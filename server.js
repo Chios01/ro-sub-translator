@@ -1,15 +1,20 @@
-const { addonBuilder, serveHTTP, getRouter } = require('stremio-addon-sdk');
 const express = require('express');
 const axios = require('axios');
 const Parser = require('srt-parser-2').default;
 const path = require('path');
 
+const app = express();
+
+// Permitem accesul aplicației Stremio de oriunde (reguli de CORS)
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    next();
+});
+
 const memoryCache = {}; 
 let globalPauseUntil = 0; 
 
-// ==========================================
-// 1. DEFINIREA ADDON-ULUI STREMIO
-// ==========================================
 const manifest = {
     id: 'org.stremio.rotranslator.cloud', 
     version: '1.0.0',
@@ -21,48 +26,48 @@ const manifest = {
     idPrefixes: ['tt']
 };
 
-const builder = new addonBuilder(manifest);
+// ==========================================
+// 1. RUTELE SERVERULUI (FĂRĂ MODULUL SDK)
+// ==========================================
 
-builder.defineSubtitlesHandler(async (args, env) => {
-    const isSeries = args.id.includes(':');
-    const type = isSeries ? 'series' : 'movie';
-    
-    // Extragem datele de configurare (cheile) din URL-ul unic al utilizatorului
-    const urlParts = env.request.originalUrl.split('/');
-    const configData = urlParts[1]; 
-    
-    const host = env.request.headers.host;
+// Pagina Web de Configurare
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// Manifestul pentru Stremio
+app.get('/:configData/manifest.json', (req, res) => {
+    res.json(manifest);
+});
+
+// Funcția centrală care comunică cu Stremio pentru lista de subtitrări
+async function handleSubtitles(req, res) {
+    const { configData, type, id, extra } = req.params;
+
+    const host = req.headers.host;
     const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
     const baseUrl = `${protocol}://${host}`;
-    
-    let extraParams = [];
-    let userFilename = '';
-    
-    if (args.videoHash) extraParams.push(`videoHash=${args.videoHash}`);
-    if (args.videoSize) extraParams.push(`videoSize=${args.videoSize}`);
-    if (args.extra) {
-        if (args.extra.videoHash && !args.videoHash) extraParams.push(`videoHash=${args.extra.videoHash}`);
-        if (args.extra.videoSize && !args.videoSize) extraParams.push(`videoSize=${args.extra.videoSize}`);
-        if (args.extra.filename) {
-            userFilename = args.extra.filename;
-            extraParams.push(`filename=${encodeURIComponent(userFilename)}`);
-        }
-    }
 
     let extraString = '';
-    if (extraParams.length > 0) {
-        extraString = '/' + extraParams.join('&');
+    let userFilename = '';
+
+    if (extra) {
+        extraString = '/' + extra;
+        try {
+            const params = new URLSearchParams(extra);
+            userFilename = params.get('filename') || '';
+        } catch (e) {}
     }
 
     const urlsToFetch = [
-        `https://opensubtitles-v3.strem.io/subtitles/${type}/${args.id}${extraString}.json`, 
-        `https://opensubtitles-v3.strem.io/subtitles/${type}/${args.id}.json`,             
-        `https://opensubtitles.strem.io/subtitles/${type}/${args.id}${extraString}.json`,  
-        `https://opensubtitles.strem.io/subtitles/${type}/${args.id}.json`,
-        `https://yifysubtitles.strem.io/subtitles/${type}/${args.id}${extraString}.json`,
-        `https://yifysubtitles.strem.io/subtitles/${type}/${args.id}.json`,
-        `https://subtitles.strem.io/subtitles/${type}/${args.id}${extraString}.json`,
-        `https://subtitles.strem.io/subtitles/${type}/${args.id}.json`
+        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
+        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}.json`,             
+        `https://opensubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,  
+        `https://opensubtitles.strem.io/subtitles/${type}/${id}.json`,
+        `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
+        `https://yifysubtitles.strem.io/subtitles/${type}/${id}.json`,
+        `https://subtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
+        `https://subtitles.strem.io/subtitles/${type}/${id}.json`
     ];
 
     try {
@@ -73,9 +78,9 @@ builder.defineSubtitlesHandler(async (args, env) => {
         const results = await Promise.all(fetchPromises);
         
         let allSubs = [];
-        results.forEach(res => {
-            if (res && res.data && Array.isArray(res.data.subtitles)) {
-                allSubs.push(...res.data.subtitles);
+        results.forEach(r => {
+            if (r && r.data && Array.isArray(r.data.subtitles)) {
+                allSubs.push(...r.data.subtitles);
             }
         });
         
@@ -88,17 +93,15 @@ builder.defineSubtitlesHandler(async (args, env) => {
             return true;
         }).slice(0, 120); 
 
-        if (engSubs.length === 0) return Promise.resolve({ subtitles: [] });
+        if (engSubs.length === 0) return res.json({ subtitles: [] });
 
         let processedSubs = [];
-        
-        for(let i = 0; i < engSubs.length; i += 10) {
+        for (let i = 0; i < engSubs.length; i += 10) {
             const batch = engSubs.slice(i, i + 10);
             const batchResults = await Promise.all(batch.map(async (sub, idx) => {
-                let fallbackName = sub.id || `Varianta_${i + idx + 1}`; 
-                let realName = fallbackName;
+                let realName = sub.id || `Varianta_${i + idx + 1}`;
                 try {
-                    const headRes = await axios.head(sub.url, { timeout: 2000 }); 
+                    const headRes = await axios.head(sub.url, { timeout: 2000 });
                     const disposition = headRes.headers['content-disposition'];
                     if (disposition && disposition.includes('filename')) {
                         const match = disposition.match(/filename=["']?([^"';]+)["']?/i);
@@ -129,8 +132,8 @@ builder.defineSubtitlesHandler(async (args, env) => {
         diverseSubs.forEach(s => {
             s.score = 0;
             const subName = s.realName.toLowerCase();
-            if (isExtendedVideo && /extended|director|dc|unrated|remastered|special|imax/i.test(subName)) s.score += 200; 
-            else if (!isExtendedVideo && /extended|director|dc|unrated|remastered|special|imax/i.test(subName)) s.score -= 100;  
+            if (isExtendedVideo && /extended|director|dc|unrated|remastered|special|imax/i.test(subName)) s.score += 200;
+            else if (!isExtendedVideo && /extended|director|dc|unrated|remastered|special|imax/i.test(subName)) s.score -= 100;
 
             const tags = ['rarbg', 'yts', 'yify', 'web-dl', 'webrip', 'bluray', 'brrip', 'x264', 'x265', 'amazon', 'amzn', 'nf'];
             tags.forEach(tag => {
@@ -147,41 +150,33 @@ builder.defineSubtitlesHandler(async (args, env) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
             let displayTitle = s.realName;
             const splitMatch = displayTitle.match(/(\b19\d{2}\b|\b20\d{2}\b|\b1080p\b|\b720p\b|\b2160p\b|\b4k\b|\bEXTENDED\b|\bDIRECTORS?\b|\bUNRATED\b|\bREMASTERED\b)/i);
-            
+
             if (splitMatch && splitMatch.index > 3) displayTitle = displayTitle.substring(splitMatch.index);
             else if (displayTitle.length > 40) displayTitle = ".." + displayTitle.slice(-38);
-            
+
             const cleanNameForId = `AI_${displayTitle.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
 
             return {
-                id: cleanNameForId, 
-                // Aici am inclus baza64 a utilizatorului direct in linkul catre serverul propriu
-                url: `${baseUrl}/${configData}/translate?id=${args.id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
-                lang: 'ron' 
+                id: cleanNameForId,
+                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
+                lang: 'ron'
             };
         });
 
-        return Promise.resolve({ subtitles: generatedSubs });
+        return res.json({ subtitles: generatedSubs });
     } catch (error) {
-        return Promise.resolve({ subtitles: [] });
+        return res.json({ subtitles: [] });
     }
-});
+}
 
-// ==========================================
-// 2. SERVERUL EXPRESS (RUTARE ȘI HTTP)
-// ==========================================
-const app = express();
-const addonInterface = builder.getInterface();
+// Rutele care interceptează exact cererile Stremio
+app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
+app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 
-// Afișează pagina de configurare pe root
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-// Ruta pentru traducere (izolează cheile per cerere)
+// Ruta pentru traducerea propriu-zisă
 app.get('/:configData/translate', async (req, res) => {
     const imdbId = req.query.id;
-    const targetUrl = req.query.targetUrl; 
+    const targetUrl = req.query.targetUrl;
     const configData = req.params.configData;
 
     if (!targetUrl) return res.status(400).send('Lipsă URL sursă.');
@@ -194,7 +189,7 @@ app.get('/:configData/translate', async (req, res) => {
         return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
     }
 
-    const cacheKey = targetUrl; 
+    const cacheKey = targetUrl;
 
     if (memoryCache[cacheKey]) {
         try {
@@ -202,7 +197,7 @@ app.get('/:configData/translate', async (req, res) => {
             res.setHeader('Content-Type', 'text/srt; charset=utf-8');
             return res.send(srtString);
         } catch (error) {
-            delete memoryCache[cacheKey]; 
+            delete memoryCache[cacheKey];
             return res.status(500).send('Eroare la cache.');
         }
     }
@@ -210,29 +205,23 @@ app.get('/:configData/translate', async (req, res) => {
     console.log(`▶ Procesare cerută pentru filmul: ${imdbId}`);
     const processPromise = (async () => {
         const srtRes = await axios.get(targetUrl);
-        return await translateSrtWithGemini(srtRes.data, userKeys); // Trimitem cheile specifice
+        return await translateSrtWithGemini(srtRes.data, userKeys);
     })();
 
-    memoryCache[cacheKey] = processPromise; 
+    memoryCache[cacheKey] = processPromise;
 
     try {
         const translatedSrtString = await processPromise;
-        memoryCache[cacheKey] = translatedSrtString; 
-        
+        memoryCache[cacheKey] = translatedSrtString;
+
         res.setHeader('Content-Type', 'text/srt; charset=utf-8');
         res.send(translatedSrtString);
         console.log(`✔ Finalizat cu succes: ${imdbId}`);
     } catch (error) {
-        delete memoryCache[cacheKey]; 
+        delete memoryCache[cacheKey];
         res.status(500).send('Eroare la procesarea subtitrării.');
     }
 });
-
-// Trimitem restul cererilor (cum ar fi manifest.json) către router-ul Stremio
-app.use('/:configData', (req, res, next) => {
-    if (req.path.includes('/translate')) return next('route');
-    next();
-}, getRouter(addonInterface));
 
 const PORT = process.env.PORT || 7000;
 app.listen(PORT, () => {
@@ -240,7 +229,7 @@ app.listen(PORT, () => {
 });
 
 // ==========================================
-// 3. FUNCȚII AJUTĂTOARE & TRADUCERE
+// 2. FUNCȚII AJUTĂTOARE & TRADUCERE
 // ==========================================
 
 function cleanTextForJson(text) {
@@ -249,7 +238,7 @@ function cleanTextForJson(text) {
     clean = clean.replace(/[\[\(\*\{][\s\S]*?[\]\)\*\}]/g, '');
     clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/[♪#♫]/g, '');
-    clean = clean.replace(/"/g, "'"); 
+    clean = clean.replace(/"/g, "'");
     if (clean.trim() === '') return ' ';
     return clean.trim();
 }
@@ -267,10 +256,10 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     chunkObjArray.forEach(obj => {
         chunkDict[obj.id] = obj.text;
     });
-    
+
     const expectedKeysCount = Object.keys(chunkDict).length;
     let attempts = 0;
-    const maxAttempts = keyState.keys.length * 4; 
+    const maxAttempts = keyState.keys.length * 4;
 
     while (attempts < maxAttempts) {
         if (Date.now() < globalPauseUntil) {
@@ -325,7 +314,7 @@ ${JSON.stringify(chunkDict)}`;
                         openBraces--;
                         if (openBraces === 0) {
                             endIndex = i;
-                            break; 
+                            break;
                         }
                     }
                 }
