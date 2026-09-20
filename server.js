@@ -197,20 +197,17 @@ app.get('/:configData/translate', async (req, res) => {
 
     const cacheKey = targetUrl;
 
-    // 1. Verificăm memoria cache
     if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
         res.setHeader('Content-Type', 'text/srt; charset=utf-8');
         return res.send(memoryCache[cacheKey]);
     }
 
-    // 2. TRUCUL KEEP-ALIVE (Pentru ExoPlayer / Render Timeout)
     res.writeHead(200, {
         'Content-Type': 'text/srt; charset=utf-8',
         'Transfer-Encoding': 'chunked'
     });
     res.flushHeaders(); 
 
-    // Picurăm un text invizibil la fiecare 10 secunde ca să nu ia reset
     const keepAlive = setInterval(() => {
         res.write(' \n');
     }, 10000);
@@ -246,10 +243,8 @@ app.get('/:configData/translate', async (req, res) => {
             });
         }
 
-        // Așteptăm traducerea
         const finalSrt = await processPromise;
         
-        // Oprim picurarea, livrăm subtitrarea completă și închidem
         clearInterval(keepAlive);
         res.write(finalSrt);
         res.end();
@@ -308,28 +303,28 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         const apiKey = keyState.keys[keyIndex];
         keyState.index = (keyState.index + 1) % keyState.keys.length;
 
-        const modelName = (attempts < 2) ? 'gemini-3.5-flash' : 'gemini-3.5-flash-lite';
+        // MODEL FORȚAT DOAR PE LITE
+        const modelName = 'gemini-3.5-flash-lite';
 
         try {
-            console.log(`${c.cyan}➤ [Gemini] Traduc calup${globalChunkIndex + 1}/${totalChunks} (Model:${modelName} | Cheie: ${keyIndex})...${c.reset}`);
+            console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
             
-            const prompt = `Ești un traducător profesionist de subtitrări de film din engleză în română.
-Sarcina ta este să traduci ABSOLUT TOATE valorile următorului obiect JSON.
+            // PROMPT SCURT, OPTIMIZAT PENTRU LITE
+            const prompt = `Ești un traducător profesionist (engleză -> română).
+Traduce TOATE valorile din acest obiect JSON.
 
-REGULI LINGVISTICE PREMIUM (ROMÂNĂ):
-1. Precizie și Naturalețe: Traducerea trebuie să fie precisă și firească. Nu traduce literar (cuvânt cu cuvânt), dar NICI NU INVENTA sensuri noi sau argou inexistent. Păstrează exact ideea originală!
-2. Fără Cenzură: Nu cenzura nimic. Menține exact același nivel de limbaj (inclusiv înjurături, argou sau limbaj licențios) ca în original.
-3. Pronume (Tutuire): Folosește pronumele de tutuire ("tu", "voi") implicit.
-4. Gen (Masculin implicit): Pentru cuvintele care depind de gen, folosește forma de masculin implicit.
-5. FORMAT ȘI SDH: Păstrează etichetele HTML (<i>, <b>) și liniile noi (Enter/\\n). Dacă o linie conține DOAR un sunet descriptiv (ex: ENGINE ROARS), tradu-o doar cu un spațiu gol: " ". Nu lăsa niciun cuvânt netradus.
+REGULI STRICTE:
+1. ADAPTARE, NU TRADUCERE MOT-A-MOT: Găsește echivalentul firesc în limba română pentru expresii și argou. Trebuie să sune natural, ca în viața reală.
+2. FĂRĂ CENZURĂ: Păstrează înjurăturile și termenii vulgari exact ca în original.
+3. PERSOANĂ ȘI GEN: Folosește tutuitul ("tu/voi") și masculinul ca gen implicit.
+4. FORMAT: Păstrează etichetele HTML (<i>, <b>) și liniile noi (\\n). Lasă un spațiu gol (" ") pentru zgomote de fond.
 
-CONSTRÂNGERI CRITICE DE FORMAT (JSON ABSOLUT):
-1. Returnează DOAR un singur obiect JSON plat. Fără text pe lângă, fără markdown (fără \`\`\`json).
-2. TRADUCE EXACT ${expectedKeysCount} LINII. Nu omite și nu adăuga nicio cheie!
-3. Format așteptat: {"ID": "text tradus", "ID2": "text tradus"}
-4. NU folosi ghilimele duble (") în interiorul textului tradus. Folosește doar ghilimele simple (').
+REGULI JSON (CRITIC):
+1. Returnează STRICT un singur obiect JSON plat. Fără text înainte sau după. Fără markdown.
+2. Numărul de chei trebuie să fie EXACT ${expectedKeysCount}.
+3. Folosește DOAR ghilimele simple (') în interiorul textului tradus. Fără ghilimele duble (").
 
-English subtitles:
+Subtitrare originală:
 ${JSON.stringify(chunkDict)}`;
 
             const response = await axios.post(
@@ -392,7 +387,7 @@ ${JSON.stringify(chunkDict)}`;
                 attempts++;
                 await new Promise(r => setTimeout(r, delay));
             } else if (error.response && error.response.status === 503) {
-                console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Trecem pe modelul Lite...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
                 attempts++;
                 await new Promise(r => setTimeout(r, 1000));
             } else {
@@ -416,7 +411,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 120; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // LIMITA RĂMÂNE EXACT LA 3, CUM AI CERUT
     const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
