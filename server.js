@@ -309,15 +309,16 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         try {
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
             
-            // PROMPT SCURT, OPTIMIZAT PENTRU LITE
+            // PROMPT SCURT, OPTIMIZAT PENTRU LITE (FĂRĂ EZITĂRI ȘI SUNETE)
             const prompt = `Ești un traducător profesionist (engleză -> română).
 Traduce TOATE valorile din acest obiect JSON.
 
 REGULI STRICTE:
-1. ADAPTARE, NU TRADUCERE MOT-A-MOT: Găsește echivalentul firesc în limba română pentru expresii și argou. Trebuie să sune natural, ca în viața reală.
-2. FĂRĂ CENZURĂ: Păstrează înjurăturile și termenii vulgari exact ca în original.
-3. PERSOANĂ ȘI GEN: Folosește tutuitul ("tu/voi") și masculinul ca gen implicit.
-4. FORMAT: Păstrează etichetele HTML (<i>, <b>) și liniile noi (\\n). Lasă un spațiu gol (" ") pentru zgomote de fond.
+1. ADAPTARE: Găsește echivalentul firesc în limba română. Să sune natural, nu robotic.
+2. FĂRĂ EZITĂRI ȘI SUNETE: ELIMINĂ COMPLET interjecțiile de ezitare sau zgomotele (ex: "hm", "uh", "um", "ah", "ăă", "[sighs]", "[grunts]"). Dacă o linie conține DOAR astfel de sunete, tradu-o cu un simplu spațiu gol (" ").
+3. FĂRĂ CENZURĂ: Păstrează înjurăturile și argoul exact ca în original.
+4. PERSOANĂ ȘI GEN: Folosește tutuitul ("tu/voi") și masculinul ca gen implicit.
+5. FORMAT HTML: Păstrează etichetele HTML (<i>, <b>) și liniile noi (\\n).
 
 REGULI JSON (CRITIC):
 1. Returnează STRICT un singur obiect JSON plat. Fără text înainte sau după. Fără markdown.
@@ -383,6 +384,57 @@ ${JSON.stringify(chunkDict)}`;
                 if (newPause > globalPauseUntil) {
                     globalPauseUntil = newPause;
                     console.log(`${c.yellow}⚠ [Gemini] 429. Se activează PAUZA GLOBALĂ: ${(delay/1000).toFixed(1)}s...${c.reset}`);
+                }
+                attempts++;
+                await new Promise(r => setTimeout(r, delay));
+            } else if (error.response && error.response.status === 503) {
+                console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
+                attempts++;
+                await new Promise(r => setTimeout(r, 1000));
+            } else {
+                console.log(`${c.red}⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}. Reîncercare...${c.reset}`);
+                attempts++;
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+    }
+    throw new Error(`Calupul ${globalChunkIndex + 1} a eșuat definitiv.`);
+}
+
+async function translateSrtWithGemini(srtText, userKeys) {
+    const parser = new Parser();
+    const blocks = parser.fromSrt(srtText);
+    
+    const textsToTranslate = blocks.map((b, index) => {
+        return { id: index, text: cleanTextForJson(b.text) };
+    });
+    
+    const CHUNK_SIZE = 120; 
+    const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
+    
+    const CONCURRENCY_LIMIT = 3; 
+    let allTranslatedTexts = [];
+
+    const keyState = { keys: userKeys, index: 0 };
+
+    for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
+        const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
+        const batchPromises = batchChunks.map((chunk, indexInBatch) => {
+            return processChunkWithRetry(chunk, i + indexInBatch, chunks.length, keyState);
+        });
+        
+        const batchResults = await Promise.all(batchPromises);
+        batchResults.forEach(translatedTextsArray => {
+            allTranslatedTexts.push(...translatedTextsArray);
+        });
+    }
+
+    blocks.forEach((block, index) => {
+        block.text = allTranslatedTexts[index] || block.text; 
+    });
+
+    return parser.toSrt(blocks);
+}
                 }
                 attempts++;
                 await new Promise(r => setTimeout(r, delay));
