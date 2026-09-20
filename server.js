@@ -197,45 +197,66 @@ app.get('/:configData/translate', async (req, res) => {
 
     const cacheKey = targetUrl;
 
-    if (memoryCache[cacheKey]) {
-        try {
-            const srtString = await memoryCache[cacheKey];
-            res.setHeader('Content-Type', 'text/srt; charset=utf-8');
-            return res.send(srtString);
-        } catch (error) {
-            delete memoryCache[cacheKey];
-            return res.status(500).send('Eroare la cache.');
-        }
+    // 1. Verificăm memoria cache
+    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
+        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
+        return res.send(memoryCache[cacheKey]);
     }
 
-    console.log(`${c.cyan}\n==================================================${c.reset}`);
-    console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-    console.log(`${c.cyan}==================================================\n${c.reset}`);
+    // 2. TRUCUL KEEP-ALIVE (Pentru ExoPlayer / Render Timeout)
+    res.writeHead(200, {
+        'Content-Type': 'text/srt; charset=utf-8',
+        'Transfer-Encoding': 'chunked'
+    });
+    res.flushHeaders(); 
 
-    const startTime = Date.now();
-    const processPromise = (async () => {
-        const srtRes = await axios.get(targetUrl);
-        return await translateSrtWithGemini(srtRes.data, userKeys);
-    })();
-
-    memoryCache[cacheKey] = processPromise;
+    // Picurăm un text invizibil la fiecare 10 secunde ca să nu ia reset
+    const keepAlive = setInterval(() => {
+        res.write(' \n');
+    }, 10000);
 
     try {
-        const translatedSrtString = await processPromise;
-        memoryCache[cacheKey] = translatedSrtString;
+        let processPromise;
+        let isNew = false;
 
-        const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-        let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
+            processPromise = memoryCache[cacheKey];
+        } else {
+            isNew = true;
+            console.log(`${c.cyan}\n==================================================${c.reset}`);
+            console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
+            console.log(`${c.cyan}==================================================\n${c.reset}`);
+            
+            const startTime = Date.now();
+            processPromise = (async () => {
+                const srtRes = await axios.get(targetUrl);
+                return await translateSrtWithGemini(srtRes.data, userKeys);
+            })();
+            memoryCache[cacheKey] = processPromise;
+            
+            processPromise.then(translatedSrtString => {
+                memoryCache[cacheKey] = translatedSrtString;
+                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+                let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+            }).catch(() => {
+                delete memoryCache[cacheKey];
+            });
+        }
 
-        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
-        res.send(translatedSrtString);
+        // Așteptăm traducerea
+        const finalSrt = await processPromise;
         
-        console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
-        console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
-        console.log(`${c.cyan}==================================================\n${c.reset}`);
+        // Oprim picurarea, livrăm subtitrarea completă și închidem
+        clearInterval(keepAlive);
+        res.write(finalSrt);
+        res.end();
+
     } catch (error) {
-        delete memoryCache[cacheKey];
-        res.status(500).send('Eroare la procesarea subtitrării.');
+        clearInterval(keepAlive);
+        res.end(); 
     }
 });
 
@@ -320,7 +341,6 @@ ${JSON.stringify(chunkDict)}`;
                 { headers: { 'Content-Type': 'application/json' } }
             );
 
-            // Verificare de siguranță
             if (!response.data || !response.data.candidates || !response.data.candidates[0] || !response.data.candidates[0].content) {
                 throw new Error("Răspuns invalid sau gol primit de la API.");
             }
@@ -396,6 +416,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 120; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
+    // LIMITA RĂMÂNE EXACT LA 3, CUM AI CERUT
     const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
