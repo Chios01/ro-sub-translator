@@ -18,8 +18,7 @@ const manifest = {
     resources: ['subtitles'],
     types: ['movie', 'series'],
     catalogs: [],
-    idPrefixes: ['tt'],
-    behaviorHints: { configurable: true, configurationRequired: true }
+    idPrefixes: ['tt']
 };
 
 const builder = new addonBuilder(manifest);
@@ -263,7 +262,6 @@ function chunkArray(array, size) {
     return result;
 }
 
-// Observă că acum primește obiectul keyState care conține cheile utilizatorului
 async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunks, keyState) {
     const chunkDict = {};
     chunkObjArray.forEach(obj => {
@@ -379,7 +377,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
-    // Obiectul care plimbă cheile de-a lungul procesului pentru acest utilizator
     const keyState = { keys: userKeys, index: 0 };
 
     for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
