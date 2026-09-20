@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RO Sub Translator - Configurare</title>
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 20px;
+            margin: 0;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #161b22;
+            padding: 30px;
+            border-radius: 10px;
+            border: 1px solid #30363d;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            max-width: 500px;
+            width: 100%;
+        }
+        h1 {
+            text-align: center;
+            color: #58a6ff;
+            margin-bottom: 5px;
+        }
+        p.subtitle {
+            text-align: center;
+            color: #8b949e;
+            font-size: 14px;
+            margin-bottom: 25px;
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .required::after {
+            content: " *";
+            color: #f85149;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-family: monospace;
+            box-sizing: border-box;
+        }
+        input[type="text"]:focus {
+            border-color: #58a6ff;
+            outline: none;
+        }
+        .btn-install {
+            width: 100%;
+            padding: 12px;
+            background-color: #238636;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: background-color 0.2s;
+        }
+        .btn-install:hover {
+            background-color: #2ea043;
+        }
+        .footer {
+            margin-top: auto;
+            padding-top: 40px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>RO Sub Translator</h1>
+        <p class="subtitle">Adaugă cheile tale Google Gemini API</p>
+
+        <form id="configForm">
+            <!-- Cheile obligatorii -->
+            <div class="input-group">
+                <label class="required" for="key1">Cheia API 1</label>
+                <input type="text" id="key1" required placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label class="required" for="key2">Cheia API 2</label>
+                <input type="text" id="key2" required placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label class="required" for="key3">Cheia API 3</label>
+                <input type="text" id="key3" required placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label class="required" for="key4">Cheia API 4</label>
+                <input type="text" id="key4" required placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label class="required" for="key5">Cheia API 5</label>
+                <input type="text" id="key5" required placeholder="AIzaSy...">
+            </div>
+
+            <!-- Cheile opționale -->
+            <hr style="border: 0; border-top: 1px solid #30363d; margin: 20px 0;">
+            
+            <div class="input-group">
+                <label for="key6">Cheia API 6 (Opțional)</label>
+                <input type="text" id="key6" placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label for="key7">Cheia API 7 (Opțional)</label>
+                <input type="text" id="key7" placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label for="key8">Cheia API 8 (Opțional)</label>
+                <input type="text" id="key8" placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label for="key9">Cheia API 9 (Opțional)</label>
+                <input type="text" id="key9" placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label for="key10">Cheia API 10 (Opțional)</label>
+                <input type="text" id="key10" placeholder="AIzaSy...">
+            </div>
+
+            <button type="submit" class="btn-install">Instalează în Stremio</button>
+        </form>
+    </div>
+
+    <div class="footer">
+        <p style="color: #00f7ff; font-family: 'Courier New', monospace; text-shadow: 0 0 5px #00f7ff;">
+            // System status: Operational. Powered by Chios.
+        </p>
+    </div>
+
+    <script>
+        document.getElementById('configForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            let keys = [];
+            for(let i = 1; i <= 10; i++) {
+                let val = document.getElementById('key' + i).value.trim();
+                if(val) keys.push(val);
+            }
+            
+            if(keys.length < 5) {
+                alert("Te rugăm să introduci cel puțin primele 5 chei obligatorii!");
+                return;
+            }
+
+            // Codăm cheile în Base64 pentru a le pune în siguranță în URL
+            let configData = btoa(JSON.stringify(keys));
+            
+            // Generăm link-ul de instalare Stremio
+            let currentHost = window.location.host;
+            let installLink = "stremio://" + currentHost + "/" + configData + "/manifest.json";
+            
+            // Redirecționăm către aplicația Stremio
+            window.location.href = installLink;
+        });
+    </script>
+
+</body>
+</html>
