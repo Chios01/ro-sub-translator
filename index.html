@@ -12,7 +12,8 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 40px 20px;
+            justify-content: center; /* Centrează totul perfect pe mijlocul ecranului */
+            padding: 20px;
             margin: 0;
             min-height: 100vh;
         }
@@ -80,8 +81,8 @@
             background-color: #2ea043;
         }
         .footer {
-            margin-top: auto;
-            padding-top: 40px;
+            margin-top: 15px; /* Lipește textul exact sub chenar */
+            text-align: center;
         }
     </style>
 </head>
@@ -92,7 +93,6 @@
         <p class="subtitle">Adaugă cheile tale Google Gemini API</p>
 
         <form id="configForm">
-            <!-- Cheile obligatorii -->
             <div class="input-group">
                 <label class="required" for="key1">Cheia API 1</label>
                 <input type="text" id="key1" required placeholder="AIzaSy...">
@@ -114,7 +114,6 @@
                 <input type="text" id="key5" required placeholder="AIzaSy...">
             </div>
 
-            <!-- Cheile opționale -->
             <hr style="border: 0; border-top: 1px solid #30363d; margin: 20px 0;">
             
             <div class="input-group">
@@ -142,8 +141,9 @@
         </form>
     </div>
 
+    <!-- Textul este scos din .container, dar stă imediat sub el -->
     <div class="footer">
-        <p style="color: #00f7ff; font-family: 'Courier New', monospace; text-shadow: 0 0 5px #00f7ff;">
+        <p style="color: #00f7ff; font-family: 'Courier New', monospace; text-shadow: 0 0 5px #00f7ff; font-size: 14px; margin: 0;">
             // System status: Operational. Powered by Chios.
         </p>
     </div>
@@ -162,14 +162,10 @@
                 return;
             }
 
-            // Codăm cheile în Base64 pentru a le pune în siguranță în URL
             let configData = btoa(JSON.stringify(keys));
-            
-            // Generăm link-ul de instalare Stremio
             let currentHost = window.location.host;
             let installLink = "stremio://" + currentHost + "/" + configData + "/manifest.json";
             
-            // Redirecționăm către aplicația Stremio
             window.location.href = installLink;
         });
     </script>
