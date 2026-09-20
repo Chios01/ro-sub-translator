@@ -3,14 +3,21 @@ const axios = require('axios');
 const Parser = require('srt-parser-2').default;
 const path = require('path');
 
+// Forțăm afișarea instantanee a logurilor în consolă (fără buffering)
+console.log = (...args) => process.stdout.write(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ') + '\n');
+
 const app = express();
 
-// Permitem accesul aplicației Stremio de oriunde (reguli de CORS)
 app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
     next();
 });
+
+const c = {
+    green: '\x1b[32m', yellow: '\x1b[33m', red: '\x1b[31m',
+    cyan: '\x1b[36m', magenta: '\x1b[35m', reset: '\x1b[0m'
+};
 
 const memoryCache = {}; 
 let globalPauseUntil = 0; 
@@ -27,20 +34,17 @@ const manifest = {
 };
 
 // ==========================================
-// 1. RUTELE SERVERULUI (FĂRĂ MODULUL SDK)
+// 1. RUTELE SERVERULUI
 // ==========================================
 
-// Pagina Web de Configurare
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Manifestul pentru Stremio
 app.get('/:configData/manifest.json', (req, res) => {
     res.json(manifest);
 });
 
-// Funcția centrală care comunică cu Stremio pentru lista de subtitrări
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
 
@@ -169,11 +173,9 @@ async function handleSubtitles(req, res) {
     }
 }
 
-// Rutele care interceptează exact cererile Stremio
 app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
 app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 
-// Ruta pentru traducerea propriu-zisă
 app.get('/:configData/translate', async (req, res) => {
     const imdbId = req.query.id;
     const targetUrl = req.query.targetUrl;
@@ -202,7 +204,11 @@ app.get('/:configData/translate', async (req, res) => {
         }
     }
 
-    console.log(`▶ Procesare cerută pentru filmul: ${imdbId}`);
+    console.log(`\n==================================================`);
+    console.log(`▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}`);
+    console.log(`==================================================`);
+
+    const startTime = Date.now();
     const processPromise = (async () => {
         const srtRes = await axios.get(targetUrl);
         return await translateSrtWithGemini(srtRes.data, userKeys);
@@ -214,9 +220,15 @@ app.get('/:configData/translate', async (req, res) => {
         const translatedSrtString = await processPromise;
         memoryCache[cacheKey] = translatedSrtString;
 
+        const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+        let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+
         res.setHeader('Content-Type', 'text/srt; charset=utf-8');
         res.send(translatedSrtString);
-        console.log(`✔ Finalizat cu succes: ${imdbId}`);
+        
+        console.log(`\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}`);
+        console.log(`⏱ Timp total de traducere: ${timeFormatted}`);
+        console.log(`==================================================\n`);
     } catch (error) {
         delete memoryCache[cacheKey];
         res.status(500).send('Eroare la procesarea subtitrării.');
@@ -267,12 +279,15 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, waitTime));
         }
 
-        const apiKey = keyState.keys[keyState.index];
+        const keyIndex = keyState.index;
+        const apiKey = keyState.keys[keyIndex];
         keyState.index = (keyState.index + 1) % keyState.keys.length;
 
         const modelName = (attempts < 2) ? 'gemini-3.5-flash' : 'gemini-3.5-flash-lite';
 
         try {
+            console.log(`➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} \vert{} Cheie:${keyIndex})...`);
+            
             const prompt = `Ești un traducător profesionist de subtitrări de film din engleză în română.
 Sarcina ta este să traduci ABSOLUT TOATE valorile următorului obiect JSON.
 
@@ -334,22 +349,31 @@ ${JSON.stringify(chunkDict)}`;
                 return translatedDict[obj.id] !== undefined ? translatedDict[obj.id] : obj.text;
             });
 
+            console.log(`✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat!`);
             return finalTranslatedArray;
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
                 const delay = 6000 + (attempts * 1500) + Math.floor(Math.random() * 1000); 
                 const newPause = Date.now() + delay;
-                if (newPause > globalPauseUntil) globalPauseUntil = newPause;
+                if (newPause > globalPauseUntil) {
+                    globalPauseUntil = newPause;
+                    console.log(`⚠ [Gemini] 429. Se activează PAUZA GLOBALĂ: ${(delay/1000).toFixed(1)}s...`);
+                }
                 attempts++;
                 await new Promise(r => setTimeout(r, delay));
+            } else if (error.response && error.response.status === 503) {
+                console.log(`⚠ [Gemini] Eroare 503 de la Google. Trecem pe modelul Lite...`);
+                attempts++;
+                await new Promise(r => setTimeout(r, 1000));
             } else {
+                console.log(`⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}. Reîncercare...`);
                 attempts++;
                 await new Promise(r => setTimeout(r, 1000));
             }
         }
     }
-    throw new Error(`Calupul a eșuat definitiv.`);
+    throw new Error(`Calupul ${globalChunkIndex + 1} a eșuat definitiv.`);
 }
 
 async function translateSrtWithGemini(srtText, userKeys) {
