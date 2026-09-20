@@ -13,6 +13,16 @@ app.use((req, res, next) => {
     next();
 });
 
+// === CULORI PENTRU CONSOLĂ ===
+const c = {
+    green: '\x1b[32m',
+    yellow: '\x1b[33m',
+    red: '\x1b[31m',
+    cyan: '\x1b[36m',
+    magenta: '\x1b[35m',
+    reset: '\x1b[0m'
+};
+
 const memoryCache = {}; 
 let globalPauseUntil = 0; 
 
@@ -198,9 +208,9 @@ app.get('/:configData/translate', async (req, res) => {
         }
     }
 
-    console.log(`\n==================================================`);
-    console.log(`▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}`);
-    console.log(`==================================================`);
+    console.log(`${c.cyan}\n==================================================${c.reset}`);
+    console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
+    console.log(`${c.cyan}==================================================\n${c.reset}`);
 
     const startTime = Date.now();
     const processPromise = (async () => {
@@ -220,9 +230,9 @@ app.get('/:configData/translate', async (req, res) => {
         res.setHeader('Content-Type', 'text/srt; charset=utf-8');
         res.send(translatedSrtString);
         
-        console.log(`\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}`);
-        console.log(`⏱ Timp total de traducere: ${timeFormatted}`);
-        console.log(`==================================================\n`);
+        console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+        console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
+        console.log(`${c.cyan}==================================================\n${c.reset}`);
     } catch (error) {
         delete memoryCache[cacheKey];
         res.status(500).send('Eroare la procesarea subtitrării.');
@@ -231,7 +241,7 @@ app.get('/:configData/translate', async (req, res) => {
 
 const PORT = process.env.PORT || 7000;
 app.listen(PORT, () => {
-    console.log(`✔ Serverul rulează pe portul: ${PORT}`);
+    console.log(`${c.green}✔ Serverul rulează pe portul: ${PORT}${c.reset}`);
 });
 
 // ==========================================
@@ -280,7 +290,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         const modelName = (attempts < 2) ? 'gemini-3.5-flash' : 'gemini-3.5-flash-lite';
 
         try {
-            console.log(`➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} \vert{} Cheie:${keyIndex})...`);
+            console.log(`${c.cyan}➤ [Gemini] Traduc calup${globalChunkIndex + 1}/${totalChunks} (Model:${modelName} | Cheie: ${keyIndex})...${c.reset}`);
             
             const prompt = `Ești un traducător profesionist de subtitrări de film din engleză în română.
 Sarcina ta este să traduci ABSOLUT TOATE valorile următorului obiect JSON.
@@ -310,7 +320,7 @@ ${JSON.stringify(chunkDict)}`;
                 { headers: { 'Content-Type': 'application/json' } }
             );
 
-            // Verificare de siguranță pentru răspunsul de la Gemini
+            // Verificare de siguranță
             if (!response.data || !response.data.candidates || !response.data.candidates[0] || !response.data.candidates[0].content) {
                 throw new Error("Răspuns invalid sau gol primit de la API.");
             }
@@ -348,7 +358,7 @@ ${JSON.stringify(chunkDict)}`;
                 return translatedDict[obj.id] !== undefined ? translatedDict[obj.id] : obj.text;
             });
 
-            console.log(`✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat!`);
+            console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat!${c.reset}`);
             return finalTranslatedArray;
 
         } catch (error) {
@@ -357,16 +367,16 @@ ${JSON.stringify(chunkDict)}`;
                 const newPause = Date.now() + delay;
                 if (newPause > globalPauseUntil) {
                     globalPauseUntil = newPause;
-                    console.log(`⚠ [Gemini] 429. Se activează PAUZA GLOBALĂ: ${(delay/1000).toFixed(1)}s...`);
+                    console.log(`${c.yellow}⚠ [Gemini] 429. Se activează PAUZA GLOBALĂ: ${(delay/1000).toFixed(1)}s...${c.reset}`);
                 }
                 attempts++;
                 await new Promise(r => setTimeout(r, delay));
             } else if (error.response && error.response.status === 503) {
-                console.log(`⚠ [Gemini] Eroare 503 de la Google. Trecem pe modelul Lite...`);
+                console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Trecem pe modelul Lite...${c.reset}`);
                 attempts++;
                 await new Promise(r => setTimeout(r, 1000));
             } else {
-                console.log(`⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}. Reîncercare...`);
+                console.log(`${c.red}⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}. Reîncercare...${c.reset}`);
                 attempts++;
                 await new Promise(r => setTimeout(r, 1000));
             }
