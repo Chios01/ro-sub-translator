@@ -3,7 +3,6 @@ const axios = require('axios');
 const Parser = require('srt-parser-2').default;
 const path = require('path');
 
-// Forțăm afișarea instantanee a logurilor în consolă (fără buffering)
 console.log = (...args) => process.stdout.write(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ') + '\n');
 
 const app = express();
@@ -13,11 +12,6 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Headers', '*');
     next();
 });
-
-const c = {
-    green: '\x1b[32m', yellow: '\x1b[33m', red: '\x1b[31m',
-    cyan: '\x1b[36m', magenta: '\x1b[35m', reset: '\x1b[0m'
-};
 
 const memoryCache = {}; 
 let globalPauseUntil = 0; 
@@ -315,6 +309,11 @@ ${JSON.stringify(chunkDict)}`;
                 },
                 { headers: { 'Content-Type': 'application/json' } }
             );
+
+            // Verificare de siguranță pentru răspunsul de la Gemini
+            if (!response.data || !response.data.candidates || !response.data.candidates[0] || !response.data.candidates[0].content) {
+                throw new Error("Răspuns invalid sau gol primit de la API.");
+            }
 
             let textResponse = response.data.candidates[0].content.parts[0].text;
             
