@@ -67,6 +67,7 @@ async function handleSubtitles(req, res) {
         } catch (e) {}
     }
 
+    // LISTA DE SURSE - ACUM INCLUSIV SUBDL
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}.json`,             
@@ -75,7 +76,9 @@ async function handleSubtitles(req, res) {
         `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
         `https://yifysubtitles.strem.io/subtitles/${type}/${id}.json`,
         `https://subtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
-        `https://subtitles.strem.io/subtitles/${type}/${id}.json`
+        `https://subtitles.strem.io/subtitles/${type}/${id}.json`,
+        `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`,
+        `https://subdl.strem.io/subtitles/${type}/${id}.json`
     ];
 
     try {
