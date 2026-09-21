@@ -109,7 +109,6 @@ async function handleSubtitles(req, res) {
         for (let i = 0; i < engSubs.length; i += 10) {
             const batch = engSubs.slice(i, i + 10);
             const batchResults = await Promise.all(batch.map(async (sub, idx) => {
-                // MODIFICARE AICI: Extragem titlul real ascuns de addon!
                 let realName = sub.title || sub.id || `Varianta_${i + idx + 1}`;
                 try {
                     if (!sub.title || sub.title.length < 4) {
@@ -126,7 +125,6 @@ async function handleSubtitles(req, res) {
             processedSubs.push(...batchResults);
         }
 
-        // MODIFICARE AICI: Am eliminat ascunderea subtitrărilor similare. Vrem să vedem variante de sync diferite!
         let diverseSubs = [];
         const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
 
@@ -167,7 +165,6 @@ async function handleSubtitles(req, res) {
             if (splitMatch && splitMatch.index > 3) displayTitle = displayTitle.substring(splitMatch.index);
             else if (displayTitle.length > 50) displayTitle = ".." + displayTitle.slice(-48);
 
-            // MODIFICARE AICI: Forțăm Stremio să afișeze absolut toate cele 20 de opțiuni!
             const cleanNameForId = `AI_${displayTitle.replace(/[^a-zA-Z0-9.-]/g, '_')}_v${s.index + 1}`;
 
             return {
@@ -328,7 +325,7 @@ REGULI STRICTE:
 2. FĂRĂ EZITĂRI ȘI SUNETE: ELIMINĂ COMPLET interjecțiile de ezitare sau zgomotele (ex: "hm", "uh", "um", "ah", "ăă", "[sighs]", "[grunts]"). Dacă o linie conține DOAR astfel de sunete, tradu-o cu un simplu spațiu gol (" ").
 3. FĂRĂ CENZURĂ: Păstrează înjurăturile și argoul exact ca în original.
 4. PERSOANĂ ȘI GEN: Folosește tutuitul ("tu/voi") și masculinul ca gen implicit.
-5. FORMAT HTML: Păstrează etichetele HTML (<i>, <b>) și liniile noi (\\n).
+5. FORMAT ȘI LINII NOI: Păstrează etichetele HTML (<i>, <b>). CRITIC: Păstrează OBLIGATORIU simbolul de linie nouă (\\n). Dacă textul original este pe două rânduri (ex: dialog cu două cratime), traducerea TREBUIE să conțină \\n între ele! Nu le lipi pe un singur rând!
 
 REGULI JSON (CRITIC):
 1. Returnează STRICT un singur obiect JSON plat. Fără text înainte sau după. Fără markdown.
