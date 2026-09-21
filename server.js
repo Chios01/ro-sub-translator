@@ -278,6 +278,7 @@ function cleanTextForJson(text) {
     clean = clean.replace(/[\[\(\*\{][\s\S]*?[\]\)\*\}]/g, '');
     clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/[♪#♫]/g, '');
+    // Curățare litere stricate note muzicale
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
     clean = clean.replace(/"/g, "'");
@@ -317,19 +318,6 @@ function formatSubtitleLine(text) {
         }
     }
     return text;
-}
-
-function fixBrokenJson(text) {
-    let fixed = text;
-    fixed = fixed.replace(/"(\d+)":\s*([^",}\n]+)([,}\n])/g, function(match, key, value, terminator) {
-        let cleanVal = value.trim();
-        if (!cleanVal.startsWith('"')) {
-            cleanVal = cleanVal.replace(/^b['"]|['"]$/g, '');
-            return `"${key}": "${cleanVal}"${terminator}`;
-        }
-        return match;
-    });
-    return fixed;
 }
 
 async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunks, keyState) {
@@ -394,7 +382,11 @@ ${JSON.stringify(chunkDict)}`;
                     contents: [{ parts: [{ text: prompt }] }],
                     generationConfig: { response_mime_type: "application/json" }
                 },
-                { headers: { 'Content-Type': 'application/json' } }
+                { 
+                    headers: { 'Content-Type': 'application/json' },
+                    // TIMEOUT NOU DE 25 SECUNDE PENTRU A PREVENI BLOCAJUL LUI GOOGLE
+                    timeout: 25000 
+                }
             );
 
             if (!response.data || !response.data.candidates || !response.data.candidates[0] || !response.data.candidates[0].content) {
@@ -424,49 +416,24 @@ ${JSON.stringify(chunkDict)}`;
                 textResponse = textResponse.substring(startIndex, endIndex + 1);
             }
 
-            let translatedDict = {};
-            try {
-                let cleanText = fixBrokenJson(textResponse);
-                translatedDict = JSON.parse(cleanText);
-            } catch (e) {
-                const keys = Object.keys(chunkDict);
-                for (let i = 0; i < keys.length; i++) {
-                    const key = keys[i];
-                    const nextKey = keys[i + 1];
-                    
-                    let lookahead = `\\s*\\}|$)`;
-                    if (nextKey) {
-                        lookahead = `\\s*,?\\s*"?(?:${nextKey})"?\\s*:|\\s*\\}|$)`;
-                    }
-                    
-                    const regex = new RegExp(`"?${key}"?\\s*:\\s*(.*?)(?=${lookahead}`, 's');
-                    const match = textResponse.match(regex);
-                    if (match) {
-                        let val = match[1].trim();
-                        if (val.endsWith(',')) val = val.substring(0, val.length - 1).trim();
-                        if (val.startsWith('"') || val.startsWith("'")) val = val.substring(1);
-                        if (val.endsWith('"') || val.endsWith("'")) val = val.substring(0, val.length - 1);
-                        val = val.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'");
-                        translatedDict[key] = val.trim();
-                    }
-                }
-            }
-
+            const translatedDict = JSON.parse(textResponse);
             const receivedKeysCount = Object.keys(translatedDict).length;
             
-            // REGULA DE FIER (100% STRICT): Dacă AI-ul a omis fie și O SINGURĂ propoziție, reia calupul!
-            if (receivedKeysCount < expectedKeysCount) {
-                 throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
+            if (receivedKeysCount < Math.floor(expectedKeysCount * 0.95)) {
+                 throw new Error(`AI-ul a omis prea multe replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
+            } else if (receivedKeysCount < expectedKeysCount) {
+                 console.log(`${c.yellow}⚠ [Gemini] Notă: AI a omis ${expectedKeysCount - receivedKeysCount} propoziții scurte. Continuăm.${c.reset}`);
             }
 
             const finalTranslatedArray = chunkObjArray.map(obj => {
                 return translatedDict[obj.id] !== undefined ? translatedDict[obj.id] : obj.text;
             });
 
-            console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${expectedKeysCount} linii)${c.reset}`);
+            console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${receivedKeysCount} linii returnate)${c.reset}`);
             return finalTranslatedArray;
 
         } catch (error) {
+            // Dacă dă timeout, trece ca eroare și reia instantaneu, eliberând "banda rulantă"
             if (error.response && error.response.status === 429) {
                 const delay = 6000 + (attempts * 1500) + Math.floor(Math.random() * 1000); 
                 currentKeyObj.pauseUntil = Date.now() + delay;
@@ -495,32 +462,44 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // REVENIRE LA 150 DE LINII (pentru viteză maximă per calup)
     const CHUNK_SIZE = 150; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
     const CONCURRENCY_LIMIT = 3; 
-    let allTranslatedTexts = [];
+    let allTranslatedChunks = new Array(chunks.length);
+    const pool = new Set();
 
     const keyState = { 
         keys: userKeys.map(k => ({ value: k, pauseUntil: 0 })), 
         index: 0 
     };
 
-    for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
-        const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
-        const batchPromises = batchChunks.map((chunk, indexInBatch) => {
-            return processChunkWithRetry(chunk, i + indexInBatch, chunks.length, keyState);
-        });
+    // BANDA RULANTĂ INDEPENDENTĂ: Nu mai stăm după calupurile lente!
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
         
-        const batchResults = await Promise.all(batchPromises);
-        batchResults.forEach(translatedTextsArray => {
-            allTranslatedTexts.push(...translatedTextsArray);
-        });
+        const promise = processChunkWithRetry(chunk, i, chunks.length, keyState)
+            .then(res => {
+                allTranslatedChunks[i] = res;
+                pool.delete(promise);
+            });
+        
+        pool.add(promise);
+
+        if (pool.size >= CONCURRENCY_LIMIT) {
+            await Promise.race(pool);
+        }
     }
 
+    await Promise.all(pool);
+
+    let finalTranslations = [];
+    allTranslatedChunks.forEach(chunkArr => {
+        if (chunkArr) finalTranslations.push(...chunkArr);
+    });
+
     blocks.forEach((block, index) => {
-        let finalStr = allTranslatedTexts[index] || block.text; 
+        let finalStr = finalTranslations[index] || block.text; 
         block.text = formatSubtitleLine(finalStr);
     });
 
