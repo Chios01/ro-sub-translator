@@ -278,7 +278,7 @@ function cleanTextForJson(text) {
     clean = clean.replace(/[\[\(\*\{][\s\S]*?[\]\)\*\}]/g, '');
     clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/[♪#♫]/g, '');
-    // Distrugem codurile corupte (mojibake) pentru notele muzicale
+    // Distrugem codurile corupte pentru note muzicale
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
     clean = clean.replace(/"/g, "'");
@@ -498,7 +498,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 100; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    const CONCURRENCY_LIMIT = 3; 
+    // REGULATORUL DE RITM: Scădem de la 3 la 2 simultan pentru a proteja cheile
+    const CONCURRENCY_LIMIT = 2; 
     let allTranslatedTexts = [];
 
     const keyState = { 
@@ -516,6 +517,11 @@ async function translateSrtWithGemini(srtText, userKeys) {
         batchResults.forEach(translatedTextsArray => {
             allTranslatedTexts.push(...translatedTextsArray);
         });
+
+        // REGULATORUL DE RITM: O pauză de 1.5 secunde după fiecare 200 de linii pentru a evita limita anti-spam
+        if (i + CONCURRENCY_LIMIT < chunks.length) {
+            await new Promise(r => setTimeout(r, 1500));
+        }
     }
 
     blocks.forEach((block, index) => {
