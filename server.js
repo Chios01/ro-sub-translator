@@ -454,7 +454,6 @@ ${JSON.stringify(chunkDict)}`;
 
             const receivedKeysCount = Object.keys(translatedDict).length;
             
-            // Regula dictatorială de aur, lăsată 100% curată
             if (receivedKeysCount < expectedKeysCount) {
                  throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
             }
@@ -468,16 +467,15 @@ ${JSON.stringify(chunkDict)}`;
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
-                // Revenire la setările optime de așteptare care nu blochează serverul
-                const delay = 6000 + (attempts * 1500) + Math.floor(Math.random() * 1000); 
+                // PAUZĂ DEEP SLEEP: Baza este de 45 de secunde reale pentru a supraviețui limitării de 1 minut
+                const delay = 45000 + (attempts * 3000) + Math.floor(Math.random() * 2000); 
                 currentKeyObj.pauseUntil = Date.now() + delay;
-                console.log(`${c.yellow}⚠ [Gemini] 429. Cheia ${keyIndex} ia o pauză de ${(delay/1000).toFixed(1)}s. Trecem la următoarea...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] 429. Limită Google! Cheia ${keyIndex} ia o pauză reală de ${(delay/1000).toFixed(1)}s...${c.reset}`);
                 attempts++;
-                await new Promise(r => setTimeout(r, 1500));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
                 attempts++;
-                await new Promise(r => setTimeout(r, 1000));
+                await new Promise(r => setTimeout(r, 2000));
             } else {
                 console.log(`${c.red}⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}. Reîncercare...${c.reset}`);
                 attempts++;
@@ -496,11 +494,10 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // PUNCTUL TĂU DE ECHILIBRU DESCOPERIT: La 120 de linii AI-ul nu obosește și nu sare replici!
-    const CHUNK_SIZE = 120; 
+    // REVENIRE LA 100 LINII (Pentru a garanta că AI-ul nu obosește și nu sare replici)
+    const CHUNK_SIZE = 100; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // Valuri de câte 3
     const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
