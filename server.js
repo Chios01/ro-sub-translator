@@ -350,8 +350,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 500));
         }
 
-        // MOTOR NOU: Am trecut la motorul oficial și extrem de inteligent gemini-1.5-flash
-        const modelName = 'gemini-1.5-flash';
+        const modelName = 'gemini-3.5-flash-lite';
 
         try {
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
@@ -413,7 +412,6 @@ ${JSON.stringify(chunkDict)}`;
             const translatedDict = JSON.parse(textResponse);
             const receivedKeysCount = Object.keys(translatedDict).length;
             
-            // REGULA STRICTĂ PĂSTRATĂ: Nu acceptăm absolut nicio linie omisă
             if (receivedKeysCount < expectedKeysCount) {
                  throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
             }
