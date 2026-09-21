@@ -317,6 +317,26 @@ function formatSubtitleLine(text) {
     return text;
 }
 
+// FUNCȚIE NOUĂ: Repară sintaxa JSON stricată de AI înainte de a o citi serverul
+function fixBrokenJson(text) {
+    let fixed = text;
+    
+    // Corectează problema unde AI-ul uită ghilimelele duble la valori: ex: "1": Salut,
+    // Această expresie regulată caută modele de tip "cheie": valoare fără ghilimele și le forțează formatul corect.
+    fixed = fixed.replace(/"(\d+)":\s*([^",}\n]+)([,}\n])/g, function(match, key, value, terminator) {
+        let cleanVal = value.trim();
+        // Dacă valoarea nu începe cu ghilimele duble, i le punem noi manual!
+        if (!cleanVal.startsWith('"')) {
+            // curățăm eventualele caractere ciudate puse de Python (ex: b'Salut' -> Salut)
+            cleanVal = cleanVal.replace(/^b['"]|['"]$/g, '');
+            return `"${key}": "${cleanVal}"${terminator}`;
+        }
+        return match;
+    });
+
+    return fixed;
+}
+
 async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunks, keyState) {
     const chunkDict = {};
     chunkObjArray.forEach(obj => {
@@ -409,6 +429,9 @@ ${JSON.stringify(chunkDict)}`;
                 textResponse = textResponse.substring(startIndex, endIndex + 1);
             }
 
+            // REPARĂM JSON-UL înainte de a încerca să îl citim
+            textResponse = fixBrokenJson(textResponse);
+
             const translatedDict = JSON.parse(textResponse);
             const receivedKeysCount = Object.keys(translatedDict).length;
             
@@ -452,7 +475,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // REVENIRE LA 100 LINII (Maximul fizic suportat de flash-lite pentru formatare corectă)
     const CHUNK_SIZE = 100; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
