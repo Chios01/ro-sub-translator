@@ -355,20 +355,21 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         try {
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
             
+            // PROMPT CORECTAT: Instrucțiuni stricte și sigure pentru un format JSON impecabil
             const prompt = `Ești un traducător profesionist (engleză -> română).
 Traduce TOATE valorile din acest obiect JSON.
 
 REGULI STRICTE:
-1. ADAPTARE ȘI GRAMATICĂ: Găsește echivalentul firesc. Respectă topica românească! Corect: "Nu te mai uita" (NU "Nu mai te uita"). Corect: "Nu vă mai certați". Folosește "â" corect (ex: "țâțe", nu "țațe").
-2. FĂRĂ EZITĂRI ȘI SUNETE: ELIMINĂ COMPLET interjecțiile de ezitare sau zgomotele (ex: "hm", "uh", "um", "ah", "ăă", "[sighs]", "[grunts]"). Dacă o linie conține DOAR astfel de sunete, tradu-o cu un simplu spațiu gol (" ").
-3. FĂRĂ CENZURĂ: Păstrează înjurăturile și argoul exact ca în original.
-4. PERSOANĂ ȘI GEN: Folosește tutuitul ("tu/voi") și masculinul ca gen implicit.
-5. FORMAT ȘI LINII NOI: Păstrează etichetele HTML (<i>, <b>). CRITIC: Păstrează OBLIGATORIU simbolul de linie nouă (\\n). Dacă textul original este pe două rânduri (ex: dialog cu două cratime), traducerea TREBUIE să conțină \\n între ele! Nu le lipi pe un singur rând!
+1. ADAPTARE ȘI GRAMATICĂ: Găsește echivalentul firesc. Respectă topica românească! Corect: "Nu te mai uita" (NU "Nu mai te uita"). Corect: "Nu vă mai certați". Folosește "â" corect.
+2. FĂRĂ EZITĂRI ȘI SUNETE: ELIMINĂ COMPLET interjecțiile de ezitare sau zgomotele (ex: "hm", "uh", "um", "ah", "ăă", "[sighs]", "[grunts]"). Dacă o linie conține DOAR astfel de sunete, tradu-o cu un simplu spațiu gol (' ').
+3. PĂSTREAZĂ TOATE CHEILE: Nu omite NICIO cheie originală. Dacă o replică e scurtă sau pare inutilă, returnează cheia cu un spațiu (' ').
+4. FORMAT ȘI LINII NOI: Păstrează etichetele HTML (<i>, <b>). CRITIC: Păstrează OBLIGATORIU simbolul de linie nouă (\\n). Dacă textul original este pe două rânduri, traducerea TREBUIE să conțină \\n între ele!
 
 REGULI JSON (CRITIC):
-1. Returnează STRICT un singur obiect JSON plat. Fără text înainte sau după. Fără markdown.
+1. Returnează STRICT un singur obiect JSON plat, perfect valid. Fără markdown.
 2. Numărul de chei trebuie să fie EXACT ${expectedKeysCount}.
-3. Folosește DOAR ghilimele simple (') în interiorul textului tradus. Fără ghilimele duble (").
+3. Cheile și valorile JSON TREBUIE să fie încadrate obligatoriu în ghilimele duble ("). (Exemplu corect: "1": "Salut").
+4. Pentru orice dialog sau citat care apare ÎN INTERIORUL textului tradus, folosește exclusiv ghilimele simple (').
 
 Subtitrare originală:
 ${JSON.stringify(chunkDict)}`;
@@ -412,7 +413,7 @@ ${JSON.stringify(chunkDict)}`;
             const translatedDict = JSON.parse(textResponse);
             const receivedKeysCount = Object.keys(translatedDict).length;
             
-            // REGULA STRICTĂ DE 100%: Nu acceptăm nicio linie lipsă!
+            // Verificare STRICTĂ pentru 100% din linii
             if (receivedKeysCount < expectedKeysCount) {
                  throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia traducerea calupului.`);
             }
@@ -453,7 +454,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // REDUS LA 100 DE LINII pentru a garanta o rată de succes de 100% din partea AI-ului la fiecare interogare
     const CHUNK_SIZE = 100; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
