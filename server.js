@@ -356,6 +356,11 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                     currentKeyObj = candidate;
                     apiKey = candidate.value;
                     keyIndex = keyState.index;
+                    
+                    // ANTI-COLIZIUNE: Blocăm instant cheia pentru 2 secunde.
+                    // Previne situația în care toți muncitorii folosesc aceeași cheie în aceeași milisecundă.
+                    candidate.pauseUntil = Date.now() + 2000;
+                    
                     found = true;
                     break;
                 }
@@ -467,11 +472,20 @@ ${JSON.stringify(chunkDict)}`;
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
-                // PAUZĂ DEEP SLEEP: Baza este de 45 de secunde reale pentru a supraviețui limitării de 1 minut
                 const delay = 45000 + (attempts * 3000) + Math.floor(Math.random() * 2000); 
                 currentKeyObj.pauseUntil = Date.now() + delay;
-                console.log(`${c.yellow}⚠ [Gemini] 429. Limită Google! Cheia ${keyIndex} ia o pauză reală de ${(delay/1000).toFixed(1)}s...${c.reset}`);
+                
+                // TĂCERE GLOBALĂ: Dacă primim 429, aplicăm o tăcere de 2 secunde pe toate cheile.
+                // Aceasta oprește spam-ul în buclă și menține logul curat.
+                keyState.keys.forEach(k => {
+                    if (k.pauseUntil < Date.now() + 2000) {
+                        k.pauseUntil = Date.now() + 2000;
+                    }
+                });
+
+                console.log(`${c.yellow}⚠ [Gemini] 429. Limită Google! Cheia ${keyIndex} ia o pauză de ${(delay/1000).toFixed(1)}s...${c.reset}`);
                 attempts++;
+                await new Promise(r => setTimeout(r, 2000));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
                 attempts++;
@@ -494,7 +508,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // REVENIRE LA 100 LINII (Pentru a garanta că AI-ul nu obosește și nu sare replici)
     const CHUNK_SIZE = 100; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
