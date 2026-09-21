@@ -317,23 +317,16 @@ function formatSubtitleLine(text) {
     return text;
 }
 
-// FUNCȚIE NOUĂ: Repară sintaxa JSON stricată de AI înainte de a o citi serverul
 function fixBrokenJson(text) {
     let fixed = text;
-    
-    // Corectează problema unde AI-ul uită ghilimelele duble la valori: ex: "1": Salut,
-    // Această expresie regulată caută modele de tip "cheie": valoare fără ghilimele și le forțează formatul corect.
     fixed = fixed.replace(/"(\d+)":\s*([^",}\n]+)([,}\n])/g, function(match, key, value, terminator) {
         let cleanVal = value.trim();
-        // Dacă valoarea nu începe cu ghilimele duble, i le punem noi manual!
         if (!cleanVal.startsWith('"')) {
-            // curățăm eventualele caractere ciudate puse de Python (ex: b'Salut' -> Salut)
             cleanVal = cleanVal.replace(/^b['"]|['"]$/g, '');
             return `"${key}": "${cleanVal}"${terminator}`;
         }
         return match;
     });
-
     return fixed;
 }
 
@@ -429,10 +422,35 @@ ${JSON.stringify(chunkDict)}`;
                 textResponse = textResponse.substring(startIndex, endIndex + 1);
             }
 
-            // REPARĂM JSON-UL înainte de a încerca să îl citim
-            textResponse = fixBrokenJson(textResponse);
+            // SISTEM NOU: Plasa de siguranță invincibilă care citește textul chiar dacă codul JSON e rupt.
+            let translatedDict = {};
+            try {
+                let cleanText = fixBrokenJson(textResponse);
+                translatedDict = JSON.parse(cleanText);
+            } catch (e) {
+                const keys = Object.keys(chunkDict);
+                for (let i = 0; i < keys.length; i++) {
+                    const key = keys[i];
+                    const nextKey = keys[i + 1];
+                    
+                    let lookahead = `\\s*\\}|$)`;
+                    if (nextKey) {
+                        lookahead = `\\s*,?\\s*"?(?:${nextKey})"?\\s*:|\\s*\\}|$)`;
+                    }
+                    
+                    const regex = new RegExp(`"?${key}"?\\s*:\\s*(.*?)(?=${lookahead}`, 's');
+                    const match = textResponse.match(regex);
+                    if (match) {
+                        let val = match[1].trim();
+                        if (val.endsWith(',')) val = val.substring(0, val.length - 1).trim();
+                        if (val.startsWith('"') || val.startsWith("'")) val = val.substring(1);
+                        if (val.endsWith('"') || val.endsWith("'")) val = val.substring(0, val.length - 1);
+                        val = val.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'");
+                        translatedDict[key] = val.trim();
+                    }
+                }
+            }
 
-            const translatedDict = JSON.parse(textResponse);
             const receivedKeysCount = Object.keys(translatedDict).length;
             
             if (receivedKeysCount < expectedKeysCount) {
