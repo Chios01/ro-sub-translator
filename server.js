@@ -328,7 +328,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     const maxAttempts = keyState.keys.length * 4;
 
     while (attempts < maxAttempts) {
-        // SISTEM NOU: Căutăm o cheie care este liberă, sărind peste cele obosite
         let currentKeyObj = null;
         let keyIndex = -1;
         let apiKey = null;
@@ -348,7 +347,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             }
             if (found) break;
             
-            // Dacă chiar TOATE cheile sunt în pauză simultan, așteptăm 500ms și căutăm iar
             await new Promise(r => setTimeout(r, 500));
         }
 
@@ -426,11 +424,12 @@ ${JSON.stringify(chunkDict)}`;
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
-                // SISTEM NOU: Doar ACEASTĂ cheie primește pauză. Nu oprim tot serverul!
                 const delay = 6000 + (attempts * 1500) + Math.floor(Math.random() * 1000); 
                 currentKeyObj.pauseUntil = Date.now() + delay;
                 console.log(`${c.yellow}⚠ [Gemini] 429. Cheia ${keyIndex} ia o pauză de ${(delay/1000).toFixed(1)}s. Trecem la următoarea...${c.reset}`);
                 attempts++;
+                // AMORTIZOR NOU: O pauză scurtă de 1.5 secunde pentru a nu mitralia Google cu cereri
+                await new Promise(r => setTimeout(r, 1500));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
                 attempts++;
@@ -459,7 +458,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
-    // SISTEM NOU: Creăm un obiect pentru fiecare cheie care reține până când este în pauză
     const keyState = { 
         keys: userKeys.map(k => ({ value: k, pauseUntil: 0 })), 
         index: 0 
