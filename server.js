@@ -220,21 +220,28 @@ app.get('/:configData/translate', async (req, res) => {
             processPromise = memoryCache[cacheKey];
         } else {
             isNew = true;
-            console.log(`${c.cyan}\n==================================================${c.reset}`);
-            console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-            console.log(`${c.cyan}==================================================\n${c.reset}`);
-            
             const startTime = Date.now();
+            
             processPromise = (async () => {
                 const srtRes = await axios.get(targetUrl);
+                
+                // Am mutat calculul și afișarea AICI, la început!
+                const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
+                console.log(`${c.cyan}\n==================================================${c.reset}`);
+                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                
                 return await translateSrtWithGemini(srtRes.data, userKeys);
             })();
+            
             memoryCache[cacheKey] = processPromise;
             
             processPromise.then(translatedSrtString => {
                 memoryCache[cacheKey] = translatedSrtString;
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+                
                 console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
                 console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
                 console.log(`${c.cyan}==================================================\n${c.reset}`);
@@ -289,6 +296,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         chunkDict[obj.id] = obj.text;
     });
 
+    // Numărul de linii așteptat se adaptează automat oricărui CHUNK_SIZE
     const expectedKeysCount = Object.keys(chunkDict).length;
     let attempts = 0;
     const maxAttempts = keyState.keys.length * 4;
@@ -303,13 +311,11 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         const apiKey = keyState.keys[keyIndex];
         keyState.index = (keyState.index + 1) % keyState.keys.length;
 
-        // MODEL FORȚAT DOAR PE LITE
         const modelName = 'gemini-3.5-flash-lite';
 
         try {
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
             
-            // PROMPT SCURT, OPTIMIZAT PENTRU LITE (FĂRĂ EZITĂRI ȘI SUNETE)
             const prompt = `Ești un traducător profesionist (engleză -> română).
 Traduce TOATE valorile din acest obiect JSON.
 
@@ -374,7 +380,7 @@ ${JSON.stringify(chunkDict)}`;
                 return translatedDict[obj.id] !== undefined ? translatedDict[obj.id] : obj.text;
             });
 
-            console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat!${c.reset}`);
+            console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${expectedKeysCount} linii)${c.reset}`);
             return finalTranslatedArray;
 
         } catch (error) {
