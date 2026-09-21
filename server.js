@@ -109,13 +109,16 @@ async function handleSubtitles(req, res) {
         for (let i = 0; i < engSubs.length; i += 10) {
             const batch = engSubs.slice(i, i + 10);
             const batchResults = await Promise.all(batch.map(async (sub, idx) => {
-                let realName = sub.id || `Varianta_${i + idx + 1}`;
+                // MODIFICARE AICI: Extragem titlul real ascuns de addon!
+                let realName = sub.title || sub.id || `Varianta_${i + idx + 1}`;
                 try {
-                    const headRes = await axios.head(sub.url, { timeout: 2000 });
-                    const disposition = headRes.headers['content-disposition'];
-                    if (disposition && disposition.includes('filename')) {
-                        const match = disposition.match(/filename=["']?([^"';]+)["']?/i);
-                        if (match && match[1]) realName = match[1].replace(/\.srt$/gi, '');
+                    if (!sub.title || sub.title.length < 4) {
+                        const headRes = await axios.head(sub.url, { timeout: 2000 });
+                        const disposition = headRes.headers['content-disposition'];
+                        if (disposition && disposition.includes('filename')) {
+                            const match = disposition.match(/filename=["']?([^"';]+)["']?/i);
+                            if (match && match[1]) realName = match[1].replace(/\.srt$/gi, '');
+                        }
                     }
                 } catch (e) { }
                 return { originalUrl: sub.url, realName, index: i + idx };
@@ -123,17 +126,13 @@ async function handleSubtitles(req, res) {
             processedSubs.push(...batchResults);
         }
 
-        const uniqueNames = new Set();
+        // MODIFICARE AICI: Am eliminat ascunderea subtitrărilor similare. Vrem să vedem variante de sync diferite!
         let diverseSubs = [];
         const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
 
         for (const s of processedSubs) {
             if (trashRegex.test(s.realName)) continue;
-            const cleanKey = s.realName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            if (!uniqueNames.has(cleanKey)) {
-                uniqueNames.add(cleanKey);
-                diverseSubs.push(s);
-            }
+            diverseSubs.push(s);
         }
 
         const isExtendedVideo = /extended|director|dc|unrated|remastered|special|imax/i.test(userFilename);
@@ -143,11 +142,10 @@ async function handleSubtitles(req, res) {
             s.score = 0;
             const subName = s.realName.toLowerCase();
             
-            // LOGICĂ NOUĂ: Fără penalizări pentru filmele care nu sunt raportate corect de Torrentio
             if (isExtendedVideo && /extended|director|dc|unrated|remastered|special|imax/i.test(subName)) {
-                s.score += 200; // Super-bonus dacă totul e clar
+                s.score += 200;
             } else if (/extended|director|dc|unrated|remastered|special|imax/i.test(subName)) {
-                s.score += 50;  // Bonus de siguranță, le scoatem la suprafață just in case
+                s.score += 50;
             }
 
             const tags = ['rarbg', 'yts', 'yify', 'web-dl', 'webrip', 'bluray', 'brrip', 'x264', 'x265', 'amazon', 'amzn', 'nf'];
@@ -159,19 +157,18 @@ async function handleSubtitles(req, res) {
         });
 
         diverseSubs.sort((a, b) => b.score - a.score);
-        
-        // AM CRESCUT LIMITA DE AFIȘARE LA 20 DE SUBTITRĂRI
         diverseSubs = diverseSubs.slice(0, 20);
 
         const generatedSubs = diverseSubs.map((s) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
             let displayTitle = s.realName;
+            
             const splitMatch = displayTitle.match(/(\b19\d{2}\b|\b20\d{2}\b|\b1080p\b|\b720p\b|\b2160p\b|\b4k\b|\bEXTENDED\b|\bDIRECTORS?\b|\bUNRATED\b|\bREMASTERED\b)/i);
-
             if (splitMatch && splitMatch.index > 3) displayTitle = displayTitle.substring(splitMatch.index);
-            else if (displayTitle.length > 40) displayTitle = ".." + displayTitle.slice(-38);
+            else if (displayTitle.length > 50) displayTitle = ".." + displayTitle.slice(-48);
 
-            const cleanNameForId = `AI_${displayTitle.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+            // MODIFICARE AICI: Forțăm Stremio să afișeze absolut toate cele 20 de opțiuni!
+            const cleanNameForId = `AI_${displayTitle.replace(/[^a-zA-Z0-9.-]/g, '_')}_v${s.index + 1}`;
 
             return {
                 id: cleanNameForId,
