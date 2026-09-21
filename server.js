@@ -67,7 +67,6 @@ async function handleSubtitles(req, res) {
         } catch (e) {}
     }
 
-    // LISTA DE SURSE - ACUM INCLUSIV SUBDL
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}.json`,             
@@ -102,7 +101,7 @@ async function handleSubtitles(req, res) {
             if (uniqueUrls.has(sub.url)) return false;
             uniqueUrls.add(sub.url);
             return true;
-        }).slice(0, 120); 
+        }).slice(0, 150); 
 
         if (engSubs.length === 0) return res.json({ subtitles: [] });
 
@@ -143,8 +142,13 @@ async function handleSubtitles(req, res) {
         diverseSubs.forEach(s => {
             s.score = 0;
             const subName = s.realName.toLowerCase();
-            if (isExtendedVideo && /extended|director|dc|unrated|remastered|special|imax/i.test(subName)) s.score += 200;
-            else if (!isExtendedVideo && /extended|director|dc|unrated|remastered|special|imax/i.test(subName)) s.score -= 100;
+            
+            // LOGICĂ NOUĂ: Fără penalizări pentru filmele care nu sunt raportate corect de Torrentio
+            if (isExtendedVideo && /extended|director|dc|unrated|remastered|special|imax/i.test(subName)) {
+                s.score += 200; // Super-bonus dacă totul e clar
+            } else if (/extended|director|dc|unrated|remastered|special|imax/i.test(subName)) {
+                s.score += 50;  // Bonus de siguranță, le scoatem la suprafață just in case
+            }
 
             const tags = ['rarbg', 'yts', 'yify', 'web-dl', 'webrip', 'bluray', 'brrip', 'x264', 'x265', 'amazon', 'amzn', 'nf'];
             tags.forEach(tag => {
@@ -155,7 +159,9 @@ async function handleSubtitles(req, res) {
         });
 
         diverseSubs.sort((a, b) => b.score - a.score);
-        diverseSubs = diverseSubs.slice(0, 12);
+        
+        // AM CRESCUT LIMITA DE AFIȘARE LA 20 DE SUBTITRĂRI
+        diverseSubs = diverseSubs.slice(0, 20);
 
         const generatedSubs = diverseSubs.map((s) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
