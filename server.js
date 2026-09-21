@@ -278,7 +278,6 @@ function cleanTextForJson(text) {
     clean = clean.replace(/[\[\(\*\{][\s\S]*?[\]\)\*\}]/g, '');
     clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/[♪#♫]/g, '');
-    // Distrugem codurile corupte pentru note muzicale
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
     clean = clean.replace(/"/g, "'");
@@ -455,6 +454,7 @@ ${JSON.stringify(chunkDict)}`;
 
             const receivedKeysCount = Object.keys(translatedDict).length;
             
+            // REGULA DE FIER (100% STRICT): Dacă AI-ul a omis fie și O SINGURĂ propoziție, reia calupul!
             if (receivedKeysCount < expectedKeysCount) {
                  throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
             }
@@ -472,7 +472,7 @@ ${JSON.stringify(chunkDict)}`;
                 currentKeyObj.pauseUntil = Date.now() + delay;
                 console.log(`${c.yellow}⚠ [Gemini] 429. Cheia ${keyIndex} ia o pauză de ${(delay/1000).toFixed(1)}s. Trecem la următoarea...${c.reset}`);
                 attempts++;
-                await new Promise(r => setTimeout(r, 2500));
+                await new Promise(r => setTimeout(r, 1500));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
                 attempts++;
@@ -495,11 +495,11 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 100; 
+    // REVENIRE LA 150 DE LINII (pentru viteză maximă per calup)
+    const CHUNK_SIZE = 150; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // REGULATORUL DE RITM: Scădem de la 3 la 2 simultan pentru a proteja cheile
-    const CONCURRENCY_LIMIT = 2; 
+    const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
     const keyState = { 
@@ -517,11 +517,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
         batchResults.forEach(translatedTextsArray => {
             allTranslatedTexts.push(...translatedTextsArray);
         });
-
-        // REGULATORUL DE RITM: O pauză de 1.5 secunde după fiecare 200 de linii pentru a evita limita anti-spam
-        if (i + CONCURRENCY_LIMIT < chunks.length) {
-            await new Promise(r => setTimeout(r, 1500));
-        }
     }
 
     blocks.forEach((block, index) => {
