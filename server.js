@@ -350,7 +350,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 500));
         }
 
-        const modelName = 'gemini-3.5-flash-lite';
+        // MOTOR NOU: Am trecut la motorul oficial și extrem de inteligent gemini-1.5-flash
+        const modelName = 'gemini-1.5-flash';
 
         try {
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
@@ -412,8 +413,9 @@ ${JSON.stringify(chunkDict)}`;
             const translatedDict = JSON.parse(textResponse);
             const receivedKeysCount = Object.keys(translatedDict).length;
             
+            // REGULA STRICTĂ PĂSTRATĂ: Nu acceptăm absolut nicio linie omisă
             if (receivedKeysCount < expectedKeysCount) {
-                 throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia traducerea calupului.`);
+                 throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
             }
 
             const finalTranslatedArray = chunkObjArray.map(obj => {
@@ -429,7 +431,6 @@ ${JSON.stringify(chunkDict)}`;
                 currentKeyObj.pauseUntil = Date.now() + delay;
                 console.log(`${c.yellow}⚠ [Gemini] 429. Cheia ${keyIndex} ia o pauză de ${(delay/1000).toFixed(1)}s. Trecem la următoarea...${c.reset}`);
                 attempts++;
-                // PAUZA MĂRITĂ AICI LA 2.5 SECUNDE PENTRU ECHILIBRU (2500ms)
                 await new Promise(r => setTimeout(r, 2500));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
@@ -453,7 +454,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 100; 
+    // NOU: Am setat dimensiunea la 200 de linii pe calup!
+    const CHUNK_SIZE = 200; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
     const CONCURRENCY_LIMIT = 3; 
