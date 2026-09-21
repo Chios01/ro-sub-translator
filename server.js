@@ -452,8 +452,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // NOU: Am setat dimensiunea la 200 de linii pe calup!
-    const CHUNK_SIZE = 200; 
+    // REVENIRE LA 100 LINII (Maximul fizic suportat de flash-lite pentru formatare corectă)
+    const CHUNK_SIZE = 100; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
     const CONCURRENCY_LIMIT = 3; 
