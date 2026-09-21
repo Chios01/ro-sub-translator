@@ -357,10 +357,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                     apiKey = candidate.value;
                     keyIndex = keyState.index;
                     
-                    // ANTI-COLIZIUNE: Blocăm instant cheia pentru 2 secunde.
-                    // Previne situația în care toți muncitorii folosesc aceeași cheie în aceeași milisecundă.
                     candidate.pauseUntil = Date.now() + 2000;
-                    
                     found = true;
                     break;
                 }
@@ -380,15 +377,13 @@ Traduce TOATE valorile din acest obiect JSON.
 
 REGULI STRICTE:
 1. ADAPTARE ȘI GRAMATICĂ: Găsește echivalentul firesc. Respectă topica românească! Corect: "Nu te mai uita" (NU "Nu mai te uita"). Corect: "Nu vă mai certați". Folosește "â" corect.
-2. FĂRĂ EZITĂRI ȘI SUNETE: ELIMINĂ COMPLET interjecțiile de ezitare sau zgomotele (ex: "hm", "uh", "um", "ah", "ăă", "[sighs]", "[grunts]"). Dacă o linie conține DOAR astfel de sunete, tradu-o cu un simplu spațiu gol (' ').
-3. PĂSTREAZĂ TOATE CHEILE: Nu omite NICIO cheie originală. Dacă o replică e scurtă sau pare inutilă, returnează cheia cu un spațiu (' ').
-4. FORMAT ȘI LINII NOI: Păstrează etichetele HTML (<i>, <b>). CRITIC: Păstrează OBLIGATORIU simbolul de linie nouă (\\n). Dacă textul original este pe două rânduri, traducerea TREBUIE să conțină \\n între ele!
+2. FĂRĂ EZITĂRI ȘI SUNETE: ELIMINĂ COMPLET interjecțiile de ezitare sau zgomotele. Dacă o linie conține DOAR astfel de sunete, tradu-o cu un simplu spațiu gol (' ').
+3. FORMAT ȘI LINII NOI: Păstrează etichetele HTML (<i>, <b>). CRITIC: Păstrează OBLIGATORIU simbolul de linie nouă (\\n). 
 
 REGULI JSON (CRITIC):
 1. Returnează STRICT un singur obiect JSON plat, perfect valid. Fără markdown.
 2. Numărul de chei trebuie să fie EXACT ${expectedKeysCount}.
 3. Cheile și valorile JSON TREBUIE să fie încadrate obligatoriu în ghilimele duble ("). (Exemplu corect: "1": "Salut").
-4. Pentru orice dialog sau citat care apare ÎN INTERIORUL textului tradus, folosește exclusiv ghilimele simple (').
 
 Subtitrare originală:
 ${JSON.stringify(chunkDict)}`;
@@ -408,22 +403,9 @@ ${JSON.stringify(chunkDict)}`;
 
             let textResponse = response.data.candidates[0].content.parts[0].text;
             
-            let openBraces = 0;
+            // Decupare mult mai sigură a JSON-ului pentru a evita orice comentariu suplimentar adăugat de AI
             let startIndex = textResponse.indexOf('{');
-            let endIndex = -1;
-
-            if (startIndex !== -1) {
-                for (let i = startIndex; i < textResponse.length; i++) {
-                    if (textResponse[i] === '{') openBraces++;
-                    if (textResponse[i] === '}') {
-                        openBraces--;
-                        if (openBraces === 0) {
-                            endIndex = i;
-                            break;
-                        }
-                    }
-                }
-            }
+            let endIndex = textResponse.lastIndexOf('}');
 
             if (startIndex !== -1 && endIndex !== -1) {
                 textResponse = textResponse.substring(startIndex, endIndex + 1);
@@ -459,15 +441,23 @@ ${JSON.stringify(chunkDict)}`;
 
             const receivedKeysCount = Object.keys(translatedDict).length;
             
+            // REGULA CELOR 2 ȘANSE (Grațierea)
             if (receivedKeysCount < expectedKeysCount) {
-                 throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
+                if (attempts < 2) {
+                    // Mai dăm 2 șanse AI-ului să fie perfect
+                    throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
+                } else {
+                    // Dacă tot refuză linia după 2 încercări, acceptăm ce avem ca să nu blocăm filmul!
+                    console.log(`${c.yellow}⚠ [Gemini] Acceptăm calupul cu ${expectedKeysCount - receivedKeysCount} linii lipsă pentru a preveni blocajul.${c.reset}`);
+                }
             }
 
+            // Datorită fallback-ului obj.text, orice linie omisă de AI va rămâne pur și simplu în engleză
             const finalTranslatedArray = chunkObjArray.map(obj => {
                 return translatedDict[obj.id] !== undefined ? translatedDict[obj.id] : obj.text;
             });
 
-            console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${expectedKeysCount} linii)${c.reset}`);
+            console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${receivedKeysCount}/${expectedKeysCount} linii)${c.reset}`);
             return finalTranslatedArray;
 
         } catch (error) {
@@ -475,8 +465,6 @@ ${JSON.stringify(chunkDict)}`;
                 const delay = 45000 + (attempts * 3000) + Math.floor(Math.random() * 2000); 
                 currentKeyObj.pauseUntil = Date.now() + delay;
                 
-                // TĂCERE GLOBALĂ: Dacă primim 429, aplicăm o tăcere de 2 secunde pe toate cheile.
-                // Aceasta oprește spam-ul în buclă și menține logul curat.
                 keyState.keys.forEach(k => {
                     if (k.pauseUntil < Date.now() + 2000) {
                         k.pauseUntil = Date.now() + 2000;
@@ -497,7 +485,10 @@ ${JSON.stringify(chunkDict)}`;
             }
         }
     }
-    throw new Error(`Calupul ${globalChunkIndex + 1} a eșuat definitiv.`);
+    
+    // Fallback suprem: dacă totuși pică grav după 100 încercări, returnăm textul original în engleză să nu stricăm fișierul SRT
+    console.log(`${c.red}⚠ Calupul ${globalChunkIndex + 1} a eșuat definitiv. Păstrăm engleza pentru continuitate.${c.reset}`);
+    return chunkObjArray.map(obj => obj.text);
 }
 
 async function translateSrtWithGemini(srtText, userKeys) {
@@ -508,7 +499,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 100; 
+    // Menținem mărimea optimă de 120
+    const CHUNK_SIZE = 120; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
     const CONCURRENCY_LIMIT = 3; 
