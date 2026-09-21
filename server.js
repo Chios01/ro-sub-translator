@@ -278,6 +278,9 @@ function cleanTextForJson(text) {
     clean = clean.replace(/[\[\(\*\{][\s\S]*?[\]\)\*\}]/g, '');
     clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/[♪#♫]/g, '');
+    // Distrugem codurile corupte (mojibake) pentru notele muzicale
+    clean = clean.replace(/â™ª/gi, '');
+    clean = clean.replace(/â™«/gi, '');
     clean = clean.replace(/"/g, "'");
     if (clean.trim() === '') return ' ';
     return clean.trim();
@@ -422,7 +425,6 @@ ${JSON.stringify(chunkDict)}`;
                 textResponse = textResponse.substring(startIndex, endIndex + 1);
             }
 
-            // SISTEM NOU: Plasa de siguranță invincibilă care citește textul chiar dacă codul JSON e rupt.
             let translatedDict = {};
             try {
                 let cleanText = fixBrokenJson(textResponse);
