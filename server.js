@@ -292,39 +292,35 @@ function chunkArray(array, size) {
     return result;
 }
 
-// Funcție NOUĂ: Sparge liniile prea lungi la jumătate
+// FUNCȚIE: Taie liniile lungi doar dacă sunt pe un singur rând
 function formatSubtitleLine(text) {
     if (!text) return text;
-    const lines = text.split('\n');
-    const MAX_LEN = 42;
-    const result = [];
     
-    for (let line of lines) {
-        if (line.length > MAX_LEN) {
-            let mid = Math.floor(line.length / 2);
-            let leftSpace = line.lastIndexOf(' ', mid);
-            let rightSpace = line.indexOf(' ', mid);
-            let splitIndex = -1;
-            
-            if (leftSpace !== -1 && rightSpace !== -1) {
-                splitIndex = (mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace;
-            } else if (leftSpace !== -1) {
-                splitIndex = leftSpace;
-            } else if (rightSpace !== -1) {
-                splitIndex = rightSpace;
-            }
+    // Dacă subtitrarea are DEJA o linie nouă (ex: dialog) o lăsăm intactă
+    if (text.includes('\n')) {
+        return text;
+    }
 
-            if (splitIndex !== -1) {
-                result.push(line.substring(0, splitIndex).trim());
-                result.push(line.substring(splitIndex + 1).trim());
-            } else {
-                result.push(line);
-            }
-        } else {
-            result.push(line);
+    const MAX_LEN = 45; 
+    if (text.length > MAX_LEN) {
+        let mid = Math.floor(text.length / 2);
+        let leftSpace = text.lastIndexOf(' ', mid);
+        let rightSpace = text.indexOf(' ', mid);
+        let splitIndex = -1;
+
+        if (leftSpace !== -1 && rightSpace !== -1) {
+            splitIndex = (mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace;
+        } else if (leftSpace !== -1) {
+            splitIndex = leftSpace;
+        } else if (rightSpace !== -1) {
+            splitIndex = rightSpace;
+        }
+
+        if (splitIndex !== -1) {
+            return text.substring(0, splitIndex).trim() + '\n' + text.substring(splitIndex + 1).trim();
         }
     }
-    return result.join('\n');
+    return text;
 }
 
 async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunks, keyState) {
@@ -451,7 +447,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 120; 
+    // MODIFICARE AICI: Am crescut calupul de la 120 la 150!
+    const CHUNK_SIZE = 150; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
     const CONCURRENCY_LIMIT = 3; 
@@ -471,7 +468,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
         });
     }
 
-    // APLICĂM FILTRUL MATEMATIC AICI
     blocks.forEach((block, index) => {
         let finalStr = allTranslatedTexts[index] || block.text; 
         block.text = formatSubtitleLine(finalStr);
