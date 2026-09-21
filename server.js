@@ -225,7 +225,6 @@ app.get('/:configData/translate', async (req, res) => {
             processPromise = (async () => {
                 const srtRes = await axios.get(targetUrl);
                 
-                // Am mutat calculul și afișarea AICI, la început!
                 const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
                 console.log(`${c.cyan}\n==================================================${c.reset}`);
                 console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
@@ -296,7 +295,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         chunkDict[obj.id] = obj.text;
     });
 
-    // Numărul de linii așteptat se adaptează automat oricărui CHUNK_SIZE
     const expectedKeysCount = Object.keys(chunkDict).length;
     let attempts = 0;
     const maxAttempts = keyState.keys.length * 4;
@@ -320,7 +318,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
 Traduce TOATE valorile din acest obiect JSON.
 
 REGULI STRICTE:
-1. ADAPTARE: Găsește echivalentul firesc în limba română. Să sune natural, nu robotic.
+1. ADAPTARE ȘI GRAMATICĂ: Găsește echivalentul firesc. Respectă topica românească! Corect: "Nu te mai uita" (NU "Nu mai te uita"). Corect: "Nu vă mai certați". Folosește "â" corect (ex: "țâțe", nu "țațe").
 2. FĂRĂ EZITĂRI ȘI SUNETE: ELIMINĂ COMPLET interjecțiile de ezitare sau zgomotele (ex: "hm", "uh", "um", "ah", "ăă", "[sighs]", "[grunts]"). Dacă o linie conține DOAR astfel de sunete, tradu-o cu un simplu spațiu gol (" ").
 3. FĂRĂ CENZURĂ: Păstrează înjurăturile și argoul exact ca în original.
 4. PERSOANĂ ȘI GEN: Folosește tutuitul ("tu/voi") și masculinul ca gen implicit.
