@@ -24,7 +24,6 @@ const c = {
 };
 
 const memoryCache = {}; 
-let globalPauseUntil = 0; 
 
 const manifest = {
     id: 'org.stremio.rotranslator.cloud', 
@@ -292,14 +291,9 @@ function chunkArray(array, size) {
     return result;
 }
 
-// FUNCȚIE: Taie liniile lungi doar dacă sunt pe un singur rând
 function formatSubtitleLine(text) {
     if (!text) return text;
-    
-    // Dacă subtitrarea are DEJA o linie nouă (ex: dialog) o lăsăm intactă
-    if (text.includes('\n')) {
-        return text;
-    }
+    if (text.includes('\n')) return text;
 
     const MAX_LEN = 45; 
     if (text.length > MAX_LEN) {
@@ -334,14 +328,29 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     const maxAttempts = keyState.keys.length * 4;
 
     while (attempts < maxAttempts) {
-        if (Date.now() < globalPauseUntil) {
-            const waitTime = globalPauseUntil - Date.now();
-            await new Promise(r => setTimeout(r, waitTime));
-        }
+        // SISTEM NOU: Căutăm o cheie care este liberă, sărind peste cele obosite
+        let currentKeyObj = null;
+        let keyIndex = -1;
+        let apiKey = null;
 
-        const keyIndex = keyState.index;
-        const apiKey = keyState.keys[keyIndex];
-        keyState.index = (keyState.index + 1) % keyState.keys.length;
+        while (true) {
+            let found = false;
+            for (let i = 0; i < keyState.keys.length; i++) {
+                keyState.index = (keyState.index + 1) % keyState.keys.length;
+                let candidate = keyState.keys[keyState.index];
+                if (Date.now() >= candidate.pauseUntil) {
+                    currentKeyObj = candidate;
+                    apiKey = candidate.value;
+                    keyIndex = keyState.index;
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break;
+            
+            // Dacă chiar TOATE cheile sunt în pauză simultan, așteptăm 500ms și căutăm iar
+            await new Promise(r => setTimeout(r, 500));
+        }
 
         const modelName = 'gemini-3.5-flash-lite';
 
@@ -417,14 +426,11 @@ ${JSON.stringify(chunkDict)}`;
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
+                // SISTEM NOU: Doar ACEASTĂ cheie primește pauză. Nu oprim tot serverul!
                 const delay = 6000 + (attempts * 1500) + Math.floor(Math.random() * 1000); 
-                const newPause = Date.now() + delay;
-                if (newPause > globalPauseUntil) {
-                    globalPauseUntil = newPause;
-                    console.log(`${c.yellow}⚠ [Gemini] 429. Se activează PAUZA GLOBALĂ: ${(delay/1000).toFixed(1)}s...${c.reset}`);
-                }
+                currentKeyObj.pauseUntil = Date.now() + delay;
+                console.log(`${c.yellow}⚠ [Gemini] 429. Cheia ${keyIndex} ia o pauză de ${(delay/1000).toFixed(1)}s. Trecem la următoarea...${c.reset}`);
                 attempts++;
-                await new Promise(r => setTimeout(r, delay));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
                 attempts++;
@@ -447,14 +453,17 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // MODIFICARE AICI: Am crescut calupul de la 120 la 150!
     const CHUNK_SIZE = 150; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
     const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
-    const keyState = { keys: userKeys, index: 0 };
+    // SISTEM NOU: Creăm un obiect pentru fiecare cheie care reține până când este în pauză
+    const keyState = { 
+        keys: userKeys.map(k => ({ value: k, pauseUntil: 0 })), 
+        index: 0 
+    };
 
     for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
         const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
