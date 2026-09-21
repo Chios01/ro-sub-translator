@@ -411,8 +411,10 @@ ${JSON.stringify(chunkDict)}`;
 
             const translatedDict = JSON.parse(textResponse);
             const receivedKeysCount = Object.keys(translatedDict).length;
+            
+            // REGULA STRICTĂ DE 100%: Nu acceptăm nicio linie lipsă!
             if (receivedKeysCount < expectedKeysCount) {
-                 throw new Error(`AI-ul a omis replici!`);
+                 throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia traducerea calupului.`);
             }
 
             const finalTranslatedArray = chunkObjArray.map(obj => {
@@ -428,7 +430,6 @@ ${JSON.stringify(chunkDict)}`;
                 currentKeyObj.pauseUntil = Date.now() + delay;
                 console.log(`${c.yellow}⚠ [Gemini] 429. Cheia ${keyIndex} ia o pauză de ${(delay/1000).toFixed(1)}s. Trecem la următoarea...${c.reset}`);
                 attempts++;
-                // AMORTIZOR NOU: O pauză scurtă de 1.5 secunde pentru a nu mitralia Google cu cereri
                 await new Promise(r => setTimeout(r, 1500));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
@@ -452,7 +453,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 150; 
+    // REDUS LA 100 DE LINII pentru a garanta o rată de succes de 100% din partea AI-ului la fiecare interogare
+    const CHUNK_SIZE = 100; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
     const CONCURRENCY_LIMIT = 3; 
