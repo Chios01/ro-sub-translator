@@ -489,10 +489,12 @@ ${JSON.stringify(keysToTranslate)}`;
         } catch (error) {
             if (error.response && error.response.status === 429) {
                 currentKeyObj.pauseUntil = Date.now() + 61000;
-                globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
                 
-                const sleepTime = Math.floor(10000 + Math.random() * 5000);
-                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul 10s... (Aștept ${(sleepTime/1000).toFixed(1)}s)${c.reset}`);
+                // Mărit pauza globală la 15 secunde pentru a permite o respirație reală a IP-ului
+                globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 15000);
+                
+                const sleepTime = Math.floor(15000 + Math.random() * 5000);
+                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} blocată. Serverul ia o pauză de 15s pentru protecție...${c.reset}`);
                 attempts++;
                 
                 await new Promise(r => setTimeout(r, sleepTime));
@@ -523,9 +525,11 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 150; 
+    // MĂRIM LA 165
+    const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
+    // PĂSTRĂM CONCURRENCY LA 3 CA SĂ FIE RAPID
     const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
