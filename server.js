@@ -132,27 +132,31 @@ async function handleSubtitles(req, res) {
             diverseSubs.push(s);
         }
 
-        const isExtendedVideo = /extended|director|dc|unrated|remastered|special|imax/i.test(userFilename);
         const fNameLower = userFilename.toLowerCase();
 
+        // NOUL MOTOR DE SORTARE INTELIGENTĂ
         diverseSubs.forEach(s => {
             s.score = 0;
             const subName = s.realName.toLowerCase();
             
-            if (isExtendedVideo && /extended|director|dc|unrated|remastered|special|imax/i.test(subName)) {
-                s.score += 200;
-            } else if (/extended|director|dc|unrated|remastered|special|imax/i.test(subName)) {
-                s.score += 50;
+            // 1. Puncte din oficiu pentru surse Premium (sincronizare perfectă)
+            if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(subName)) s.score += 40;
+            if (/bluray|brrip|bdrip|bdr/i.test(subName)) s.score += 30;
+            if (/yts|yify|rarbg|tgx|qxr/i.test(subName)) s.score += 20;
+
+            // 2. Penalizări pentru subtitrări dubioase
+            if (/sync|corregido|resync|translated|auto/i.test(subName)) s.score -= 30;
+
+            // 3. Potrivire exactă cu numele fișierului trimis de Stremio (Torrentio/RealDebrid)
+            if (fNameLower && fNameLower.length > 5) {
+                const tags = ['rarbg', 'yts', 'yify', 'web-dl', 'webrip', 'bluray', 'brrip', 'x264', 'x265', 'hevc', 'amazon', 'amzn', 'nf', 'dsnp', 'imax', 'remastered', 'extended', 'unrated', 'director'];
+                tags.forEach(tag => {
+                    if (fNameLower.includes(tag) && subName.includes(tag)) s.score += 60;
+                });
             }
-
-            const tags = ['rarbg', 'yts', 'yify', 'web-dl', 'webrip', 'bluray', 'brrip', 'x264', 'x265', 'amazon', 'amzn', 'nf'];
-            tags.forEach(tag => {
-                if (fNameLower.includes(tag) && subName.includes(tag)) s.score += 50;
-            });
-
-            if (/yts|yify|rarbg|bluray|web-dl|webrip/i.test(subName)) s.score += 15;
         });
 
+        // Ordonăm de la cea mai bună la cea mai slabă
         diverseSubs.sort((a, b) => b.score - a.score);
         diverseSubs = diverseSubs.slice(0, 20);
 
@@ -463,7 +467,6 @@ ${JSON.stringify(keysToTranslate)}`;
             }
 
             if (Object.keys(keysToTranslate).length === 0) {
-                // AFIȘAJ CORECTAT: Arată clar câte linii din total au fost asamblate cu succes.
                 console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${expectedTotalCount}/${expectedTotalCount} linii)${c.reset}`);
                 break; 
             } else {
