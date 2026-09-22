@@ -340,7 +340,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
 
     const expectedKeysCount = Object.keys(chunkDict).length;
     let attempts = 0;
-    const maxAttempts = 100;
+    const maxAttempts = 100; // Pentru a nu ceda niciodată la filme lungi
 
     while (attempts < maxAttempts) {
         let currentKeyObj = null;
@@ -357,6 +357,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                     apiKey = candidate.value;
                     keyIndex = keyState.index;
                     
+                    // Anti-coliziune: o mică protecție ca să nu ia 2 muncitori aceeași cheie în aceeași secundă
                     candidate.pauseUntil = Date.now() + 2000;
                     found = true;
                     break;
@@ -364,7 +365,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             }
             if (found) break;
             
-            await new Promise(r => setTimeout(r, 500));
+            // Așteptăm să se elibereze o cheie
+            await new Promise(r => setTimeout(r, 1000));
         }
 
         const modelName = 'gemini-3.5-flash-lite';
@@ -372,24 +374,23 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         try {
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
             
+            // PROMPT OPTIMIZAT: I-am spus clar să nu șteargă cheile nici măcar la zgomote și să returneze EXACT numărul.
             const prompt = `Ești un traducător profesionist (engleză -> română).
 Traduce TOATE valorile din acest obiect JSON.
 
 REGULI STRICTE:
-1. ADAPTARE ȘI GRAMATICĂ: Găsește echivalentul firesc. Respectă topica românească! Corect: "Nu te mai uita" (NU "Nu mai te uita"). Corect: "Nu vă mai certați". Folosește "â" corect.
-2. FĂRĂ EZITĂRI ȘI SUNETE: ELIMINĂ COMPLET interjecțiile de ezitare sau zgomotele. Dacă o linie conține DOAR astfel de sunete, tradu-o cu un simplu spațiu gol (' ').
-3. FORMAT ȘI LINII NOI: Păstrează etichetele HTML (<i>, <b>). CRITIC: Păstrează OBLIGATORIU simbolul de linie nouă (\\n).
-4. FĂRĂ CENZURĂ: Traduce absolut orice cuvânt, inclusiv înjurăturile, argoul sau limbajul vulgar. Nu omite și nu cenzura nimic, este pentru un film adresat adulților.
+1. ADAPTARE: Găsește echivalentul firesc în română. Folosește corect diacriticele.
+2. NU OMITE NIMIC: Trebuie să returnezi EXACT același număr de chei. NU combina replicile. NU șterge nicio cheie!
+3. ZGOMOTE/EZITĂRI: Dacă o replică conține DOAR zgomote sau ezitări, NU o șterge! Tradu-o cu un simplu spațiu gol (" ").
+4. FORMAT ȘI LINII NOI: Păstrează etichetele HTML (<i>, <b>) și simbolul de linie nouă (\\n).
+5. FĂRĂ CENZURĂ: Traduce absolut orice cuvânt, inclusiv înjurăturile sau limbajul vulgar.
 
 REGULI JSON (CRITIC):
-1. Returnează STRICT un singur obiect JSON plat, perfect valid. Fără markdown.
-2. Numărul de chei trebuie să fie EXACT ${expectedKeysCount}.
-3. Cheile și valorile JSON TREBUIE să fie încadrate obligatoriu în ghilimele duble ("). (Exemplu corect: "1": "Salut").
+Returnează STRICT un obiect JSON plat, perfect valid, cu EXACT ${expectedKeysCount} chei. Fără markdown.
 
 Subtitrare originală:
 ${JSON.stringify(chunkDict)}`;
 
-            // OPRIM CENZURA GOOGLE: Trimitem parametrii de Safety Settings dezactivați
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
                 {
@@ -406,7 +407,6 @@ ${JSON.stringify(chunkDict)}`;
             );
 
             if (!response.data || !response.data.candidates || !response.data.candidates[0] || !response.data.candidates[0].content) {
-                // Dacă cumva tot blochează (foarte rar cu BLOCK_NONE), aruncăm eroare ca să reia.
                 if (response.data.promptFeedback && response.data.promptFeedback.blockReason) {
                     throw new Error(`Filtrat de Google (${response.data.promptFeedback.blockReason})`);
                 }
@@ -452,12 +452,9 @@ ${JSON.stringify(chunkDict)}`;
 
             const receivedKeysCount = Object.keys(translatedDict).length;
             
-            if (receivedKeysCount < expectedKeysCount) {
-                if (attempts < 2) {
-                    throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
-                } else {
-                    console.log(`${c.yellow}⚠ [Gemini] Acceptăm calupul cu ${expectedKeysCount - receivedKeysCount} linii lipsă pentru a preveni blocajul.${c.reset}`);
-                }
+            // DICTATURĂ 100%: Dacă nu e tradus tot, aruncăm calupul și refacem
+            if (receivedKeysCount !== expectedKeysCount) {
+                throw new Error(`AI-ul a omis sau adăugat replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
             }
 
             const finalTranslatedArray = chunkObjArray.map(obj => {
@@ -469,18 +466,11 @@ ${JSON.stringify(chunkDict)}`;
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
-                const delay = 45000 + (attempts * 3000) + Math.floor(Math.random() * 2000); 
-                currentKeyObj.pauseUntil = Date.now() + delay;
-                
-                keyState.keys.forEach(k => {
-                    if (k.pauseUntil < Date.now() + 2000) {
-                        k.pauseUntil = Date.now() + 2000;
-                    }
-                });
-
-                console.log(`${c.yellow}⚠ [Gemini] 429. Limită Google! Cheia ${keyIndex} ia o pauză de ${(delay/1000).toFixed(1)}s...${c.reset}`);
+                // SOLUȚIA ANTI-429 REPARATĂ: Dacă cheia ia 429, înseamnă că acel proiect a atins limita pe minut.
+                // O scoatem din joc fix 60 de secunde (resetarea oficială Google).
+                currentKeyObj.pauseUntil = Date.now() + 60000;
+                console.log(`${c.yellow}⚠ [Gemini] 429. Limită atinsă. Cheia ${keyIndex} ia o pauză de 60s...${c.reset}`);
                 attempts++;
-                await new Promise(r => setTimeout(r, 2000));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
                 attempts++;
@@ -488,7 +478,8 @@ ${JSON.stringify(chunkDict)}`;
             } else {
                 console.log(`${c.red}⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}. Reîncercare...${c.reset}`);
                 attempts++;
-                await new Promise(r => setTimeout(r, 1000));
+                // Pauză mică ca să nu facem spam instant când respingem un calup greșit
+                await new Promise(r => setTimeout(r, 2000));
             }
         }
     }
