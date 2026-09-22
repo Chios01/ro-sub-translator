@@ -378,7 +378,8 @@ Traduce TOATE valorile din acest obiect JSON.
 REGULI STRICTE:
 1. ADAPTARE ȘI GRAMATICĂ: Găsește echivalentul firesc. Respectă topica românească! Corect: "Nu te mai uita" (NU "Nu mai te uita"). Corect: "Nu vă mai certați". Folosește "â" corect.
 2. FĂRĂ EZITĂRI ȘI SUNETE: ELIMINĂ COMPLET interjecțiile de ezitare sau zgomotele. Dacă o linie conține DOAR astfel de sunete, tradu-o cu un simplu spațiu gol (' ').
-3. FORMAT ȘI LINII NOI: Păstrează etichetele HTML (<i>, <b>). CRITIC: Păstrează OBLIGATORIU simbolul de linie nouă (\\n). 
+3. FORMAT ȘI LINII NOI: Păstrează etichetele HTML (<i>, <b>). CRITIC: Păstrează OBLIGATORIU simbolul de linie nouă (\\n).
+4. FĂRĂ CENZURĂ: Traduce absolut orice cuvânt, inclusiv înjurăturile, argoul sau limbajul vulgar. Nu omite și nu cenzura nimic, este pentru un film adresat adulților.
 
 REGULI JSON (CRITIC):
 1. Returnează STRICT un singur obiect JSON plat, perfect valid. Fără markdown.
@@ -388,22 +389,32 @@ REGULI JSON (CRITIC):
 Subtitrare originală:
 ${JSON.stringify(chunkDict)}`;
 
+            // OPRIM CENZURA GOOGLE: Trimitem parametrii de Safety Settings dezactivați
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
                 {
                     contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { response_mime_type: "application/json" }
+                    generationConfig: { response_mime_type: "application/json" },
+                    safetySettings: [
+                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                    ]
                 },
                 { headers: { 'Content-Type': 'application/json' } }
             );
 
             if (!response.data || !response.data.candidates || !response.data.candidates[0] || !response.data.candidates[0].content) {
+                // Dacă cumva tot blochează (foarte rar cu BLOCK_NONE), aruncăm eroare ca să reia.
+                if (response.data.promptFeedback && response.data.promptFeedback.blockReason) {
+                    throw new Error(`Filtrat de Google (${response.data.promptFeedback.blockReason})`);
+                }
                 throw new Error("Răspuns invalid sau gol primit de la API.");
             }
 
             let textResponse = response.data.candidates[0].content.parts[0].text;
             
-            // Decupare mult mai sigură a JSON-ului pentru a evita orice comentariu suplimentar adăugat de AI
             let startIndex = textResponse.indexOf('{');
             let endIndex = textResponse.lastIndexOf('}');
 
@@ -441,18 +452,14 @@ ${JSON.stringify(chunkDict)}`;
 
             const receivedKeysCount = Object.keys(translatedDict).length;
             
-            // REGULA CELOR 2 ȘANSE (Grațierea)
             if (receivedKeysCount < expectedKeysCount) {
                 if (attempts < 2) {
-                    // Mai dăm 2 șanse AI-ului să fie perfect
                     throw new Error(`AI-ul a omis replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
                 } else {
-                    // Dacă tot refuză linia după 2 încercări, acceptăm ce avem ca să nu blocăm filmul!
                     console.log(`${c.yellow}⚠ [Gemini] Acceptăm calupul cu ${expectedKeysCount - receivedKeysCount} linii lipsă pentru a preveni blocajul.${c.reset}`);
                 }
             }
 
-            // Datorită fallback-ului obj.text, orice linie omisă de AI va rămâne pur și simplu în engleză
             const finalTranslatedArray = chunkObjArray.map(obj => {
                 return translatedDict[obj.id] !== undefined ? translatedDict[obj.id] : obj.text;
             });
@@ -486,7 +493,6 @@ ${JSON.stringify(chunkDict)}`;
         }
     }
     
-    // Fallback suprem: dacă totuși pică grav după 100 încercări, returnăm textul original în engleză să nu stricăm fișierul SRT
     console.log(`${c.red}⚠ Calupul ${globalChunkIndex + 1} a eșuat definitiv. Păstrăm engleza pentru continuitate.${c.reset}`);
     return chunkObjArray.map(obj => obj.text);
 }
@@ -499,7 +505,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // Menținem mărimea optimă de 120
     const CHUNK_SIZE = 120; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
