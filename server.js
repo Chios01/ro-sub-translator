@@ -394,19 +394,19 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT NOU - EXTREM DE DIRECT. Folosim tehnica "Negative Examples".
             const prompt = `Ești un traducător profesionist de subtitrări pentru cinema. Traduce din engleză în română.
 
 REGULI EXTREM DE STRICTE:
 1. INTERZIS SLANG ENGLEZESC: Șterge complet "man", "bro", "dude", "mate". NU le combina cu cuvinte românești!
    -> ENG: "Why would I care, man?" -> RO CORECT: "De ce mi-ar păsa?" (FALS: "De ce man-ar păsa?")
 2. GRAMATICĂ ȘI ACORDURI: Fii foarte atent la cratime și pronume. 
-   -> Folosește "mi-ar", "ți-ar", "i-ar" corect. (Ex: "mi-ar păsa", NU "m-ar păsa" sau alte aberații).
-3. FĂRĂ INTERJECȚII CIUDATE: Șterge complet zgomotele: "uh", "um", "hm", "ah", "ăă", "er", "ay", "aï", "ouch", "wow", "oh", "ya". 
-   -> Dacă o replică conține doar un sunet/zgomot, returnează EXACT un spațiu gol: " ". 
-   -> FALS: "La dracu! Aï!". CORECT: "La dracu!"
-4. CONTEXT: Dacă o propoziție e ruptă pe 2 rânduri, tradu cursiv și continuu.
-5. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
+   -> Folosește "mi-ar", "ți-ar", "i-ar" corect. (Ex: "mi-ar păsa", NU "m-ar păsa").
+3. CONTEXT: Dacă o propoziție e ruptă pe 2 rânduri, tradu cursiv și continuu.
+4. REPARĂ CUVINTELE: Dacă în engleză un cuvânt este bâlbâit (ex: "Wh- where?"), în română scrie cuvântul curat și întreg ("Unde?").
+5. ELIMINĂ ZGOMOTELE ȘI APROBĂRILE FONETICE: Șterge complet "uh", "um", "hm", "ah", "ăă", "er", "mhm", "uh-huh", "îhî", "aha", "ouch", "wow", "oh", "ya". 
+   -> NU le traduce! Nu scrie "Îhî" sau "Aha".
+   -> Dacă o replică conține doar o liniuță de dialog urmată de un zgomot (ex: "- Mhm."), înlocuiește toată replica EXACT cu un spațiu gol: " ". 
+6. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
