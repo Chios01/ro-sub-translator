@@ -354,6 +354,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let attempts = 0;
     const maxAttempts = 30;
 
+    const antiCollisionDelay = totalChunks > 12 ? 1500 : 500;
+
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         while (Date.now() < globalRateLimitPause) {
             await new Promise(r => setTimeout(r, 1000));
@@ -373,8 +375,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                     apiKey = candidate.value;
                     keyIndex = keyState.index;
                     
-                    // Frâna stabilă de 1.5 secunde
-                    candidate.pauseUntil = Date.now() + 1500;
+                    candidate.pauseUntil = Date.now() + antiCollisionDelay;
                     found = true;
                     break;
                 }
@@ -383,7 +384,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        // RĂMÂNEM PE MODELUL CARE A DAT CELE MAI BUNE REZULTATE DE VITEZĂ
         const modelName = 'gemini-3.5-flash-lite';
         let currentBatchSize = Object.keys(keysToTranslate).length;
 
@@ -394,15 +394,14 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT NOU: Foarte strict și detaliat pentru gramatică, ignorând modelul "lite"
             const prompt = `Ești un traducător profesionist de subtitrări pentru cinema. Traduce din engleză în română.
 
 REGULI STRICTE:
-1. GRAMATICĂ IMPECABILĂ: Scrie corect românește, folosește diacritice (ă, î, â, ș, ț). FĂRĂ cuvinte inventate.
-2. CONTEXT ȘI CONTINUITATE: Dacă o propoziție e ruptă pe două rânduri, asigură-te că traducerea are sens continuu și acordul este corect (ex: nu traduce pe bucăți izolate).
-3. REPARĂ CUVINTELE: Dacă în engleză un cuvânt este tăiat sau bâlbâit (ex: "Wh- where?"), în română scrie cuvântul întreg și corect ("Unde?").
-4. ELIMINĂ ZGOMOTELE: Șterge complet ezitările ("uh", "um", "hm", "ah", "ăă", "er"). Dacă o replică rămâne goală, pune un spațiu (" ").
-5. FĂRĂ ENGLEZISME: Nu lăsa absolut niciun cuvânt netradus.
+1. GRAMATICĂ ȘI CRATIME: Scrie impecabil în limba română. Folosește corect cratima (ex: "mi-ar păsa", "m-a", "s-a", "l-a"). FĂRĂ cuvinte inventate sau trunchiate.
+2. INTERZIS SLANG ENGLEZESC: Nu lăsa NICIODATĂ cuvinte ca "man", "bro", "dude", "fuck" în text. Adaptează-le sau ignoră-le. Eroare frecventă: NU scrie "De ce man pasă", scrie corect "De ce mi-ar păsa".
+3. CONTEXT: Dacă o propoziție e ruptă pe două rânduri, tradu-le astfel încât să aibă sens împreună.
+4. REPARĂ CUVINTELE: Dacă în engleză un cuvânt este bâlbâit (ex: "Wh- where?"), în română scrie cuvântul curat și întreg ("Unde?").
+5. ELIMINĂ ZGOMOTELE: Șterge complet "uh", "um", "hm", "ah", "ăă", "er". Dacă o replică rămâne goală, pune doar un spațiu (" ").
 6. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
 
 JSON de tradus:
