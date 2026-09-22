@@ -354,6 +354,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let attempts = 0;
     const maxAttempts = 30;
 
+    const antiCollisionDelay = totalChunks > 12 ? 1500 : 500;
+
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         while (Date.now() < globalRateLimitPause) {
             await new Promise(r => setTimeout(r, 1000));
@@ -373,8 +375,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                     apiKey = candidate.value;
                     keyIndex = keyState.index;
                     
-                    // FRÂNA ORIGINALĂ: Simplă și stabilă, fără condiții legate de calupuri
-                    candidate.pauseUntil = Date.now() + 1500;
+                    candidate.pauseUntil = Date.now() + antiCollisionDelay;
                     found = true;
                     break;
                 }
@@ -393,13 +394,16 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            const prompt = `Ești un traducător profesionist. Traduce din engleză în română.
+            // PROMPT NOU: Extrem de strict pentru eliminarea ezitărilor și a cuvintelor în engleză
+            const prompt = `Ești un traducător profesionist de subtitrări. Traduce din engleză în română.
 
 REGULI STRICTE:
-1. ADAPTARE: Găsește echivalentul firesc în română.
-2. NU OMITE NIMIC: Tradu absolut fiecare cheie.
-3. ZGOMOTE: Dacă o replică e doar un zgomot (ex: sigh), pune un spațiu gol (" ").
-4. FORMAT: Păstrează etichetele <i> și \\n.
+1. 100% ROMÂNĂ: Traduce absolut tot. Nu lăsa niciun cuvânt în engleză.
+2. ELIMINĂ ZGOMOTELE: Șterge complet interjecțiile și ezitările (uh, um, hm, ah, er, ăă, mhm, sighs, chuckles, groans). 
+   - Dacă o replică conține "Uh, hello", tradu DOAR "Bună". 
+   - Dacă o replică este formată exclusiv dintr-un zgomot sau o ezitare (ex: "Um."), pune doar un spațiu gol (" ").
+3. ADAPTARE: Folosește un limbaj firesc și natural pentru limba română.
+4. FORMAT: Păstrează exact etichetele <i> și \\n. NU omite nicio cheie din JSON!
 5. FĂRĂ CENZURĂ: Traduce absolut orice cuvânt vulgar. Este pentru adulți.
 
 JSON de tradus:
@@ -490,8 +494,6 @@ ${JSON.stringify(keysToTranslate)}`;
         } catch (error) {
             if (error.response && error.response.status === 429) {
                 currentKeyObj.pauseUntil = Date.now() + 61000;
-                
-                // PAUZA IP ORIGINALĂ: Doar 10 secunde pauză pe întreg serverul (exact cum era la acel log perfect de 3m 02s)
                 globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
                 
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
@@ -529,7 +531,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // Rămânem la 3 muncitori!
     const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
