@@ -132,42 +132,57 @@ async function handleSubtitles(req, res) {
             diverseSubs.push(s);
         }
 
-        const isExtendedVideo = /extended|director|dc|unrated|remastered|special|imax/i.test(userFilename);
         const fNameLower = userFilename.toLowerCase();
+        // Spargem numele fișierului video în cuvinte cheie ignorând extensiile .mkv, .mp4
+        const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
 
         diverseSubs.forEach(s => {
             s.score = 0;
             const subName = s.realName.toLowerCase();
             
-            if (isExtendedVideo && /extended|director|dc|unrated|remastered|special|imax/i.test(subName)) {
-                s.score += 200;
-            } else if (/extended|director|dc|unrated|remastered|special|imax/i.test(subName)) {
-                s.score += 50;
+            // 1. DINAMIC: Potrivirea perfectă la nivel de cuvânt cheie (Jackpot pentru sincronizare)
+            if (videoTokens.length > 0) {
+                let matchCount = 0;
+                videoTokens.forEach(token => {
+                    if (subName.includes(token)) {
+                        s.score += 60; // Puncte pentru fiecare element potrivit (ex: 1080p, x265, RARBG)
+                        matchCount++;
+                    }
+                });
+                
+                // Dacă mai mult de jumătate din cuvintele fișierului video se regăsesc în numele subtitrării
+                if (matchCount > 0 && matchCount >= videoTokens.length / 2) {
+                    s.score += 300; // JACKPOT: Propulsare direct pe locul 1
+                }
             }
 
-            const tags = ['rarbg', 'yts', 'yify', 'web-dl', 'webrip', 'bluray', 'brrip', 'x264', 'x265', 'amazon', 'amzn', 'nf'];
-            tags.forEach(tag => {
-                if (fNameLower.includes(tag) && subName.includes(tag)) s.score += 50;
-            });
-
-            if (/yts|yify|rarbg|bluray|web-dl|webrip/i.test(subName)) s.score += 15;
+            // 2. STATICE: Puncte de siguranță pentru calități superioare (Dacă Stremio nu ne dă numele fișierului video)
+            if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(subName)) s.score += 40;
+            if (/bluray|brrip|bdrip|bdr/i.test(subName)) s.score += 30;
+            if (/yts|yify|rarbg|tgx|qxr|psa/i.test(subName)) s.score += 20;
+            
+            // 3. PENALIZĂRI: Aruncăm la coadă traducerile automate slabe sau cele desincronizate
+            if (/sync|corregido|resync|translated|auto|machine/i.test(subName)) s.score -= 100;
         });
 
         diverseSubs.sort((a, b) => b.score - a.score);
         diverseSubs = diverseSubs.slice(0, 20);
 
-        const generatedSubs = diverseSubs.map((s) => {
+        const generatedSubs = diverseSubs.map((s, index) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
-            let displayTitle = s.realName;
             
-            const splitMatch = displayTitle.match(/(\b19\d{2}\b|\b20\d{2}\b|\b1080p\b|\b720p\b|\b2160p\b|\b4k\b|\bEXTENDED\b|\bDIRECTORS?\b|\bUNRATED\b|\bREMASTERED\b)/i);
-            if (splitMatch && splitMatch.index > 3) displayTitle = displayTitle.substring(splitMatch.index);
-            else if (displayTitle.length > 50) displayTitle = ".." + displayTitle.slice(-48);
-
-            const cleanNameForId = `AI_${displayTitle.replace(/[^a-zA-Z0-9.-]/g, '_')}_v${s.index + 1}`;
+            let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
+            const tagMatch = vizualName.match(/(1080p|720p|2160p|4k|bluray|web-dl|webrip|yts|yify|rarbg)/i);
+            
+            let labelName = `[${index + 1}] RO AI`;
+            if (tagMatch) {
+                let cleanTag = tagMatch[0].toUpperCase();
+                labelName = `[${index + 1}] RO AI (${cleanTag})`;
+            }
 
             return {
-                id: cleanNameForId,
+                id: `ai_sub_${index}`,
+                title: labelName, 
                 url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
                 lang: 'ron'
             };
@@ -471,12 +486,9 @@ ${JSON.stringify(keysToTranslate)}`;
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
-                // ELIMINATĂ TĂCEREA GLOBALĂ. Punem pe pauză strict cheia care a depășit limita.
-                // Timpul de pauză: 60 de secunde (resetarea standard a cotei de la Google) + o mică marjă.
                 currentKeyObj.pauseUntil = Date.now() + 61000;
                 console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} a obosit. O trimitem pe bancă 60s și continuăm...${c.reset}`);
                 attempts++;
-                // Nu mai punem await aici, lăsăm loop-ul să caute imediat următoarea cheie disponibilă!
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Reîncercare...${c.reset}`);
                 attempts++;
