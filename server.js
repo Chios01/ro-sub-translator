@@ -394,17 +394,20 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
+            // PROMPT NOU - Corecții pentru slang ignorat, gen și liniuțe orfane
             const prompt = `Ești un traducător profesionist de subtitrări pentru cinema. Traduce din engleză în română.
 
-REGULI EXTREM DE STRICTE:
-1. FĂRĂ TRADUCERI LITERALE (IDIOMS): Adaptează expresiile idiomatice la sensul lor natural din română. Nu traduce cuvânt cu cuvânt! (ex: "pull a thread" devine "să sapi mai adânc" sau "să investighezi", NU "să dai în ață").
-2. ACORD GRAMATICAL STRICT: Fii foarte atent la acordul singular/plural și masculin/feminin. (ex: scrie "o tulburare", NU "o tulburări").
-3. CUVINTE COMPLETE ȘI DIACRITICE: Nu tăia NICIODATĂ prima literă a propoziției, mai ales dacă este un diacritic (Î, Ă, Ș, Ț, Â). Propoziția trebuie să aibă sens complet.
-4. ATENȚIE LA PRONUME: Păstrează logica acțiunii. (ex: "cererea mea" se acordă cu "mi-ai acceptat", NU "i-ai acceptat").
-5. INTERZIS SLANG ENGLEZESC: Șterge complet "man", "bro", "dude", "mate". NU le combina cu cuvinte românești!
-6. ELIMINĂ ZGOMOTELE ȘI APROBĂRILE FONETICE: Șterge complet "uh", "um", "hm", "ah", "ăă", "er", "mhm", "uh-huh", "îhî", "aha", "ouch", "wow", "oh", "ya". Dacă replica e doar un sunet, înlocuiește-o exact cu un spațiu gol: " ".
-7. CONTEXT: Dacă o propoziție e ruptă pe 2 rânduri, tradu cursiv și continuu.
-8. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
+REGULI EXTREM DE STRICTE (RESPECTĂ-LE ORBIEȘTE):
+1. INTERZIS SLANG ENGLEZESC (VITAL): ESTE STRICT INTERZIS să folosești cuvintele "man", "bro", "dude", "mate" în traducere. Șterge-le sau adaptează-le! 
+   -> FALS: "De ce man pasă?" sau "De ce man-ar pasă?". 
+   -> CORECT: "De ce mi-ar păsa?".
+2. ELIMINĂ ZGOMOTELE ȘI APROBĂRILE: Șterge complet exclamațiile și ezitările: "oh", "ah", "uh", "um", "hm", "ăă", "er", "mhm", "uh-huh", "îhî", "aha", "ouch", "wow", "ya". 
+   -> Dacă o replică devine goală după ștergere (ex: "- Oh." sau doar "-"), returnează OBLIGATORIU un spațiu gol: " ". NU lăsa liniuțe de dialog singure!
+3. GEN ȘI ACORD: Dacă dedus din context sau nume că e vorba de o femeie, folosește femininul ("Am fost plătită", nu "Am fost plătit"). Fii atent la acorduri.
+4. FĂRĂ TRADUCERI LITERALE (IDIOMS): Adaptează expresiile idiomatice (ex: "pull a thread" = "a investiga", NU "a da în ață").
+5. CUVINTE COMPLETE ȘI DIACRITICE: Nu tăia NICIODATĂ prima literă a propoziției (ex: scrie "Încă", nu "ncă").
+6. CONTEXT: Dacă o propoziție e ruptă pe 2 rânduri, tradu cursiv și continuu.
+7. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
@@ -427,7 +430,6 @@ ${JSON.stringify(keysToTranslate)}`;
                 }
             );
 
-            // ACTUALIZARE SIGURANȚĂ: prevenim eroarea "Cannot read properties of undefined (reading '0')"
             if (!response.data || !response.data.candidates || response.data.candidates.length === 0 || !response.data.candidates[0].content) {
                 if (response.data && response.data.promptFeedback && response.data.promptFeedback.blockReason) {
                     throw new Error(`Filtrat de Google (${response.data.promptFeedback.blockReason})`);
