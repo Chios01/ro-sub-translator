@@ -341,7 +341,6 @@ function fixBrokenJson(text) {
     return fixed;
 }
 
-// Global cooldown helper to prevent IP burst limits
 let globalRateLimitPause = 0;
 
 async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunks, keyState) {
@@ -356,7 +355,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     const maxAttempts = 30;
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
-        // Dacă e activat cooldown-ul global IP, așteptăm cuminți
         while (Date.now() < globalRateLimitPause) {
             await new Promise(r => setTimeout(r, 1000));
         }
@@ -406,7 +404,6 @@ REGULI STRICTE:
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
 
-            // Timeout mărit la 60s pentru calupurile de 150 de linii
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
                 {
@@ -492,8 +489,6 @@ ${JSON.stringify(keysToTranslate)}`;
         } catch (error) {
             if (error.response && error.response.status === 429) {
                 currentKeyObj.pauseUntil = Date.now() + 61000;
-                
-                // Setăm o pauză generală pentru tot IP-ul de 10 secunde ca să calmăm Google
                 globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
                 
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
@@ -528,12 +523,10 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // MĂRIM LA 150 pentru a reduce masiv numărul de cereri
     const CHUNK_SIZE = 150; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // SCĂDEM CONCURRENCY LA 2 pentru a preveni blocarea IP-ului de către Google
-    const CONCURRENCY_LIMIT = 2; 
+    const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
     const keyState = { 
