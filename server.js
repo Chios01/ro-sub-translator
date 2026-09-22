@@ -392,16 +392,17 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            const prompt = `Ești un traducător profesionist de subtitrări. Traduce din engleză în română.
+            // PROMPT NOU: Extrem de riguros privind gramatica, contextul și cuvintele complete.
+            const prompt = `Ești un traducător profesionist de subtitrări pentru cinema. Traduce din engleză în română.
 
 REGULI STRICTE:
-1. 100% ROMÂNĂ: Traduce absolut tot. Nu lăsa niciun cuvânt în engleză.
-2. ELIMINĂ ZGOMOTELE: Șterge complet interjecțiile și ezitările (uh, um, hm, ah, er, ăă, mhm, sighs, chuckles, groans). 
-   - Dacă o replică conține "Uh, hello", tradu DOAR "Bună". 
-   - Dacă o replică este formată exclusiv dintr-un zgomot sau o ezitare (ex: "Um."), pune doar un spațiu gol (" ").
-3. ADAPTARE: Folosește un limbaj firesc și natural pentru limba română.
-4. FORMAT: Păstrează exact etichetele <i> și \\n. NU omite nicio cheie din JSON!
-5. FĂRĂ CENZURĂ: Traduce absolut orice cuvânt vulgar. Este pentru adulți.
+1. GRAMATICĂ IMPECABILĂ: Scrie corect românește, folosește corect diacriticele (ă, î, â, ș, ț). FĂRĂ cuvinte inventate, trunchiate sau greșite gramatical.
+2. ATENȚIE LA CONTEXT: Propozițiile sunt des despărțite pe mai multe rânduri. Analizează rândul anterior și cel următor pentru a acorda corect verbele și substantivele în română!
+3. CUVINTE COMPLETE: Dacă în engleză un cuvânt este bâlbâit sau tăiat (ex: "Wh- where?"), în română scrie-l curat și complet ("Unde?"), fără litere aruncate aiurea.
+4. 100% ROMÂNĂ: Nu lăsa absolut niciun cuvânt în engleză. Adaptează expresiile și jargoanele specifice.
+5. ELIMINĂ ZGOMOTELE: Șterge complet "uh", "um", "hm", "ah", "sighs", "ăă", "er". Dacă o replică rămâne goală după ștergere, pune un spațiu (" ").
+6. FORMAT JSON: Păstrează etichetele <i> și \\n. NU combina cheile, returnează-le fix cum le-ai primit!
+7. FĂRĂ CENZURĂ: Traduce expresiile vulgare exact cu sensul lor dur din română.
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
@@ -420,7 +421,6 @@ ${JSON.stringify(keysToTranslate)}`;
                 },
                 { 
                     headers: { 'Content-Type': 'application/json' },
-                    // TIMEOUT MĂRIT LA 2 MINUTE PENTRU A PREVENI EROAREA "TIMEOUT OF 60000ms EXCEEDED"
                     timeout: 120000 
                 }
             );
@@ -492,7 +492,6 @@ ${JSON.stringify(keysToTranslate)}`;
         } catch (error) {
             if (error.response && error.response.status === 429) {
                 currentKeyObj.pauseUntil = Date.now() + 61000;
-                
                 globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
                 
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
