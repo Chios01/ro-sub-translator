@@ -373,6 +373,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                     apiKey = candidate.value;
                     keyIndex = keyState.index;
                     
+                    // Frâna stabilă de 1.5 secunde
                     candidate.pauseUntil = Date.now() + 1500;
                     found = true;
                     break;
@@ -382,6 +383,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
+        // RĂMÂNEM PE MODELUL CARE A DAT CELE MAI BUNE REZULTATE DE VITEZĂ
         const modelName = 'gemini-3.5-flash-lite';
         let currentBatchSize = Object.keys(keysToTranslate).length;
 
@@ -392,17 +394,16 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT NOU: Extrem de riguros privind gramatica, contextul și cuvintele complete.
+            // PROMPT NOU: Foarte strict și detaliat pentru gramatică, ignorând modelul "lite"
             const prompt = `Ești un traducător profesionist de subtitrări pentru cinema. Traduce din engleză în română.
 
 REGULI STRICTE:
-1. GRAMATICĂ IMPECABILĂ: Scrie corect românește, folosește corect diacriticele (ă, î, â, ș, ț). FĂRĂ cuvinte inventate, trunchiate sau greșite gramatical.
-2. ATENȚIE LA CONTEXT: Propozițiile sunt des despărțite pe mai multe rânduri. Analizează rândul anterior și cel următor pentru a acorda corect verbele și substantivele în română!
-3. CUVINTE COMPLETE: Dacă în engleză un cuvânt este bâlbâit sau tăiat (ex: "Wh- where?"), în română scrie-l curat și complet ("Unde?"), fără litere aruncate aiurea.
-4. 100% ROMÂNĂ: Nu lăsa absolut niciun cuvânt în engleză. Adaptează expresiile și jargoanele specifice.
-5. ELIMINĂ ZGOMOTELE: Șterge complet "uh", "um", "hm", "ah", "sighs", "ăă", "er". Dacă o replică rămâne goală după ștergere, pune un spațiu (" ").
-6. FORMAT JSON: Păstrează etichetele <i> și \\n. NU combina cheile, returnează-le fix cum le-ai primit!
-7. FĂRĂ CENZURĂ: Traduce expresiile vulgare exact cu sensul lor dur din română.
+1. GRAMATICĂ IMPECABILĂ: Scrie corect românește, folosește diacritice (ă, î, â, ș, ț). FĂRĂ cuvinte inventate.
+2. CONTEXT ȘI CONTINUITATE: Dacă o propoziție e ruptă pe două rânduri, asigură-te că traducerea are sens continuu și acordul este corect (ex: nu traduce pe bucăți izolate).
+3. REPARĂ CUVINTELE: Dacă în engleză un cuvânt este tăiat sau bâlbâit (ex: "Wh- where?"), în română scrie cuvântul întreg și corect ("Unde?").
+4. ELIMINĂ ZGOMOTELE: Șterge complet ezitările ("uh", "um", "hm", "ah", "ăă", "er"). Dacă o replică rămâne goală, pune un spațiu (" ").
+5. FĂRĂ ENGLEZISME: Nu lăsa absolut niciun cuvânt netradus.
+6. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
