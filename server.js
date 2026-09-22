@@ -394,16 +394,19 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT NOU, foarte specific anti-zgomote/bâlbâieli.
+            // PROMPT NOU - EXTREM DE DIRECT. Folosim tehnica "Negative Examples".
             const prompt = `Ești un traducător profesionist de subtitrări pentru cinema. Traduce din engleză în română.
 
-REGULI STRICTE:
-1. GRAMATICĂ ȘI CRATIME: Scrie impecabil în limba română. Folosește corect cratima (ex: "mi-ar păsa", "m-a", "s-a"). FĂRĂ cuvinte inventate.
-2. INTERZIS SLANG ENGLEZESC: Nu lăsa NICIODATĂ cuvinte ca "man", "bro", "dude", "fuck" în text. Adaptează-le la limba română sau ignoră-le complet.
-3. CONTEXT: Dacă o propoziție e ruptă pe două rânduri, tradu-le astfel încât să aibă sens împreună.
-4. REPARĂ CUVINTELE: Dacă în engleză un cuvânt este bâlbâit (ex: "Wh- where?"), în română scrie cuvântul curat și întreg ("Unde?").
-5. INTERJECȚII ȘI ZGOMOTE (FOARTE IMPORTANT): Șterge complet sunetele, ezitările și strigătele ("uh", "um", "hm", "ah", "ya!", "ha!", "oh", "wow", "er", "ăă"). NU le traduce cu "Ia!", "Aha!" sau "Hm". Dacă o replică conține DOAR un zgomot sau o interjecție, înlocuiește-o OBLIGATORIU cu un spațiu gol (" "). Nu lăsa zgomote pe ecran!
-6. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
+REGULI EXTREM DE STRICTE:
+1. INTERZIS SLANG ENGLEZESC: Șterge complet "man", "bro", "dude", "mate". NU le combina cu cuvinte românești!
+   -> ENG: "Why would I care, man?" -> RO CORECT: "De ce mi-ar păsa?" (FALS: "De ce man-ar păsa?")
+2. GRAMATICĂ ȘI ACORDURI: Fii foarte atent la cratime și pronume. 
+   -> Folosește "mi-ar", "ți-ar", "i-ar" corect. (Ex: "mi-ar păsa", NU "m-ar păsa" sau alte aberații).
+3. FĂRĂ INTERJECȚII CIUDATE: Șterge complet zgomotele: "uh", "um", "hm", "ah", "ăă", "er", "ay", "aï", "ouch", "wow", "oh", "ya". 
+   -> Dacă o replică conține doar un sunet/zgomot, returnează EXACT un spațiu gol: " ". 
+   -> FALS: "La dracu! Aï!". CORECT: "La dracu!"
+4. CONTEXT: Dacă o propoziție e ruptă pe 2 rânduri, tradu cursiv și continuu.
+5. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
