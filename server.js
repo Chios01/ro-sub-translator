@@ -354,8 +354,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let attempts = 0;
     const maxAttempts = 30;
 
-    const antiCollisionDelay = totalChunks > 12 ? 1500 : 500;
-
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         while (Date.now() < globalRateLimitPause) {
             await new Promise(r => setTimeout(r, 1000));
@@ -375,7 +373,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                     apiKey = candidate.value;
                     keyIndex = keyState.index;
                     
-                    candidate.pauseUntil = Date.now() + antiCollisionDelay;
+                    candidate.pauseUntil = Date.now() + 1500;
                     found = true;
                     break;
                 }
@@ -394,7 +392,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT NOU: Extrem de strict pentru eliminarea ezitărilor și a cuvintelor în engleză
             const prompt = `Ești un traducător profesionist de subtitrări. Traduce din engleză în română.
 
 REGULI STRICTE:
@@ -423,7 +420,8 @@ ${JSON.stringify(keysToTranslate)}`;
                 },
                 { 
                     headers: { 'Content-Type': 'application/json' },
-                    timeout: 60000 
+                    // TIMEOUT MĂRIT LA 2 MINUTE PENTRU A PREVENI EROAREA "TIMEOUT OF 60000ms EXCEEDED"
+                    timeout: 120000 
                 }
             );
 
@@ -494,6 +492,7 @@ ${JSON.stringify(keysToTranslate)}`;
         } catch (error) {
             if (error.response && error.response.status === 429) {
                 currentKeyObj.pauseUntil = Date.now() + 61000;
+                
                 globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
                 
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
