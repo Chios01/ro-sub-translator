@@ -397,16 +397,13 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             const prompt = `Ești un traducător profesionist de subtitrări pentru cinema. Traduce din engleză în română.
 
 REGULI EXTREM DE STRICTE:
-1. INTERZIS SLANG ENGLEZESC: Șterge complet "man", "bro", "dude", "mate". NU le combina cu cuvinte românești!
-   -> ENG: "Why would I care, man?" -> RO CORECT: "De ce mi-ar păsa?" (FALS: "De ce man-ar păsa?")
-2. GRAMATICĂ ȘI ACORDURI: Fii foarte atent la cratime și pronume. 
-   -> Folosește "mi-ar", "ți-ar", "i-ar" corect. (Ex: "mi-ar păsa", NU "m-ar păsa").
-3. CONTEXT: Dacă o propoziție e ruptă pe 2 rânduri, tradu cursiv și continuu.
-4. REPARĂ CUVINTELE: Dacă în engleză un cuvânt este bâlbâit (ex: "Wh- where?"), în română scrie cuvântul curat și întreg ("Unde?").
-5. ELIMINĂ ZGOMOTELE ȘI APROBĂRILE FONETICE: Șterge complet "uh", "um", "hm", "ah", "ăă", "er", "mhm", "uh-huh", "îhî", "aha", "ouch", "wow", "oh", "ya". 
-   -> NU le traduce! Nu scrie "Îhî" sau "Aha".
-   -> Dacă o replică conține doar o liniuță de dialog urmată de un zgomot (ex: "- Mhm."), înlocuiește toată replica EXACT cu un spațiu gol: " ". 
-6. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
+1. FĂRĂ TRADUCERI MOT-A-MOT (LITERALE): Adaptează expresiile la limba română naturală. (Ex: "baby seal" devine "pui de focă", NU "foca bebe").
+2. CUVINTE COMPLETE ȘI DIACRITICE: Nu tăia NICIODATĂ prima literă a propoziției, mai ales dacă este un diacritic (Î, Ă, Ș, Ț, Â). Propoziția trebuie să aibă sens complet.
+3. ATENȚIE LA PRONUME ȘI ACORDURI: Păstrează logica acțiunii. (Ex: "cererea mea" se acordă cu "mi-ai acceptat", NU "i-ai acceptat").
+4. INTERZIS SLANG ENGLEZESC: Șterge complet "man", "bro", "dude", "mate". NU le combina cu cuvinte românești!
+5. ELIMINĂ ZGOMOTELE ȘI APROBĂRILE FONETICE: Șterge complet "uh", "um", "hm", "ah", "ăă", "er", "mhm", "uh-huh", "îhî", "aha", "ouch", "wow", "oh", "ya". Dacă replica e doar un sunet, înlocuiește-o exact cu un spațiu gol: " ".
+6. CONTEXT: Dacă o propoziție e ruptă pe 2 rânduri, tradu cursiv și continuu.
+7. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
