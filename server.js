@@ -394,20 +394,22 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT NOU - Corecții pentru slang ignorat, gen și liniuțe orfane
+            // PROMPT NOU - Am implementat "Liniuțele orfane" și "Deducția de gen"
             const prompt = `Ești un traducător profesionist de subtitrări pentru cinema. Traduce din engleză în română.
 
 REGULI EXTREM DE STRICTE (RESPECTĂ-LE ORBIEȘTE):
-1. INTERZIS SLANG ENGLEZESC (VITAL): ESTE STRICT INTERZIS să folosești cuvintele "man", "bro", "dude", "mate" în traducere. Șterge-le sau adaptează-le! 
+1. INTERZIS SLANG ENGLEZESC (VITAL): ESTE STRICT INTERZIS să folosești cuvintele "man", "bro", "dude", "mate" în traducere. 
    -> FALS: "De ce man pasă?" sau "De ce man-ar pasă?". 
    -> CORECT: "De ce mi-ar păsa?".
-2. ELIMINĂ ZGOMOTELE ȘI APROBĂRILE: Șterge complet exclamațiile și ezitările: "oh", "ah", "uh", "um", "hm", "ăă", "er", "mhm", "uh-huh", "îhî", "aha", "ouch", "wow", "ya". 
-   -> Dacă o replică devine goală după ștergere (ex: "- Oh." sau doar "-"), returnează OBLIGATORIU un spațiu gol: " ". NU lăsa liniuțe de dialog singure!
-3. GEN ȘI ACORD: Dacă dedus din context sau nume că e vorba de o femeie, folosește femininul ("Am fost plătită", nu "Am fost plătit"). Fii atent la acorduri.
-4. FĂRĂ TRADUCERI LITERALE (IDIOMS): Adaptează expresiile idiomatice (ex: "pull a thread" = "a investiga", NU "a da în ață").
-5. CUVINTE COMPLETE ȘI DIACRITICE: Nu tăia NICIODATĂ prima literă a propoziției (ex: scrie "Încă", nu "ncă").
-6. CONTEXT: Dacă o propoziție e ruptă pe 2 rânduri, tradu cursiv și continuu.
-7. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
+2. LINIUȚE ORFANE (CRITIC): Dacă o replică conține 2 rânduri, iar tu ștergi un zgomot ("oh", "ah", "hm", "mhm") de pe unul din rânduri, ȘTERGE ȘI LINIUȚA DE DIALOG (-). 
+   -> FALS: "- Legal și ilegal.\\n- ". 
+   -> CORECT: "- Legal și ilegal." (fără liniuță pe rândul doi).
+3. GEN ȘI ACORD (FEMININ): Ești un AI și nu vezi imaginile, dar caută indicii în replicile din jur. Dacă deduci că vorbește o femeie (sau despre o femeie), folosește femininul ("Am fost plătită", nu "Am fost plătit").
+4. ELIMINĂ ZGOMOTELE: Șterge complet ezitările: "oh", "ah", "uh", "um", "hm", "ăă", "er", "mhm", "uh-huh", "îhî", "aha", "ouch", "wow", "ya". Nu le traduce!
+5. FĂRĂ TRADUCERI LITERALE (IDIOMS): Adaptează expresiile idiomatice (ex: "pull a thread" = "a investiga", NU "a da în ață").
+6. CUVINTE COMPLETE ȘI DIACRITICE: Nu tăia NICIODATĂ prima literă a propoziției (ex: scrie "Încă", nu "ncă").
+7. CONTEXT: Dacă o propoziție e ruptă pe 2 rânduri, tradu cursiv și continuu.
+8. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
