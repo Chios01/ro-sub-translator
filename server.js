@@ -343,7 +343,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let attempts = 0;
     const maxAttempts = 15; 
 
-    // BUCLA INTELIGENTĂ: Nu aruncăm munca bună! Reluăm doar ce a rămas netradus (restanțele)
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         let currentKeyObj = null;
         let keyIndex = -1;
@@ -359,7 +358,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                     apiKey = candidate.value;
                     keyIndex = keyState.index;
                     
-                    candidate.pauseUntil = Date.now() + 1500; // Lacăt anti-coliziune
+                    candidate.pauseUntil = Date.now() + 1500;
                     found = true;
                     break;
                 }
@@ -451,11 +450,10 @@ ${JSON.stringify(keysToTranslate)}`;
             }
 
             let newlyTranslatedCount = 0;
-            // Transferăm DOAR liniile traduse cu succes în dicționarul final
             for (let key in parsedDict) {
                 if (keysToTranslate[key] !== undefined) {
                     finalTranslatedDict[key] = parsedDict[key];
-                    delete keysToTranslate[key]; // L-am rezolvat, îl ștergem din restanțe!
+                    delete keysToTranslate[key]; 
                     newlyTranslatedCount++;
                 }
             }
@@ -465,16 +463,15 @@ ${JSON.stringify(keysToTranslate)}`;
             }
 
             if (Object.keys(keysToTranslate).length === 0) {
-                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat 100%!${c.reset}`);
-                break; // Am terminat tot calupul cu succes absolut!
+                // AFIȘAJ CORECTAT: Arată clar câte linii din total au fost asamblate cu succes.
+                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${expectedTotalCount}/${expectedTotalCount} linii)${c.reset}`);
+                break; 
             } else {
-                // Dacă au mai rămas linii, NU dăm eroare! Bucla se va repeta elegant DOAR pentru ele.
                 attempts++;
             }
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
-                // TĂCEREA GLOBALĂ (Scut Anti-Spam): O cheie a luat 429? Punem TOATE cheile pe pauză 65 de secunde!
                 const delay = 65000;
                 keyState.keys.forEach(k => {
                     k.pauseUntil = Math.max(k.pauseUntil, Date.now() + delay);
@@ -494,7 +491,6 @@ ${JSON.stringify(keysToTranslate)}`;
         }
     }
     
-    // Asamblăm rezultatul final garantat 100% (sau cu fallback în caz de apocalipsă Google)
     const finalTranslatedArray = chunkObjArray.map(obj => {
         return finalTranslatedDict[obj.id] !== undefined ? finalTranslatedDict[obj.id] : obj.text;
     });
