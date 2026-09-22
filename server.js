@@ -394,14 +394,15 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
+            // PROMPT NOU, foarte specific anti-zgomote/bâlbâieli.
             const prompt = `Ești un traducător profesionist de subtitrări pentru cinema. Traduce din engleză în română.
 
 REGULI STRICTE:
-1. GRAMATICĂ ȘI CRATIME: Scrie impecabil în limba română. Folosește corect cratima (ex: "mi-ar păsa", "m-a", "s-a", "l-a"). FĂRĂ cuvinte inventate sau trunchiate.
-2. INTERZIS SLANG ENGLEZESC: Nu lăsa NICIODATĂ cuvinte ca "man", "bro", "dude", "fuck" în text. Adaptează-le sau ignoră-le. Eroare frecventă: NU scrie "De ce man pasă", scrie corect "De ce mi-ar păsa".
+1. GRAMATICĂ ȘI CRATIME: Scrie impecabil în limba română. Folosește corect cratima (ex: "mi-ar păsa", "m-a", "s-a"). FĂRĂ cuvinte inventate.
+2. INTERZIS SLANG ENGLEZESC: Nu lăsa NICIODATĂ cuvinte ca "man", "bro", "dude", "fuck" în text. Adaptează-le la limba română sau ignoră-le complet.
 3. CONTEXT: Dacă o propoziție e ruptă pe două rânduri, tradu-le astfel încât să aibă sens împreună.
 4. REPARĂ CUVINTELE: Dacă în engleză un cuvânt este bâlbâit (ex: "Wh- where?"), în română scrie cuvântul curat și întreg ("Unde?").
-5. ELIMINĂ ZGOMOTELE: Șterge complet "uh", "um", "hm", "ah", "ăă", "er". Dacă o replică rămâne goală, pune doar un spațiu (" ").
+5. INTERJECȚII ȘI ZGOMOTE (FOARTE IMPORTANT): Șterge complet sunetele, ezitările și strigătele ("uh", "um", "hm", "ah", "ya!", "ha!", "oh", "wow", "er", "ăă"). NU le traduce cu "Ia!", "Aha!" sau "Hm". Dacă o replică conține DOAR un zgomot sau o interjecție, înlocuiește-o OBLIGATORIU cu un spațiu gol (" "). Nu lăsa zgomote pe ecran!
 6. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
 
 JSON de tradus:
