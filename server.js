@@ -354,9 +354,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let attempts = 0;
     const maxAttempts = 30;
 
-    // REGULA UTILIZATORULUI: Dacă filmul e scurt (<=12 calupuri), Modul Sport (0.5s). Dacă e lung, Modul Anduranță (1.5s).
-    const antiCollisionDelay = totalChunks > 12 ? 1500 : 500;
-
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         while (Date.now() < globalRateLimitPause) {
             await new Promise(r => setTimeout(r, 1000));
@@ -376,7 +373,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                     apiKey = candidate.value;
                     keyIndex = keyState.index;
                     
-                    candidate.pauseUntil = Date.now() + antiCollisionDelay;
+                    // FRÂNA ORIGINALĂ: Simplă și stabilă, fără condiții legate de calupuri
+                    candidate.pauseUntil = Date.now() + 1500;
                     found = true;
                     break;
                 }
@@ -492,6 +490,8 @@ ${JSON.stringify(keysToTranslate)}`;
         } catch (error) {
             if (error.response && error.response.status === 429) {
                 currentKeyObj.pauseUntil = Date.now() + 61000;
+                
+                // PAUZA IP ORIGINALĂ: Doar 10 secunde pauză pe întreg serverul (exact cum era la acel log perfect de 3m 02s)
                 globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
                 
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
@@ -529,6 +529,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
+    // Rămânem la 3 muncitori!
     const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
