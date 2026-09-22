@@ -350,7 +350,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    const maxAttempts = 15; 
+    const maxAttempts = 30; // Ridicat la 30 pentru a permite muncitorilor să se odihnească
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         let currentKeyObj = null;
@@ -374,6 +374,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             }
             if (found) break;
             
+            // Așteptăm să se elibereze o cheie
             await new Promise(r => setTimeout(r, 1000));
         }
 
@@ -480,12 +481,17 @@ ${JSON.stringify(keysToTranslate)}`;
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
-                currentKeyObj.pauseUntil = Date.now() + 61000;
-                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} a obosit. O trimitem pe bancă 60s și continuăm...${c.reset}`);
+                // EXTREM DE IMPORTANT: Punem cheia pe pauză 65 de secunde...
+                currentKeyObj.pauseUntil = Date.now() + 65000;
+                
+                // JITTER: Forțăm muncitorul să "doarmă" aleatoriu între 10 și 15 secunde!
+                // Aceasta rupe bucla de erori simultane și "sparge" The Thundering Herd.
+                const sleepTime = Math.floor(10000 + Math.random() * 5000);
+                
+                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă 65s. Muncitorul așteaptă ${(sleepTime/1000).toFixed(1)}s...${c.reset}`);
                 attempts++;
-                // AM ADĂUGAT "RESPIRAȚIA" AICI: Așteptăm 2 secunde înainte de a sări pe următoarea cheie
-                // Asta previne Efectul de Mitralieră și blocarea în masă a cheilor!
-                await new Promise(r => setTimeout(r, 2000));
+                
+                await new Promise(r => setTimeout(r, sleepTime));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Reîncercare...${c.reset}`);
                 attempts++;
