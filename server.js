@@ -133,35 +133,29 @@ async function handleSubtitles(req, res) {
         }
 
         const fNameLower = userFilename.toLowerCase();
-        // Spargem numele fișierului video în cuvinte cheie ignorând extensiile .mkv, .mp4
         const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
 
         diverseSubs.forEach(s => {
             s.score = 0;
             const subName = s.realName.toLowerCase();
             
-            // 1. DINAMIC: Potrivirea perfectă la nivel de cuvânt cheie (Jackpot pentru sincronizare)
             if (videoTokens.length > 0) {
                 let matchCount = 0;
                 videoTokens.forEach(token => {
                     if (subName.includes(token)) {
-                        s.score += 60; // Puncte pentru fiecare element potrivit (ex: 1080p, x265, RARBG)
+                        s.score += 60; 
                         matchCount++;
                     }
                 });
                 
-                // Dacă mai mult de jumătate din cuvintele fișierului video se regăsesc în numele subtitrării
                 if (matchCount > 0 && matchCount >= videoTokens.length / 2) {
-                    s.score += 300; // JACKPOT: Propulsare direct pe locul 1
+                    s.score += 300; 
                 }
             }
 
-            // 2. STATICE: Puncte de siguranță pentru calități superioare (Dacă Stremio nu ne dă numele fișierului video)
             if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(subName)) s.score += 40;
             if (/bluray|brrip|bdrip|bdr/i.test(subName)) s.score += 30;
             if (/yts|yify|rarbg|tgx|qxr|psa/i.test(subName)) s.score += 20;
-            
-            // 3. PENALIZĂRI: Aruncăm la coadă traducerile automate slabe sau cele desincronizate
             if (/sync|corregido|resync|translated|auto|machine/i.test(subName)) s.score -= 100;
         });
 
@@ -489,6 +483,9 @@ ${JSON.stringify(keysToTranslate)}`;
                 currentKeyObj.pauseUntil = Date.now() + 61000;
                 console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} a obosit. O trimitem pe bancă 60s și continuăm...${c.reset}`);
                 attempts++;
+                // AM ADĂUGAT "RESPIRAȚIA" AICI: Așteptăm 2 secunde înainte de a sări pe următoarea cheie
+                // Asta previne Efectul de Mitralieră și blocarea în masă a cheilor!
+                await new Promise(r => setTimeout(r, 2000));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Reîncercare...${c.reset}`);
                 attempts++;
