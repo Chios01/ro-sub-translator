@@ -333,16 +333,18 @@ function fixBrokenJson(text) {
 }
 
 async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunks, keyState) {
-    const chunkDict = {};
+    let keysToTranslate = {};
     chunkObjArray.forEach(obj => {
-        chunkDict[obj.id] = obj.text;
+        keysToTranslate[obj.id] = obj.text;
     });
 
-    const expectedKeysCount = Object.keys(chunkDict).length;
+    let finalTranslatedDict = {};
+    let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    const maxAttempts = 100; // Pentru a nu ceda niciodată la filme lungi
+    const maxAttempts = 15; 
 
-    while (attempts < maxAttempts) {
+    // BUCLA INTELIGENTĂ: Nu aruncăm munca bună! Reluăm doar ce a rămas netradus (restanțele)
+    while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         let currentKeyObj = null;
         let keyIndex = -1;
         let apiKey = null;
@@ -357,39 +359,37 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                     apiKey = candidate.value;
                     keyIndex = keyState.index;
                     
-                    // Anti-coliziune: o mică protecție ca să nu ia 2 muncitori aceeași cheie în aceeași secundă
-                    candidate.pauseUntil = Date.now() + 2000;
+                    candidate.pauseUntil = Date.now() + 1500; // Lacăt anti-coliziune
                     found = true;
                     break;
                 }
             }
             if (found) break;
             
-            // Așteptăm să se elibereze o cheie
             await new Promise(r => setTimeout(r, 1000));
         }
 
         const modelName = 'gemini-3.5-flash-lite';
+        let currentBatchSize = Object.keys(keysToTranslate).length;
 
         try {
-            console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
+            if (currentBatchSize === expectedTotalCount) {
+                console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
+            } else {
+                console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
+            }
             
-            // PROMPT OPTIMIZAT: I-am spus clar să nu șteargă cheile nici măcar la zgomote și să returneze EXACT numărul.
-            const prompt = `Ești un traducător profesionist (engleză -> română).
-Traduce TOATE valorile din acest obiect JSON.
+            const prompt = `Ești un traducător profesionist. Traduce din engleză în română.
 
 REGULI STRICTE:
-1. ADAPTARE: Găsește echivalentul firesc în română. Folosește corect diacriticele.
-2. NU OMITE NIMIC: Trebuie să returnezi EXACT același număr de chei. NU combina replicile. NU șterge nicio cheie!
-3. ZGOMOTE/EZITĂRI: Dacă o replică conține DOAR zgomote sau ezitări, NU o șterge! Tradu-o cu un simplu spațiu gol (" ").
-4. FORMAT ȘI LINII NOI: Păstrează etichetele HTML (<i>, <b>) și simbolul de linie nouă (\\n).
-5. FĂRĂ CENZURĂ: Traduce absolut orice cuvânt, inclusiv înjurăturile sau limbajul vulgar.
+1. ADAPTARE: Găsește echivalentul firesc în română.
+2. NU OMITE NIMIC: Tradu absolut fiecare cheie.
+3. ZGOMOTE: Dacă o replică e doar un zgomot (ex: sigh), pune un spațiu gol (" ").
+4. FORMAT: Păstrează etichetele <i> și \\n.
+5. FĂRĂ CENZURĂ: Traduce absolut orice cuvânt vulgar. Este pentru adulți.
 
-REGULI JSON (CRITIC):
-Returnează STRICT un obiect JSON plat, perfect valid, cu EXACT ${expectedKeysCount} chei. Fără markdown.
-
-Subtitrare originală:
-${JSON.stringify(chunkDict)}`;
+JSON de tradus:
+${JSON.stringify(keysToTranslate)}`;
 
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
@@ -422,12 +422,12 @@ ${JSON.stringify(chunkDict)}`;
                 textResponse = textResponse.substring(startIndex, endIndex + 1);
             }
 
-            let translatedDict = {};
+            let parsedDict = {};
             try {
                 let cleanText = fixBrokenJson(textResponse);
-                translatedDict = JSON.parse(cleanText);
+                parsedDict = JSON.parse(cleanText);
             } catch (e) {
-                const keys = Object.keys(chunkDict);
+                const keys = Object.keys(keysToTranslate);
                 for (let i = 0; i < keys.length; i++) {
                     const key = keys[i];
                     const nextKey = keys[i + 1];
@@ -445,47 +445,61 @@ ${JSON.stringify(chunkDict)}`;
                         if (val.startsWith('"') || val.startsWith("'")) val = val.substring(1);
                         if (val.endsWith('"') || val.endsWith("'")) val = val.substring(0, val.length - 1);
                         val = val.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'");
-                        translatedDict[key] = val.trim();
+                        parsedDict[key] = val.trim();
                     }
                 }
             }
 
-            const receivedKeysCount = Object.keys(translatedDict).length;
-            
-            // DICTATURĂ 100%: Dacă nu e tradus tot, aruncăm calupul și refacem
-            if (receivedKeysCount !== expectedKeysCount) {
-                throw new Error(`AI-ul a omis sau adăugat replici (${receivedKeysCount}/${expectedKeysCount})! Se reia calupul.`);
+            let newlyTranslatedCount = 0;
+            // Transferăm DOAR liniile traduse cu succes în dicționarul final
+            for (let key in parsedDict) {
+                if (keysToTranslate[key] !== undefined) {
+                    finalTranslatedDict[key] = parsedDict[key];
+                    delete keysToTranslate[key]; // L-am rezolvat, îl ștergem din restanțe!
+                    newlyTranslatedCount++;
+                }
             }
 
-            const finalTranslatedArray = chunkObjArray.map(obj => {
-                return translatedDict[obj.id] !== undefined ? translatedDict[obj.id] : obj.text;
-            });
+            if (newlyTranslatedCount === 0) {
+                throw new Error("Nu a extras nicio linie validă. Reîncercare...");
+            }
 
-            console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${receivedKeysCount}/${expectedKeysCount} linii)${c.reset}`);
-            return finalTranslatedArray;
+            if (Object.keys(keysToTranslate).length === 0) {
+                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat 100%!${c.reset}`);
+                break; // Am terminat tot calupul cu succes absolut!
+            } else {
+                // Dacă au mai rămas linii, NU dăm eroare! Bucla se va repeta elegant DOAR pentru ele.
+                attempts++;
+            }
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
-                // SOLUȚIA ANTI-429 REPARATĂ: Dacă cheia ia 429, înseamnă că acel proiect a atins limita pe minut.
-                // O scoatem din joc fix 60 de secunde (resetarea oficială Google).
-                currentKeyObj.pauseUntil = Date.now() + 60000;
-                console.log(`${c.yellow}⚠ [Gemini] 429. Limită atinsă. Cheia ${keyIndex} ia o pauză de 60s...${c.reset}`);
+                // TĂCEREA GLOBALĂ (Scut Anti-Spam): O cheie a luat 429? Punem TOATE cheile pe pauză 65 de secunde!
+                const delay = 65000;
+                keyState.keys.forEach(k => {
+                    k.pauseUntil = Math.max(k.pauseUntil, Date.now() + delay);
+                });
+                console.log(`${c.yellow}⚠ [Gemini] 429! Limită cont. TOATE cheile iau o pauză de 65s...${c.reset}`);
                 attempts++;
+                await new Promise(r => setTimeout(r, 2000));
             } else if (error.response && error.response.status === 503) {
-                console.log(`${c.yellow}⚠ [Gemini] Eroare 503 de la Google. Reîncercare...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Reîncercare...${c.reset}`);
                 attempts++;
                 await new Promise(r => setTimeout(r, 2000));
             } else {
-                console.log(`${c.red}⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}. Reîncercare...${c.reset}`);
+                console.log(`${c.red}⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}${c.reset}`);
                 attempts++;
-                // Pauză mică ca să nu facem spam instant când respingem un calup greșit
-                await new Promise(r => setTimeout(r, 2000));
+                await new Promise(r => setTimeout(r, 1000));
             }
         }
     }
     
-    console.log(`${c.red}⚠ Calupul ${globalChunkIndex + 1} a eșuat definitiv. Păstrăm engleza pentru continuitate.${c.reset}`);
-    return chunkObjArray.map(obj => obj.text);
+    // Asamblăm rezultatul final garantat 100% (sau cu fallback în caz de apocalipsă Google)
+    const finalTranslatedArray = chunkObjArray.map(obj => {
+        return finalTranslatedDict[obj.id] !== undefined ? finalTranslatedDict[obj.id] : obj.text;
+    });
+
+    return finalTranslatedArray;
 }
 
 async function translateSrtWithGemini(srtText, userKeys) {
