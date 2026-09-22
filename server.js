@@ -341,6 +341,9 @@ function fixBrokenJson(text) {
     return fixed;
 }
 
+// Global cooldown helper to prevent IP burst limits
+let globalRateLimitPause = 0;
+
 async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunks, keyState) {
     let keysToTranslate = {};
     chunkObjArray.forEach(obj => {
@@ -350,9 +353,14 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    const maxAttempts = 30; // Ridicat la 30 pentru a permite muncitorilor să se odihnească
+    const maxAttempts = 30;
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
+        // Dacă e activat cooldown-ul global IP, așteptăm cuminți
+        while (Date.now() < globalRateLimitPause) {
+            await new Promise(r => setTimeout(r, 1000));
+        }
+
         let currentKeyObj = null;
         let keyIndex = -1;
         let apiKey = null;
@@ -373,8 +381,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 }
             }
             if (found) break;
-            
-            // Așteptăm să se elibereze o cheie
             await new Promise(r => setTimeout(r, 1000));
         }
 
@@ -400,6 +406,7 @@ REGULI STRICTE:
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
 
+            // Timeout mărit la 60s pentru calupurile de 150 de linii
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
                 {
@@ -412,7 +419,10 @@ ${JSON.stringify(keysToTranslate)}`;
                         { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
                     ]
                 },
-                { headers: { 'Content-Type': 'application/json' } }
+                { 
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: 60000 
+                }
             );
 
             if (!response.data || !response.data.candidates || !response.data.candidates[0] || !response.data.candidates[0].content) {
@@ -481,14 +491,13 @@ ${JSON.stringify(keysToTranslate)}`;
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
-                // EXTREM DE IMPORTANT: Punem cheia pe pauză 65 de secunde...
-                currentKeyObj.pauseUntil = Date.now() + 65000;
+                currentKeyObj.pauseUntil = Date.now() + 61000;
                 
-                // JITTER: Forțăm muncitorul să "doarmă" aleatoriu între 10 și 15 secunde!
-                // Aceasta rupe bucla de erori simultane și "sparge" The Thundering Herd.
+                // Setăm o pauză generală pentru tot IP-ul de 10 secunde ca să calmăm Google
+                globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
+                
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
-                
-                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă 65s. Muncitorul așteaptă ${(sleepTime/1000).toFixed(1)}s...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul 10s... (Aștept ${(sleepTime/1000).toFixed(1)}s)${c.reset}`);
                 attempts++;
                 
                 await new Promise(r => setTimeout(r, sleepTime));
@@ -519,10 +528,12 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 120; 
+    // MĂRIM LA 150 pentru a reduce masiv numărul de cereri
+    const CHUNK_SIZE = 150; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    const CONCURRENCY_LIMIT = 3; 
+    // SCĂDEM CONCURRENCY LA 2 pentru a preveni blocarea IP-ului de către Google
+    const CONCURRENCY_LIMIT = 2; 
     let allTranslatedTexts = [];
 
     const keyState = { 
