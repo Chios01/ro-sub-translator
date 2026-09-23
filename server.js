@@ -71,21 +71,15 @@ async function handleSubtitles(req, res) {
 
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
-        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}.json`,             
         `https://opensubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,  
-        `https://opensubtitles.strem.io/subtitles/${type}/${id}.json`,
         `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
-        `https://yifysubtitles.strem.io/subtitles/${type}/${id}.json`,
-        `https://subtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
-        `https://subtitles.strem.io/subtitles/${type}/${id}.json`,
-        `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`,
-        `https://subdl.strem.io/subtitles/${type}/${id}.json`
+        `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`
     ];
 
     try {
         const fetchPromises = urlsToFetch.map(u => 
             axios.get(u, { 
-                timeout: 4500, 
+                timeout: 3000, 
                 headers: { 'User-Agent': BROWSER_USER_AGENT } 
             }).catch(() => ({ data: { subtitles: [] } }))
         );
@@ -106,14 +100,13 @@ async function handleSubtitles(req, res) {
             if (uniqueUrls.has(sub.url)) return false;
             uniqueUrls.add(sub.url);
             return true;
-        }).slice(0, 150); 
+        }).slice(0, 20); 
 
         if (engSubs.length === 0) return res.json({ subtitles: [] });
 
         let diverseSubs = [];
         const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
 
-        // === ELIMINAT FREEZE-UL: Fără HEAD requests, procesare 100% instantanee ===
         engSubs.forEach((sub, idx) => {
             let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
             if (!trashRegex.test(realName)) {
@@ -149,7 +142,7 @@ async function handleSubtitles(req, res) {
         });
 
         diverseSubs.sort((a, b) => b.score - a.score);
-        diverseSubs = diverseSubs.slice(0, 20);
+        diverseSubs = diverseSubs.slice(0, 15);
 
         const generatedSubs = diverseSubs.map((s, index) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
@@ -167,7 +160,7 @@ async function handleSubtitles(req, res) {
                 id: `ai_sub_${index}`,
                 title: labelName, 
                 url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
-                lang: 'ron' // === REVENIT LA 'ron' PENTRU AUTO-SELECT ===
+                lang: 'ron' 
             };
         });
 
@@ -343,7 +336,9 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    const maxAttempts = 30;
+    
+    // Max attempts readus la o valoare normală pentru a permite recuperarea corectă dacă pică serverul o dată
+    const maxAttempts = 15;
 
     let antiCollisionDelay = 500;
     if (totalChunks > 12) {
@@ -380,7 +375,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        // === MODELUL STABIL ===
         const modelName = 'gemini-3.5-flash-lite';
         let currentBatchSize = Object.keys(keysToTranslate).length;
 
@@ -429,7 +423,11 @@ ${JSON.stringify(keysToTranslate)}`;
                 },
                 { 
                     headers: { 'Content-Type': 'application/json' },
-                    timeout: 35000 
+                    // ===============================================================
+                    // REVENIT LA 120 DE SECUNDE (2 MINUTE) TIMEOUT
+                    // Asta era cauza erorilor! Îi tăiam conexiunea când era la jumătate
+                    // ===============================================================
+                    timeout: 120000 
                 }
             );
 
@@ -487,7 +485,7 @@ ${JSON.stringify(keysToTranslate)}`;
             }
 
             if (newlyTranslatedCount === 0) {
-                throw new Error("Nu a extras nicio linie validă. Reîncercare...");
+                throw new Error("Nu a extras nicio linie validă.");
             }
 
             if (Object.keys(keysToTranslate).length === 0) {
@@ -519,6 +517,10 @@ ${JSON.stringify(keysToTranslate)}`;
         }
     }
     
+    if (attempts >= maxAttempts) {
+        console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1} a fost abandonat parțial după erori repetate. Mențin engleza pentru restul liniilor.${c.reset}`);
+    }
+
     const finalTranslatedArray = chunkObjArray.map(obj => {
         return finalTranslatedDict[obj.id] !== undefined ? finalTranslatedDict[obj.id] : obj.text;
     });
@@ -537,7 +539,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // === REVENIT LA 3 CALUPURI ===
     let CONCURRENCY_LIMIT = 3; 
 
     let allTranslatedTexts = [];
