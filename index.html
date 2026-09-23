@@ -63,17 +63,9 @@
         button:hover {
             background-color: #00c853;
         }
-        .btn-config {
-            background-color: #2196F3;
-            margin-top: 10px;
-            display: none; /* Ascuns până la instalare */
-        }
-        .btn-config:hover {
-            background-color: #1976D2;
-        }
         .hacker-status {
             text-align: center;
-            margin-top: 20px;
+            margin-top: 30px;
         }
     </style>
 </head>
@@ -95,7 +87,6 @@
     </div>
 
     <button onclick="installAddon()">Instalează în Stremio</button>
-    <button id="configBtn" class="btn-config" onclick="reconfigureAddon()">Configurează / Resetează Cheile</button>
 
     <div class="hacker-status">
         <p style="color: #00f7ff; font-family: 'Courier New', monospace; text-shadow: 0 0 5px #00f7ff;">
@@ -104,24 +95,6 @@
     </div>
 
     <script>
-        // La încărcarea paginii, verificăm dacă utilizatorul are deja chei salvate în browser
-        window.onload = function() {
-            const savedKeys = localStorage.getItem('chios_saved_keys');
-            if (savedKeys) {
-                try {
-                    const keysArray = JSON.parse(savedKeys);
-                    const inputs = document.querySelectorAll('.api-key');
-                    inputs.forEach((input, index) => {
-                        if (keysArray[index]) {
-                            input.value = keysArray[index];
-                        }
-                    });
-                    // Dacă există chei salvate, afișăm butonul de configurare rapidă
-                    document.getElementById('configBtn').style.display = 'block';
-                } catch (e) {}
-            }
-        };
-
         function installAddon() {
             const inputs = document.querySelectorAll('.api-key');
             const keys = [];
@@ -136,9 +109,6 @@
                 return;
             }
 
-            // Salvăm cheile în browser pentru a le recunoaște la reconfigurare
-            localStorage.setItem('chios_saved_keys', JSON.stringify(keys));
-
             const configString = JSON.stringify(keys);
             const configBase64 = btoa(configString);
             
@@ -147,15 +117,7 @@
             const manifestUrl = `${protocol}${host}/${configBase64}/manifest.json`;
             
             const stremioUrl = manifestUrl.replace('https://', 'stremio://').replace('http://', 'stremio://');
-            
-            // Afișăm butonul de configurare și trimitem către Stremio
-            document.getElementById('configBtn').style.display = 'block';
             window.location.href = stremioUrl;
-        }
-
-        function reconfigureAddon() {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            alert('Modifică cheile dorite în căsuțe și apasă din nou pe "Instalează în Stremio" pentru a actualiza configurarea!');
         }
     </script>
 </body>
