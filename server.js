@@ -37,7 +37,6 @@ const manifest = {
     idPrefixes: ['tt']
 };
 
-// === DEGHIZARE PENTRU A EVITA BLOCAREA (CLOUDFLARE/403) ===
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 // ==========================================
@@ -111,36 +110,16 @@ async function handleSubtitles(req, res) {
 
         if (engSubs.length === 0) return res.json({ subtitles: [] });
 
-        let processedSubs = [];
-        for (let i = 0; i < engSubs.length; i += 10) {
-            const batch = engSubs.slice(i, i + 10);
-            const batchResults = await Promise.all(batch.map(async (sub, idx) => {
-                let realName = sub.title || sub.id || `Varianta_${i + idx + 1}`;
-                try {
-                    if (!sub.title || sub.title.length < 4) {
-                        const headRes = await axios.head(sub.url, { 
-                            timeout: 2000,
-                            headers: { 'User-Agent': BROWSER_USER_AGENT }
-                        });
-                        const disposition = headRes.headers['content-disposition'];
-                        if (disposition && disposition.includes('filename')) {
-                            const match = disposition.match(/filename=["']?([^"';]+)["']?/i);
-                            if (match && match[1]) realName = match[1].replace(/\.srt$/gi, '');
-                        }
-                    }
-                } catch (e) { }
-                return { originalUrl: sub.url, realName, index: i + idx };
-            }));
-            processedSubs.push(...batchResults);
-        }
-
         let diverseSubs = [];
         const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
 
-        for (const s of processedSubs) {
-            if (trashRegex.test(s.realName)) continue;
-            diverseSubs.push(s);
-        }
+        // === ELIMINAT FREEZE-UL: Fără HEAD requests, procesare 100% instantanee ===
+        engSubs.forEach((sub, idx) => {
+            let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
+            if (!trashRegex.test(realName)) {
+                diverseSubs.push({ originalUrl: sub.url, realName, index: idx });
+            }
+        });
 
         const fNameLower = userFilename.toLowerCase();
         const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
@@ -188,7 +167,7 @@ async function handleSubtitles(req, res) {
                 id: `ai_sub_${index}`,
                 title: labelName, 
                 url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
-                lang: 'ron'
+                lang: 'ron' // === REVENIT LA 'ron' PENTRU AUTO-SELECT ===
             };
         });
 
@@ -366,12 +345,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let attempts = 0;
     const maxAttempts = 30;
 
-    // === REVENIT LA 1.5 SECUNDE PAUZĂ PENTRU TURBO ===
     let antiCollisionDelay = 500;
     if (totalChunks > 12) {
-        antiCollisionDelay = 1500; 
-    }
-    if (keyState.keys.length >= 20) {
         antiCollisionDelay = 1500; 
     }
 
@@ -405,8 +380,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        // === SCHIMBAT MODELUL ÎN GEMINI-3.5-FLASH ===
-        const modelName = 'gemini-3.5-flash';
+        // === MODELUL STABIL ===
+        const modelName = 'gemini-3.5-flash-lite';
         let currentBatchSize = Object.keys(keysToTranslate).length;
 
         try {
@@ -454,7 +429,7 @@ ${JSON.stringify(keysToTranslate)}`;
                 },
                 { 
                     headers: { 'Content-Type': 'application/json' },
-                    timeout: 35000 // Tăiem conexiunea dacă Google nu răspunde în 35 de secunde
+                    timeout: 35000 
                 }
             );
 
@@ -562,11 +537,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // === REVENIT LA 3 CALUPURI PENTRU STABILITATE ===
+    // === REVENIT LA 3 CALUPURI ===
     let CONCURRENCY_LIMIT = 3; 
-    if (userKeys.length >= 20) {
-        CONCURRENCY_LIMIT = 3; 
-    }
 
     let allTranslatedTexts = [];
 
