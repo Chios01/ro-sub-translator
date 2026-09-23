@@ -336,8 +336,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    
-    // Max attempts readus la o valoare normală pentru a permite recuperarea corectă dacă pică serverul o dată
     const maxAttempts = 15;
 
     let antiCollisionDelay = 500;
@@ -355,23 +353,30 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         let apiKey = null;
 
         while (true) {
-            let availableIndices = [];
-            for (let i = 0; i < keyState.keys.length; i++) {
-                if (Date.now() >= keyState.keys[i].pauseUntil) {
-                    availableIndices.push(i);
+            let foundKey = false;
+            
+            // === LOGICA NOUĂ: PACHETUL DE CĂRȚI ===
+            // Le luăm strict la rând, una după alta. 1, 2, 3... 20. Nu le mai amestecăm aleatoriu.
+            for (let attempt = 0; attempt < keyState.keys.length; attempt++) {
+                let currentIndex = keyState.index % keyState.keys.length;
+                keyState.index++; // Mutăm contorul pe următoarea cheie
+
+                if (Date.now() >= keyState.keys[currentIndex].pauseUntil) {
+                    keyIndex = currentIndex;
+                    currentKeyObj = keyState.keys[keyIndex];
+                    apiKey = currentKeyObj.value;
+
+                    currentKeyObj.pauseUntil = Date.now() + antiCollisionDelay;
+                    foundKey = true;
+                    break; // Am găsit o cheie, ieșim din loop-ul de căutare
                 }
             }
 
-            if (availableIndices.length > 0) {
-                let randomIndex = Math.floor(Math.random() * availableIndices.length);
-                keyIndex = availableIndices[randomIndex];
-                currentKeyObj = keyState.keys[keyIndex];
-                apiKey = currentKeyObj.value;
-
-                currentKeyObj.pauseUntil = Date.now() + antiCollisionDelay;
-                break;
+            if (foundKey) {
+                break; // Ieșim din `while(true)` pentru că avem cheie validă
             }
 
+            // Dacă absolut toate cheile sunt pe pauză, așteptăm 1 secundă și verificăm din nou
             await new Promise(r => setTimeout(r, 1000));
         }
 
@@ -423,10 +428,6 @@ ${JSON.stringify(keysToTranslate)}`;
                 },
                 { 
                     headers: { 'Content-Type': 'application/json' },
-                    // ===============================================================
-                    // REVENIT LA 120 DE SECUNDE (2 MINUTE) TIMEOUT
-                    // Asta era cauza erorilor! Îi tăiam conexiunea când era la jumătate
-                    // ===============================================================
                     timeout: 120000 
                 }
             );
@@ -543,6 +544,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
 
     let allTranslatedTexts = [];
 
+    // === CONTOR GLOBAL PENTRU EXTRAGEREA ÎN CERC A CHEILOR ===
     const keyState = { 
         keys: userKeys.map(k => ({ value: k, pauseUntil: 0 })), 
         index: 0 
