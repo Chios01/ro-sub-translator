@@ -79,7 +79,7 @@ async function handleSubtitles(req, res) {
 
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
-        `https://opensubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,  
+        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`,  
         `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
         `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`
     ];
@@ -270,7 +270,7 @@ app.listen(PORT, () => {
 });
 
 // ==========================================
-// 2. FUNCȚII AJUTĂTOARE & TRADUCERE (PROMPT AVANSAT ANTICICĂ/ANTIGLITCH)
+// 2. FUNCȚII AJUTĂTOARE & TRADUCERE
 // ==========================================
 
 function cleanTextForJson(text) {
@@ -386,29 +386,32 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT ÎMBUNĂTĂȚIT PENTRU EVITAREA TRADUCERILOR CIUDATE SAU LITERALE
+            // PROMPT ACTUALIZAT CU REGULĂ STRICTĂ DE ACORD DE GEN (MASCULIN / FEMININ)
             const prompt = `Ești un traducător profesionist de subtitrări pentru filme și seriale. Traduce din engleză în română naturală.
 RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 
-1. EVITĂ TRADUCERILE LITERALE (IDIOMURI ȘI EXCLAMAȚII):
-   -> Nu traduce niciodată cuvânt cu cuvânt expresii sau exclamații (ex: "Damn" se traduce prin "La naiba" sau "Ce naiba", NICIODATĂ prin cuvinte ciudate sau inventate).
-   -> Folosește un limbaj colocvial, fluent, specific personajelor dintr-un serial.
+1. ACORD DE GEN STRICT (CRITIC): 
+   -> Fii extrem de atent la contextul fiecărei replici: dacă un personaj se referă la un bărbat/băiat (sau la o persoană de gen masculin), adjectivele și formele gramaticale trebuie să fie OBLIGATORIU la masculin (ex: "nesuferit", "prost", "frumos", NU "nesuferită", "proastă", " frumoasă"). Dacă se referă la o femeie, folosește femininul.
 
-2. GRAMATICĂ ȘI ACORDURI (CRITIC): 
+2. EVITĂ TRADUCERILE LITERALE (IDIOMURI ȘI EXCLAMAȚII):
+   -> Nu traduce niciodată cuvânt cu cuvânt expresii sau exclamații (ex: "Damn" se traduce prin "La naiba" sau "Ce naiba", NICIODATĂ prin cuvinte ciudate).
+   -> Folosește un limbaj colocvial, fluent, specific dialogurilor dintr-un serial de comedie.
+
+3. GRAMATICĂ ȘI PLURALUL: 
    -> Articulează corect substantivele la plural (ex: "sânii mei", NU "sâni mei").
    -> Folosește corect genul substantivelor comune (ex: "o secundă", NU "un secund").
    -> Nu scrie niciodată "Mi s-a plătit" în loc de "Am fost plătit(ă)".
 
-3. INTERZIS TRADUCEREA ZGOMOTELOR: Nu traduce și nu scrie NICIODATĂ cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Uh-huh", "Ha", "Vai".
+4. INTERZIS TRADUCEREA ZGOMOTELOR: Nu traduce și nu scrie NICIODATĂ cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Uh-huh", "Ha", "Vai".
    -> Dacă replica engleză este doar un zgomot, returnează OBLIGATORIU un spațiu gol: " ". 
 
-4. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând nou, trebuie SĂ ȘTERGI ȘI LINIUȚA DE DIALOG (-). Nu lăsa liniuțe suspendate.
+5. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând nou, trebuie SĂ ȘTERGI ȘI LINIUȚA DE DIALOG (-). Nu lăsa liniuțe suspendate.
 
-5. INTERZIS SLANG ENGLEZESC: Nu scrie NICIODATĂ "man", "bro", "dude". Adaptează-le în română dacă e cazul sau omită-le dacă nu aduc sens.
+6. INTERZIS SLANG ENGLEZESC: Nu scrie NICIODATĂ "man", "bro", "dude". Adaptează-le în română sau omită-le.
 
-6. CUVINTE COMPLETE: Nu tăia niciodată prima literă a cuvântului, mai ales la diacritice (ex: scrie "Încă", nu "ncă").
+7. CUVINTE COMPLETE: Nu tăia niciodată prima literă a cuvântului, mai ales la diacritice (ex: scrie "Încă", nu "ncă").
 
-7. ELIMINĂ SUNETELE DE FUNDAL (SDH): Șterge complet orice text aflat între paranteze rotunde (...) sau drepte [...]. Păstrează exclusiv dialogul.
+8. ELIMINĂ SUNETELE DE FUNDAL (SDH): Șterge complet orice text aflat între paranteze rotunde (...) sau drepte [...]. Păstrează exclusiv dialogul.
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
