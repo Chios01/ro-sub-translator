@@ -378,21 +378,24 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         let apiKey = null;
 
         while (true) {
-            let found = false;
+            // Selectare complet aleatorie a unei chei disponibile (care nu este pe pauză)
+            let availableIndices = [];
             for (let i = 0; i < keyState.keys.length; i++) {
-                keyState.index = (keyState.index + 1) % keyState.keys.length;
-                let candidate = keyState.keys[keyState.index];
-                if (Date.now() >= candidate.pauseUntil) {
-                    currentKeyObj = candidate;
-                    apiKey = candidate.value;
-                    keyIndex = keyState.index;
-                    
-                    candidate.pauseUntil = Date.now() + antiCollisionDelay;
-                    found = true;
-                    break;
+                if (Date.now() >= keyState.keys[i].pauseUntil) {
+                    availableIndices.push(i);
                 }
             }
-            if (found) break;
+
+            if (availableIndices.length > 0) {
+                let randomIndex = Math.floor(Math.random() * availableIndices.length);
+                keyIndex = availableIndices[randomIndex];
+                currentKeyObj = keyState.keys[keyIndex];
+                apiKey = currentKeyObj.value;
+
+                currentKeyObj.pauseUntil = Date.now() + antiCollisionDelay;
+                break;
+            }
+
             await new Promise(r => setTimeout(r, 1000));
         }
 
@@ -552,7 +555,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // Logica pentru Cutia de Viteze Automată (3 sau 5 calupuri)
     let CONCURRENCY_LIMIT = 3; 
     if (userKeys.length >= 20) {
         CONCURRENCY_LIMIT = 5; 
