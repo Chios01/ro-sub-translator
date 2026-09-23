@@ -243,7 +243,6 @@ app.get('/:configData/translate', async (req, res) => {
             const startTime = Date.now();
             
             processPromise = (async () => {
-                // Descărcarea fișierului SRT cu User-Agent mascarat
                 const srtRes = await axios.get(targetUrl, {
                     headers: { 'User-Agent': BROWSER_USER_AGENT }
                 });
@@ -552,7 +551,12 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    const CONCURRENCY_LIMIT = 3; 
+    // Logica pentru Cutia de Viteze Automată (3 sau 5 calupuri)
+    let CONCURRENCY_LIMIT = 3; 
+    if (userKeys.length >= 20) {
+        CONCURRENCY_LIMIT = 5; 
+    }
+
     let allTranslatedTexts = [];
 
     const keyState = { 
