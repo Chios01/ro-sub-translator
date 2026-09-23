@@ -3,113 +3,174 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Configurare - RO Sub Translator</title>
+    <title>RO Sub Translator - Configurare</title>
     <style>
         body {
+            background-color: #0d1117;
+            color: #c9d1d9;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #121212;
-            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
             padding: 20px;
-            max-width: 600px;
-            margin: 0 auto;
+            margin: 0;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #161b22;
+            padding: 30px;
+            border-radius: 10px;
+            border: 1px solid #30363d;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            max-width: 500px;
+            width: 100%;
         }
         h1 {
-            color: #00e676;
             text-align: center;
+            color: #58a6ff;
             margin-bottom: 5px;
         }
         p.subtitle {
             text-align: center;
-            color: #a0a0a0;
-            margin-bottom: 30px;
+            color: #8b949e;
             font-size: 14px;
+            margin-bottom: 25px;
         }
-        .key-container {
-            margin-bottom: 12px;
+        .input-group {
+            margin-bottom: 15px;
         }
         label {
             display: block;
             margin-bottom: 5px;
             font-size: 14px;
-            color: #b0b0b0;
+            font-weight: 600;
         }
-        input {
+        .required::after {
+            content: " *";
+            color: #f85149;
+        }
+        input[type="text"] {
             width: 100%;
             padding: 10px;
+            background-color: #0d1117;
+            border: 1px solid #30363d;
             border-radius: 6px;
-            border: 1px solid #333;
-            background-color: #1e1e1e;
-            color: #fff;
-            box-sizing: border-box;
+            color: #c9d1d9;
             font-family: monospace;
+            box-sizing: border-box;
         }
-        input:focus {
+        input[type="text"]:focus {
+            border-color: #58a6ff;
             outline: none;
-            border-color: #00e676;
         }
-        button {
+        .btn-install {
             width: 100%;
-            padding: 15px;
-            background-color: #00e676;
-            color: #121212;
+            padding: 12px;
+            background-color: #238636;
+            color: white;
             border: none;
             border-radius: 6px;
-            font-size: 18px;
+            font-size: 16px;
             font-weight: bold;
             cursor: pointer;
-            margin-top: 25px;
+            margin-top: 20px;
             transition: background-color 0.2s;
         }
-        button:hover {
-            background-color: #00c853;
+        .btn-install:hover {
+            background-color: #2ea043;
+        }
+        .footer {
+            margin-top: 25px;
+            padding-top: 15px;
+            border-top: 1px dashed #30363d;
+            text-align: center;
         }
     </style>
 </head>
 <body>
-    <h1>RO Sub Translator</h1>
-    <p class="subtitle">Introdu cele 10 chei API Google Gemini (Un singur cont)</p>
-    
-    <div id="keys-form">
-        <!-- Generăm 10 câmpuri -->
-        <div class="key-container"><label>Cheia 1:</label><input type="text" class="api-key" placeholder="AIzaSy..."></div>
-        <div class="key-container"><label>Cheia 2:</label><input type="text" class="api-key" placeholder="AIzaSy..."></div>
-        <div class="key-container"><label>Cheia 3:</label><input type="text" class="api-key" placeholder="AIzaSy..."></div>
-        <div class="key-container"><label>Cheia 4:</label><input type="text" class="api-key" placeholder="AIzaSy..."></div>
-        <div class="key-container"><label>Cheia 5:</label><input type="text" class="api-key" placeholder="AIzaSy..."></div>
-        <div class="key-container"><label>Cheia 6:</label><input type="text" class="api-key" placeholder="AIzaSy..."></div>
-        <div class="key-container"><label>Cheia 7:</label><input type="text" class="api-key" placeholder="AIzaSy..."></div>
-        <div class="key-container"><label>Cheia 8:</label><input type="text" class="api-key" placeholder="AIzaSy..."></div>
-        <div class="key-container"><label>Cheia 9:</label><input type="text" class="api-key" placeholder="AIzaSy..."></div>
-        <div class="key-container"><label>Cheia 10:</label><input type="text" class="api-key" placeholder="AIzaSy..."></div>
+
+    <div class="container">
+        <h1>RO Sub Translator</h1>
+        <p class="subtitle">Adaugă cheile tale Google Gemini API</p>
+
+        <form id="configForm">
+            <div class="input-group">
+                <label class="required" for="key1">Cheia API 1</label>
+                <input type="text" id="key1" required placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label class="required" for="key2">Cheia API 2</label>
+                <input type="text" id="key2" required placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label class="required" for="key3">Cheia API 3</label>
+                <input type="text" id="key3" required placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label class="required" for="key4">Cheia API 4</label>
+                <input type="text" id="key4" required placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label class="required" for="key5">Cheia API 5</label>
+                <input type="text" id="key5" required placeholder="AIzaSy...">
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid #30363d; margin: 20px 0;">
+            
+            <div class="input-group">
+                <label for="key6">Cheia API 6 (Opțional)</label>
+                <input type="text" id="key6" placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label for="key7">Cheia API 7 (Opțional)</label>
+                <input type="text" id="key7" placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label for="key8">Cheia API 8 (Opțional)</label>
+                <input type="text" id="key8" placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label for="key9">Cheia API 9 (Opțional)</label>
+                <input type="text" id="key9" placeholder="AIzaSy...">
+            </div>
+            <div class="input-group">
+                <label for="key10">Cheia API 10 (Opțional)</label>
+                <input type="text" id="key10" placeholder="AIzaSy...">
+            </div>
+
+            <button type="submit" class="btn-install">Instalează în Stremio</button>
+        </form>
+
+        <!-- Textul a fost mutat AICI, în interiorul container-ului gri -->
+        <div class="footer">
+            <p style="color: #00f7ff; font-family: 'Courier New', monospace; text-shadow: 0 0 5px #00f7ff; font-size: 14px; margin: 0;">
+                // System status: Operational. Powered by Chios.
+            </p>
+        </div>
     </div>
 
-    <button onclick="installAddon()">Instalează în Stremio</button>
-
     <script>
-        function installAddon() {
-            const inputs = document.querySelectorAll('.api-key');
-            const keys = [];
+        document.getElementById('configForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            let keys = [];
+            for(let i = 1; i <= 10; i++) {
+                let val = document.getElementById('key' + i).value.trim();
+                if(val) keys.push(val);
+            }
             
-            inputs.forEach(input => {
-                const val = input.value.trim();
-                if (val) keys.push(val);
-            });
-
-            if (keys.length === 0) {
-                alert('Te rog introdu măcar o cheie API!');
+            if(keys.length < 5) {
+                alert("Te rugăm să introduci cel puțin primele 5 chei obligatorii!");
                 return;
             }
 
-            const configString = JSON.stringify(keys);
-            const configBase64 = btoa(configString);
+            let configData = btoa(JSON.stringify(keys));
+            let currentHost = window.location.host;
+            let installLink = "stremio://" + currentHost + "/" + configData + "/manifest.json";
             
-            const host = window.location.host;
-            const protocol = window.location.protocol === 'https:' ? 'https://' : 'http://';
-            const manifestUrl = `${protocol}${host}/${configBase64}/manifest.json`;
-            
-            const stremioUrl = manifestUrl.replace('https://', 'stremio://').replace('http://', 'stremio://');
-            window.location.href = stremioUrl;
-        }
+            window.location.href = installLink;
+        });
     </script>
+
 </body>
 </html>

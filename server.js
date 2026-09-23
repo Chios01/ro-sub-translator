@@ -25,18 +25,18 @@ const c = {
 
 const memoryCache = {}; 
 
-// === MANIFESTUL TĂU PERSONALIZAT ===
 const manifest = {
-    id: 'community.chios.geminitranslator', 
+    id: 'org.stremio.rotranslator.cloud', 
     version: '1.0.0',
     name: 'RO Sub Translator',
-    description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
+    description: 'Traducere Premium cu Gemini. Configurat prin Interfața Web.',
     resources: ['subtitles'],
     types: ['movie', 'series'],
     catalogs: [],
     idPrefixes: ['tt']
 };
 
+// === DEGHIZARE PENTRU A EVITA BLOCAREA (CLOUDFLARE/403) ===
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 // ==========================================
@@ -71,15 +71,21 @@ async function handleSubtitles(req, res) {
 
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
+        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}.json`,             
         `https://opensubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,  
+        `https://opensubtitles.strem.io/subtitles/${type}/${id}.json`,
         `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
-        `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`
+        `https://yifysubtitles.strem.io/subtitles/${type}/${id}.json`,
+        `https://subtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
+        `https://subtitles.strem.io/subtitles/${type}/${id}.json`,
+        `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`,
+        `https://subdl.strem.io/subtitles/${type}/${id}.json`
     ];
 
     try {
         const fetchPromises = urlsToFetch.map(u => 
             axios.get(u, { 
-                timeout: 3000, 
+                timeout: 4500, 
                 headers: { 'User-Agent': BROWSER_USER_AGENT } 
             }).catch(() => ({ data: { subtitles: [] } }))
         );
@@ -100,19 +106,40 @@ async function handleSubtitles(req, res) {
             if (uniqueUrls.has(sub.url)) return false;
             uniqueUrls.add(sub.url);
             return true;
-        }).slice(0, 20); 
+        }).slice(0, 150); 
 
         if (engSubs.length === 0) return res.json({ subtitles: [] });
+
+        let processedSubs = [];
+        for (let i = 0; i < engSubs.length; i += 10) {
+            const batch = engSubs.slice(i, i + 10);
+            const batchResults = await Promise.all(batch.map(async (sub, idx) => {
+                let realName = sub.title || sub.id || `Varianta_${i + idx + 1}`;
+                try {
+                    if (!sub.title || sub.title.length < 4) {
+                        const headRes = await axios.head(sub.url, { 
+                            timeout: 2000,
+                            headers: { 'User-Agent': BROWSER_USER_AGENT }
+                        });
+                        const disposition = headRes.headers['content-disposition'];
+                        if (disposition && disposition.includes('filename')) {
+                            const match = disposition.match(/filename=["']?([^"';]+)["']?/i);
+                            if (match && match[1]) realName = match[1].replace(/\.srt$/gi, '');
+                        }
+                    }
+                } catch (e) { }
+                return { originalUrl: sub.url, realName, index: i + idx };
+            }));
+            processedSubs.push(...batchResults);
+        }
 
         let diverseSubs = [];
         const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
 
-        engSubs.forEach((sub, idx) => {
-            let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
-            if (!trashRegex.test(realName)) {
-                diverseSubs.push({ originalUrl: sub.url, realName, index: idx });
-            }
-        });
+        for (const s of processedSubs) {
+            if (trashRegex.test(s.realName)) continue;
+            diverseSubs.push(s);
+        }
 
         const fNameLower = userFilename.toLowerCase();
         const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
@@ -142,7 +169,7 @@ async function handleSubtitles(req, res) {
         });
 
         diverseSubs.sort((a, b) => b.score - a.score);
-        diverseSubs = diverseSubs.slice(0, 15);
+        diverseSubs = diverseSubs.slice(0, 20);
 
         const generatedSubs = diverseSubs.map((s, index) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
@@ -160,7 +187,7 @@ async function handleSubtitles(req, res) {
                 id: `ai_sub_${index}`,
                 title: labelName, 
                 url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
-                lang: 'ron' 
+                lang: 'ron'
             };
         });
 
@@ -216,6 +243,7 @@ app.get('/:configData/translate', async (req, res) => {
             const startTime = Date.now();
             
             processPromise = (async () => {
+                // Descărcarea fișierului SRT cu User-Agent mascarat
                 const srtRes = await axios.get(targetUrl, {
                     headers: { 'User-Agent': BROWSER_USER_AGENT }
                 });
@@ -336,12 +364,9 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    const maxAttempts = 15;
+    const maxAttempts = 30;
 
-    let antiCollisionDelay = 500;
-    if (totalChunks > 12) {
-        antiCollisionDelay = 1500; 
-    }
+    const antiCollisionDelay = totalChunks > 12 ? 1500 : 500;
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         while (Date.now() < globalRateLimitPause) {
@@ -353,30 +378,21 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         let apiKey = null;
 
         while (true) {
-            let foundKey = false;
-            
-            // === LOGICA NOUĂ: PACHETUL DE CĂRȚI ===
-            // Le luăm strict la rând, una după alta. 1, 2, 3... 20. Nu le mai amestecăm aleatoriu.
-            for (let attempt = 0; attempt < keyState.keys.length; attempt++) {
-                let currentIndex = keyState.index % keyState.keys.length;
-                keyState.index++; // Mutăm contorul pe următoarea cheie
-
-                if (Date.now() >= keyState.keys[currentIndex].pauseUntil) {
-                    keyIndex = currentIndex;
-                    currentKeyObj = keyState.keys[keyIndex];
-                    apiKey = currentKeyObj.value;
-
-                    currentKeyObj.pauseUntil = Date.now() + antiCollisionDelay;
-                    foundKey = true;
-                    break; // Am găsit o cheie, ieșim din loop-ul de căutare
+            let found = false;
+            for (let i = 0; i < keyState.keys.length; i++) {
+                keyState.index = (keyState.index + 1) % keyState.keys.length;
+                let candidate = keyState.keys[keyState.index];
+                if (Date.now() >= candidate.pauseUntil) {
+                    currentKeyObj = candidate;
+                    apiKey = candidate.value;
+                    keyIndex = keyState.index;
+                    
+                    candidate.pauseUntil = Date.now() + antiCollisionDelay;
+                    found = true;
+                    break;
                 }
             }
-
-            if (foundKey) {
-                break; // Ieșim din `while(true)` pentru că avem cheie validă
-            }
-
-            // Dacă absolut toate cheile sunt pe pauză, așteptăm 1 secundă și verificăm din nou
+            if (found) break;
             await new Promise(r => setTimeout(r, 1000));
         }
 
@@ -486,7 +502,7 @@ ${JSON.stringify(keysToTranslate)}`;
             }
 
             if (newlyTranslatedCount === 0) {
-                throw new Error("Nu a extras nicio linie validă.");
+                throw new Error("Nu a extras nicio linie validă. Reîncercare...");
             }
 
             if (Object.keys(keysToTranslate).length === 0) {
@@ -518,10 +534,6 @@ ${JSON.stringify(keysToTranslate)}`;
         }
     }
     
-    if (attempts >= maxAttempts) {
-        console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1} a fost abandonat parțial după erori repetate. Mențin engleza pentru restul liniilor.${c.reset}`);
-    }
-
     const finalTranslatedArray = chunkObjArray.map(obj => {
         return finalTranslatedDict[obj.id] !== undefined ? finalTranslatedDict[obj.id] : obj.text;
     });
@@ -540,11 +552,9 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    let CONCURRENCY_LIMIT = 3; 
-
+    const CONCURRENCY_LIMIT = 3; 
     let allTranslatedTexts = [];
 
-    // === CONTOR GLOBAL PENTRU EXTRAGEREA ÎN CERC A CHEILOR ===
     const keyState = { 
         keys: userKeys.map(k => ({ value: k, pauseUntil: 0 })), 
         index: 0 
