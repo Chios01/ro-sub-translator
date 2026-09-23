@@ -366,7 +366,14 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let attempts = 0;
     const maxAttempts = 30;
 
-    const antiCollisionDelay = totalChunks > 12 ? 1500 : 500;
+    // === NOUA LOGICĂ: Frână de 3 secunde pentru Turbo, 1.5s pentru normal ===
+    let antiCollisionDelay = 500;
+    if (totalChunks > 12) {
+        antiCollisionDelay = 1500; // Viteza normală (sub 20 chei)
+    }
+    if (keyState.keys.length >= 20) {
+        antiCollisionDelay = 3000; // Frâna mărită la 3 secunde pentru Modul Turbo
+    }
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         while (Date.now() < globalRateLimitPause) {
