@@ -7,7 +7,7 @@ Acest proiect nu este doar un simplu script de traducere, ci un **motor robust, 
 ### 🚀 Caracteristici Principale
 
 * **Viteză Adaptivă & Mod Turbo (Multi-Threading):** Sistemul acționează ca o cutie de viteze automată. La configurarea standard (10 chei API), utilizează 3 "muncitori" asincroni care traduc simultan. Dacă introduci 20 de chei, activează automat Modul Turbo (5 muncitori simultani) care traduc simultan calupuri de câte 165 de linii.
-* **Curățare Inteligentă (Anti-SDH):** Elimină automat descrierile de sunete și parantezele destinate persoanelor cu deficiențe de auz (ex: `[THUNDER RUMBLING]`), lăsând pe ecran exclusiv dialogul curat al personajelor.
+* **Curățare Inteligentă (Anti-SDH):** Elimină automat descrierile de sunete și parantezele destinate persoanelor cu deficiențe de auz, lăsând pe ecran exclusiv dialogul curat al personajelor.
 * **Sistem BYOK (Bring Your Own Key):** Complet descentralizat. Fiecare utilizator își introduce propriile chei (10 obligatorii, 10 opționale pentru Turbo) printr-o interfață web securizată, eliminând riscul de blocare globală a addon-ului.
 * **Memorie Cache Globală:** Odată ce un film a fost tradus de un utilizator, fișierul `.srt` rămâne salvat în memoria RAM a serverului. Următorii utilizatori care accesează același film primesc traducerea instantaneu, cu 0 timp de așteptare și 0 consum de API.
 * **Toleranță la Erori (Auto-Recuperare):** Dacă Google refuză o cheie (Eroarea 429 - Too Many Requests), serverul o trimite automat "pe bancă" la răcit pentru 60 de secunde, rotește următoarea cheie disponibilă și recuperează instant liniile omise.
