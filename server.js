@@ -55,6 +55,11 @@ app.get('/:configData/manifest.json', (req, res) => {
     res.json(manifest);
 });
 
+// Ruta adăugată pentru a rezolva eroarea de la butonul de configurare din Stremio
+app.get('/:configData/configure', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
 
