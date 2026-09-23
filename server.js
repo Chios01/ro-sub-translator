@@ -454,7 +454,7 @@ ${JSON.stringify(keysToTranslate)}`;
                 },
                 { 
                     headers: { 'Content-Type': 'application/json' },
-                    timeout: 120000 
+                    timeout: 35000 // Tăiem conexiunea dacă Google nu răspunde în 35 de secunde
                 }
             );
 
