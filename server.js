@@ -25,18 +25,19 @@ const c = {
 
 const memoryCache = {}; 
 
+// === MANIFESTUL TĂU STABIL (CU CONFIGURABLE ACTIVAT) ===
 const manifest = {
-    id: 'org.stremio.rotranslator.cloud', 
+    id: 'community.chios.geminitranslator', 
     version: '1.0.0',
     name: 'RO Sub Translator',
-    description: 'Traducere Premium cu Gemini. Configurat prin Interfața Web.',
+    description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
     types: ['movie', 'series'],
     catalogs: [],
-    idPrefixes: ['tt']
+    idPrefixes: ['tt'],
+    configurable: true // Activează butonul de setări (rotița dințată) în Stremio[cite: 2]
 };
 
-// === DEGHIZARE PENTRU A EVITA BLOCAREA (CLOUDFLARE/403) ===
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 // ==========================================
@@ -243,7 +244,6 @@ app.get('/:configData/translate', async (req, res) => {
             const startTime = Date.now();
             
             processPromise = (async () => {
-                // Descărcarea fișierului SRT cu User-Agent mascarat
                 const srtRes = await axios.get(targetUrl, {
                     headers: { 'User-Agent': BROWSER_USER_AGENT }
                 });
@@ -290,7 +290,7 @@ app.listen(PORT, () => {
 });
 
 // ==========================================
-// 2. FUNCȚII AJUTĂTOARE & TRADUCERE
+// 2. FUNCȚII AJUTĂTOARE & TRADUCERE (STABIL 10 CHEI)
 // ==========================================
 
 function cleanTextForJson(text) {
@@ -366,8 +366,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let attempts = 0;
     const maxAttempts = 30;
 
-    const antiCollisionDelay = totalChunks > 12 ? 1500 : 500;
-
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         while (Date.now() < globalRateLimitPause) {
             await new Promise(r => setTimeout(r, 1000));
@@ -378,21 +376,23 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         let apiKey = null;
 
         while (true) {
-            let found = false;
+            let availableIndices = [];
             for (let i = 0; i < keyState.keys.length; i++) {
-                keyState.index = (keyState.index + 1) % keyState.keys.length;
-                let candidate = keyState.keys[keyState.index];
-                if (Date.now() >= candidate.pauseUntil) {
-                    currentKeyObj = candidate;
-                    apiKey = candidate.value;
-                    keyIndex = keyState.index;
-                    
-                    candidate.pauseUntil = Date.now() + antiCollisionDelay;
-                    found = true;
-                    break;
+                if (Date.now() >= keyState.keys[i].pauseUntil) {
+                    availableIndices.push(i);
                 }
             }
-            if (found) break;
+
+            if (availableIndices.length > 0) {
+                let randomIndex = Math.floor(Math.random() * availableIndices.length);
+                keyIndex = availableIndices[randomIndex];
+                currentKeyObj = keyState.keys[keyIndex];
+                apiKey = currentKeyObj.value;
+
+                currentKeyObj.pauseUntil = Date.now() + 1500;
+                break;
+            }
+
             await new Promise(r => setTimeout(r, 1000));
         }
 
@@ -552,7 +552,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    const CONCURRENCY_LIMIT = 3; 
+    let CONCURRENCY_LIMIT = 3; 
+
     let allTranslatedTexts = [];
 
     const keyState = { 
