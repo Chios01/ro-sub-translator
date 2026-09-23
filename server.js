@@ -366,13 +366,13 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let attempts = 0;
     const maxAttempts = 30;
 
-    // === NOUA LOGICĂ: Frână de 2.5 secunde pentru Turbo, 1.5s pentru normal ===
+    // === REVENIT LA 1.5 SECUNDE PAUZĂ PENTRU TURBO ===
     let antiCollisionDelay = 500;
     if (totalChunks > 12) {
         antiCollisionDelay = 1500; 
     }
     if (keyState.keys.length >= 20) {
-        antiCollisionDelay = 2500; // Pauză de 2.5 secunde între chei pentru Modul Turbo
+        antiCollisionDelay = 1500; 
     }
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
@@ -405,7 +405,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        const modelName = 'gemini-3.5-flash-lite';
+        // === SCHIMBAT MODELUL ÎN GEMINI-3.5-FLASH ===
+        const modelName = 'gemini-3.5-flash';
         let currentBatchSize = Object.keys(keysToTranslate).length;
 
         try {
@@ -561,10 +562,10 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // === NOUA LOGICĂ: 4 calupuri simultan pentru Modul Turbo ===
+    // === REVENIT LA 3 CALUPURI PENTRU STABILITATE ===
     let CONCURRENCY_LIMIT = 3; 
     if (userKeys.length >= 20) {
-        CONCURRENCY_LIMIT = 4; 
+        CONCURRENCY_LIMIT = 3; 
     }
 
     let allTranslatedTexts = [];
