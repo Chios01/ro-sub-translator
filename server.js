@@ -425,6 +425,8 @@ RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 
 6. CUVINTE COMPLETE: Nu tăia niciodată prima literă a cuvântului, mai ales la diacritice (ex: scrie "Încă", nu "ncă").
 
+7. ELIMINĂ SUNETELE DE FUNDAL (SDH): Șterge complet orice text aflat între paranteze rotunde (...) sau drepte [...]. Păstrează exclusiv dialogul.
+
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
 
