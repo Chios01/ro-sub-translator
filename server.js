@@ -25,7 +25,7 @@ const c = {
 
 const memoryCache = {}; 
 
-// === MANIFESTUL TĂU STABIL (CU CONFIGURABLE ACTIVAT) ===
+// === MANIFESTUL TĂU CU CONFIGURARE ACTIVATĂ ÎN STREMIO ===
 const manifest = {
     id: 'community.chios.geminitranslator', 
     version: '1.0.0',
@@ -35,7 +35,10 @@ const manifest = {
     types: ['movie', 'series'],
     catalogs: [],
     idPrefixes: ['tt'],
-    configurable: true // Activează butonul de setări (rotița dințată) în Stremio[cite: 2]
+    behaviorHints: {
+        configurable: true,
+        configurationRequired: false
+    }
 };
 
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
