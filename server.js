@@ -366,13 +366,13 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let attempts = 0;
     const maxAttempts = 30;
 
-    // === NOUA LOGICĂ: Frână de 3 secunde pentru Turbo, 1.5s pentru normal ===
+    // === NOUA LOGICĂ: Frână de 2.5 secunde pentru Turbo, 1.5s pentru normal ===
     let antiCollisionDelay = 500;
     if (totalChunks > 12) {
-        antiCollisionDelay = 1500; // Viteza normală (sub 20 chei)
+        antiCollisionDelay = 1500; 
     }
     if (keyState.keys.length >= 20) {
-        antiCollisionDelay = 3000; // Frâna mărită la 3 secunde pentru Modul Turbo
+        antiCollisionDelay = 2500; // Pauză de 2.5 secunde între chei pentru Modul Turbo
     }
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
@@ -385,7 +385,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         let apiKey = null;
 
         while (true) {
-            // Selectare complet aleatorie a unei chei disponibile (care nu este pe pauză)
             let availableIndices = [];
             for (let i = 0; i < keyState.keys.length; i++) {
                 if (Date.now() >= keyState.keys[i].pauseUntil) {
@@ -562,9 +561,10 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
+    // === NOUA LOGICĂ: 4 calupuri simultan pentru Modul Turbo ===
     let CONCURRENCY_LIMIT = 3; 
     if (userKeys.length >= 20) {
-        CONCURRENCY_LIMIT = 5; 
+        CONCURRENCY_LIMIT = 4; 
     }
 
     let allTranslatedTexts = [];
