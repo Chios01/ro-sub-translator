@@ -386,33 +386,37 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT ACTUALIZAT CU INTERDICȚIA CIFRELOR ÎN CUVINTE ȘI TOATE REGULILE ANTERIOARE
+            // PROMPT RECALIBRAT: CIFRE PERMISE INDEPENDENT, FĂRĂ LITERALE, SPAȚIERE CORECTĂ
             const prompt = `Ești un traducător profesionist de subtitrări pentru filme și seriale. Traduce din engleză în română naturală.
 RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 
-1. FĂRĂ CIFRE ÎN CUVINTE (CRITIC): Nu introduce niciodată cifre în interiorul cuvintelor (ex: interzis "2uita", scrie corect "uita"). Toate cuvintele trebuie să fie formate exclusiv din litere.
+1. REGULA CIFRELOR ȘI NUMERELOR:
+   -> Folosește cifre pentru numere, ore, sume sau numere de masă (ex: "Mesele 12, 4, 11"). 
+   -> ESTE STRICT INTERZIS SĂ FOLOSEȘTI CIFRE ÎN INTERIORUL CUVINTELOR. Cifrele nu se lipesc de litere (ex: interzis "2uita", corect este "uita" sau "te uita").
 
-2. TERMENI DE ADRESARE ȘI SLANG ("dude", "bro", "man"):
-   -> Când un personaj folosește apelative precum "dude", "bro" sau "man", tradu-le prin termeni colocviali naturali în română (ex: "frate", "băiete", "omule") sau omită-le dacă nu își au rostul. Nu inventa niciodată cuvinte ciudate.
+2. SPAȚIEREA CORECTĂ:
+   -> Păstrează spațiile corecte între cuvinte. Nu lipi cuvinte care trebuie să fie separate (ex: scrie "ai mai", NU "aimai").
 
-3. ACORD DE GEN STRICT: 
-   -> Fii atent la context: dacă un personaj se referă la un bărbat/băiat, adjectivele și formele gramaticale trebuie să fie OBLIGATORIU la masculin (ex: "nesuferit", "prost"). Dacă se referă la o femeie, folosește femininul.
+3. ACORD DE GEN STRICT (CRITIC): 
+   -> Fii atent la context: dacă un personaj se referă la un bărbat/băiat, adjectivele OBLIGATORIU trebuie să fie la masculin (ex: "nesuferit", "desființat", "prost"). Dacă se referă la o femeie, folosește femininul ("desființată", "proastă").
 
-4. EVITĂ TRADUCERILE LITERALE:
-   -> Nu traduce niciodată cuvânt cu cuvânt expresiile sau exclamațiile (ex: "Damn" se traduce prin "La naiba" sau "Ce naiba"). Folosește un limbaj colocvial, fluent.
+4. TERMENI DE ADRESARE ȘI SLANG ("dude", "bro", "man"):
+   -> Tradu-le prin termeni colocviali ("frate", "băiete", "omule") sau omită-le. Nu inventa cuvinte ciudate.
 
-5. GRAMATICĂ ȘI PLURALUL: 
-   -> Articulează corect substantivele la plural (ex: "sânii mei", NU "sâni mei").
-   -> Folosește corect genul substantivelor comune (ex: "o secundă", NU "un secund").
+5. EVITĂ TRADUCERILE LITERALE:
+   -> Nu traduce mot-a-mot expresiile ("Damn" se traduce "La naiba"). Adaptează natural pentru comedie.
+
+6. GRAMATICĂ ȘI PLURALUL: 
+   -> Articulează corect la plural (ex: "sânii mei", NU "sâni mei").
    -> Nu scrie niciodată "Mi s-a plătit" în loc de "Am fost plătit(ă)".
 
-6. INTERZIS TRADUCEREA ZGOMOTELOR: Nu traduce și nu scrie NICIODATĂ cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Uh-huh", "Ha", "Vai". Returnează un spațiu gol: " ".
+7. INTERZIS TRADUCEREA ZGOMOTELOR: Nu traduce și nu scrie NICIODATĂ cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Uh-huh", "Ha", "Vai". Returnează DOAR un spațiu gol: " ". 
 
-7. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând nou, șterge și liniuța de dialog (-).
+8. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând, șterge obligatoriu și liniuța de dialog (-).
 
-8. CUVINTE COMPLETE: Nu tăia niciodată prima literă a cuvântului, mai ales la diacritice (ex: "Încă", nu "ncă").
+9. CUVINTE COMPLETE: Nu tăia prima literă a cuvântului (ex: "Încă", nu "ncă").
 
-9. ELIMINĂ SUNETELE DE FUNDAL (SDH): Șterge complet orice text aflat între paranteze rotunde (...) sau drepte [...].
+10. ELIMINĂ SUNETELE DE FUNDAL (SDH): Șterge complet orice text aflat între paranteze rotunde (...) sau drepte [...].
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
