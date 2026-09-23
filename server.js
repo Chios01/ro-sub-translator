@@ -36,6 +36,9 @@ const manifest = {
     idPrefixes: ['tt']
 };
 
+// === DEGHIZARE PENTRU A EVITA BLOCAREA (CLOUDFLARE/403) ===
+const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
 // ==========================================
 // 1. RUTELE SERVERULUI
 // ==========================================
@@ -81,7 +84,10 @@ async function handleSubtitles(req, res) {
 
     try {
         const fetchPromises = urlsToFetch.map(u => 
-            axios.get(u, { timeout: 4500 }).catch(() => ({ data: { subtitles: [] } }))
+            axios.get(u, { 
+                timeout: 4500, 
+                headers: { 'User-Agent': BROWSER_USER_AGENT } 
+            }).catch(() => ({ data: { subtitles: [] } }))
         );
 
         const results = await Promise.all(fetchPromises);
@@ -111,7 +117,10 @@ async function handleSubtitles(req, res) {
                 let realName = sub.title || sub.id || `Varianta_${i + idx + 1}`;
                 try {
                     if (!sub.title || sub.title.length < 4) {
-                        const headRes = await axios.head(sub.url, { timeout: 2000 });
+                        const headRes = await axios.head(sub.url, { 
+                            timeout: 2000,
+                            headers: { 'User-Agent': BROWSER_USER_AGENT }
+                        });
                         const disposition = headRes.headers['content-disposition'];
                         if (disposition && disposition.includes('filename')) {
                             const match = disposition.match(/filename=["']?([^"';]+)["']?/i);
@@ -234,7 +243,10 @@ app.get('/:configData/translate', async (req, res) => {
             const startTime = Date.now();
             
             processPromise = (async () => {
-                const srtRes = await axios.get(targetUrl);
+                // Descărcarea fișierului SRT cu User-Agent mascarat
+                const srtRes = await axios.get(targetUrl, {
+                    headers: { 'User-Agent': BROWSER_USER_AGENT }
+                });
                 
                 const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
                 console.log(`${c.cyan}\n==================================================${c.reset}`);
@@ -394,7 +406,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT NOU - Am adăugat reguli clare pentru gramatică (dublu i și genul substantivelor)
             const prompt = `Ești un traducător profesionist de subtitrări. Traduce din engleză în română.
 RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 
