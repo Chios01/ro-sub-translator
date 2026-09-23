@@ -3,174 +3,141 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RO Sub Translator - Configurare</title>
+    <title>Configurare RO Sub Translator</title>
     <style>
-        body {
-            background-color: #0d1117;
-            color: #c9d1d9;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #141414; 
+            color: #ffffff; 
+            display: flex; 
+            justify-content: center; 
+            padding: 20px; 
             margin: 0;
-            min-height: 100vh;
         }
-        .container {
-            background-color: #161b22;
-            padding: 30px;
-            border-radius: 10px;
-            border: 1px solid #30363d;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            max-width: 500px;
-            width: 100%;
+        .container { 
+            max-width: 600px; 
+            width: 100%; 
+            background: #242424; 
+            padding: 30px; 
+            border-radius: 12px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8); 
         }
-        h1 {
-            text-align: center;
-            color: #58a6ff;
+        h1 { 
+            text-align: center; 
+            color: #8a2be2; 
             margin-bottom: 5px;
         }
-        p.subtitle {
+        .description {
             text-align: center;
-            color: #8b949e;
+            color: #aaaaaa;
             font-size: 14px;
             margin-bottom: 25px;
+            line-height: 1.5;
         }
-        .input-group {
-            margin-bottom: 15px;
+        .key-group { margin-bottom: 25px; }
+        .key-group h3 {
+            border-bottom: 1px solid #444;
+            padding-bottom: 10px;
+            color: #e0e0e0;
         }
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-size: 14px;
-            font-weight: 600;
+        .optional-title { color: #888 !important; }
+        label { 
+            display: block; 
+            margin-bottom: 6px; 
+            font-size: 13px; 
+            color: #ccc;
         }
-        .required::after {
-            content: " *";
-            color: #f85149;
-        }
-        input[type="text"] {
-            width: 100%;
-            padding: 10px;
-            background-color: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            color: #c9d1d9;
+        input { 
+            width: 100%; 
+            padding: 12px; 
+            margin-bottom: 12px; 
+            border: 1px solid #444; 
+            border-radius: 6px; 
+            background: #1e1e1e; 
+            color: #fff; 
+            box-sizing: border-box; 
             font-family: monospace;
-            box-sizing: border-box;
         }
-        input[type="text"]:focus {
-            border-color: #58a6ff;
+        input:focus {
             outline: none;
+            border-color: #8a2be2;
         }
-        .btn-install {
-            width: 100%;
-            padding: 12px;
-            background-color: #238636;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 16px;
+        .btn { 
+            display: block; 
+            width: 100%; 
+            padding: 16px; 
+            background: #8a2be2; 
+            color: #fff; 
+            border: none; 
+            border-radius: 8px; 
+            font-size: 16px; 
             font-weight: bold;
-            cursor: pointer;
-            margin-top: 20px;
-            transition: background-color 0.2s;
+            cursor: pointer; 
+            transition: background 0.2s;
         }
-        .btn-install:hover {
-            background-color: #2ea043;
-        }
-        .footer {
-            margin-top: 25px;
-            padding-top: 15px;
-            border-top: 1px dashed #30363d;
-            text-align: center;
-        }
+        .btn:hover { background: #6a1b9a; }
     </style>
 </head>
 <body>
-
     <div class="container">
-        <h1>RO Sub Translator</h1>
-        <p class="subtitle">Adaugă cheile tale Google Gemini API</p>
-
-        <form id="configForm">
-            <div class="input-group">
-                <label class="required" for="key1">Cheia API 1</label>
-                <input type="text" id="key1" required placeholder="AIzaSy...">
-            </div>
-            <div class="input-group">
-                <label class="required" for="key2">Cheia API 2</label>
-                <input type="text" id="key2" required placeholder="AIzaSy...">
-            </div>
-            <div class="input-group">
-                <label class="required" for="key3">Cheia API 3</label>
-                <input type="text" id="key3" required placeholder="AIzaSy...">
-            </div>
-            <div class="input-group">
-                <label class="required" for="key4">Cheia API 4</label>
-                <input type="text" id="key4" required placeholder="AIzaSy...">
-            </div>
-            <div class="input-group">
-                <label class="required" for="key5">Cheia API 5</label>
-                <input type="text" id="key5" required placeholder="AIzaSy...">
-            </div>
-
-            <hr style="border: 0; border-top: 1px solid #30363d; margin: 20px 0;">
-            
-            <div class="input-group">
-                <label for="key6">Cheia API 6 (Opțional)</label>
-                <input type="text" id="key6" placeholder="AIzaSy...">
-            </div>
-            <div class="input-group">
-                <label for="key7">Cheia API 7 (Opțional)</label>
-                <input type="text" id="key7" placeholder="AIzaSy...">
-            </div>
-            <div class="input-group">
-                <label for="key8">Cheia API 8 (Opțional)</label>
-                <input type="text" id="key8" placeholder="AIzaSy...">
-            </div>
-            <div class="input-group">
-                <label for="key9">Cheia API 9 (Opțional)</label>
-                <input type="text" id="key9" placeholder="AIzaSy...">
-            </div>
-            <div class="input-group">
-                <label for="key10">Cheia API 10 (Opțional)</label>
-                <input type="text" id="key10" placeholder="AIzaSy...">
-            </div>
-
-            <button type="submit" class="btn-install">Instalează în Stremio</button>
-        </form>
-
-        <!-- Textul a fost mutat AICI, în interiorul container-ului gri -->
-        <div class="footer">
-            <p style="color: #00f7ff; font-family: 'Courier New', monospace; text-shadow: 0 0 5px #00f7ff; font-size: 14px; margin: 0;">
-                // System status: Operational. Powered by Chios.
-            </p>
+        <h1>RO Sub Translator (AI)</h1>
+        <div class="description">
+            Introduceți cheile API Google Gemini.<br> 
+            Primele 10 sunt <b>obligatorii</b> pentru o funcționare stabilă.<br> 
+            Adăugarea a 20 de chei activează automat <b>Modul Turbo</b>.
         </div>
+        
+        <form id="configForm">
+            <div class="key-group" id="mandatoryKeys">
+                <h3>Chei Obligatorii (1 - 10)</h3>
+                <!-- Scriptul JS de mai jos va genera căsuțele -->
+            </div>
+
+            <div class="key-group" id="optionalKeys">
+                <h3 class="optional-title">Chei Opționale (11 - 20)</h3>
+            </div>
+
+            <button type="submit" class="btn">Instalează în Stremio</button>
+        </form>
     </div>
 
     <script>
+        // Generăm cele 10 căsuțe obligatorii
+        const mandatoryContainer = document.getElementById('mandatoryKeys');
+        for(let i = 1; i <= 10; i++) {
+            mandatoryContainer.innerHTML += `
+                <label>Cheia API ${i} *</label>
+                <input type="text" id="key${i}" required placeholder="AIzaSy...">
+            `;
+        }
+
+        // Generăm cele 10 căsuțe opționale
+        const optionalContainer = document.getElementById('optionalKeys');
+        for(let i = 11; i <= 20; i++) {
+            optionalContainer.innerHTML += `
+                <label>Cheia API ${i} (Opțional)</label>
+                <input type="text" id="key${i}" placeholder="AIzaSy...">
+            `;
+        }
+
+        // Funcția de capturare a datelor și trimitere către Stremio
         document.getElementById('configForm').addEventListener('submit', function(e) {
             e.preventDefault();
+            
             let keys = [];
-            for(let i = 1; i <= 10; i++) {
+            for(let i = 1; i <= 20; i++) {
                 let val = document.getElementById('key' + i).value.trim();
-                if(val) keys.push(val);
+                if(val !== '') {
+                    keys.push(val);
+                }
             }
             
-            if(keys.length < 5) {
-                alert("Te rugăm să introduci cel puțin primele 5 chei obligatorii!");
-                return;
-            }
-
             let configData = btoa(JSON.stringify(keys));
-            let currentHost = window.location.host;
-            let installLink = "stremio://" + currentHost + "/" + configData + "/manifest.json";
+            let currentUrl = window.location.href.replace(/\/$/, "");
+            let stremioUrl = currentUrl.replace('https://', 'stremio://').replace('http://', 'stremio://') + '/' + configData + '/manifest.json';
             
-            window.location.href = installLink;
+            window.location.href = stremioUrl;
         });
     </script>
-
 </body>
 </html>
