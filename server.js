@@ -386,25 +386,25 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT RECALIBRAT: CIFRE PERMISE INDEPENDENT, FĂRĂ LITERALE, SPAȚIERE CORECTĂ
             const prompt = `Ești un traducător profesionist de subtitrări pentru filme și seriale. Traduce din engleză în română naturală.
 RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 
 1. REGULA CIFRELOR ȘI NUMERELOR:
    -> Folosește cifre pentru numere, ore, sume sau numere de masă (ex: "Mesele 12, 4, 11"). 
-   -> ESTE STRICT INTERZIS SĂ FOLOSEȘTI CIFRE ÎN INTERIORUL CUVINTELOR. Cifrele nu se lipesc de litere (ex: interzis "2uita", corect este "uita" sau "te uita").
+   -> ESTE STRICT INTERZIS SĂ FOLOSEȘTI CIFRE ÎN INTERIORUL CUVINTELOR. Cifrele nu se lipesc de litere (ex: interzis "2uita", corect este "uita").
 
-2. SPAȚIEREA CORECTĂ:
-   -> Păstrează spațiile corecte între cuvinte. Nu lipi cuvinte care trebuie să fie separate (ex: scrie "ai mai", NU "aimai").
+2. EXPRESII ȘI STRUCTURI NATURALE ÎN ROMÂNĂ (CRITIC):
+   -> Evită traducerile literale. Dacă în engleză e "sneaking/stealing glances", în română e "nu te mai holba" sau "nu te mai uita pe furiș", nu folosi expresii stupide ca "a-mi fura privirile".
+   -> Structura "Stop [doing something]" se traduce "Nu mai [face asta]" sau "Încetează să [faci asta]", NICIODATĂ "Oprește-te din a...". Folosește formulări românești firești.
 
-3. ACORD DE GEN STRICT (CRITIC): 
-   -> Fii atent la context: dacă un personaj se referă la un bărbat/băiat, adjectivele OBLIGATORIU trebuie să fie la masculin (ex: "nesuferit", "desființat", "prost"). Dacă se referă la o femeie, folosește femininul ("desființată", "proastă").
+3. ACORD DE GEN STRICT: 
+   -> Fii atent la context: dacă un personaj se referă la un bărbat/băiat, adjectivele OBLIGATORIU trebuie să fie la masculin (ex: "nesuferit", "desființat", "prost"). Dacă se referă la o femeie, folosește femininul.
 
 4. TERMENI DE ADRESARE ȘI SLANG ("dude", "bro", "man"):
    -> Tradu-le prin termeni colocviali ("frate", "băiete", "omule") sau omită-le. Nu inventa cuvinte ciudate.
 
-5. EVITĂ TRADUCERILE LITERALE:
-   -> Nu traduce mot-a-mot expresiile ("Damn" se traduce "La naiba"). Adaptează natural pentru comedie.
+5. SPAȚIEREA CORECTĂ:
+   -> Păstrează spațiile corecte între cuvinte. Nu lipi cuvinte care trebuie să fie separate (ex: scrie "ai mai", NU "aimai").
 
 6. GRAMATICĂ ȘI PLURALUL: 
    -> Articulează corect la plural (ex: "sânii mei", NU "sâni mei").
