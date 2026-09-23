@@ -25,15 +25,16 @@ const c = {
 
 const memoryCache = {}; 
 
+// === MANIFESTUL TĂU PERSONALIZAT ===
 const manifest = {
-    id: 'org.stremio.rotranslator.cloud', 
-    version: '1.0.0',
-    name: 'RO Sub Translator',
-    description: 'Traducere Premium cu Gemini. Configurat prin Interfața Web.',
-    resources: ['subtitles'],
-    types: ['movie', 'series'],
+    id: "community.chios.geminitranslator",
+    version: "1.0.0",
+    name: "Chios Translate AI",
+    description: "Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.",
+    resources: ["subtitles"],
+    types: ["movie", "series"],
     catalogs: [],
-    idPrefixes: ['tt']
+    idPrefixes: ["tt"]
 };
 
 // === DEGHIZARE PENTRU A EVITA BLOCAREA (CLOUDFLARE/403) ===
