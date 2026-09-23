@@ -77,7 +77,6 @@ async function handleSubtitles(req, res) {
         } catch (e) {}
     }
 
-    // Încărcare paralelă ultra-rapidă pentru a elimina delay-ul din Stremio
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
         `https://opensubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,  
@@ -169,7 +168,7 @@ async function handleSubtitles(req, res) {
                 id: `ai_sub_${index}`,
                 title: labelName, 
                 url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
-                lang: 'ron' // Forțează limba română ca să apară selectată instant în Stremio
+                lang: 'ron'
             };
         });
 
@@ -271,7 +270,7 @@ app.listen(PORT, () => {
 });
 
 // ==========================================
-// 2. FUNCȚII AJUTĂTOARE & TRADUCERE (10 CHEI + SELECȚIE ALEATORIE SIGURĂ)
+// 2. FUNCȚII AJUTĂTOARE & TRADUCERE (PROMPT AVANSAT ANTICICĂ/ANTIGLITCH)
 // ==========================================
 
 function cleanTextForJson(text) {
@@ -387,22 +386,25 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            const prompt = `Ești un traducător profesionist de subtitrări. Traduce din engleză în română.
+            // PROMPT ÎMBUNĂTĂȚIT PENTRU EVITAREA TRADUCERILOR CIUDATE SAU LITERALE
+            const prompt = `Ești un traducător profesionist de subtitrări pentru filme și seriale. Traduce din engleză în română naturală.
 RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 
-1. GRAMATICĂ ȘI ACORDURI (CRITIC): 
+1. EVITĂ TRADUCERILE LITERALE (IDIOMURI ȘI EXCLAMAȚII):
+   -> Nu traduce niciodată cuvânt cu cuvânt expresii sau exclamații (ex: "Damn" se traduce prin "La naiba" sau "Ce naiba", NICIODATĂ prin cuvinte ciudate sau inventate).
+   -> Folosește un limbaj colocvial, fluent, specific personajelor dintr-un serial.
+
+2. GRAMATICĂ ȘI ACORDURI (CRITIC): 
    -> Articulează corect substantivele la plural (ex: "sânii mei", NU "sâni mei").
    -> Folosește corect genul substantivelor comune (ex: "o secundă", NU "un secund").
    -> Nu scrie niciodată "Mi s-a plătit" în loc de "Am fost plătit(ă)".
 
-2. INTERZIS TRADUCEREA ZGOMOTELOR: Nu traduce și nu scrie NICIODATĂ cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Uh-huh", "Ha", "Vai".
+3. INTERZIS TRADUCEREA ZGOMOTELOR: Nu traduce și nu scrie NICIODATĂ cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Uh-huh", "Ha", "Vai".
    -> Dacă replica engleză este doar un zgomot, returnează OBLIGATORIU un spațiu gol: " ". 
 
-3. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând nou, trebuie SĂ ȘTERGI ȘI LINIUȚA DE DIALOG (-). Nu lăsa liniuțe suspendate.
+4. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând nou, trebuie SĂ ȘTERGI ȘI LINIUȚA DE DIALOG (-). Nu lăsa liniuțe suspendate.
 
-4. INTERZIS SLANG ENGLEZESC: Nu scrie NICIODATĂ "man", "bro", "dude".
-
-5. FĂRĂ TRADUCERI LITERALE (IDIOMS): Adaptează sensul la româna naturală. (ex: "Te-a distrus", nu "Te-a făcut desființată").
+5. INTERZIS SLANG ENGLEZESC: Nu scrie NICIODATĂ "man", "bro", "dude". Adaptează-le în română dacă e cazul sau omită-le dacă nu aduc sens.
 
 6. CUVINTE COMPLETE: Nu tăia niciodată prima literă a cuvântului, mai ales la diacritice (ex: scrie "Încă", nu "ncă").
 
