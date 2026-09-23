@@ -394,22 +394,25 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT NOU - Am implementat "Liniuțele orfane" și "Deducția de gen"
-            const prompt = `Ești un traducător profesionist de subtitrări pentru cinema. Traduce din engleză în română.
+            // PROMPT NOU - Reguli mai aspre, exemple AȘA NU
+            const prompt = `Ești un traducător profesionist de subtitrări. Traduce din engleză în română.
+RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 
-REGULI EXTREM DE STRICTE (RESPECTĂ-LE ORBIEȘTE):
-1. INTERZIS SLANG ENGLEZESC (VITAL): ESTE STRICT INTERZIS să folosești cuvintele "man", "bro", "dude", "mate" în traducere. 
-   -> FALS: "De ce man pasă?" sau "De ce man-ar pasă?". 
-   -> CORECT: "De ce mi-ar păsa?".
-2. LINIUȚE ORFANE (CRITIC): Dacă o replică conține 2 rânduri, iar tu ștergi un zgomot ("oh", "ah", "hm", "mhm") de pe unul din rânduri, ȘTERGE ȘI LINIUȚA DE DIALOG (-). 
-   -> FALS: "- Legal și ilegal.\\n- ". 
-   -> CORECT: "- Legal și ilegal." (fără liniuță pe rândul doi).
-3. GEN ȘI ACORD (FEMININ): Ești un AI și nu vezi imaginile, dar caută indicii în replicile din jur. Dacă deduci că vorbește o femeie (sau despre o femeie), folosește femininul ("Am fost plătită", nu "Am fost plătit").
-4. ELIMINĂ ZGOMOTELE: Șterge complet ezitările: "oh", "ah", "uh", "um", "hm", "ăă", "er", "mhm", "uh-huh", "îhî", "aha", "ouch", "wow", "ya". Nu le traduce!
-5. FĂRĂ TRADUCERI LITERALE (IDIOMS): Adaptează expresiile idiomatice (ex: "pull a thread" = "a investiga", NU "a da în ață").
-6. CUVINTE COMPLETE ȘI DIACRITICE: Nu tăia NICIODATĂ prima literă a propoziției (ex: scrie "Încă", nu "ncă").
-7. CONTEXT: Dacă o propoziție e ruptă pe 2 rânduri, tradu cursiv și continuu.
-8. FORMAT JSON: Păstrează etichetele <i> și \\n. NU omite nicio cheie!
+1. INTERZIS TRADUCEREA ZGOMOTELOR/ONOMATOPEELOR: Nu traduce și nu scrie NICIODATĂ cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Uh-huh", "Ha", "Vai".
+   -> Dacă replica engleză este doar un zgomot (ex: "Oh!"), returnează OBLIGATORIU un spațiu gol: " ". 
+   -> FALS: "Vai!" / CORECT: " "
+
+2. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând nou, trebuie SĂ ȘTERGI ȘI LINIUȚA DE DIALOG (-). Nu lăsa liniuțe suspendate.
+   -> FALS: "- Legal și ilegal.\\n- " / CORECT: "- Legal și ilegal."
+
+3. INTERZIS SLANG ENGLEZESC: Nu scrie NICIODATĂ "man", "bro", "dude". Adaptează-le sau șterge-le.
+
+4. FĂRĂ TRADUCERI LITERALE (IDIOMS): Adaptează sensul la româna naturală. Nu amesteca expresii pasive absurde.
+   -> FALS: "Na, te-a făcut desființată." / CORECT: "Ei bine, te-a distrus." sau "Te-a pus la punct."
+
+5. FEMININ IMPLICIT PENTRU GEN: Dacă ești nesigur de gen, iar textul englez e "I was paid", tradu "Am fost plătită" (nu "Mi s-a plătit").
+
+6. CUVINTE COMPLETE: Nu tăia niciodată prima literă a cuvântului, mai ales la diacritice (ex: scrie "Încă", nu "ncă").
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
