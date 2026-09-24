@@ -283,6 +283,8 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™«/gi, '');
     clean = clean.replace(/"/g, "'");
 
+    clean = clean.replace(/^(\s*-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+)[,\.\!\?]*\s+/i, '$1');
+
     const ignoreRegex = /^(-?\s*(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+)[.!?\s]*)$/i;
     if (ignoreRegex.test(clean.trim())) {
         return ' ';
@@ -350,7 +352,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    const maxAttempts = 10; // LIMITĂ DURĂ: Oprește "zbaterile" la 10 încercări eșuate
+    const maxAttempts = 10;
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         
@@ -409,9 +411,13 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             const prompt = `Translate the following English subtitles into natural, conversational Romanian.
 
 RULES:
-1. DIACRITICS (CRITICAL): You MUST use correct Romanian diacritics (ă, â, î, ș, ț) for EVERY word. Never write "mananc" (write "mănânc"), never write "pasa" (write "pasă"). 
+1. DIACRITICS & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Always use "o secundă" (NEVER "un secund"). Articulate plurals correctly (e.g., "sânii", not "sâni").
 2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for the first person ("I"), use neutral phrasing. Instead of "Am fost plătit / plătită" (I got paid), use "Mi-am primit banii" or "Am luat banii". 
-3. IDIOMS & SLANG: Do not translate literally. "Why do I give a shit?" should be "Ce-mi pasă mie?", NOT "De ce mănânc rahat?". "Man" as slang should be "omule" or "frate".
+3. IDIOMS & SLANG: Do not translate literally. 
+   - "Stop doing X" = "Nu mai face X", NEVER "Oprește-te din a...". 
+   - Vulgar idioms must sound natural in Romanian. Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi dracu'".
+   - "Why do I give a shit?" = "Ce-mi pasă mie?". 
+   - "Man" as slang = "omule".
 4. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like (sighs), [music], (city humming). DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. Remove dangling hyphens (-).
 5. NO DIGITS IN WORDS: Never put numbers inside words (e.g., write "uita", not "2uita"). 
 6. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add any extra text, explanations, or markdown formatting blocks before or after the JSON.
@@ -505,7 +511,7 @@ ${JSON.stringify(batchToProcess)}`;
             attempts++;
             if (attempts >= maxAttempts) {
                 console.log(`${c.red}✖ [Gemini] Abandon! Serverele Google sunt prea aglomerate. Renunț la liniile rămase din calupul ${globalChunkIndex + 1}.${c.reset}`);
-                break; // Ieșim forțat din buclă după 10 încercări eșuate
+                break; 
             }
 
             if (error.response && error.response.status === 429) {
