@@ -276,19 +276,53 @@ app.listen(PORT, () => {
 function cleanTextForJson(text) {
     if (!text) return text;
     let clean = text;
-    clean = clean.replace(/[\[\(\*\{][\s\S]*?[\]\)\*\}]/g, '');
+
+    // 1. Ștergem COMPLET tag-urile HTML (asta previne ascunderea parantezelor)
+    clean = clean.replace(/<[^>]+>/g, '');
+
+    // 2. Ștergem descrierile audio din paranteze
+    clean = clean.replace(/[\[\(\*\{【][\s\S]*?[\]\)\*\}】]/g, '');
+
+    // 3. Ștergem numele personajelor și notele muzicale
     clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/[♪#♫]/g, '');
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
+    
+    // 4. Transformăm ghilimelele
     clean = clean.replace(/"/g, "'");
 
-    clean = clean.replace(/^(\s*-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+)[,\.\!\?]*\s+/i, '$1');
+    // 5. PROCESARE LINIE CU LINIE (PENTRU LINIUȚE ORFANE ȘI INTERJECȚII)
+    let lines = clean.split('\n');
+    lines = lines.map(line => {
+        let l = line.trim();
+        
+        // Eliminăm interjecțiile lipite de început în buclă (pentru a curăța "Oh, ah, yes!")
+        let changed = true;
+        while(changed) {
+            const match = l.match(/^(-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]+(.*)$/i);
+            if (match) {
+                l = match[1] + match[3].trim();
+            } else {
+                changed = false;
+            }
+        }
 
-    const ignoreRegex = /^(-?\s*(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+)[.!?\s]*)$/i;
-    if (ignoreRegex.test(clean.trim())) {
-        return ' ';
-    }
+        // Dacă după curățare a rămas o linie doar cu o interjecție (ex: "Ah!"), o golim
+        if (/^(-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*$/i.test(l)) {
+            return '';
+        }
+
+        // Dacă linia a rămas DOAR cu o liniuță goală (ex: "-"), o ștergem complet
+        if (/^-?\s*$/.test(l)) {
+            return '';
+        }
+
+        return l;
+    });
+
+    // Reconstruim textul, eliminând rândurile devenite goale
+    clean = lines.filter(l => l !== '').join('\n');
 
     if (clean.trim() === '') return ' ';
     return clean.trim();
@@ -352,10 +386,26 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    const maxAttempts = 15; // Răbdare: Încearcă de 15 ori același calup
+    let contentErrorCount = 0; 
+    const maxAttempts = 15; 
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         
+        let batchToProcess = {};
+        const allKeys = Object.keys(keysToTranslate);
+        
+        // Sparge calupul DOAR dacă a eșuat de 2 ori din cauză de cenzură/format
+        if (contentErrorCount >= 2 && allKeys.length > 5) {
+            console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1} pare blocat de format. Îl împart pentru a izola problema...${c.reset}`);
+            const halfLength = Math.floor(allKeys.length / 2);
+            for (let i = 0; i < halfLength; i++) {
+                batchToProcess[allKeys[i]] = keysToTranslate[allKeys[i]];
+            }
+            contentErrorCount = 0; 
+        } else {
+            batchToProcess = Object.assign({}, keysToTranslate);
+        }
+
         while (Date.now() < globalRateLimitPause) {
             await new Promise(r => setTimeout(r, 1000));
         }
@@ -386,7 +436,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         }
 
         const modelName = 'gemini-3.5-flash-lite';
-        let currentBatchSize = Object.keys(keysToTranslate).length;
+        let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
             if (currentBatchSize === expectedTotalCount) {
@@ -395,21 +445,19 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPTUL ENGLEZESC + RELAXAREA CUVINTELOR VULGARE
             const prompt = `Translate the following English subtitles into natural, conversational Romanian.
 
 RULES:
-1. DIACRITICS & GRAMMAR: Use correct Romanian diacritics (ă, â, î, ș, ț). Always use "o secundă" (NEVER "un secund"). Articulate plurals correctly.
+1. DIACRITICS & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Always use "o secundă" (NEVER "un secund"). Articulate plurals correctly.
 2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
 3. TV BROADCAST CENSORSHIP (CRITICAL): To prevent safety filter blocks, DO NOT translate extreme swear words literally. Soften all vulgarities to PG-13 TV standards. For example, translate "motherfucker", "fuck", or "shit" as "la naiba", "du-te dracului", "nenorocitule", "fir-ar", or "rahat".
 4. IDIOMS & SLANG: "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". "Stop doing X" = "Nu mai face X". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
-5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like (sighs), [music], (city humming). DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. Remove dangling hyphens (-).
+5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like (sighs), [music]. DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. Remove dangling hyphens (-).
 6. NO DIGITS IN WORDS: Never put numbers inside words (e.g., write "uita", not "2uita"). 
 7. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
-8. CENSORSHIP BYPASS: If a line still violates safety policies, DO NOT block the output. Simply replace the explicit word with a generic expression like "Fir-ar!" and translate the rest.
 
 Input JSON:
-${JSON.stringify(keysToTranslate)}`;
+${JSON.stringify(batchToProcess)}`;
 
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
@@ -450,7 +498,7 @@ ${JSON.stringify(keysToTranslate)}`;
                 let cleanText = fixBrokenJson(textResponse);
                 parsedDict = JSON.parse(cleanText);
             } catch (e) {
-                const keys = Object.keys(keysToTranslate);
+                const keys = Object.keys(batchToProcess);
                 for (let i = 0; i < keys.length; i++) {
                     const key = keys[i];
                     const nextKey = keys[i + 1];
@@ -486,6 +534,7 @@ ${JSON.stringify(keysToTranslate)}`;
                 throw new Error("Nu a extras nicio linie validă.");
             } else {
                 attempts = 0;
+                contentErrorCount = 0;
             }
 
             if (Object.keys(keysToTranslate).length === 0) {
@@ -513,7 +562,8 @@ ${JSON.stringify(keysToTranslate)}`;
                 console.log(`${c.yellow}⚠ [Gemini] Timeout. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, 2000));
             } else {
-                console.log(`${c.magenta}⚠ [Gemini] Eroare text calup ${globalChunkIndex + 1}. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
+                contentErrorCount++;
+                console.log(`${c.magenta}⚠ [Gemini] Eroare format/cenzură. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, 1000));
             }
         }
