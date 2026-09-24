@@ -347,6 +347,22 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     const maxAttempts = 15;
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
+        
+        let batchToProcess = {};
+        const allKeys = Object.keys(keysToTranslate);
+        
+        // Logica CORECTATĂ: Dacă se încăpățânează, luăm DOAR jumătate pentru prompt,
+        // dar nu aruncăm cealaltă jumătate din `keysToTranslate`.
+        if (attempts >= 4 && allKeys.length > 5) {
+            console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1} este blocat. Îl împart pentru a izola problema...${c.reset}`);
+            const halfLength = Math.floor(allKeys.length / 2);
+            for (let i = 0; i < halfLength; i++) {
+                batchToProcess[allKeys[i]] = keysToTranslate[allKeys[i]];
+            }
+        } else {
+            batchToProcess = Object.assign({}, keysToTranslate);
+        }
+
         while (Date.now() < globalRateLimitPause) {
             await new Promise(r => setTimeout(r, 1000));
         }
@@ -377,7 +393,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         }
 
         const modelName = 'gemini-3.5-flash-lite';
-        let currentBatchSize = Object.keys(keysToTranslate).length;
+        let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
             if (currentBatchSize === expectedTotalCount) {
@@ -421,7 +437,7 @@ RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 9. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând, șterge obligatoriu și liniuța de dialog (-).
 
 JSON de tradus:
-${JSON.stringify(keysToTranslate)}`;
+${JSON.stringify(batchToProcess)}`;
 
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
@@ -462,7 +478,7 @@ ${JSON.stringify(keysToTranslate)}`;
                 let cleanText = fixBrokenJson(textResponse);
                 parsedDict = JSON.parse(cleanText);
             } catch (e) {
-                const keys = Object.keys(keysToTranslate);
+                const keys = Object.keys(batchToProcess);
                 for (let i = 0; i < keys.length; i++) {
                     const key = keys[i];
                     const nextKey = keys[i + 1];
@@ -496,14 +512,15 @@ ${JSON.stringify(keysToTranslate)}`;
 
             if (newlyTranslatedCount === 0) {
                 throw new Error("Nu a extras nicio linie validă.");
+            } else {
+                // Am tradus ceva! Resetăm numărătoarea încercărilor pentru ce a mai rămas.
+                attempts = 0;
             }
 
             if (Object.keys(keysToTranslate).length === 0) {
                 console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${expectedTotalCount}/${expectedTotalCount} linii)${c.reset}`);
                 break; 
-            } else {
-                attempts++;
-            }
+            } 
 
         } catch (error) {
             if (error.response && error.response.status === 429) {
