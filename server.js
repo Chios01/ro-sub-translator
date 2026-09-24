@@ -389,34 +389,36 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             const prompt = `Ești un traducător profesionist de subtitrări pentru filme și seriale. Traduce din engleză în română naturală.
 RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 
-1. REGULA CIFRELOR ȘI NUMERELOR:
-   -> Folosește cifre pentru numere, ore, sume sau numere de masă (ex: "Mesele 12, 4, 11"). 
-   -> ESTE STRICT INTERZIS SĂ FOLOSEȘTI CIFRE ÎN INTERIORUL CUVINTELOR. Cifrele nu se lipesc de litere (ex: interzis "2uita", corect este "uita").
+1. DIACRITICE OBLIGATORII (CRITIC): 
+   -> Folosește mereu caracterele românești corecte: ă, â, î, ș, ț. 
+   -> Este STRICT INTERZIS să scrii cuvinte fără diacritice când ele o cer (ex: scrie OBLIGATORIU "plătit" sau "plătită", NICIODATĂ "platit").
 
-2. EXPRESII ȘI STRUCTURI NATURALE ÎN ROMÂNĂ (CRITIC):
-   -> Evită traducerile literale. Dacă în engleză e "sneaking/stealing glances", în română e "nu te mai holba" sau "nu te mai uita pe furiș", nu folosi expresii stupide ca "a-mi fura privirile".
-   -> Structura "Stop [doing something]" se traduce "Nu mai [face asta]" sau "Încetează să [faci asta]", NICIODATĂ "Oprește-te din a...". Folosește formulări românești firești.
+2. ACORD DE GEN DIN CONTEXT: 
+   -> Deoarece nu poți vedea imaginile din film, analizează cu atenție indiciile din replicile pe care le ai pentru a deduce dacă personajul care vorbește este bărbat sau femeie. Folosește forma corectă ("Am fost plătit" vs "Am fost plătită").
 
-3. ACORD DE GEN STRICT: 
-   -> Fii atent la context: dacă un personaj se referă la un bărbat/băiat, adjectivele OBLIGATORIU trebuie să fie la masculin (ex: "nesuferit", "desființat", "prost"). Dacă se referă la o femeie, folosește femininul.
+3. ELIMINĂ SUNETELE DE FUNDAL (CRITIC): 
+   -> NU traduce și NU păstra textul care descrie sunete, muzică sau acțiuni (ex: "(city humming)", "[sirens blaring]").
+   -> Dacă o linie conține DOAR astfel de descrieri, returnează DOAR un spațiu gol: " ". 
+   -> Șterge complet orice text aflat între paranteze rotunde () sau pătrate [].
 
-4. TERMENI DE ADRESARE ȘI SLANG ("dude", "bro", "man"):
-   -> Tradu-le prin termeni colocviali ("frate", "băiete", "omule") sau omită-le. Nu inventa cuvinte ciudate.
+4. FĂRĂ CARACTERE CIUDATE: 
+   -> Nu introduce simboluri precum "「" sau alte paranteze asiatice. Folosește doar semne de punctuație standard românești.
 
-5. SPAȚIEREA CORECTĂ:
-   -> Păstrează spațiile corecte între cuvinte. Nu lipi cuvinte care trebuie să fie separate (ex: scrie "ai mai", NU "aimai").
+5. EVITĂ "ROMGLEZA" ȘI TRADUCERILE LITERALE:
+   -> Nu lăsa cuvinte ca "man" în textul românesc ("De ce man pasă?" este GREȘIT. Tradu "De ce ți-ar păsa, omule?").
+   -> Nu traduce mot-a-mot expresiile ("Damn" se traduce "La naiba"). 
 
-6. GRAMATICĂ ȘI PLURALUL: 
-   -> Articulează corect la plural (ex: "sânii mei", NU "sâni mei").
-   -> Nu scrie niciodată "Mi s-a plătit" în loc de "Am fost plătit(ă)".
+6. REGULA CIFRELOR ȘI NUMERELOR:
+   -> Folosește cifre pentru numere, ore, sume (ex: "Mesele 12, 4"). 
+   -> ESTE STRICT INTERZIS SĂ FOLOSEȘTI CIFRE ÎN INTERIORUL CUVINTELOR (ex: interzis "2uita", corect este "uita").
 
-7. INTERZIS TRADUCEREA ZGOMOTELOR: Nu traduce și nu scrie NICIODATĂ cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Uh-huh", "Ha", "Vai". Returnează DOAR un spațiu gol: " ". 
+7. SPAȚIERE ȘI CUVINTE COMPLETE:
+   -> Păstrează spațiile corecte (NU "aimai").
+   -> Nu tăia prima literă a cuvântului. Asigură-te că frazele au sens complet și nu sunt retezate ("Arată-ți p..." trebuie tradus complet dacă originalul e complet).
 
-8. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând, șterge obligatoriu și liniuța de dialog (-).
+8. INTERZIS TRADUCEREA ZGOMOTELOR SCURTE: Nu traduce cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm". Returnează DOAR un spațiu gol: " ". 
 
-9. CUVINTE COMPLETE: Nu tăia prima literă a cuvântului (ex: "Încă", nu "ncă").
-
-10. ELIMINĂ SUNETELE DE FUNDAL (SDH): Șterge complet orice text aflat între paranteze rotunde (...) sau drepte [...].
+9. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând, șterge obligatoriu și liniuța de dialog (-).
 
 JSON de tradus:
 ${JSON.stringify(keysToTranslate)}`;
