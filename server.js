@@ -283,7 +283,6 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™«/gi, '');
     clean = clean.replace(/"/g, "'");
 
-    // Filtrul agresiv pentru interjecții înainte de a trimite textul către Gemini
     const ignoreRegex = /^(-?\s*(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+)[.!?\s]*)$/i;
     if (ignoreRegex.test(clean.trim())) {
         return ' ';
@@ -407,41 +406,17 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            const prompt = `Ești un traducător profesionist de subtitrări pentru filme și seriale. Traduce din engleză în română naturală.
-RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
+            // PROMPT SIMPLIFICAT, TRADUS ÎN ENGLEZĂ ȘI BLINDAT PENTRU RĂSPUNS JSON
+            const prompt = `Translate the following English subtitles into natural, conversational Romanian.
 
-1. DIACRITICE OBLIGATORII (CRITIC): 
-   -> Folosește mereu caracterele românești corecte: ă, â, î, ș, ț. 
-   -> Este STRICT INTERZIS să scrii cuvinte fără diacritice când ele o cer (ex: scrie OBLIGATORIU "plătit" sau "plătită", NICIODATĂ "platit").
+RULES:
+1. DIACRITICS: You MUST use correct Romanian diacritics (ă, â, î, ș, ț). Always use "plătit" / "plătită", never "platit".
+2. GENDER: Adapt masculine/feminine forms correctly based on conversational context.
+3. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like (sighs), [music], (city humming). DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. If a line consists ONLY of these, return a single space: " ". Remove dangling hyphens (-).
+4. NO DIGITS IN WORDS: Never put numbers inside words (e.g., write "uita", not "2uita"). 
+5. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add any extra text, explanations, or markdown formatting blocks before or after the JSON.
 
-2. ACORD DE GEN DIN CONTEXT: 
-   -> Deoarece nu poți vedea imaginile din film, analizează cu atenție indiciile din replicile pe care le ai pentru a deduce dacă personajul care vorbește este bărbat sau femeie. Folosește forma corectă ("Am fost plătit" vs "Am fost plătită").
-
-3. ELIMINĂ SUNETELE DE FUNDAL (CRITIC): 
-   -> NU traduce și NU păstra textul care descrie sunete, muzică sau acțiuni (ex: "(city humming)", "[sirens blaring]").
-   -> Dacă o linie conține DOAR astfel de descrieri, returnează DOAR un spațiu gol: " ". 
-   -> Șterge complet orice text aflat între paranteze rotunde () sau pătrate [].
-
-4. FĂRĂ CARACTERE CIUDATE: 
-   -> Nu introduce simboluri precum "「" sau alte paranteze asiatice. Folosește doar semne de punctuație standard românești.
-
-5. EVITĂ "ROMGLEZA" ȘI TRADUCERILE LITERALE:
-   -> Nu lăsa cuvinte ca "man" în textul românesc ("De ce man pasă?" este GREȘIT. Tradu "De ce ți-ar păsa, omule?").
-   -> Nu traduce mot-a-mot expresiile ("Damn" se traduce "La naiba"). 
-
-6. REGULA CIFRELOR ȘI NUMERELOR:
-   -> Folosește cifre pentru numere, ore, sume (ex: "Mesele 12, 4"). 
-   -> ESTE STRICT INTERZIS SĂ FOLOSEȘTI CIFRE ÎN INTERIORUL CUVINTELOR (ex: interzis "2uita", corect este "uita").
-
-7. SPAȚIERE ȘI CUVINTE COMPLETE:
-   -> Păstrează spațiile corecte (NU "aimai").
-   -> Nu tăia prima literă a cuvântului. Asigură-te că frazele au sens complet și nu sunt retezate ("Arată-ți p..." trebuie tradus complet dacă originalul e complet).
-
-8. INTERZIS TRADUCEREA ZGOMOTELOR SCURTE: Nu traduce cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Hm", "Hmm", "Umm", "Eh". Returnează DOAR un spațiu gol: " ". 
-
-9. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând, șterge obligatoriu și liniuța de dialog (-).
-
-JSON de tradus:
+Input JSON:
 ${JSON.stringify(batchToProcess)}`;
 
             const response = await axios.post(
