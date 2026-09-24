@@ -276,8 +276,6 @@ app.listen(PORT, () => {
 function cleanTextForJson(text) {
     if (!text) return text;
     let clean = text;
-    
-    // Curățăm tag-uri și paranteze
     clean = clean.replace(/[\[\(\*\{][\s\S]*?[\]\)\*\}]/g, '');
     clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/[♪#♫]/g, '');
@@ -285,10 +283,6 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™«/gi, '');
     clean = clean.replace(/"/g, "'");
 
-    // TĂIEM INTERJECȚIILE DE LA ÎNCEPUTUL PROPOZIȚIILOR (ex: "Ah, I got paid" devine "I got paid")
-    clean = clean.replace(/^(\s*-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+)[,\.\!\?]*\s+/i, '$1');
-
-    // Dacă linia a rămas doar o interjecție goală, o ștergem complet
     const ignoreRegex = /^(-?\s*(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+)[.!?\s]*)$/i;
     if (ignoreRegex.test(clean.trim())) {
         return ' ';
@@ -356,7 +350,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    const maxAttempts = 12;
+    const maxAttempts = 10; // LIMITĂ DURĂ: Oprește "zbaterile" la 10 încercări eșuate
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         
@@ -418,7 +412,7 @@ RULES:
 1. DIACRITICS (CRITICAL): You MUST use correct Romanian diacritics (ă, â, î, ș, ț) for EVERY word. Never write "mananc" (write "mănânc"), never write "pasa" (write "pasă"). 
 2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for the first person ("I"), use neutral phrasing. Instead of "Am fost plătit / plătită" (I got paid), use "Mi-am primit banii" or "Am luat banii". 
 3. IDIOMS & SLANG: Do not translate literally. "Why do I give a shit?" should be "Ce-mi pasă mie?", NOT "De ce mănânc rahat?". "Man" as slang should be "omule" or "frate".
-4. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like (sighs), [music]. DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. Remove dangling hyphens (-).
+4. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like (sighs), [music], (city humming). DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. Remove dangling hyphens (-).
 5. NO DIGITS IN WORDS: Never put numbers inside words (e.g., write "uita", not "2uita"). 
 6. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add any extra text, explanations, or markdown formatting blocks before or after the JSON.
 
@@ -508,22 +502,24 @@ ${JSON.stringify(batchToProcess)}`;
             } 
 
         } catch (error) {
+            attempts++;
+            if (attempts >= maxAttempts) {
+                console.log(`${c.red}✖ [Gemini] Abandon! Serverele Google sunt prea aglomerate. Renunț la liniile rămase din calupul ${globalChunkIndex + 1}.${c.reset}`);
+                break; // Ieșim forțat din buclă după 10 încercări eșuate
+            }
+
             if (error.response && error.response.status === 429) {
                 currentKeyObj.pauseUntil = Date.now() + 61000;
                 globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
                 
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
                 console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul 10s... (Aștept ${(sleepTime/1000).toFixed(1)}s)${c.reset}`);
-                attempts++;
-                
                 await new Promise(r => setTimeout(r, sleepTime));
             } else if (error.response && error.response.status === 503) {
-                console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Reîncercare...${c.reset}`);
-                attempts++;
+                console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, 2000));
             } else {
-                console.log(`${c.red}⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}${c.reset}`);
-                attempts++;
+                console.log(`${c.red}⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, 1000));
             }
         }
