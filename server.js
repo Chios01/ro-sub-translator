@@ -282,6 +282,13 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
     clean = clean.replace(/"/g, "'");
+
+    // Filtrul agresiv pentru interjecții înainte de a trimite textul către Gemini
+    const ignoreRegex = /^(-?\s*(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+)[.!?\s]*)$/i;
+    if (ignoreRegex.test(clean.trim())) {
+        return ' ';
+    }
+
     if (clean.trim() === '') return ' ';
     return clean.trim();
 }
@@ -400,7 +407,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // PROMPT ACTUALIZAT PENTRU HM...
             const prompt = `Ești un traducător profesionist de subtitrări pentru filme și seriale. Traduce din engleză în română naturală.
 RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 
@@ -431,9 +437,7 @@ RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
    -> Păstrează spațiile corecte (NU "aimai").
    -> Nu tăia prima literă a cuvântului. Asigură-te că frazele au sens complet și nu sunt retezate ("Arată-ți p..." trebuie tradus complet dacă originalul e complet).
 
-8. INTERZIS TRADUCEREA ZGOMOTELOR ȘI INTERJECȚIILOR SCURTE: 
-   -> Nu traduce și ignoră complet cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Hm", "Hmm", "Umm", "Eh". 
-   -> Ignoră-le chiar dacă sunt însoțite de puncte de suspensie (ex: "Hm...", "Oh..."). Dacă replica e formată DOAR din aceste sunete, returnează DOAR un spațiu gol: " ".
+8. INTERZIS TRADUCEREA ZGOMOTELOR SCURTE: Nu traduce cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Hm", "Hmm", "Umm", "Eh". Returnează DOAR un spațiu gol: " ". 
 
 9. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând, șterge obligatoriu și liniuța de dialog (-).
 
