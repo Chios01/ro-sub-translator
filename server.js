@@ -344,15 +344,13 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    const maxAttempts = 15;
+    const maxAttempts = 12;
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         
         let batchToProcess = {};
         const allKeys = Object.keys(keysToTranslate);
         
-        // Logica CORECTATĂ: Dacă se încăpățânează, luăm DOAR jumătate pentru prompt,
-        // dar nu aruncăm cealaltă jumătate din `keysToTranslate`.
         if (attempts >= 4 && allKeys.length > 5) {
             console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1} este blocat. Îl împart pentru a izola problema...${c.reset}`);
             const halfLength = Math.floor(allKeys.length / 2);
@@ -402,6 +400,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
+            // PROMPT ACTUALIZAT PENTRU HM...
             const prompt = `Ești un traducător profesionist de subtitrări pentru filme și seriale. Traduce din engleză în română naturală.
 RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
 
@@ -432,7 +431,9 @@ RESPECTĂ STRICT URMĂTOARELE REGULI (FĂRĂ EXCEPȚII):
    -> Păstrează spațiile corecte (NU "aimai").
    -> Nu tăia prima literă a cuvântului. Asigură-te că frazele au sens complet și nu sunt retezate ("Arată-ți p..." trebuie tradus complet dacă originalul e complet).
 
-8. INTERZIS TRADUCEREA ZGOMOTELOR SCURTE: Nu traduce cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm". Returnează DOAR un spațiu gol: " ". 
+8. INTERZIS TRADUCEREA ZGOMOTELOR ȘI INTERJECȚIILOR SCURTE: 
+   -> Nu traduce și ignoră complet cuvinte ca: "Oh", "Ah", "Wow", "Ugh", "Mhm", "Hm", "Hmm", "Umm", "Eh". 
+   -> Ignoră-le chiar dacă sunt însoțite de puncte de suspensie (ex: "Hm...", "Oh..."). Dacă replica e formată DOAR din aceste sunete, returnează DOAR un spațiu gol: " ".
 
 9. INTERZIS LINIUȚE ORFANE: Dacă ștergi un zgomot de pe un rând, șterge obligatoriu și liniuța de dialog (-).
 
@@ -513,7 +514,6 @@ ${JSON.stringify(batchToProcess)}`;
             if (newlyTranslatedCount === 0) {
                 throw new Error("Nu a extras nicio linie validă.");
             } else {
-                // Am tradus ceva! Resetăm numărătoarea încercărilor pentru ce a mai rămas.
                 attempts = 0;
             }
 
