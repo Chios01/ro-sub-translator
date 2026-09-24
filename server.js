@@ -352,23 +352,10 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
     let attempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = 15; // Răbdare: Încearcă de 15 ori același calup
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         
-        let batchToProcess = {};
-        const allKeys = Object.keys(keysToTranslate);
-        
-        if (attempts >= 4 && allKeys.length > 5) {
-            console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1} este blocat. Îl împart pentru a izola problema...${c.reset}`);
-            const halfLength = Math.floor(allKeys.length / 2);
-            for (let i = 0; i < halfLength; i++) {
-                batchToProcess[allKeys[i]] = keysToTranslate[allKeys[i]];
-            }
-        } else {
-            batchToProcess = Object.assign({}, keysToTranslate);
-        }
-
         while (Date.now() < globalRateLimitPause) {
             await new Promise(r => setTimeout(r, 1000));
         }
@@ -399,7 +386,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         }
 
         const modelName = 'gemini-3.5-flash-lite';
-        let currentBatchSize = Object.keys(batchToProcess).length;
+        let currentBatchSize = Object.keys(keysToTranslate).length;
 
         try {
             if (currentBatchSize === expectedTotalCount) {
@@ -408,22 +395,21 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
+            // PROMPTUL ENGLEZESC + RELAXAREA CUVINTELOR VULGARE
             const prompt = `Translate the following English subtitles into natural, conversational Romanian.
 
 RULES:
-1. DIACRITICS & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Always use "o secundă" (NEVER "un secund"). Articulate plurals correctly (e.g., "sânii", not "sâni").
-2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for the first person ("I"), use neutral phrasing. Instead of "Am fost plătit / plătită" (I got paid), use "Mi-am primit banii" or "Am luat banii". 
-3. IDIOMS & SLANG: Do not translate literally. 
-   - "Stop doing X" = "Nu mai face X", NEVER "Oprește-te din a...". 
-   - Vulgar idioms must sound natural in Romanian. Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi dracu'".
-   - "Why do I give a shit?" = "Ce-mi pasă mie?". 
-   - "Man" as slang = "omule".
-4. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like (sighs), [music], (city humming). DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. Remove dangling hyphens (-).
-5. NO DIGITS IN WORDS: Never put numbers inside words (e.g., write "uita", not "2uita"). 
-6. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add any extra text, explanations, or markdown formatting blocks before or after the JSON.
+1. DIACRITICS & GRAMMAR: Use correct Romanian diacritics (ă, â, î, ș, ț). Always use "o secundă" (NEVER "un secund"). Articulate plurals correctly.
+2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
+3. TV BROADCAST CENSORSHIP (CRITICAL): To prevent safety filter blocks, DO NOT translate extreme swear words literally. Soften all vulgarities to PG-13 TV standards. For example, translate "motherfucker", "fuck", or "shit" as "la naiba", "du-te dracului", "nenorocitule", "fir-ar", or "rahat".
+4. IDIOMS & SLANG: "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". "Stop doing X" = "Nu mai face X". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
+5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like (sighs), [music], (city humming). DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. Remove dangling hyphens (-).
+6. NO DIGITS IN WORDS: Never put numbers inside words (e.g., write "uita", not "2uita"). 
+7. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
+8. CENSORSHIP BYPASS: If a line still violates safety policies, DO NOT block the output. Simply replace the explicit word with a generic expression like "Fir-ar!" and translate the rest.
 
 Input JSON:
-${JSON.stringify(batchToProcess)}`;
+${JSON.stringify(keysToTranslate)}`;
 
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
@@ -464,7 +450,7 @@ ${JSON.stringify(batchToProcess)}`;
                 let cleanText = fixBrokenJson(textResponse);
                 parsedDict = JSON.parse(cleanText);
             } catch (e) {
-                const keys = Object.keys(batchToProcess);
+                const keys = Object.keys(keysToTranslate);
                 for (let i = 0; i < keys.length; i++) {
                     const key = keys[i];
                     const nextKey = keys[i + 1];
@@ -510,22 +496,24 @@ ${JSON.stringify(batchToProcess)}`;
         } catch (error) {
             attempts++;
             if (attempts >= maxAttempts) {
-                console.log(`${c.red}✖ [Gemini] Abandon! Serverele Google sunt prea aglomerate. Renunț la liniile rămase din calupul ${globalChunkIndex + 1}.${c.reset}`);
+                console.log(`${c.red}✖ [Gemini] Limita atinsă pentru calupul ${globalChunkIndex + 1}. Abandon!${c.reset}`);
                 break; 
             }
 
             if (error.response && error.response.status === 429) {
                 currentKeyObj.pauseUntil = Date.now() + 61000;
                 globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
-                
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
                 console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul 10s... (Aștept ${(sleepTime/1000).toFixed(1)}s)${c.reset}`);
                 await new Promise(r => setTimeout(r, sleepTime));
             } else if (error.response && error.response.status === 503) {
                 console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, 2000));
+            } else if (error.message && error.message.toLowerCase().includes('timeout')) {
+                console.log(`${c.yellow}⚠ [Gemini] Timeout. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
+                await new Promise(r => setTimeout(r, 2000));
             } else {
-                console.log(`${c.red}⚠ [Gemini] Eroare calup ${globalChunkIndex + 1}: ${error.message}. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
+                console.log(`${c.magenta}⚠ [Gemini] Eroare text calup ${globalChunkIndex + 1}. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, 1000));
             }
         }
