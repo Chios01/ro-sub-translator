@@ -29,7 +29,7 @@ const memoryCache = {};
 // === MANIFESTUL TĂU OPTIMIZAT PENTRU STREMIO ===
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '1.8.0', // <--- Versiunea 1.8.0 pentru update
+    version: '1.9.0', // <--- Versiunea 1.9.0
     name: 'RO Sub Translator',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
@@ -277,14 +277,19 @@ function cleanTextForJson(text) {
     let clean = text;
 
     clean = clean.replace(/<[^>]+>/g, '');
-    clean = clean.replace(/\[[^\]]*\]/g, ''); 
-    clean = clean.replace(/\([^\)]*\)/g, ''); 
-    clean = clean.replace(/\{[^\}]*\}/g, ''); 
-    clean = clean.replace(/【[^】]*】/g, ''); 
-    clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
-    clean = clean.replace(/[♪#♫]/g, '');
+    
+    // NOU: Ștergem toate caracterele muzicale direct
+    clean = clean.replace(/[♪♫♬♩#]/gi, '');
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
+
+    // NOU: Regex "Nuclear" care distruge parantezele indiferent ce e în ele
+    clean = clean.replace(/\[[\s\S]*?\]/g, ''); 
+    clean = clean.replace(/\([\s\S]*?\)/g, ''); 
+    clean = clean.replace(/\{[\s\S]*?\}/g, ''); 
+    clean = clean.replace(/【[\s\S]*?】/g, ''); 
+    
+    clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/"/g, "'");
 
     let lines = clean.split('\n');
@@ -293,7 +298,8 @@ function cleanTextForJson(text) {
         
         let changed = true;
         while(changed) {
-            const match = l.match(/^(-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
+            // NOU: Acceptă orice combinație de liniuțe și prinde "mm"
+            const match = l.match(/^([-—\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
             if (match) {
                 l = match[1] + match[3].trim();
             } else {
@@ -301,17 +307,19 @@ function cleanTextForJson(text) {
             }
         }
 
-        if (/^[-.,!?\s]*$/.test(l)) {
+        if (/^[-—.,!?\s]*$/.test(l)) {
             return '';
         }
         return l;
     });
 
-    // NOU: Filtru inteligent pentru liniuțe orfane (Pre-procesare)
     let validLines = lines.filter(l => l !== '');
+    
+    // NOU: Curățare completă a liniuțelor defecte ("--", "- -")
     if (validLines.length === 1) {
-        // Dacă e o singură linie, ștergem liniuța de dialog de la început (dacă există)
-        validLines[0] = validLines[0].replace(/^-\s*/, '');
+        validLines[0] = validLines[0].replace(/^[-—\s]+/, '');
+    } else if (validLines.length > 1) {
+        validLines = validLines.map(l => l.replace(/^[-—\s]+/, '- '));
     }
 
     clean = validLines.join('\n');
@@ -334,16 +342,19 @@ function formatSubtitleLine(text) {
     let lines = text.split('\n');
     lines = lines.map(l => {
         let cl = l.trim();
-        if (/^(-?\s*)(ă+|m+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl)) return '';
-        if (/^[-.,!?\s]*$/.test(cl)) return '';
+        // NOU: Acceptă orice combinație de liniuțe și prinde "mm" din traducerile halucinate
+        if (/^([-—\s]*)(ă+|m+|mm+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl)) return '';
+        if (/^[-—.,!?\s]*$/.test(cl)) return '';
         return cl;
     });
     
-    // NOU: Filtru inteligent pentru liniuțe orfane (Post-procesare)
     let validLines = lines.filter(l => l !== '');
+    
+    // NOU: Curățare completă a liniuțelor defecte și în post-procesare
     if (validLines.length === 1) {
-        // Dacă după curățare a rămas o singură linie, eliminăm liniuța de dialog de la început
-        validLines[0] = validLines[0].replace(/^-\s*/, '');
+        validLines[0] = validLines[0].replace(/^[-—\s]+/, '');
+    } else if (validLines.length > 1) {
+        validLines = validLines.map(l => l.replace(/^[-—\s]+/, '- '));
     }
     
     text = validLines.join('\n');
@@ -462,7 +473,7 @@ RULES:
 2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
 3. TV BROADCAST CENSORSHIP (CRITICAL): To prevent safety filter blocks, DO NOT translate extreme swear words literally. Soften all vulgarities to PG-13 TV standards. For example, translate "motherfucker", "fuck", or "shit" as "la naiba", "du-te dracului", "nenorocitule", "fir-ar", or "rahat".
 4. IDIOMS & SLANG: "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". "Stop doing X" = "Nu mai face X". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
-5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like [SNAPPING], (sighs), [music]. Completely remove them! DO NOT translate hesitations/interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm, Um, Uh, Ăă. Remove them! Remove dangling hyphens (-).
+5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like [SNAPPING], (sighs), [music]. Completely remove them! DO NOT translate hesitations/interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm, Um, Uh, Ăă, Mm. Remove them! Remove dangling hyphens (-).
 6. NO DIGITS IN WORDS: Never put numbers inside words (e.g., write "uita", not "2uita"). 
 7. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
 
