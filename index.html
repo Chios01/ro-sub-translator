@@ -2,7 +2,7 @@
 <html lang="ro">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Configurare - RO Sub Translator</title>
     <style>
         body {
@@ -11,32 +11,34 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             display: flex;
             justify-content: center;
-            align-items: flex-start;
+            align-items: center;
             min-height: 100vh;
             margin: 0;
-            padding: 20px;
+            padding: 15px;
             box-sizing: border-box;
         }
         .container {
             max-width: 400px;
             width: 100%;
-            padding-bottom: 40px;
+            padding: 15px;
+            box-sizing: border-box;
         }
         h1 {
-            color: #00ff7f; /* Verdele vibrant din imagini */
-            font-size: 26px;
-            margin-bottom: 8px;
+            color: #00ff7f;
+            font-size: 24px;
+            margin-top: 0;
+            margin-bottom: 5px;
             text-align: center;
             font-weight: bold;
         }
         .version-badge {
             font-size: 0.45em;
-            background-color: #8a5ae9; /* Bulina specifică Stremio */
+            background-color: #8a5ae9;
             color: #ffffff;
-            padding: 4px 10px;
+            padding: 3px 8px;
             border-radius: 20px;
             vertical-align: middle;
-            margin-left: 8px;
+            margin-left: 6px;
             font-weight: 600;
             letter-spacing: 0.5px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.3);
@@ -45,16 +47,16 @@
             text-align: center;
             color: #999999;
             margin-top: 0;
-            margin-bottom: 30px;
-            font-size: 14px;
+            margin-bottom: 20px;
+            font-size: 13px;
         }
         .input-group {
-            margin-bottom: 15px;
+            margin-bottom: 8px;
         }
         label {
             display: block;
-            margin-bottom: 6px;
-            font-size: 13px;
+            margin-bottom: 3px;
+            font-size: 12px;
             color: #bbbbbb;
         }
         input[type="text"] {
@@ -62,11 +64,11 @@
             background-color: #1e1e1e;
             color: #ffffff;
             border: 1px solid #333333;
-            border-radius: 8px;
-            padding: 12px 15px;
-            font-size: 14px;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 13px;
             font-family: monospace;
-            box-sizing: border-box;
+            box-sizing: border-box; /* Aceasta repară ieșirea din cadru */
             transition: border-color 0.2s;
         }
         input[type="text"]:focus {
@@ -79,17 +81,18 @@
         .btn-install {
             display: block;
             width: 100%;
-            background-color: #00e676; /* Verde deschis pentru buton */
+            background-color: #00e676;
             color: #000000;
             border: none;
-            padding: 16px;
-            border-radius: 8px;
-            font-size: 16px;
+            padding: 14px;
+            border-radius: 6px;
+            font-size: 15px;
             font-weight: bold;
             cursor: pointer;
             text-align: center;
             text-decoration: none;
-            margin-top: 25px;
+            margin-top: 20px;
+            box-sizing: border-box; /* Aceasta aliniază corect butonul verde */
             transition: background-color 0.3s ease;
         }
         .btn-install:hover {
@@ -97,23 +100,21 @@
         }
         .footer {
             text-align: center;
-            color: #00ffff; /* Cyan-ul din footer */
+            color: #00ffff;
             font-family: 'Courier New', Courier, monospace;
-            font-size: 12px;
-            margin-top: 30px;
-            line-height: 1.5;
+            font-size: 11px;
+            margin-top: 20px;
+            line-height: 1.4;
         }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <!-- Titlul cu bulina de versiune injectată automat de server -->
         <h1>RO Sub Translator <span class="version-badge">v{{VERSION}}</span></h1>
         <p class="subtitle">Introdu cele 10 chei API Google Gemini</p>
         
         <div id="keys-container">
-            <!-- 10 câmpuri de input -->
             <div class="input-group"><label>Cheia 1:</label><input type="text" id="key1" placeholder="AIzaSy..."></div>
             <div class="input-group"><label>Cheia 2:</label><input type="text" id="key2" placeholder="AIzaSy..."></div>
             <div class="input-group"><label>Cheia 3:</label><input type="text" id="key3" placeholder="AIzaSy..."></div>
@@ -134,7 +135,6 @@
     </div>
 
     <script>
-        // Adăugăm un "ascultător" pe toate cele 10 câmpuri de text
         for (let i = 1; i <= 10; i++) {
             document.getElementById('key' + i).addEventListener('input', updateLink);
         }
@@ -142,7 +142,6 @@
         function updateLink() {
             let keysArray = [];
             
-            // Colectăm valorile din toate cele 10 căsuțe
             for (let i = 1; i <= 10; i++) {
                 let val = document.getElementById('key' + i).value.trim();
                 if (val !== "") {
@@ -150,7 +149,6 @@
                 }
             }
             
-            // Dacă utilizatorul a introdus cel puțin o cheie validă, generăm link-ul
             if (keysArray.length > 0) {
                 const configJson = JSON.stringify(keysArray);
                 const base64Config = btoa(configJson);
