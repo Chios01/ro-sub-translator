@@ -23,8 +23,6 @@ const c = {
     reset: '\x1b[0m'
 };
 
-const memoryCache = {}; 
-
 // === MANIFESTUL TĂU OPTIMIZAT PENTRU STREMIO ===
 const manifest = {
     id: 'community.chios.geminitranslator', 
@@ -196,13 +194,6 @@ app.get('/:configData/translate', async (req, res) => {
         return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
     }
 
-    const cacheKey = targetUrl;
-
-    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
-        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
-        return res.send(memoryCache[cacheKey]);
-    }
-
     res.writeHead(200, {
         'Content-Type': 'text/srt; charset=utf-8',
         'Transfer-Encoding': 'chunked'
@@ -214,45 +205,26 @@ app.get('/:configData/translate', async (req, res) => {
     }, 10000);
 
     try {
-        let processPromise;
-        let isNew = false;
-
-        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
-            processPromise = memoryCache[cacheKey];
-        } else {
-            isNew = true;
-            const startTime = Date.now();
-            
-            processPromise = (async () => {
-                const srtRes = await axios.get(targetUrl, {
-                    headers: { 'User-Agent': BROWSER_USER_AGENT }
-                });
-                
-                const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
-                console.log(`${c.cyan}\n==================================================${c.reset}`);
-                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
-                return await translateSrtWithGemini(srtRes.data, userKeys);
-            })();
-            
-            memoryCache[cacheKey] = processPromise;
-            
-            processPromise.then(translatedSrtString => {
-                memoryCache[cacheKey] = translatedSrtString;
-                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-                let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
-                
-                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-            }).catch(() => {
-                delete memoryCache[cacheKey];
-            });
-        }
-
-        const finalSrt = await processPromise;
+        const startTime = Date.now();
+        
+        const srtRes = await axios.get(targetUrl, {
+            headers: { 'User-Agent': BROWSER_USER_AGENT }
+        });
+        
+        const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
+        console.log(`${c.cyan}\n==================================================${c.reset}`);
+        console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
+        console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
+        console.log(`${c.cyan}==================================================\n${c.reset}`);
+        
+        const finalSrt = await translateSrtWithGemini(srtRes.data, userKeys);
+        
+        const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+        let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+        
+        console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+        console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
+        console.log(`${c.cyan}==================================================\n${c.reset}`);
         
         clearInterval(keepAlive);
         res.write(finalSrt);
@@ -277,30 +249,30 @@ function cleanTextForJson(text) {
     if (!text) return text;
     let clean = text;
 
-    // 1. Ștergem COMPLET tag-urile HTML (asta previne ascunderea parantezelor)
+    // 1. Ștergem COMPLET tag-urile HTML
     clean = clean.replace(/<[^>]+>/g, '');
 
-    // 2. Ștergem descrierile audio din paranteze
-    clean = clean.replace(/[\[\(\*\{【][\s\S]*?[\]\)\*\}】]/g, '');
+    // 2. Ștergem descrierile audio (Abordare Nucleară per tip de paranteză)
+    clean = clean.replace(/\[[^\]]*\]/g, ''); // distruge tot între [ ]
+    clean = clean.replace(/\([^\)]*\)/g, ''); // distruge tot între ( )
+    clean = clean.replace(/\{[^\}]*\}/g, ''); // distruge tot între { }
+    clean = clean.replace(/【[^】]*】/g, ''); // pentru fonturi ciudate
 
-    // 3. Ștergem numele personajelor și notele muzicale
+    // 3. Ștergem numele personajelor (ex: "MAX:") și notele muzicale
     clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/[♪#♫]/g, '');
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
-    
-    // 4. Transformăm ghilimelele
     clean = clean.replace(/"/g, "'");
 
-    // 5. PROCESARE LINIE CU LINIE (PENTRU LINIUȚE ORFANE ȘI INTERJECȚII)
     let lines = clean.split('\n');
     lines = lines.map(line => {
         let l = line.trim();
         
-        // Eliminăm interjecțiile lipite de început în buclă (pentru a curăța "Oh, ah, yes!")
+        // Eliminăm interjecțiile lipite de început în buclă
         let changed = true;
         while(changed) {
-            const match = l.match(/^(-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]+(.*)$/i);
+            const match = l.match(/^(-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
             if (match) {
                 l = match[1] + match[3].trim();
             } else {
@@ -308,20 +280,14 @@ function cleanTextForJson(text) {
             }
         }
 
-        // Dacă după curățare a rămas o linie doar cu o interjecție (ex: "Ah!"), o golim
-        if (/^(-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*$/i.test(l)) {
-            return '';
-        }
-
-        // Dacă linia a rămas DOAR cu o liniuță goală (ex: "-"), o ștergem complet
-        if (/^-?\s*$/.test(l)) {
+        // Dacă a rămas DOAR punctuație (ex: o liniuță, puncte de suspensie, un semn de exclamare), GOLIM LINIA COMPLET
+        if (/^[-.,!?\s]*$/.test(l)) {
             return '';
         }
 
         return l;
     });
 
-    // Reconstruim textul, eliminând rândurile devenite goale
     clean = lines.filter(l => l !== '').join('\n');
 
     if (clean.trim() === '') return ' ';
@@ -394,7 +360,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         let batchToProcess = {};
         const allKeys = Object.keys(keysToTranslate);
         
-        // Sparge calupul DOAR dacă a eșuat de 2 ori din cauză de cenzură/format
         if (contentErrorCount >= 2 && allKeys.length > 5) {
             console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1} pare blocat de format. Îl împart pentru a izola problema...${c.reset}`);
             const halfLength = Math.floor(allKeys.length / 2);
@@ -452,7 +417,7 @@ RULES:
 2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
 3. TV BROADCAST CENSORSHIP (CRITICAL): To prevent safety filter blocks, DO NOT translate extreme swear words literally. Soften all vulgarities to PG-13 TV standards. For example, translate "motherfucker", "fuck", or "shit" as "la naiba", "du-te dracului", "nenorocitule", "fir-ar", or "rahat".
 4. IDIOMS & SLANG: "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". "Stop doing X" = "Nu mai face X". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
-5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like (sighs), [music]. DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. Remove dangling hyphens (-).
+5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like [SNAPPING], (sighs), [music]. Completely remove them! DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. Remove dangling hyphens (-).
 6. NO DIGITS IN WORDS: Never put numbers inside words (e.g., write "uita", not "2uita"). 
 7. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
 
