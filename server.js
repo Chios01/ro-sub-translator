@@ -27,7 +27,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '1.9.0', 
+    version: '2.0.0', // <--- Versiunea 2.0.0 (Fără liniuțe de dialog deloc)
     name: 'RO Sub Translator',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
@@ -310,11 +310,8 @@ function cleanTextForJson(text) {
 
     let validLines = lines.filter(l => l !== '');
     
-    if (validLines.length === 1) {
-        validLines[0] = validLines[0].replace(/^[-—\s]+/, '');
-    } else if (validLines.length > 1) {
-        validLines = validLines.map(l => l.replace(/^[-—\s]+/, '- '));
-    }
+    // NOU: Ștergem liniuțele de la început pentru TOATE rândurile
+    validLines = validLines.map(l => l.replace(/^[-—\s]+/, ''));
 
     clean = validLines.join('\n');
 
@@ -343,11 +340,8 @@ function formatSubtitleLine(text) {
     
     let validLines = lines.filter(l => l !== '');
     
-    if (validLines.length === 1) {
-        validLines[0] = validLines[0].replace(/^[-—\s]+/, '');
-    } else if (validLines.length > 1) {
-        validLines = validLines.map(l => l.replace(/^[-—\s]+/, '- '));
-    }
+    // NOU: Ștergem liniuțele de la început pentru TOATE rândurile (Post-procesare)
+    validLines = validLines.map(l => l.replace(/^[-—\s]+/, ''));
     
     text = validLines.join('\n');
     if (text.trim() === '') return ' '; 
