@@ -70,17 +70,43 @@
             font-size: 13px;
             font-family: monospace;
             box-sizing: border-box;
-            transition: border-color 0.2s;
+            transition: border-color 0.3s, box-shadow 0.3s;
         }
         input[type="text"]:focus {
             outline: none;
-            border-color: #00ff7f;
+            border-color: #8a5ae9;
         }
         input[type="text"]::placeholder {
             color: #555555;
         }
-        .btn-install {
+        
+        .btn-validate {
             display: block;
+            width: 100%;
+            background-color: #8a5ae9;
+            color: #ffffff;
+            border: none;
+            padding: 14px;
+            border-radius: 6px;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            text-align: center;
+            margin-top: 20px;
+            box-sizing: border-box;
+            transition: background-color 0.3s ease;
+        }
+        .btn-validate:hover {
+            background-color: #7241d6;
+        }
+        .btn-validate:disabled {
+            background-color: #555555;
+            cursor: not-allowed;
+            opacity: 0.8;
+        }
+
+        .btn-install {
+            display: none; 
             width: 100%;
             background-color: #00e676;
             color: #000000;
@@ -99,12 +125,23 @@
         .btn-install:hover {
             background-color: #00c853;
         }
+
+        #statusMsg {
+            text-align: center;
+            color: #ff3333;
+            font-size: 13px;
+            margin-top: 15px;
+            margin-bottom: 0;
+            font-weight: bold;
+            display: none;
+        }
+
         .footer {
             text-align: center;
             color: #00ffff;
             font-family: 'Courier New', Courier, monospace;
-            font-size: 14px; /* Font mărit de la 13px la 14px */
-            margin-top: 15px; /* Spațiu micșorat de la 35px la 15px pentru a-l apropia de buton */
+            font-size: 14px;
+            margin-top: 15px;
             line-height: 1.4;
         }
     </style>
@@ -116,19 +153,23 @@
         <p class="subtitle">Introdu cele 10 chei API Google Gemini</p>
         
         <div id="keys-container">
-            <div class="input-group"><label>Cheia 1:</label><input type="text" id="key1" placeholder="AIzaSy..."></div>
-            <div class="input-group"><label>Cheia 2:</label><input type="text" id="key2" placeholder="AIzaSy..."></div>
-            <div class="input-group"><label>Cheia 3:</label><input type="text" id="key3" placeholder="AIzaSy..."></div>
-            <div class="input-group"><label>Cheia 4:</label><input type="text" id="key4" placeholder="AIzaSy..."></div>
-            <div class="input-group"><label>Cheia 5:</label><input type="text" id="key5" placeholder="AIzaSy..."></div>
-            <div class="input-group"><label>Cheia 6:</label><input type="text" id="key6" placeholder="AIzaSy..."></div>
-            <div class="input-group"><label>Cheia 7:</label><input type="text" id="key7" placeholder="AIzaSy..."></div>
-            <div class="input-group"><label>Cheia 8:</label><input type="text" id="key8" placeholder="AIzaSy..."></div>
-            <div class="input-group"><label>Cheia 9:</label><input type="text" id="key9" placeholder="AIzaSy..."></div>
-            <div class="input-group"><label>Cheia 10:</label><input type="text" id="key10" placeholder="AIzaSy..."></div>
+            <div class="input-group"><label>Cheia 1:</label><input type="text" id="key1" placeholder="AIza... sau AQ..."></div>
+            <div class="input-group"><label>Cheia 2:</label><input type="text" id="key2" placeholder="AIza... sau AQ..."></div>
+            <div class="input-group"><label>Cheia 3:</label><input type="text" id="key3" placeholder="AIza... sau AQ..."></div>
+            <div class="input-group"><label>Cheia 4:</label><input type="text" id="key4" placeholder="AIza... sau AQ..."></div>
+            <div class="input-group"><label>Cheia 5:</label><input type="text" id="key5" placeholder="AIza... sau AQ..."></div>
+            <div class="input-group"><label>Cheia 6:</label><input type="text" id="key6" placeholder="AIza... sau AQ..."></div>
+            <div class="input-group"><label>Cheia 7:</label><input type="text" id="key7" placeholder="AIza... sau AQ..."></div>
+            <div class="input-group"><label>Cheia 8:</label><input type="text" id="key8" placeholder="AIza... sau AQ..."></div>
+            <div class="input-group"><label>Cheia 9:</label><input type="text" id="key9" placeholder="AIza... sau AQ..."></div>
+            <div class="input-group"><label>Cheia 10:</label><input type="text" id="key10" placeholder="AIza... sau AQ..."></div>
         </div>
         
+        <button id="validateBtn" class="btn-validate" onclick="validateKeys()">Verifică Cheile</button>
+        
         <a href="#" id="installLink" class="btn-install">Instalează în Stremio</a>
+        
+        <p id="statusMsg"></p>
         
         <div class="footer">
             // System status: Operational. Powered<br>by Chios.
@@ -137,29 +178,87 @@
 
     <script>
         for (let i = 1; i <= 10; i++) {
-            document.getElementById('key' + i).addEventListener('input', updateLink);
+            document.getElementById('key' + i).addEventListener('input', function() {
+                document.getElementById('installLink').style.display = 'none';
+                document.getElementById('validateBtn').style.display = 'block';
+                document.getElementById('statusMsg').style.display = 'none';
+                this.style.borderColor = "#333333";
+            });
         }
 
-        function updateLink() {
+        async function validateKeys() {
+            const validateBtn = document.getElementById('validateBtn');
+            const installLink = document.getElementById('installLink');
+            const statusMsg = document.getElementById('statusMsg');
+            
+            statusMsg.style.display = 'none';
             let keysArray = [];
             
             for (let i = 1; i <= 10; i++) {
-                let val = document.getElementById('key' + i).value.trim();
-                if (val !== "") {
-                    keysArray.push(val);
+                let input = document.getElementById('key' + i);
+                let val = input.value.trim();
+                input.style.borderColor = "#333333";
+                
+                if (val === "") {
+                    statusMsg.innerText = `Eroare: Nu ai completat Cheia ${i}. Toate cele 10 sunt obligatorii!`;
+                    statusMsg.style.display = 'block';
+                    input.style.borderColor = "#ff3333";
+                    input.focus();
+                    return;
                 }
+                
+                // Actualizare: Acum acceptă atât standardul vechi (AIza) cât și pe cel nou (AQ)
+                if (!val.startsWith("AIza") && !val.startsWith("AQ")) {
+                    statusMsg.innerText = `Eroare: Cheia ${i} nu pare validă. O cheie Google începe cu "AIza" sau "AQ".`;
+                    statusMsg.style.display = 'block';
+                    input.style.borderColor = "#ff3333";
+                    input.focus();
+                    return;
+                }
+                
+                keysArray.push({ id: 'key' + i, value: val });
             }
+
+            validateBtn.innerText = "Se verifică la Google... (așteaptă)";
+            validateBtn.disabled = true;
             
-            if (keysArray.length > 0) {
-                const configJson = JSON.stringify(keysArray);
+            let allValid = true;
+
+            const validationPromises = keysArray.map(async (keyObj) => {
+                let input = document.getElementById(keyObj.id);
+                try {
+                    let res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash?key=${keyObj.value}`);
+                    if (res.ok) {
+                        input.style.borderColor = "#00ff7f";
+                    } else {
+                        input.style.borderColor = "#ff3333";
+                        allValid = false;
+                    }
+                } catch (e) {
+                    input.style.borderColor = "#ff3333";
+                    allValid = false;
+                }
+            });
+
+            await Promise.all(validationPromises);
+
+            validateBtn.innerText = "Verifică Cheile";
+            validateBtn.disabled = false;
+
+            if (allValid) {
+                validateBtn.style.display = 'none';
+                
+                const configJson = JSON.stringify(keysArray.map(k => k.value));
                 const base64Config = btoa(configJson);
                 
                 const currentUrl = window.location.href.replace('https://', '').replace('http://', '').split('/')[0];
                 const installUrl = `stremio://${currentUrl}/${base64Config}/manifest.json`;
                 
-                document.getElementById('installLink').href = installUrl;
+                installLink.href = installUrl;
+                installLink.style.display = 'block';
             } else {
-                document.getElementById('installLink').href = "#";
+                statusMsg.innerText = "Eroare: Cheile marcate cu roșu sunt greșite sau au fost blocate!";
+                statusMsg.style.display = 'block';
             }
         }
     </script>
