@@ -29,7 +29,7 @@ const memoryCache = {};
 // === MANIFESTUL TĂU OPTIMIZAT PENTRU STREMIO ===
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '1.0.0',
+    version: '1.6.0', // <--- AICI SCHIMBI NUMĂRUL (ex: 1.7.0, 2.0.0)
     name: 'RO Sub Translator',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
@@ -199,7 +199,7 @@ app.get('/:configData/translate', async (req, res) => {
 
     const cacheKey = targetUrl;
 
-    // 1. Dacă textul este deja tradus și salvat, îl dăm direct (Fără loading!)
+    // 1. Dacă textul este deja tradus și salvat în RAM, îl dăm direct
     if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
         res.setHeader('Content-Type', 'text/srt; charset=utf-8');
         return res.send(memoryCache[cacheKey]);
@@ -243,7 +243,7 @@ app.get('/:configData/translate', async (req, res) => {
             memoryCache[cacheKey] = processPromise;
             
             processPromise.then(translatedSrtString => {
-                // Când e gata, înlocuim promisiunea cu textul final pentru viitor
+                // Când e gata, înlocuim promisiunea cu textul final pentru viitor (în sesiunea curentă)
                 memoryCache[cacheKey] = translatedSrtString;
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
@@ -281,16 +281,11 @@ function cleanTextForJson(text) {
     if (!text) return text;
     let clean = text;
 
-    // 1. Ștergem COMPLET tag-urile HTML
     clean = clean.replace(/<[^>]+>/g, '');
-
-    // 2. Ștergem descrierile audio (Abordare Nucleară per tip de paranteză)
-    clean = clean.replace(/\[[^\]]*\]/g, ''); // distruge tot între [ ]
-    clean = clean.replace(/\([^\)]*\)/g, ''); // distruge tot între ( )
-    clean = clean.replace(/\{[^\}]*\}/g, ''); // distruge tot între { }
-    clean = clean.replace(/【[^】]*】/g, ''); // pentru fonturi ciudate
-
-    // 3. Ștergem numele personajelor (ex: "MAX:") și notele muzicale
+    clean = clean.replace(/\[[^\]]*\]/g, ''); 
+    clean = clean.replace(/\([^\)]*\)/g, ''); 
+    clean = clean.replace(/\{[^\}]*\}/g, ''); 
+    clean = clean.replace(/【[^】]*】/g, ''); 
     clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/[♪#♫]/g, '');
     clean = clean.replace(/â™ª/gi, '');
@@ -301,7 +296,6 @@ function cleanTextForJson(text) {
     lines = lines.map(line => {
         let l = line.trim();
         
-        // Eliminăm interjecțiile lipite de început în buclă
         let changed = true;
         while(changed) {
             const match = l.match(/^(-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
@@ -312,7 +306,6 @@ function cleanTextForJson(text) {
             }
         }
 
-        // Dacă a rămas DOAR punctuație (ex: o liniuță, puncte de suspensie, un semn de exclamare), GOLIM LINIA COMPLET
         if (/^[-.,!?\s]*$/.test(l)) {
             return '';
         }
