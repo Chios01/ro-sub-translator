@@ -8,10 +8,27 @@ console.log = (...args) => process.stdout.write(args.map(arg => typeof arg === '
 
 const app = express();
 
+// Permitem paginii noastre web să ceară validarea (Rezolvarea problemei CORS)
 app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
     next();
+});
+
+// AICI ESTE SECRETUL NOU: O rută specială doar pentru a verifica cheile, ferită de blocajul browserelor.
+app.get('/validate-key', async (req, res) => {
+    const key = req.query.key;
+    if (!key) return res.status(400).send('No key provided');
+
+    try {
+        // Serverul.js vorbește cu Google (aici nu există problema CORS)
+        const check = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash?key=${key}`, { timeout: 5000 });
+        if (check.status === 200) {
+            return res.json({ valid: true });
+        }
+    } catch (e) {
+        return res.json({ valid: false });
+    }
 });
 
 const c = {
