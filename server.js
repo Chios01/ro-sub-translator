@@ -23,13 +23,13 @@ const c = {
     reset: '\x1b[0m'
 };
 
-// === SISTEMUL DE CACHE (MEMORIE) PENTRU DERULARE INSTANTĂ ===
+// === SISTEMUL DE CACHE (MEMORIE) ===
 const memoryCache = {}; 
 
 // === MANIFESTUL TĂU OPTIMIZAT PENTRU STREMIO ===
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '1.6.0', // <--- AICI SCHIMBI NUMĂRUL (ex: 1.7.0, 2.0.0)
+    version: '1.7.0', // Versiune nouă pentru a forța update-ul vizual
     name: 'RO Sub Translator',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
@@ -199,7 +199,6 @@ app.get('/:configData/translate', async (req, res) => {
 
     const cacheKey = targetUrl;
 
-    // 1. Dacă textul este deja tradus și salvat în RAM, îl dăm direct
     if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
         res.setHeader('Content-Type', 'text/srt; charset=utf-8');
         return res.send(memoryCache[cacheKey]);
@@ -218,11 +217,9 @@ app.get('/:configData/translate', async (req, res) => {
     try {
         let processPromise;
 
-        // 2. Dacă e în curs de traducere de către un alt request, ne atașăm la el
         if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
             processPromise = memoryCache[cacheKey];
         } else {
-            // 3. Nu există nici în cache, nici în curs. Pornim traducerea nouă.
             const startTime = Date.now();
             
             processPromise = (async () => {
@@ -239,11 +236,9 @@ app.get('/:configData/translate', async (req, res) => {
                 return await translateSrtWithGemini(srtRes.data, userKeys);
             })();
             
-            // Salvăm promisiunea în cache ca să știe și alte cereri că se lucrează la el
             memoryCache[cacheKey] = processPromise;
             
             processPromise.then(translatedSrtString => {
-                // Când e gata, înlocuim promisiunea cu textul final pentru viitor (în sesiunea curentă)
                 memoryCache[cacheKey] = translatedSrtString;
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
@@ -298,7 +293,8 @@ function cleanTextForJson(text) {
         
         let changed = true;
         while(changed) {
-            const match = l.match(/^(-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|hmm+|umm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
+            // Regex îmbunătățit: prinde inclusiv "um", "uh", "hm" (din 2 litere)
+            const match = l.match(/^(-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
             if (match) {
                 l = match[1] + match[3].trim();
             } else {
@@ -329,6 +325,21 @@ function chunkArray(array, size) {
 
 function formatSubtitleLine(text) {
     if (!text) return text;
+    
+    // NOU: POST-PROCESARE PENTRU CE SCAPĂ DE LA AI
+    let lines = text.split('\n');
+    lines = lines.map(l => {
+        let cl = l.trim();
+        // Șterge liniile care conțin DOAR interjecții traduse (ex: "- Ăă.", "- Mda.")
+        if (/^(-?\s*)(ă+|m+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl)) return '';
+        // Șterge liniile care au rămas cu o liniuță goală sau doar punctuație
+        if (/^[-.,!?\s]*$/.test(cl)) return '';
+        return cl;
+    });
+    
+    text = lines.filter(l => l !== '').join('\n');
+    if (text.trim() === '') return ' '; // Previne erorile în fișierul SRT
+
     if (text.includes('\n')) return text;
 
     const MAX_LEN = 45; 
@@ -442,7 +453,7 @@ RULES:
 2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
 3. TV BROADCAST CENSORSHIP (CRITICAL): To prevent safety filter blocks, DO NOT translate extreme swear words literally. Soften all vulgarities to PG-13 TV standards. For example, translate "motherfucker", "fuck", or "shit" as "la naiba", "du-te dracului", "nenorocitule", "fir-ar", or "rahat".
 4. IDIOMS & SLANG: "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". "Stop doing X" = "Nu mai face X". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
-5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like [SNAPPING], (sighs), [music]. Completely remove them! DO NOT translate short interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm. Remove dangling hyphens (-).
+5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like [SNAPPING], (sighs), [music]. Completely remove them! DO NOT translate hesitations/interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm, Um, Uh, Ăă. Remove them! Remove dangling hyphens (-).
 6. NO DIGITS IN WORDS: Never put numbers inside words (e.g., write "uita", not "2uita"). 
 7. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
 
