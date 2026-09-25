@@ -23,6 +23,9 @@ const c = {
     reset: '\x1b[0m'
 };
 
+// === SISTEMUL DE CACHE (MEMORIE) PENTRU DERULARE INSTANTĂ ===
+const memoryCache = {}; 
+
 // === MANIFESTUL TĂU OPTIMIZAT PENTRU STREMIO ===
 const manifest = {
     id: 'community.chios.geminitranslator', 
@@ -194,6 +197,14 @@ app.get('/:configData/translate', async (req, res) => {
         return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
     }
 
+    const cacheKey = targetUrl;
+
+    // 1. Dacă textul este deja tradus și salvat, îl dăm direct (Fără loading!)
+    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
+        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
+        return res.send(memoryCache[cacheKey]);
+    }
+
     res.writeHead(200, {
         'Content-Type': 'text/srt; charset=utf-8',
         'Transfer-Encoding': 'chunked'
@@ -205,26 +216,47 @@ app.get('/:configData/translate', async (req, res) => {
     }, 10000);
 
     try {
-        const startTime = Date.now();
-        
-        const srtRes = await axios.get(targetUrl, {
-            headers: { 'User-Agent': BROWSER_USER_AGENT }
-        });
-        
-        const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
-        console.log(`${c.cyan}\n==================================================${c.reset}`);
-        console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-        console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-        console.log(`${c.cyan}==================================================\n${c.reset}`);
-        
-        const finalSrt = await translateSrtWithGemini(srtRes.data, userKeys);
-        
-        const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-        let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
-        
-        console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
-        console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
-        console.log(`${c.cyan}==================================================\n${c.reset}`);
+        let processPromise;
+
+        // 2. Dacă e în curs de traducere de către un alt request, ne atașăm la el
+        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
+            processPromise = memoryCache[cacheKey];
+        } else {
+            // 3. Nu există nici în cache, nici în curs. Pornim traducerea nouă.
+            const startTime = Date.now();
+            
+            processPromise = (async () => {
+                const srtRes = await axios.get(targetUrl, {
+                    headers: { 'User-Agent': BROWSER_USER_AGENT }
+                });
+                
+                const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
+                console.log(`${c.cyan}\n==================================================${c.reset}`);
+                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                
+                return await translateSrtWithGemini(srtRes.data, userKeys);
+            })();
+            
+            // Salvăm promisiunea în cache ca să știe și alte cereri că se lucrează la el
+            memoryCache[cacheKey] = processPromise;
+            
+            processPromise.then(translatedSrtString => {
+                // Când e gata, înlocuim promisiunea cu textul final pentru viitor
+                memoryCache[cacheKey] = translatedSrtString;
+                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+                let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+                
+                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+            }).catch(() => {
+                delete memoryCache[cacheKey];
+            });
+        }
+
+        const finalSrt = await processPromise;
         
         clearInterval(keepAlive);
         res.write(finalSrt);
