@@ -27,7 +27,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.1.0', // <--- Versiunea actualizată (Prompt mai strict pentru AI)
+    version: '2.1.0', 
     name: 'RO Sub Translator',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
@@ -82,7 +82,6 @@ async function handleSubtitles(req, res) {
 
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
-        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`,  
         `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
         `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`
     ];
@@ -90,7 +89,7 @@ async function handleSubtitles(req, res) {
     try {
         const fetchPromises = urlsToFetch.map(u => 
             axios.get(u, { 
-                timeout: 3000, 
+                timeout: 3500, 
                 headers: { 'User-Agent': BROWSER_USER_AGENT } 
             }).catch(() => ({ data: { subtitles: [] } }))
         );
@@ -111,7 +110,7 @@ async function handleSubtitles(req, res) {
             if (uniqueUrls.has(sub.url)) return false;
             uniqueUrls.add(sub.url);
             return true;
-        }).slice(0, 20); 
+        }).slice(0, 25); 
 
         if (engSubs.length === 0) return res.json({ subtitles: [] });
 
@@ -149,6 +148,7 @@ async function handleSubtitles(req, res) {
             if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(subName)) s.score += 40;
             if (/bluray|brrip|bdrip|bdr/i.test(subName)) s.score += 30;
             if (/yts|yify|rarbg|tgx|qxr|psa/i.test(subName)) s.score += 20;
+            if (/sdh|hi\.|hearing impaired/i.test(subName)) s.score -= 15; 
             if (/sync|corregido|resync|translated|auto|machine/i.test(subName)) s.score -= 100;
         });
 
@@ -159,12 +159,12 @@ async function handleSubtitles(req, res) {
             const encodedUrl = encodeURIComponent(s.originalUrl);
             
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
-            const tagMatch = vizualName.match(/(1080p|720p|2160p|4k|bluray|web-dl|webrip|yts|yify|rarbg)/i);
+            const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             
-            let labelName = `[${index + 1}] RO AI`;
+            let labelName = `🇷🇴 RO AI [${index + 1}]`;
             if (tagMatch) {
                 let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `[${index + 1}] RO AI (${cleanTag})`;
+                labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
             }
 
             return {
@@ -448,9 +448,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // ========================================================
-            // NOU: PROMPT MAI STRICT PENTRU CORECTITUDINEA GRAMATICALĂ
-            // ========================================================
             const prompt = `Translate the following English subtitles into natural, conversational Romanian.
 
 RULES:
