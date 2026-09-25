@@ -6,117 +6,155 @@
     <title>Configurare - RO Sub Translator</title>
     <style>
         body {
-            background-color: #141414;
+            background-color: #121212;
             color: #ffffff;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             display: flex;
             justify-content: center;
-            align-items: center;
+            align-items: flex-start;
             min-height: 100vh;
             margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
         }
         .container {
-            background-color: #1e1e1e;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-            max-width: 500px;
+            max-width: 400px;
             width: 100%;
+            padding-bottom: 40px;
         }
         h1 {
-            color: #8a5ae9;
-            font-size: 24px;
-            margin-bottom: 10px;
+            color: #00ff7f; /* Verdele vibrant din imagini */
+            font-size: 26px;
+            margin-bottom: 8px;
             text-align: center;
+            font-weight: bold;
         }
         .version-badge {
-            font-size: 0.5em;
-            background-color: #8a5ae9;
+            font-size: 0.45em;
+            background-color: #8a5ae9; /* Bulina specifică Stremio */
             color: #ffffff;
             padding: 4px 10px;
             border-radius: 20px;
             vertical-align: middle;
-            margin-left: 10px;
+            margin-left: 8px;
             font-weight: 600;
             letter-spacing: 0.5px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
         p.subtitle {
             text-align: center;
-            color: #a0a0a0;
+            color: #999999;
+            margin-top: 0;
             margin-bottom: 30px;
             font-size: 14px;
         }
+        .input-group {
+            margin-bottom: 15px;
+        }
         label {
             display: block;
-            margin-bottom: 8px;
-            font-weight: bold;
-            color: #d1d1d1;
+            margin-bottom: 6px;
+            font-size: 13px;
+            color: #bbbbbb;
         }
-        textarea {
+        input[type="text"] {
             width: 100%;
-            height: 120px;
-            background-color: #2a2a2a;
+            background-color: #1e1e1e;
             color: #ffffff;
-            border: 1px solid #444;
+            border: 1px solid #333333;
             border-radius: 8px;
-            padding: 10px;
+            padding: 12px 15px;
             font-size: 14px;
-            resize: none;
+            font-family: monospace;
             box-sizing: border-box;
-            margin-bottom: 20px;
+            transition: border-color 0.2s;
         }
-        textarea:focus {
+        input[type="text"]:focus {
             outline: none;
-            border-color: #8a5ae9;
+            border-color: #00ff7f;
+        }
+        input[type="text"]::placeholder {
+            color: #555555;
         }
         .btn-install {
             display: block;
             width: 100%;
-            background-color: #8a5ae9;
-            color: white;
+            background-color: #00e676; /* Verde deschis pentru buton */
+            color: #000000;
             border: none;
-            padding: 15px;
+            padding: 16px;
             border-radius: 8px;
             font-size: 16px;
             font-weight: bold;
             cursor: pointer;
-            transition: background-color 0.3s ease;
             text-align: center;
             text-decoration: none;
+            margin-top: 25px;
+            transition: background-color 0.3s ease;
         }
         .btn-install:hover {
-            background-color: #7241d6;
+            background-color: #00c853;
+        }
+        .footer {
+            text-align: center;
+            color: #00ffff; /* Cyan-ul din footer */
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            margin-top: 30px;
+            line-height: 1.5;
         }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <!-- AICI ESTE CÂRLIGUL: {{VERSION}} va fi înlocuit de server.js -->
+        <!-- Titlul cu bulina de versiune injectată automat de server -->
         <h1>RO Sub Translator <span class="version-badge">v{{VERSION}}</span></h1>
-        <p class="subtitle">Adaugă cheile tale API Google Gemini (una pe rând) și apasă instalare.</p>
+        <p class="subtitle">Introdu cele 10 chei API Google Gemini</p>
         
-        <label for="apiKeys">Chei API Gemini:</label>
-        <textarea id="apiKeys" placeholder="Lipește prima cheie aici...&#10;Lipește a doua cheie aici...&#10;Lipește a treia cheie aici..."></textarea>
+        <div id="keys-container">
+            <!-- 10 câmpuri de input -->
+            <div class="input-group"><label>Cheia 1:</label><input type="text" id="key1" placeholder="AIzaSy..."></div>
+            <div class="input-group"><label>Cheia 2:</label><input type="text" id="key2" placeholder="AIzaSy..."></div>
+            <div class="input-group"><label>Cheia 3:</label><input type="text" id="key3" placeholder="AIzaSy..."></div>
+            <div class="input-group"><label>Cheia 4:</label><input type="text" id="key4" placeholder="AIzaSy..."></div>
+            <div class="input-group"><label>Cheia 5:</label><input type="text" id="key5" placeholder="AIzaSy..."></div>
+            <div class="input-group"><label>Cheia 6:</label><input type="text" id="key6" placeholder="AIzaSy..."></div>
+            <div class="input-group"><label>Cheia 7:</label><input type="text" id="key7" placeholder="AIzaSy..."></div>
+            <div class="input-group"><label>Cheia 8:</label><input type="text" id="key8" placeholder="AIzaSy..."></div>
+            <div class="input-group"><label>Cheia 9:</label><input type="text" id="key9" placeholder="AIzaSy..."></div>
+            <div class="input-group"><label>Cheia 10:</label><input type="text" id="key10" placeholder="AIzaSy..."></div>
+        </div>
         
         <a href="#" id="installLink" class="btn-install">Instalează în Stremio</a>
+        
+        <div class="footer">
+            // System status: Operational. Powered<br>by Chios.
+        </div>
     </div>
 
     <script>
-        document.getElementById('apiKeys').addEventListener('input', updateLink);
+        // Adăugăm un "ascultător" pe toate cele 10 câmpuri de text
+        for (let i = 1; i <= 10; i++) {
+            document.getElementById('key' + i).addEventListener('input', updateLink);
+        }
 
         function updateLink() {
-            const keysText = document.getElementById('apiKeys').value;
-            // Extragem liniile care nu sunt goale
-            const keysArray = keysText.split('\n').map(k => k.trim()).filter(k => k.length > 0);
+            let keysArray = [];
             
+            // Colectăm valorile din toate cele 10 căsuțe
+            for (let i = 1; i <= 10; i++) {
+                let val = document.getElementById('key' + i).value.trim();
+                if (val !== "") {
+                    keysArray.push(val);
+                }
+            }
+            
+            // Dacă utilizatorul a introdus cel puțin o cheie validă, generăm link-ul
             if (keysArray.length > 0) {
-                // Transformăm array-ul în text JSON și apoi în Base64
                 const configJson = JSON.stringify(keysArray);
                 const base64Config = btoa(configJson);
                 
-                // Generăm link-ul dinamic
                 const currentUrl = window.location.href.replace('https://', '').replace('http://', '').split('/')[0];
                 const installUrl = `stremio://${currentUrl}/${base64Config}/manifest.json`;
                 
