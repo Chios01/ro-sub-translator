@@ -30,6 +30,17 @@ Acest proiect nu este doar un simplu script de traducere, ci un **motor robust, 
 Spre deosebire de alte addon-uri care dau crash la prima eroare Google, `ro-sub-translator` citește fișierul `.srt`, îl transformă într-un fișier JSON ordonat și îl împarte în bucăți chirurgicale de câte 165 de linii. 
 
 Dacă Google blochează o cerere (Timeout de 120s sau limită de trafic), serverul nu abandonează. Calmează IP-ul pentru 1.5 - 10 secunde, schimbă cheia API și atacă din nou problema până când 100% din subtitrare este extrasă corect și asamblată perfect sincronizat pe ecran.
+---
+## ⚠️ Disclaimer & Legal
 
+Acest addon este un proiect open-source creat exclusiv în scop educativ și pentru a ajuta comunitatea. 
+
+* **Utilizarea API-ului:** Addon-ul necesită folosirea unor chei API Google Gemini personale. Tu ești singurul responsabil pentru gestionarea, securitatea și limitele de utilizare ale acestor chei.
+* **Fără afiliere:** Acest proiect **nu** este afiliat, asociat, autorizat, susținut sau aprobat în niciun fel de Google, Alphabet Inc. sau Stremio.
+* **Limitarea Răspunderii:** Dezvoltatorul nu își asumă nicio responsabilitate pentru funcționarea întreruptă a serviciilor, eventualele costuri survenite din utilizarea API-ului, limitările de trafic (rate limits) sau blocarea/suspendarea cheilor tale API. Utilizezi acest software pe propriul risc („as is”).
+
+## 📄 Licență
+
+Acest proiect este licențiat sub **Licența MIT** - așadar ești liber să îl folosești, modifici și distribui, cu respectarea clauzelor de limitare a răspunderii. Citește fișierul `LICENSE` pentru mai multe detalii.
 ---
 *Proiect creat din pasiune pentru filme și cod curat. 🎬🤖*
