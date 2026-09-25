@@ -207,7 +207,6 @@
                     return;
                 }
                 
-                // Actualizare: Acum acceptă atât standardul vechi (AIza) cât și pe cel nou (AQ)
                 if (!val.startsWith("AIza") && !val.startsWith("AQ")) {
                     statusMsg.innerText = `Eroare: Cheia ${i} nu pare validă. O cheie Google începe cu "AIza" sau "AQ".`;
                     statusMsg.style.display = 'block';
@@ -219,16 +218,21 @@
                 keysArray.push({ id: 'key' + i, value: val });
             }
 
-            validateBtn.innerText = "Se verifică la Google... (așteaptă)";
+            validateBtn.innerText = "Se verifică... (așteaptă)";
             validateBtn.disabled = true;
             
             let allValid = true;
 
+            // NOU: Acum trimitem cheile către serverul nostru intern pentru verificare, ocolind blocajul browserului
+            const currentHost = window.location.origin;
+            
             const validationPromises = keysArray.map(async (keyObj) => {
                 let input = document.getElementById(keyObj.id);
                 try {
-                    let res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash?key=${keyObj.value}`);
-                    if (res.ok) {
+                    let res = await fetch(`${currentHost}/validate-key?key=${keyObj.value}`);
+                    let data = await res.json();
+                    
+                    if (data.valid === true) {
                         input.style.borderColor = "#00ff7f";
                     } else {
                         input.style.borderColor = "#ff3333";
