@@ -14,7 +14,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// AICI ESTE SECRETUL NOU: Întrebăm generic Google dacă cheia există
 app.get('/validate-key', async (req, res) => {
     const key = req.query.key;
     if (!key) return res.status(400).send('No key provided');
@@ -42,7 +41,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.1.0', 
+    version: '2.1.1', // Am incrementat versiunea pentru fix-ul notelor muzicale
     name: 'RO Sub Translator',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
@@ -291,9 +290,13 @@ function cleanTextForJson(text) {
 
     clean = clean.replace(/<[^>]+>/g, '');
     
+    // NOU: Filtru mult mai agresiv pentru ORICE fel de combinație de note muzicale
     clean = clean.replace(/[♪♫♬♩#]/gi, '');
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
+    clean = clean.replace(/\[\s*[♪♫♬♩#]+\s*\]/gi, '');
+    clean = clean.replace(/\(\s*[♪♫♬♩#]+\s*\)/gi, '');
+    clean = clean.replace(/\[.*music.*\]/gi, ''); // Prindem și cuvântul "music" între paranteze
 
     clean = clean.replace(/\[[\s\S]*?\]/g, ''); 
     clean = clean.replace(/\([\s\S]*?\)/g, ''); 
@@ -320,6 +323,12 @@ function cleanTextForJson(text) {
         if (/^[-—.,!?\s]*$/.test(l)) {
             return '';
         }
+        
+        // Asigurare extra pe fiecare linie
+        l = l.replace(/[♪♫♬♩#]/gi, '');
+        l = l.replace(/\[\s*\]/g, ''); 
+        l = l.replace(/\(\s*\)/g, '');
+        
         return l;
     });
 
@@ -355,6 +364,12 @@ function formatSubtitleLine(text) {
     validLines = validLines.map(l => l.replace(/^[-—\s]+/, ''));
     
     text = validLines.join('\n');
+    
+    // Încă o ultimă trecere de siguranță înainte de afișare
+    text = text.replace(/[♪♫♬♩#]/gi, '');
+    text = text.replace(/\[\s*\]/g, ''); 
+    text = text.replace(/\(\s*\)/g, '');
+
     if (text.trim() === '') return ' '; 
 
     if (text.includes('\n')) return text;
