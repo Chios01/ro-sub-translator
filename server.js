@@ -29,7 +29,7 @@ const memoryCache = {};
 // === MANIFESTUL TĂU OPTIMIZAT PENTRU STREMIO ===
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '1.7.0', // Versiune nouă pentru a forța update-ul vizual
+    version: '1.8.0', // <--- Versiunea 1.8.0 pentru update
     name: 'RO Sub Translator',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
@@ -293,7 +293,6 @@ function cleanTextForJson(text) {
         
         let changed = true;
         while(changed) {
-            // Regex îmbunătățit: prinde inclusiv "um", "uh", "hm" (din 2 litere)
             const match = l.match(/^(-?\s*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
             if (match) {
                 l = match[1] + match[3].trim();
@@ -305,11 +304,17 @@ function cleanTextForJson(text) {
         if (/^[-.,!?\s]*$/.test(l)) {
             return '';
         }
-
         return l;
     });
 
-    clean = lines.filter(l => l !== '').join('\n');
+    // NOU: Filtru inteligent pentru liniuțe orfane (Pre-procesare)
+    let validLines = lines.filter(l => l !== '');
+    if (validLines.length === 1) {
+        // Dacă e o singură linie, ștergem liniuța de dialog de la început (dacă există)
+        validLines[0] = validLines[0].replace(/^-\s*/, '');
+    }
+
+    clean = validLines.join('\n');
 
     if (clean.trim() === '') return ' ';
     return clean.trim();
@@ -326,19 +331,23 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // NOU: POST-PROCESARE PENTRU CE SCAPĂ DE LA AI
     let lines = text.split('\n');
     lines = lines.map(l => {
         let cl = l.trim();
-        // Șterge liniile care conțin DOAR interjecții traduse (ex: "- Ăă.", "- Mda.")
         if (/^(-?\s*)(ă+|m+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl)) return '';
-        // Șterge liniile care au rămas cu o liniuță goală sau doar punctuație
         if (/^[-.,!?\s]*$/.test(cl)) return '';
         return cl;
     });
     
-    text = lines.filter(l => l !== '').join('\n');
-    if (text.trim() === '') return ' '; // Previne erorile în fișierul SRT
+    // NOU: Filtru inteligent pentru liniuțe orfane (Post-procesare)
+    let validLines = lines.filter(l => l !== '');
+    if (validLines.length === 1) {
+        // Dacă după curățare a rămas o singură linie, eliminăm liniuța de dialog de la început
+        validLines[0] = validLines[0].replace(/^-\s*/, '');
+    }
+    
+    text = validLines.join('\n');
+    if (text.trim() === '') return ' '; 
 
     if (text.includes('\n')) return text;
 
