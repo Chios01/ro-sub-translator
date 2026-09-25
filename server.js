@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const Parser = require('srt-parser-2').default;
 const path = require('path');
+const fs = require('fs');
 
 console.log = (...args) => process.stdout.write(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ') + '\n');
 
@@ -13,7 +14,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// === CULORI PENTRU CONSOLĂ ===
 const c = {
     green: '\x1b[32m',
     yellow: '\x1b[33m',
@@ -23,13 +23,11 @@ const c = {
     reset: '\x1b[0m'
 };
 
-// === SISTEMUL DE CACHE (MEMORIE) ===
 const memoryCache = {}; 
 
-// === MANIFESTUL TĂU OPTIMIZAT PENTRU STREMIO ===
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '1.9.0', // <--- Versiunea 1.9.0
+    version: '1.9.0', // <--- CÂND VEI MODIFICA AICI PE VIITOR, SE VA SCHIMBA PESTE TOT AUTOMAT
     name: 'RO Sub Translator',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
@@ -44,12 +42,12 @@ const manifest = {
 
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
-// ==========================================
-// 1. RUTELE SERVERULUI
-// ==========================================
-
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    fs.readFile(path.join(__dirname, 'index.html'), 'utf8', (err, data) => {
+        if (err) return res.sendFile(path.join(__dirname, 'index.html'));
+        const updatedHtml = data.replace(/{{VERSION}}/g, manifest.version);
+        res.send(updatedHtml);
+    });
 });
 
 app.get('/:configData/manifest.json', (req, res) => {
@@ -57,7 +55,11 @@ app.get('/:configData/manifest.json', (req, res) => {
 });
 
 app.get('/:configData/configure', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    fs.readFile(path.join(__dirname, 'index.html'), 'utf8', (err, data) => {
+        if (err) return res.sendFile(path.join(__dirname, 'index.html'));
+        const updatedHtml = data.replace(/{{VERSION}}/g, manifest.version);
+        res.send(updatedHtml);
+    });
 });
 
 async function handleSubtitles(req, res) {
@@ -268,22 +270,16 @@ app.listen(PORT, () => {
     console.log(`${c.green}✔ Serverul rulează pe portul: ${PORT}${c.reset}`);
 });
 
-// ==========================================
-// 2. FUNCȚII AJUTĂTOARE & TRADUCERE
-// ==========================================
-
 function cleanTextForJson(text) {
     if (!text) return text;
     let clean = text;
 
     clean = clean.replace(/<[^>]+>/g, '');
     
-    // NOU: Ștergem toate caracterele muzicale direct
     clean = clean.replace(/[♪♫♬♩#]/gi, '');
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
 
-    // NOU: Regex "Nuclear" care distruge parantezele indiferent ce e în ele
     clean = clean.replace(/\[[\s\S]*?\]/g, ''); 
     clean = clean.replace(/\([\s\S]*?\)/g, ''); 
     clean = clean.replace(/\{[\s\S]*?\}/g, ''); 
@@ -298,7 +294,6 @@ function cleanTextForJson(text) {
         
         let changed = true;
         while(changed) {
-            // NOU: Acceptă orice combinație de liniuțe și prinde "mm"
             const match = l.match(/^([-—\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
             if (match) {
                 l = match[1] + match[3].trim();
@@ -315,7 +310,6 @@ function cleanTextForJson(text) {
 
     let validLines = lines.filter(l => l !== '');
     
-    // NOU: Curățare completă a liniuțelor defecte ("--", "- -")
     if (validLines.length === 1) {
         validLines[0] = validLines[0].replace(/^[-—\s]+/, '');
     } else if (validLines.length > 1) {
@@ -342,7 +336,6 @@ function formatSubtitleLine(text) {
     let lines = text.split('\n');
     lines = lines.map(l => {
         let cl = l.trim();
-        // NOU: Acceptă orice combinație de liniuțe și prinde "mm" din traducerile halucinate
         if (/^([-—\s]*)(ă+|m+|mm+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl)) return '';
         if (/^[-—.,!?\s]*$/.test(cl)) return '';
         return cl;
@@ -350,7 +343,6 @@ function formatSubtitleLine(text) {
     
     let validLines = lines.filter(l => l !== '');
     
-    // NOU: Curățare completă a liniuțelor defecte și în post-procesare
     if (validLines.length === 1) {
         validLines[0] = validLines[0].replace(/^[-—\s]+/, '');
     } else if (validLines.length > 1) {
