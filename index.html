@@ -76,9 +76,6 @@
             outline: none;
             border-color: #8a5ae9;
         }
-        input[type="text"]::placeholder {
-            color: #555555;
-        }
         
         .btn-validate {
             display: block;
@@ -150,22 +147,22 @@
 
     <div class="container">
         <h1>RO Sub Translator <span class="version-badge">v{{VERSION}}</span></h1>
-        <p class="subtitle">Introdu cele 10 chei API Google Gemini</p>
+        <p class="subtitle">Introdu cele 10 token-uri de acces</p>
         
         <div id="keys-container">
-            <div class="input-group"><label>Cheia 1:</label><input type="text" id="key1" placeholder="AIza... sau AQ..."></div>
-            <div class="input-group"><label>Cheia 2:</label><input type="text" id="key2" placeholder="AIza... sau AQ..."></div>
-            <div class="input-group"><label>Cheia 3:</label><input type="text" id="key3" placeholder="AIza... sau AQ..."></div>
-            <div class="input-group"><label>Cheia 4:</label><input type="text" id="key4" placeholder="AIza... sau AQ..."></div>
-            <div class="input-group"><label>Cheia 5:</label><input type="text" id="key5" placeholder="AIza... sau AQ..."></div>
-            <div class="input-group"><label>Cheia 6:</label><input type="text" id="key6" placeholder="AIza... sau AQ..."></div>
-            <div class="input-group"><label>Cheia 7:</label><input type="text" id="key7" placeholder="AIza... sau AQ..."></div>
-            <div class="input-group"><label>Cheia 8:</label><input type="text" id="key8" placeholder="AIza... sau AQ..."></div>
-            <div class="input-group"><label>Cheia 9:</label><input type="text" id="key9" placeholder="AIza... sau AQ..."></div>
-            <div class="input-group"><label>Cheia 10:</label><input type="text" id="key10" placeholder="AIza... sau AQ..."></div>
+            <div class="input-group"><label>Token 1:</label><input type="text" id="key1" placeholder="..."></div>
+            <div class="input-group"><label>Token 2:</label><input type="text" id="key2" placeholder="..."></div>
+            <div class="input-group"><label>Token 3:</label><input type="text" id="key3" placeholder="..."></div>
+            <div class="input-group"><label>Token 4:</label><input type="text" id="key4" placeholder="..."></div>
+            <div class="input-group"><label>Token 5:</label><input type="text" id="key5" placeholder="..."></div>
+            <div class="input-group"><label>Token 6:</label><input type="text" id="key6" placeholder="..."></div>
+            <div class="input-group"><label>Token 7:</label><input type="text" id="key7" placeholder="..."></div>
+            <div class="input-group"><label>Token 8:</label><input type="text" id="key8" placeholder="..."></div>
+            <div class="input-group"><label>Token 9:</label><input type="text" id="key9" placeholder="..."></div>
+            <div class="input-group"><label>Token 10:</label><input type="text" id="key10" placeholder="..."></div>
         </div>
         
-        <button id="validateBtn" class="btn-validate" onclick="validateKeys()">Verifică Cheile</button>
+        <button id="validateBtn" class="btn-validate" onclick="validateKeys()">Verifică Datele</button>
         
         <a href="#" id="installLink" class="btn-install">Instalează în Stremio</a>
         
@@ -200,7 +197,7 @@
                 input.style.borderColor = "#333333";
                 
                 if (val === "") {
-                    statusMsg.innerText = `Eroare: Nu ai completat Cheia ${i}. Toate cele 10 sunt obligatorii!`;
+                    statusMsg.innerText = `Eroare: Câmpul ${i} este obligatoriu.`;
                     statusMsg.style.display = 'block';
                     input.style.borderColor = "#ff3333";
                     input.focus();
@@ -208,7 +205,7 @@
                 }
                 
                 if (!val.startsWith("AIza") && !val.startsWith("AQ")) {
-                    statusMsg.innerText = `Eroare: Cheia ${i} nu pare validă. O cheie Google începe cu "AIza" sau "AQ".`;
+                    statusMsg.innerText = `Eroare: Format invalid la câmpul ${i}.`;
                     statusMsg.style.display = 'block';
                     input.style.borderColor = "#ff3333";
                     input.focus();
@@ -218,18 +215,26 @@
                 keysArray.push({ id: 'key' + i, value: val });
             }
 
-            validateBtn.innerText = "Se verifică... (așteaptă)";
+            validateBtn.innerText = "Se verifică pe rând... (așteaptă)";
             validateBtn.disabled = true;
             
             let allValid = true;
 
-            // NOU: Acum trimitem cheile către serverul nostru intern pentru verificare, ocolind blocajul browserului
-            const currentHost = window.location.origin;
-            
-            const validationPromises = keysArray.map(async (keyObj) => {
+            for (let i = 0; i < keysArray.length; i++) {
+                let keyObj = keysArray[i];
                 let input = document.getElementById(keyObj.id);
+                
                 try {
-                    let res = await fetch(`${currentHost}/validate-key?key=${keyObj.value}`);
+                    await new Promise(r => setTimeout(r, 200)); 
+
+                    let res = await fetch('/validate-key?key=' + encodeURIComponent(keyObj.value));
+                    
+                    if (!res.ok) {
+                        input.style.borderColor = "#ff3333";
+                        allValid = false;
+                        continue;
+                    }
+
                     let data = await res.json();
                     
                     if (data.valid === true) {
@@ -242,11 +247,9 @@
                     input.style.borderColor = "#ff3333";
                     allValid = false;
                 }
-            });
+            }
 
-            await Promise.all(validationPromises);
-
-            validateBtn.innerText = "Verifică Cheile";
+            validateBtn.innerText = "Verifică Datele";
             validateBtn.disabled = false;
 
             if (allValid) {
@@ -261,7 +264,7 @@
                 installLink.href = installUrl;
                 installLink.style.display = 'block';
             } else {
-                statusMsg.innerText = "Eroare: Cheile marcate cu roșu sunt greșite sau au fost blocate!";
+                statusMsg.innerText = "Eroare: Datele marcate cu roșu sunt greșite sau blocate!";
                 statusMsg.style.display = 'block';
             }
         }
