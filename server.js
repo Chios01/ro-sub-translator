@@ -41,7 +41,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.1.1', // Am incrementat versiunea pentru fix-ul notelor muzicale
+    version: '2.2.0', // Am incrementat versiunea pentru fix-ul notelor muzicale
     name: 'RO Sub Translator',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
