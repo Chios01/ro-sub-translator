@@ -367,8 +367,8 @@ function formatSubtitleLine(text) {
     text = validLines.join('\n');
     
     text = text.replace(/[♪♫♬♩#]/gi, '');
-    text = text.replace(/\[\s*\]/g, ''); 
-    text = text.replace(/\(\s*\)/g, '');
+    text = text.replace(/\[[\s\S]*?\]/g, ''); 
+    text = text.replace(/\([\s\S]*?\)/g, '');
 
     if (text.trim() === '') return ' '; 
 
@@ -642,7 +642,14 @@ async function translateSrtWithGemini(srtText, userKeys) {
     }
 
     blocks.forEach((block, index) => {
-        let finalStr = allTranslatedTexts[index] || block.text; 
+        let finalStr = allTranslatedTexts[index];
+        
+        // Dacă valoarea este undefined sau null (ceea ce înseamnă că a fost omisă complet din eroare de procesare)
+        // se folosește textul inițial. Aici reparăm eroarea prin care un string gol "" era considerat fals.
+        if (finalStr === undefined || finalStr === null) {
+            finalStr = block.text;
+        }
+        
         block.text = formatSubtitleLine(finalStr);
     });
 
