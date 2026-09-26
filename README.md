@@ -16,7 +16,7 @@ Acest proiect nu este doar un simplu script de traducere, ci un **motor robust, 
   * Interzice traducerile literale ale expresiilor idiomatice (idioms).
   * Curăță slang-ul englezesc lăsat accidental de AI (*"man", "bro", "dude"*).
   * Corectează acordurile de gen, număr și utilizarea cratimelor.
-* 🔑 **Sistem Multi-Key (Optimizat pentru 10 chei):** Addon-ul funcționează cel mai bine folosind un "pool" extins de chei API pentru a distribui traficul. **Pentru ca motorul să ruleze la parametri optimi, fără blocaje sau întreruperi, este necesară introducerea a 10 chei API.** Cheile pot fi generate complet gratuit accesând platforma oficială [Google AI Studio](https://aistudio.google.com/app/apikey).
+* 🔑 **Sistem Multi-Key (Optimizat pentru 10 chei):** Add-on-ul funcționează cel mai bine folosind un "pool" extins de chei API pentru a distribui traficul. Pentru ca motorul să ruleze la parametri optimi, fără blocaje sau întreruperi, este necesară introducerea a 10 chei API. **💡 Sfat de performanță (Pro Tip):** Cel mai eficient este ca **fiecare cheie să fie generată într-un proiect Google separat** (nu crea toate cele 10 chei în același proiect). Un singur cont Google gratuit îți permite să creezi exact 10 proiecte distincte. Cheile pot fi generate complet gratuit accesând platforma oficială [Google AI Studio](https://aistudio.google.com/).
 
 ## 🌐 Interfața Web de Instalare și Validare
 
