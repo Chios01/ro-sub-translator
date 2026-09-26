@@ -28,14 +28,14 @@ Add-on-ul vine cu o pagină de configurare modernă (optimizată atât pentru PC
 * **Securitate:** Datele tale sunt împachetate în siguranță (Base64) și trimise direct către aplicația ta Stremio.
 
 ### ⚠️ REGULĂ STRICTĂ: Ai nevoie de EXACT 10 chei API!
-Pentru ca sistemul avansat de Anti-Cenzură și Anti-Spam (rotația cheilor) să funcționeze impecabil și să traducă mii de linii în câteva secunde, **este obligatoriu să introduci 10 chei API Google Gemini (care încep cu `AIza...` sau `AQ...`)**. 
+Pentru ca sistemul avansat de Anti-Cenzură și Anti-Spam (rotația cheilor) să funcționeze impecabil și să traducă mii de linii în câteva secunde, **este obligatoriu să introduci 10 chei API Google Gemini. 
 
 Dacă lași o căsuță goală sau dacă o cheie este invalidă, butonul final de instalare va rămâne ascuns.
 
 ### 🛠️ Cum se instalează:
 1. Generează gratuit cele 10 chei API Gemini din Google AI Studio.
 2. Lipește-le cu atenție în cele 10 căsuțe de pe pagina de configurare a add-on-ului.
-3. Apasă butonul mov **„Verifică Cheile”** și așteaptă câteva secunde.
+3. Apasă butonul mov **„Verifică Datele”** și așteaptă câteva secunde.
 4. Doar după ce **toate cele 10 căsuțe devin verzi**, va apărea butonul verde **„Instalează în Stremio”**.
 5. Apasă-l și bucură-te de filmele tale preferate! 🍿
 
