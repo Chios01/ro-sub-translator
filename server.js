@@ -14,6 +14,7 @@ app.use((req, res, next) => {
     next();
 });
 
+// Ruta pentru validarea cheilor (ocolire CORS)
 app.get('/validate-key', async (req, res) => {
     const key = req.query.key;
     if (!key) return res.status(400).send('No key provided');
@@ -41,8 +42,9 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.2.0', // Am incrementat versiunea pentru fix-ul notelor muzicale
+    version: '2.2.0',
     name: 'RO Sub Translator',
+    logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
     types: ['movie', 'series'],
@@ -290,13 +292,13 @@ function cleanTextForJson(text) {
 
     clean = clean.replace(/<[^>]+>/g, '');
     
-    // NOU: Filtru mult mai agresiv pentru ORICE fel de combinație de note muzicale
+    // Filtru super-agresiv pentru note muzicale
     clean = clean.replace(/[♪♫♬♩#]/gi, '');
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
     clean = clean.replace(/\[\s*[♪♫♬♩#]+\s*\]/gi, '');
     clean = clean.replace(/\(\s*[♪♫♬♩#]+\s*\)/gi, '');
-    clean = clean.replace(/\[.*music.*\]/gi, ''); // Prindem și cuvântul "music" între paranteze
+    clean = clean.replace(/\[.*music.*\]/gi, ''); 
 
     clean = clean.replace(/\[[\s\S]*?\]/g, ''); 
     clean = clean.replace(/\([\s\S]*?\)/g, ''); 
@@ -324,7 +326,6 @@ function cleanTextForJson(text) {
             return '';
         }
         
-        // Asigurare extra pe fiecare linie
         l = l.replace(/[♪♫♬♩#]/gi, '');
         l = l.replace(/\[\s*\]/g, ''); 
         l = l.replace(/\(\s*\)/g, '');
@@ -365,7 +366,6 @@ function formatSubtitleLine(text) {
     
     text = validLines.join('\n');
     
-    // Încă o ultimă trecere de siguranță înainte de afișare
     text = text.replace(/[♪♫♬♩#]/gi, '');
     text = text.replace(/\[\s*\]/g, ''); 
     text = text.replace(/\(\s*\)/g, '');
