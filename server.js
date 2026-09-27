@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.2.8',
+    version: '2.2.9',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -369,14 +369,31 @@ function formatSubtitleLine(text) {
     text = text.replace(/\[[\s\S]*?\]/g, ''); 
     text = text.replace(/\([\s\S]*?\)/g, '');
 
-    // Filtre mecanice de protecție împotriva halucinațiilor de limbaj
+    // Filtre mecanice de protecție (curățare interjecții și bâlbâieli de oriunde din propoziție)
+    text = text.replace(/\băă\b/gi, '');
+    text = text.replace(/\bhă\b/gi, '');
+    text = text.replace(/\bP-Păi\b/gi, 'Păi');
+    text = text.replace(/\b[wW]-Well\b/gi, 'Păi');
+
+    // Auto-corector mecanic pentru erorile frecvente (Typos AI)
+    text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); // Șterge cifra 1 lipită de un cuvânt românesc
     text = text.replace(/\baire\b/g, 'ai');
     text = text.replace(/\bAire\b/g, 'Ai');
     text = text.replace(/\baver\b/g, 'ai');
     text = text.replace(/\bAver\b/g, 'Ai');
-    text = text.replace(/\b1ui\b/g, 'lui');
-    text = text.replace(/\b1-ui\b/g, 'lui');
+    text = text.replace(/\bman spui\b/gi, 'îmi spui');
+    text = text.replace(/\bÎcerci\b/g, 'Încerci');
+    text = text.replace(/\bîcerci\b/g, 'încerci');
+    text = text.replace(/\bFă-ca\b/gi, 'Fă-te ca');
+    text = text.replace(/\bsă suferit\b/gi, 'să sufăr');
 
+    // Reparare punctuație (rezolvă golurile rămase după ștergerea interjecțiilor)
+    text = text.replace(/,\s*,/g, ',');
+    text = text.replace(/\s+,/g, ',');
+    text = text.replace(/\s+\?/g, '?');
+    text = text.replace(/\s+\./g, '.');
+    text = text.replace(/ +/g, ' '); // elimină spațiile duble
+    
     // Filtru de siguranță împotriva halucinațiilor AI cu alfabete non-latine.
     text = text.replace(/[^\u0000-\u024F\u2000-\u206F\u2E00-\u2E7F\n\r]/g, "");
 
@@ -493,9 +510,9 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
 RULES:
 1. DIACRITICS, SPELLING & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Ensure PERFECT Romanian spelling and grammar. Use standard, dictionary-approved vocabulary.
 2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
-3. TV BROADCAST CENSORSHIP (CRITICAL): To prevent safety blocks, DO NOT translate extreme swear words literally. Soften vulgarities to PG-13 TV standards. Preserve the scene's tension but maintain civilized language. Omit swear words entirely if they are just filler words. Examples: translate "motherfucker", "fuck", or "shit" as "la naiba", "du-te dracului", "nenorocitule", "fir-ar", or "rahat".
+3. TV BROADCAST CENSORSHIP (CRITICAL): To prevent safety blocks, DO NOT translate extreme swear words literally. Soften vulgarities to PG-13 TV standards. Preserve the scene's tension but maintain civilized language. Omit swear words entirely if they are just filler words.
 4. IDIOMS & SLANG: "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". "Stop doing X" = "Nu mai face X". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
-5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like [SNAPPING], (sighs), [music]. Completely remove them! DO NOT translate hesitations/interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm, Um, Uh, Ăă, Mm. Remove them!
+5. NOISES, HESITATIONS & STUTTERS: Completely remove audio tags like [music]. Completely remove ALL hesitations, stutters, and interjections (e.g., Oh, Ah, Uh, Ăă, hă) from EVERYWHERE in the sentence.
 6. NO DIGITS IN WORDS: Never put numbers inside words. 
 7. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
 
