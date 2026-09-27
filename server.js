@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.2.7',
+    version: '2.2.8',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -372,6 +372,8 @@ function formatSubtitleLine(text) {
     // Filtre mecanice de protecție împotriva halucinațiilor de limbaj
     text = text.replace(/\baire\b/g, 'ai');
     text = text.replace(/\bAire\b/g, 'Ai');
+    text = text.replace(/\baver\b/g, 'ai');
+    text = text.replace(/\bAver\b/g, 'Ai');
     text = text.replace(/\b1ui\b/g, 'lui');
     text = text.replace(/\b1-ui\b/g, 'lui');
 
