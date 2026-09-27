@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.1',
+    version: '2.3.2',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -143,7 +143,6 @@ async function handleSubtitles(req, res) {
         const fNameLower = userFilename.toLowerCase();
         const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
 
-        // Am anulat logica strictă din 2.3.0 și am revenit la sistemul vechi, flexibil
         diverseSubs.forEach(s => {
             s.score = 0;
             const subName = s.realName.toLowerCase();
@@ -376,8 +375,8 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bP-Păi\b/gi, 'Păi');
     text = text.replace(/\b[wW]-Well\b/gi, 'Păi');
 
-    // Auto-corector mecanic pentru erorile frecvente (Typos AI) - Păstrate integral!
-    text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
+    // Auto-corector mecanic pentru erorile frecvente (Typos AI)
+    text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); // Șterge cifra 1 lipită de un cuvânt românesc
     text = text.replace(/\baire\b/g, 'ai');
     text = text.replace(/\bAire\b/g, 'Ai');
     text = text.replace(/\baver\b/g, 'ai');
@@ -387,6 +386,14 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bîcerci\b/g, 'încerci');
     text = text.replace(/Fă-ca acasă/gi, 'Simte-te ca acasă');
     text = text.replace(/\bsă suferit\b/gi, 'să sufăr');
+
+    // Anomalii adăugate din seria Spider-Noir / 2 Broke Girls
+    text = text.replace(/\bcev\b/gi, 'ceva');
+    text = text.replace(/\bsăcerci\b/gi, 'să încerci');
+    text = text.replace(/\bJumiți\b/g, 'Glumiți');
+    text = text.replace(/\bjumiți\b/g, 'glumiți');
+    text = text.replace(/\bJți\b/g, 'Îți');
+    text = text.replace(/\bjți\b/g, 'îți');
 
     // Reparare punctuație (rezolvă golurile rămase după ștergerea interjecțiilor)
     text = text.replace(/,\s*,/g, ',');
