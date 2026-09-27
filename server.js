@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.5',
+    version: '2.3.6',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -143,7 +143,6 @@ async function handleSubtitles(req, res) {
         const fNameLower = userFilename.toLowerCase();
         const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
 
-        // Logica veche și flexibilă de notare a subtitrărilor
         diverseSubs.forEach(s => {
             s.score = 0;
             const subName = s.realName.toLowerCase();
@@ -314,7 +313,7 @@ function cleanTextForJson(text) {
         
         let changed = true;
         while(changed) {
-            const match = l.match(/^([-—\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
+            const match = l.match(/^([-—–−\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
             if (match) {
                 l = match[1] + match[3].trim();
             } else {
@@ -322,7 +321,7 @@ function cleanTextForJson(text) {
             }
         }
 
-        if (/^[-—.,!?\s]*$/.test(l)) {
+        if (/^[-—–−.,!?\s]*$/.test(l)) {
             return '';
         }
         
@@ -335,10 +334,10 @@ function cleanTextForJson(text) {
 
     let validLines = lines.filter(l => l !== '');
     
-    // TRUCUL 1: Lăsăm liniuțele vizibile pentru AI, ca să nu amestece dialogurile.
+    // TRUCUL 1: Lăsăm liniuțele vizibile pentru AI (prindem absolut orice tip de liniuță)
     validLines = validLines.map(l => {
-        if (/^[-—]/.test(l)) {
-            return l.replace(/^[-—]+\s*/, '- '); 
+        if (/^[-—–−]/.test(l)) {
+            return l.replace(/^[-—–−]+\s*/, '- '); 
         }
         return l;
     });
@@ -360,40 +359,38 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // Desparte dialogurile pe care AI-ul le-a unit din greșeală
-    text = text.replace(/([.?!])\s+[-—]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
+    // Desparte dialogurile unite din greșeală (căutăm orice tip de liniuță folosită de AI)
+    text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     let lines = text.split('\n');
     lines = lines.map(l => {
         let cl = l.trim();
-        if (/^([-—\s]*)(ă+|m+|mm+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl)) return '';
-        if (/^[-—.,!?\s]*$/.test(cl)) return '';
+        if (/^([-—–−\s]*)(ă+|m+|mm+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl)) return '';
+        if (/^[-—–−.,!?\s]*$/.test(cl)) return '';
         return cl;
     });
     
     let validLines = lines.filter(l => l !== '');
     
-    // SOLUȚIA PENTRU 3 RÂNDURI: Lipim liniile fragmentate, lăsând separate doar dialogurile
+    // Lipim liniile fragmentate pentru a rezolva problema celor 3 rânduri
     let mergedText = '';
     for (let i = 0; i < validLines.length; i++) {
         let l = validLines[i];
         if (i === 0) {
             mergedText = l;
         } else {
-            if (/^[-—]/.test(l)) { 
-                // Dacă începe cu liniuță, e personaj nou, lăsăm pe rând nou
+            if (/^[-—–−]/.test(l)) { 
                 mergedText += '\n' + l;
             } else {
-                // Dacă nu are liniuță, aparține aceluiași personaj, deci le unim
                 mergedText += ' ' + l; 
             }
         }
     }
     
-    // TRUCUL 2: Acum că știm că personajele sunt separate corect, ascundem estetic liniuțele!
+    // Curățăm din interior liniuțele lăsate în urmă
     let finalMergedLines = mergedText.split('\n');
     finalMergedLines = finalMergedLines.map(l => {
-        return l.replace(/^[-—]+\s*/, ''); 
+        return l.trim().replace(/^[-—–−]+\s*/g, ''); 
     });
     
     text = finalMergedLines.join('\n');
@@ -470,7 +467,9 @@ function formatSubtitleLine(text) {
         }
     }
 
-    return wrappedLines.join('\n');
+    // REGULA DE BAROS: Executată absolut la final. 
+    // Nu permite NICIODATĂ ca o linie de pe ecran să înceapă cu vreo liniuță!
+    return wrappedLines.map(l => l.replace(/^[-—–−]+\s*/g, '')).join('\n');
 }
 
 function fixBrokenJson(text) {
