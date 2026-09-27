@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.3',
+    version: '2.3.4',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -334,7 +334,7 @@ function cleanTextForJson(text) {
 
     let validLines = lines.filter(l => l !== '');
     
-    // NOU: Nu mai ștergem liniuțele de dialog, doar le formatăm frumos (- )
+    // TRUCUL 1: Lăsăm liniuțele vizibile pentru AI, ca să nu amestece dialogurile.
     validLines = validLines.map(l => {
         if (/^[-—]/.test(l)) {
             return l.replace(/^[-—]+\s*/, '- '); 
@@ -359,8 +359,8 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // 1. Desparte dialogurile pe care AI-ul le-a unit din greșeală pe un singur rând
-    text = text.replace(/([.?!])\s+[-—]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
+    // Desparte dialogurile pe care AI-ul le-a unit din greșeală (înainte să ascundem liniuțele)
+    text = text.replace(/([.?!])\s+[-—]\s+([A-ZĂÂÎȘȚ])/g, '$1\n$2');
 
     let lines = text.split('\n');
     lines = lines.map(l => {
@@ -372,12 +372,9 @@ function formatSubtitleLine(text) {
     
     let validLines = lines.filter(l => l !== '');
     
-    // 2. Asigurăm păstrarea liniuțelor de dialog
+    // TRUCUL 2: Ștergem liniuțele de la începutul rândului (pentru estetica TV). Cratimele interioare rămân!
     validLines = validLines.map(l => {
-        if (/^[-—]/.test(l)) {
-            return l.replace(/^[-—]+\s*/, '- '); 
-        }
-        return l;
+        return l.replace(/^[-—]+\s*/, ''); 
     });
     
     text = validLines.join('\n');
@@ -420,7 +417,7 @@ function formatSubtitleLine(text) {
 
     if (text.trim() === '') return ' '; 
 
-    // 3. NOUL SISTEM DE TĂIERE A LINIILOR (Word Wrap Inteligent aplicat pe FIECARE rând)
+    // NOUL SISTEM DE TĂIERE A LINIILOR (Word Wrap Inteligent)
     let finalLines = text.split('\n').map(l => l.trim()).filter(l => l !== '');
     const MAX_LEN = 45; 
     let wrappedLines = [];
@@ -429,7 +426,6 @@ function formatSubtitleLine(text) {
         if (line.length <= MAX_LEN) {
             wrappedLines.push(line);
         } else {
-            // Dacă linia e prea lungă, o tăiem frumos la cel mai apropiat spațiu de la jumătate
             let mid = Math.floor(line.length / 2);
             let leftSpace = line.lastIndexOf(' ', mid);
             let rightSpace = line.indexOf(' ', mid);
