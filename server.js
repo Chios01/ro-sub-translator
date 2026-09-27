@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.2.3',
+    version: '2.2.4',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -371,7 +371,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/\([\s\S]*?\)/g, '');
 
     // NOU: Filtru de siguranță împotriva halucinațiilor AI cu alfabete non-latine.
-    // Păstrează strict litere latine (inclusiv diacritice românești), numere, spații și punctuație standard.
     text = text.replace(/[^\u0000-\u024F\u2000-\u206F\u2E00-\u2E7F\n\r]/g, "");
 
     if (text.trim() === '') return ' '; 
@@ -492,7 +491,6 @@ RULES:
 5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like [SNAPPING], (sighs), [music]. Completely remove them! DO NOT translate hesitations/interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm, Um, Uh, Ăă, Mm. Remove them!
 6. NO DIGITS IN WORDS: Never put numbers inside words. 
 7. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
-8. NATURAL & CONCISE: Prioritize natural Romanian meaning over word-for-word translation (e.g., "I am good" = "Sunt bine", "Drop it" = "Lasă-l jos"). Keep sentences concise and to the point for easy on-screen reading.
 
 Input JSON:
 ${JSON.stringify(batchToProcess)}`;
