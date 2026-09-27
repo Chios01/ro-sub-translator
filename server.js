@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.4',
+    version: '2.3.5',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -143,6 +143,7 @@ async function handleSubtitles(req, res) {
         const fNameLower = userFilename.toLowerCase();
         const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
 
+        // Logica veche și flexibilă de notare a subtitrărilor
         diverseSubs.forEach(s => {
             s.score = 0;
             const subName = s.realName.toLowerCase();
@@ -359,8 +360,8 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // Desparte dialogurile pe care AI-ul le-a unit din greșeală (înainte să ascundem liniuțele)
-    text = text.replace(/([.?!])\s+[-—]\s+([A-ZĂÂÎȘȚ])/g, '$1\n$2');
+    // Desparte dialogurile pe care AI-ul le-a unit din greșeală
+    text = text.replace(/([.?!])\s+[-—]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     let lines = text.split('\n');
     lines = lines.map(l => {
@@ -372,12 +373,30 @@ function formatSubtitleLine(text) {
     
     let validLines = lines.filter(l => l !== '');
     
-    // TRUCUL 2: Ștergem liniuțele de la începutul rândului (pentru estetica TV). Cratimele interioare rămân!
-    validLines = validLines.map(l => {
+    // SOLUȚIA PENTRU 3 RÂNDURI: Lipim liniile fragmentate, lăsând separate doar dialogurile
+    let mergedText = '';
+    for (let i = 0; i < validLines.length; i++) {
+        let l = validLines[i];
+        if (i === 0) {
+            mergedText = l;
+        } else {
+            if (/^[-—]/.test(l)) { 
+                // Dacă începe cu liniuță, e personaj nou, lăsăm pe rând nou
+                mergedText += '\n' + l;
+            } else {
+                // Dacă nu are liniuță, aparține aceluiași personaj, deci le unim
+                mergedText += ' ' + l; 
+            }
+        }
+    }
+    
+    // TRUCUL 2: Acum că știm că personajele sunt separate corect, ascundem estetic liniuțele!
+    let finalMergedLines = mergedText.split('\n');
+    finalMergedLines = finalMergedLines.map(l => {
         return l.replace(/^[-—]+\s*/, ''); 
     });
     
-    text = validLines.join('\n');
+    text = finalMergedLines.join('\n');
     
     // Filtre mecanice de curățare
     text = text.replace(/[♪♫♬♩#]/gi, '');
@@ -390,6 +409,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/\b[wW]-Well\b/gi, 'Păi');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
+    text = text.replace(/\b1-ar\b/gi, 'l-ar');
     text = text.replace(/\baire\b/g, 'ai');
     text = text.replace(/\bAire\b/g, 'Ai');
     text = text.replace(/\baver\b/g, 'ai');
@@ -406,6 +426,8 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bjumiți\b/g, 'glumiți');
     text = text.replace(/\bJți\b/g, 'Îți');
     text = text.replace(/\bjți\b/g, 'îți');
+    text = text.replace(/\bât ai clipi\b/gi, 'cât ai clipi');
+    text = text.replace(/\bvumat\b/gi, 'vomat');
 
     text = text.replace(/,\s*,/g, ',');
     text = text.replace(/\s+,/g, ',');
