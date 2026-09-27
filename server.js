@@ -384,7 +384,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bman spui\b/gi, 'îmi spui');
     text = text.replace(/\bÎcerci\b/g, 'Încerci');
     text = text.replace(/\bîcerci\b/g, 'încerci');
-    text = text.replace(/\bFă-ca\b/gi, 'Fă-te ca');
+    text = text.replace(/Fă-ca acasă/gi, 'Simte-te ca acasă');
     text = text.replace(/\bsă suferit\b/gi, 'să sufăr');
 
     // Reparare punctuație (rezolvă golurile rămase după ștergerea interjecțiilor)
