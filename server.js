@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.2.1',
+    version: '2.2.2',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -488,6 +488,7 @@ RULES:
 5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like [SNAPPING], (sighs), [music]. Completely remove them! DO NOT translate hesitations/interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm, Um, Uh, Ăă, Mm. Remove them!
 6. NO DIGITS IN WORDS: Never put numbers inside words. 
 7. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
+8. NATURAL & CONCISE: Prioritize natural Romanian meaning over word-for-word translation (e.g., "I am good" = "Sunt bine", "Drop it" = "Lasă-l jos"). Keep sentences concise and to the point for easy on-screen reading.
 
 Input JSON:
 ${JSON.stringify(batchToProcess)}`;
@@ -644,8 +645,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
     blocks.forEach((block, index) => {
         let finalStr = allTranslatedTexts[index];
         
-        // Dacă valoarea este undefined sau null (ceea ce înseamnă că a fost omisă complet din eroare de procesare)
-        // se folosește textul inițial. Aici reparăm eroarea prin care un string gol "" era considerat fals.
         if (finalStr === undefined || finalStr === null) {
             finalStr = block.text;
         }
