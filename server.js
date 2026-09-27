@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.2',
+    version: '2.3.3',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -333,7 +333,14 @@ function cleanTextForJson(text) {
     });
 
     let validLines = lines.filter(l => l !== '');
-    validLines = validLines.map(l => l.replace(/^[-—\s]+/, ''));
+    
+    // NOU: Nu mai ștergem liniuțele de dialog, doar le formatăm frumos (- )
+    validLines = validLines.map(l => {
+        if (/^[-—]/.test(l)) {
+            return l.replace(/^[-—]+\s*/, '- '); 
+        }
+        return l;
+    });
 
     clean = validLines.join('\n');
 
@@ -352,6 +359,9 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
+    // 1. Desparte dialogurile pe care AI-ul le-a unit din greșeală pe un singur rând
+    text = text.replace(/([.?!])\s+[-—]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
+
     let lines = text.split('\n');
     lines = lines.map(l => {
         let cl = l.trim();
@@ -361,22 +371,28 @@ function formatSubtitleLine(text) {
     });
     
     let validLines = lines.filter(l => l !== '');
-    validLines = validLines.map(l => l.replace(/^[-—\s]+/, ''));
+    
+    // 2. Asigurăm păstrarea liniuțelor de dialog
+    validLines = validLines.map(l => {
+        if (/^[-—]/.test(l)) {
+            return l.replace(/^[-—]+\s*/, '- '); 
+        }
+        return l;
+    });
     
     text = validLines.join('\n');
     
+    // Filtre mecanice de curățare
     text = text.replace(/[♪♫♬♩#]/gi, '');
     text = text.replace(/\[[\s\S]*?\]/g, ''); 
     text = text.replace(/\([\s\S]*?\)/g, '');
 
-    // Filtre mecanice de protecție (curățare interjecții și bâlbâieli de oriunde din propoziție)
     text = text.replace(/\băă\b/gi, '');
     text = text.replace(/\bhă\b/gi, '');
     text = text.replace(/\bP-Păi\b/gi, 'Păi');
     text = text.replace(/\b[wW]-Well\b/gi, 'Păi');
 
-    // Auto-corector mecanic pentru erorile frecvente (Typos AI)
-    text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); // Șterge cifra 1 lipită de un cuvânt românesc
+    text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = text.replace(/\baire\b/g, 'ai');
     text = text.replace(/\bAire\b/g, 'Ai');
     text = text.replace(/\baver\b/g, 'ai');
@@ -387,7 +403,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/Fă-ca acasă/gi, 'Simte-te ca acasă');
     text = text.replace(/\bsă suferit\b/gi, 'să sufăr');
 
-    // Anomalii adăugate din seria Spider-Noir / 2 Broke Girls
     text = text.replace(/\bcev\b/gi, 'ceva');
     text = text.replace(/\bsăcerci\b/gi, 'să încerci');
     text = text.replace(/\bJumiți\b/g, 'Glumiți');
@@ -395,40 +410,49 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bJți\b/g, 'Îți');
     text = text.replace(/\bjți\b/g, 'îți');
 
-    // Reparare punctuație (rezolvă golurile rămase după ștergerea interjecțiilor)
     text = text.replace(/,\s*,/g, ',');
     text = text.replace(/\s+,/g, ',');
     text = text.replace(/\s+\?/g, '?');
     text = text.replace(/\s+\./g, '.');
     text = text.replace(/ +/g, ' '); 
     
-    // Filtru de siguranță împotriva halucinațiilor AI cu alfabete non-latine.
     text = text.replace(/[^\u0000-\u024F\u2000-\u206F\u2E00-\u2E7F\n\r]/g, "");
 
     if (text.trim() === '') return ' '; 
 
-    if (text.includes('\n')) return text;
-
+    // 3. NOUL SISTEM DE TĂIERE A LINIILOR (Word Wrap Inteligent aplicat pe FIECARE rând)
+    let finalLines = text.split('\n').map(l => l.trim()).filter(l => l !== '');
     const MAX_LEN = 45; 
-    if (text.length > MAX_LEN) {
-        let mid = Math.floor(text.length / 2);
-        let leftSpace = text.lastIndexOf(' ', mid);
-        let rightSpace = text.indexOf(' ', mid);
-        let splitIndex = -1;
+    let wrappedLines = [];
 
-        if (leftSpace !== -1 && rightSpace !== -1) {
-            splitIndex = (mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace;
-        } else if (leftSpace !== -1) {
-            splitIndex = leftSpace;
-        } else if (rightSpace !== -1) {
-            splitIndex = rightSpace;
-        }
+    for (let line of finalLines) {
+        if (line.length <= MAX_LEN) {
+            wrappedLines.push(line);
+        } else {
+            // Dacă linia e prea lungă, o tăiem frumos la cel mai apropiat spațiu de la jumătate
+            let mid = Math.floor(line.length / 2);
+            let leftSpace = line.lastIndexOf(' ', mid);
+            let rightSpace = line.indexOf(' ', mid);
+            let splitIndex = -1;
 
-        if (splitIndex !== -1) {
-            return text.substring(0, splitIndex).trim() + '\n' + text.substring(splitIndex + 1).trim();
+            if (leftSpace !== -1 && rightSpace !== -1) {
+                splitIndex = (mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace;
+            } else if (leftSpace !== -1) {
+                splitIndex = leftSpace;
+            } else if (rightSpace !== -1) {
+                splitIndex = rightSpace;
+            }
+
+            if (splitIndex !== -1) {
+                wrappedLines.push(line.substring(0, splitIndex).trim());
+                wrappedLines.push(line.substring(splitIndex + 1).trim());
+            } else {
+                wrappedLines.push(line); 
+            }
         }
     }
-    return text;
+
+    return wrappedLines.join('\n');
 }
 
 function fixBrokenJson(text) {
