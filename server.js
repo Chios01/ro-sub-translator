@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.2.9',
+    version: '2.3.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -143,28 +143,54 @@ async function handleSubtitles(req, res) {
         const fNameLower = userFilename.toLowerCase();
         const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
 
+        // --- NOU: Extragerea etichetelor specifice pentru SINCRONIZARE DINAMICĂ ---
+        const qualityTags = ['2160p', '1080p', '720p', '4k'];
+        const sourceTags = ['bluray', 'bdr', 'bdrip', 'brrip', 'web-dl', 'webdl', 'webrip', 'web', 'hdrip', 'remux'];
+        const groupTags = ['yts', 'yify', 'rarbg', 'tgx', 'qxr', 'psa', 'sparks', 'amiable', 'rovers', 'cinefeel', 'defaced', 'reward', 'galaxy'];
+
+        const vQuality = qualityTags.filter(tag => fNameLower.includes(tag));
+        const vSource = sourceTags.filter(tag => fNameLower.includes(tag));
+        const vGroup = groupTags.filter(tag => fNameLower.includes(tag));
+
         diverseSubs.forEach(s => {
             s.score = 0;
             const subName = s.realName.toLowerCase();
             
+            // 1. Potrivirea cuvintelor din titlu
             if (videoTokens.length > 0) {
                 let matchCount = 0;
                 videoTokens.forEach(token => {
                     if (subName.includes(token)) {
-                        s.score += 60; 
+                        s.score += 10; 
                         matchCount++;
                     }
                 });
-                
                 if (matchCount > 0 && matchCount >= videoTokens.length / 2) {
-                    s.score += 300; 
+                    s.score += 100; 
                 }
             }
 
-            if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(subName)) s.score += 40;
-            if (/bluray|brrip|bdrip|bdr/i.test(subName)) s.score += 30;
-            if (/yts|yify|rarbg|tgx|qxr|psa/i.test(subName)) s.score += 20;
-            if (/sdh|hi\.|hearing impaired/i.test(subName)) s.score -= 15; 
+            // 2. Sincronizarea Dinamică 
+            if (fNameLower) {
+                // Premiem exact calitatea și sursa video-ului tău
+                vQuality.forEach(q => { if (subName.includes(q)) s.score += 200; });
+                vSource.forEach(src => { if (subName.includes(src)) s.score += 200; });
+                vGroup.forEach(g => { if (subName.includes(g)) s.score += 300; }); // Grupul dictează sincronizarea perfectă!
+
+                // Dacă subtitrarea are altă sursă (ex: sub e Web-DL dar filmul tău e BluRay), o depunctăm
+                if (vSource.length > 0) {
+                    const subSource = sourceTags.find(tag => subName.includes(tag));
+                    if (subSource && !vSource.includes(subSource)) {
+                        s.score -= 50; 
+                    }
+                }
+            } else {
+                // Dacă player-ul nu ne trimite numele, dăm un mic bonus generic
+                if (/web-dl|webdl|webrip|bluray/i.test(subName)) s.score += 20;
+            }
+
+            // 3. Penalizări pentru subtitrări problematice (pentru surzi sau traduse automat prost)
+            if (/sdh|hi\.|hearing impaired/i.test(subName)) s.score -= 20; 
             if (/sync|corregido|resync|translated|auto|machine/i.test(subName)) s.score -= 100;
         });
 
