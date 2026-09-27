@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.2.6',
+    version: '2.2.7',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -292,7 +292,6 @@ function cleanTextForJson(text) {
 
     clean = clean.replace(/<[^>]+>/g, '');
     
-    // Filtru super-agresiv pentru note muzicale
     clean = clean.replace(/[♪♫♬♩#]/gi, '');
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
@@ -370,7 +369,13 @@ function formatSubtitleLine(text) {
     text = text.replace(/\[[\s\S]*?\]/g, ''); 
     text = text.replace(/\([\s\S]*?\)/g, '');
 
-    // NOU: Filtru de siguranță împotriva halucinațiilor AI cu alfabete non-latine.
+    // Filtre mecanice de protecție împotriva halucinațiilor de limbaj
+    text = text.replace(/\baire\b/g, 'ai');
+    text = text.replace(/\bAire\b/g, 'Ai');
+    text = text.replace(/\b1ui\b/g, 'lui');
+    text = text.replace(/\b1-ui\b/g, 'lui');
+
+    // Filtru de siguranță împotriva halucinațiilor AI cu alfabete non-latine.
     text = text.replace(/[^\u0000-\u024F\u2000-\u206F\u2E00-\u2E7F\n\r]/g, "");
 
     if (text.trim() === '') return ' '; 
@@ -484,10 +489,10 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             const prompt = `Translate the following English subtitles into natural, conversational Romanian.
 
 RULES:
-1. DIACRITICS, SPELLING & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Ensure PERFECT Romanian spelling. NEVER invent words (e.g., never write "cafond", "aire", or "2uita"). Always use "ai o secundă". Use standard, dictionary-approved vocabulary.
+1. DIACRITICS, SPELLING & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Ensure PERFECT Romanian spelling and grammar. Use standard, dictionary-approved vocabulary.
 2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
 3. TV BROADCAST CENSORSHIP (CRITICAL): To prevent safety blocks, DO NOT translate extreme swear words literally. Soften vulgarities to PG-13 TV standards. Preserve the scene's tension but maintain civilized language. Omit swear words entirely if they are just filler words. Examples: translate "motherfucker", "fuck", or "shit" as "la naiba", "du-te dracului", "nenorocitule", "fir-ar", or "rahat".
-4. IDIOMS & SLANG: NEVER translate idioms word-for-word. Find the natural Romanian equivalent (e.g. "piece of cake" = "floare la ureche"). If no equivalent exists, translate just the simple meaning. Examples: "Why do I give a shit?" = "Ce-mi pasă mie?". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
+4. IDIOMS & SLANG: "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". "Stop doing X" = "Nu mai face X". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
 5. NOISES & INTERJECTIONS: DO NOT translate audio descriptions like [SNAPPING], (sighs), [music]. Completely remove them! DO NOT translate hesitations/interjections like Oh, Ah, Hm, Ooh, Ugh, Mhm, Um, Uh, Ăă, Mm. Remove them!
 6. NO DIGITS IN WORDS: Never put numbers inside words. 
 7. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
