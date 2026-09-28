@@ -14,29 +14,47 @@ app.use((req, res, next) => {
     next();
 });
 
+// Ruta pentru validarea cheilor (ocolire CORS)
 app.get('/validate-key', async (req, res) => {
     const key = req.query.key;
     if (!key) return res.status(400).send('No key provided');
+
     try {
         const check = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`, { timeout: 5000 });
-        if (check.status === 200) return res.json({ valid: true });
+        if (check.status === 200) {
+            return res.json({ valid: true });
+        }
     } catch (e) {
         return res.json({ valid: false });
     }
 });
 
-const c = { green: '\x1b[32m', yellow: '\x1b[33m', red: '\x1b[31m', cyan: '\x1b[36m', magenta: '\x1b[35m', reset: '\x1b[0m' };
+const c = {
+    green: '\x1b[32m',
+    yellow: '\x1b[33m',
+    red: '\x1b[31m',
+    cyan: '\x1b[36m',
+    magenta: '\x1b[35m',
+    reset: '\x1b[0m'
+};
+
 const memoryCache = {}; 
 const secretArchive = []; 
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.35',
+    version: '2.3.24',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
-    resources: ['subtitles'], types: ['movie', 'series'], catalogs: [], idPrefixes: ['tt'],
-    behaviorHints: { configurable: true, configurationRequired: false }
+    resources: ['subtitles'],
+    types: ['movie', 'series'],
+    catalogs: [],
+    idPrefixes: ['tt'],
+    behaviorHints: {
+        configurable: true,
+        configurationRequired: false
+    }
 };
 
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -44,170 +62,396 @@ const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKi
 app.get('/', (req, res) => {
     fs.readFile(path.join(__dirname, 'index.html'), 'utf8', (err, data) => {
         if (err) return res.sendFile(path.join(__dirname, 'index.html'));
-        res.send(data.replace(/{{VERSION}}/g, manifest.version));
+        const updatedHtml = data.replace(/{{VERSION}}/g, manifest.version);
+        res.send(updatedHtml);
     });
 });
 
-app.get('/:configData/manifest.json', (req, res) => res.json(manifest));
+app.get('/:configData/manifest.json', (req, res) => {
+    res.json(manifest);
+});
+
 app.get('/:configData/configure', (req, res) => {
     fs.readFile(path.join(__dirname, 'index.html'), 'utf8', (err, data) => {
         if (err) return res.sendFile(path.join(__dirname, 'index.html'));
-        res.send(data.replace(/{{VERSION}}/g, manifest.version));
+        const updatedHtml = data.replace(/{{VERSION}}/g, manifest.version);
+        res.send(updatedHtml);
     });
 });
 
+// ==== RUTELE SECRETE PENTRU ARHIVA DE TESTARE ====
 app.get('/arhiva-secreta', (req, res) => {
-    let html = '<html lang="ro"><head><title>Arhiva Secreta</title><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
+    let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
+    html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
     html += '<h2 style="color:#0f0;">Arhiva Subtitrări (Ultimele 10)</h2>';
-    if (secretArchive.length === 0) html += '<p>Nicio subtitrare momentan.</p>';
-    else {
+    html += '<p>Aceste fișiere sunt reținute temporar în memoria serverului. Se vor șterge la restart.</p>';
+    
+    if (secretArchive.length === 0) {
+        html += '<p style="color:#aaa;">Nicio subtitrare tradusă momentan.</p>';
+    } else {
         html += '<ul style="list-style-type:none; padding:0;">';
         secretArchive.forEach((item, index) => {
-            html += `<li style="background:#222; margin-bottom:10px; padding:15px; border-radius:5px;"><strong style="color:#0bf;">ID: ${item.id}</strong> <span style="color:#888;">(${item.time})</span><br><br><a href="/download-srt/${index}" style="background:#0bf; color:#000; padding:8px 12px; border-radius:4px; font-weight:bold; text-decoration:none;">Descarcă fisier .srt</a></li>`;
+            html += `<li style="background:#222; margin-bottom:10px; padding:15px; border-radius:5px;">
+                <strong style="color:#0bf;">ID: ${item.id}</strong> <span style="color:#888; font-size:0.9em;">(${item.time})</span><br><br>
+                <a href="/download-srt/${index}" style="background:#0bf; color:#000; text-decoration:none; padding:8px 12px; border-radius:4px; font-weight:bold;">Descarcă fisier .srt</a>
+            </li>`;
         });
         html += '</ul>';
     }
-    res.send(html + '</body></html>');
+    html += '</body></html>';
+    res.send(html);
 });
 
 app.get('/download-srt/:index', (req, res) => {
     const index = parseInt(req.params.index);
-    if (isNaN(index) || !secretArchive[index]) return res.status(404).send('Fișier inexistent.');
-    res.setHeader('Content-disposition', `attachment; filename=RO_${secretArchive[index].id}.srt`);
+    if (isNaN(index) || !secretArchive[index]) {
+        return res.status(404).send('Fișierul nu există sau a fost șters automat din memorie.');
+    }
+    const item = secretArchive[index];
+    res.setHeader('Content-disposition', `attachment; filename=RO_${item.id}.srt`);
     res.setHeader('Content-type', 'text/plain; charset=utf-8');
-    res.send(secretArchive[index].content);
+    res.send(item.content);
 });
+// ===================================================
 
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
-    const protocol = req.headers.host.includes('localhost') ? 'http' : 'https';
-    const baseUrl = `${protocol}://${req.headers.host}`;
-    let extraStr = extra ? '/' + extra : '';
-    let userFilename = extra ? (new URLSearchParams(extra).get('filename') || '') : '';
 
-    const urls = [
-        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraStr}.json`, 
-        `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraStr}.json`,
-        `https://subdl.strem.io/subtitles/${type}/${id}${extraStr}.json`
+    const host = req.headers.host;
+    const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
+    const baseUrl = `${protocol}://${host}`;
+
+    let extraString = '';
+    let userFilename = '';
+
+    if (extra) {
+        extraString = '/' + extra;
+        try {
+            const params = new URLSearchParams(extra);
+            userFilename = params.get('filename') || '';
+        } catch (e) {}
+    }
+
+    const urlsToFetch = [
+        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
+        `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
+        `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`
     ];
 
     try {
-        const results = await Promise.all(urls.map(u => axios.get(u, { timeout: 3500, headers: { 'User-Agent': BROWSER_USER_AGENT } }).catch(() => ({ data: { subtitles: [] } }))));
-        let engSubs = [];
-        results.forEach(r => { if (r?.data?.subtitles) engSubs.push(...r.data.subtitles); });
+        const fetchPromises = urlsToFetch.map(u => 
+            axios.get(u, { 
+                timeout: 3500, 
+                headers: { 'User-Agent': BROWSER_USER_AGENT } 
+            }).catch(() => ({ data: { subtitles: [] } }))
+        );
+
+        const results = await Promise.all(fetchPromises);
+        
+        let allSubs = [];
+        results.forEach(r => {
+            if (r && r.data && Array.isArray(r.data.subtitles)) {
+                allSubs.push(...r.data.subtitles);
+            }
+        });
+        
+        let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
         
         const uniqueUrls = new Set();
-        engSubs = engSubs.filter(sub => (sub.lang === 'eng' || sub.lang === 'en' || sub.lang === 'English') && !uniqueUrls.has(sub.url) ? uniqueUrls.add(sub.url) : false).slice(0, 25);
+        engSubs = engSubs.filter(sub => {
+            if (uniqueUrls.has(sub.url)) return false;
+            uniqueUrls.add(sub.url);
+            return true;
+        }).slice(0, 25); 
+
         if (engSubs.length === 0) return res.json({ subtitles: [] });
 
         let diverseSubs = [];
+        const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
+
         engSubs.forEach((sub, idx) => {
             let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
-            if (!/korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i.test(realName)) diverseSubs.push({ originalUrl: sub.url, realName, index: idx, score: 0 });
+            if (!trashRegex.test(realName)) {
+                diverseSubs.push({ originalUrl: sub.url, realName, index: idx });
+            }
         });
 
-        const vTokens = userFilename.toLowerCase().split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
+        const fNameLower = userFilename.toLowerCase();
+        const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
+
         diverseSubs.forEach(s => {
-            const sn = s.realName.toLowerCase();
-            let matches = 0;
-            vTokens.forEach(t => { if (sn.includes(t)) { s.score += 60; matches++; }});
-            if (matches > 0 && matches >= vTokens.length / 2) s.score += 300;
-            if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(sn)) s.score += 40;
-            if (/bluray|brrip|bdrip|bdr/i.test(sn)) s.score += 30;
-            if (/yts|yify|rarbg|tgx|qxr|psa/i.test(sn)) s.score += 20;
-            if (/sdh|hi\.|hearing impaired/i.test(sn)) s.score -= 15;
-            if (/sync|corregido|resync|translated|auto|machine/i.test(sn)) s.score -= 100;
+            s.score = 0;
+            const subName = s.realName.toLowerCase();
+            
+            if (videoTokens.length > 0) {
+                let matchCount = 0;
+                videoTokens.forEach(token => {
+                    if (subName.includes(token)) {
+                        s.score += 60; 
+                        matchCount++;
+                    }
+                });
+                
+                if (matchCount > 0 && matchCount >= videoTokens.length / 2) {
+                    s.score += 300; 
+                }
+            }
+
+            if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(subName)) s.score += 40;
+            if (/bluray|brrip|bdrip|bdr/i.test(subName)) s.score += 30;
+            if (/yts|yify|rarbg|tgx|qxr|psa/i.test(subName)) s.score += 20;
+            if (/sdh|hi\.|hearing impaired/i.test(subName)) s.score -= 15; 
+            if (/sync|corregido|resync|translated|auto|machine/i.test(subName)) s.score -= 100;
         });
 
         diverseSubs.sort((a, b) => b.score - a.score);
         diverseSubs = diverseSubs.slice(0, 15);
 
-        return res.json({ subtitles: diverseSubs.map((s, idx) => {
-            const tagMatch = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ').match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
+        const generatedSubs = diverseSubs.map((s, index) => {
+            const encodedUrl = encodeURIComponent(s.originalUrl);
+            
+            let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
+            const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
+            
+            let labelName = `🇷🇴 RO AI [${index + 1}]`;
+            if (tagMatch) {
+                let cleanTag = tagMatch[0].toUpperCase();
+                labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
+            }
+
             return {
-                id: `ai_sub_${idx}`,
-                title: tagMatch ? `🇷🇴 RO AI [${idx + 1}] • ${tagMatch[0].toUpperCase()}` : `🇷🇴 RO AI [${idx + 1}]`, 
-                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodeURIComponent(s.originalUrl)}&v=${s.index + 1}`, lang: 'ron'
+                id: `ai_sub_${index}`,
+                title: labelName, 
+                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
+                lang: 'ron'
             };
-        })});
-    } catch (e) { return res.json({ subtitles: [] }); }
+        });
+
+        return res.json({ subtitles: generatedSubs });
+    } catch (error) {
+        return res.json({ subtitles: [] });
+    }
 }
 
 app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
 app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 
 app.get('/:configData/translate', async (req, res) => {
-    const imdbId = req.query.id, targetUrl = req.query.targetUrl, configData = req.params.configData;
-    if (!targetUrl) return res.status(400).send('Lipsă URL sursă.');
-    let userKeys = [];
-    try { userKeys = JSON.parse(Buffer.from(configData, 'base64').toString('utf8')); } catch(e) { return res.status(400).send('Configurare invalidă.'); }
+    const imdbId = req.query.id;
+    const targetUrl = req.query.targetUrl;
+    const configData = req.params.configData;
 
-    if (memoryCache[targetUrl] && typeof memoryCache[targetUrl] === 'string') {
-        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
-        return res.send(memoryCache[targetUrl]);
+    if (!targetUrl) return res.status(400).send('Lipsă URL sursă.');
+
+    let userKeys = [];
+    try {
+        const decoded = Buffer.from(configData, 'base64').toString('utf8');
+        userKeys = JSON.parse(decoded);
+    } catch(e) {
+        return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
     }
 
-    res.writeHead(200, { 'Content-Type': 'text/srt; charset=utf-8', 'Transfer-Encoding': 'chunked' });
+    const cacheKey = targetUrl;
+
+    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
+        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
+        return res.send(memoryCache[cacheKey]);
+    }
+
+    res.writeHead(200, {
+        'Content-Type': 'text/srt; charset=utf-8',
+        'Transfer-Encoding': 'chunked'
+    });
     res.flushHeaders(); 
-    const keepAlive = setInterval(() => res.write(' \n'), 10000);
+
+    const keepAlive = setInterval(() => {
+        res.write(' \n');
+    }, 10000);
 
     try {
-        if (!memoryCache[targetUrl]) {
+        let processPromise;
+
+        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
+            processPromise = memoryCache[cacheKey];
+        } else {
             const startTime = Date.now();
-            memoryCache[targetUrl] = (async () => {
-                const srtRes = await axios.get(targetUrl, { headers: { 'User-Agent': BROWSER_USER_AGENT } });
-                console.log(`${c.cyan}\n==================================================${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}\n📑 Total linii: ${(srtRes.data.match(/-->/g)||[]).length}\n${c.cyan}==================================================\n${c.reset}`);
+            
+            processPromise = (async () => {
+                const srtRes = await axios.get(targetUrl, {
+                    headers: { 'User-Agent': BROWSER_USER_AGENT }
+                });
+                
+                const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
+                console.log(`${c.cyan}\n==================================================${c.reset}`);
+                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                
                 return await translateSrtWithGemini(srtRes.data, userKeys);
             })();
-            memoryCache[targetUrl].then(srt => {
-                memoryCache[targetUrl] = srt;
-                console.log(`${c.green}\n✔ FINALIZAT: ${imdbId} în ${Math.floor((Date.now() - startTime) / 1000)}s\n==================================================\n${c.reset}`);
-            }).catch(() => delete memoryCache[targetUrl]);
+            
+            memoryCache[cacheKey] = processPromise;
+            
+            processPromise.then(translatedSrtString => {
+                memoryCache[cacheKey] = translatedSrtString;
+                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+                let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+                
+                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+            }).catch(() => {
+                delete memoryCache[cacheKey];
+            });
         }
+
+        const finalSrt = await processPromise;
         
-        const finalSrt = await memoryCache[targetUrl];
         if (finalSrt && finalSrt.trim().length > 0) {
-            secretArchive.unshift({ id: imdbId, time: new Date().toLocaleTimeString('ro-RO') + ' ' + new Date().toLocaleDateString('ro-RO'), content: finalSrt });
-            if (secretArchive.length > 10) secretArchive.pop();
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
+            
+            secretArchive.unshift({
+                id: imdbId,
+                time: timeStr,
+                content: finalSrt
+            });
+            
+            if (secretArchive.length > 10) {
+                secretArchive.pop();
+            }
         }
-        clearInterval(keepAlive); res.write(finalSrt); res.end();
-    } catch (error) { clearInterval(keepAlive); res.end(); }
+
+        clearInterval(keepAlive);
+        res.write(finalSrt);
+        res.end();
+
+    } catch (error) {
+        clearInterval(keepAlive);
+        res.end(); 
+    }
 });
 
 const PORT = process.env.PORT || 7000;
-app.listen(PORT, () => console.log(`${c.green}✔ Server rulează pe: ${PORT}${c.reset}`));
+app.listen(PORT, () => {
+    console.log(`${c.green}✔ Serverul rulează pe portul: ${PORT}${c.reset}`);
+});
 
 function cleanTextForJson(text) {
     if (!text) return text;
-    let clean = text.replace(/<[^>]+>/g, '').replace(/[♪♫♬♩#]/gi, '').replace(/\[.*music.*\]/gi, '').replace(/\[[\s\S]*?\]/g, '').replace(/\([\s\S]*?\)/g, '').replace(/\{[\s\S]*?\}/g, '').replace(/【[\s\S]*?】/g, '').replace(/^[A-Z0-9\s-]{2,}:/gm, '').replace(/"/g, "'");
-    return clean.split('\n').map(l => {
-        let cl = l.trim();
+    let clean = text;
+
+    clean = clean.replace(/<[^>]+>/g, '');
+    
+    clean = clean.replace(/[♪♫♬♩#]/gi, '');
+    clean = clean.replace(/â™ª/gi, '');
+    clean = clean.replace(/â™«/gi, '');
+    clean = clean.replace(/\[\s*[♪♫♬♩#]+\s*\]/gi, '');
+    clean = clean.replace(/\(\s*[♪♫♬♩#]+\s*\)/gi, '');
+    clean = clean.replace(/\[.*music.*\]/gi, ''); 
+
+    clean = clean.replace(/\[[\s\S]*?\]/g, ''); 
+    clean = clean.replace(/\([\s\S]*?\)/g, ''); 
+    clean = clean.replace(/\{[\s\S]*?\}/g, ''); 
+    clean = clean.replace(/【[\s\S]*?】/g, ''); 
+    
+    clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
+    clean = clean.replace(/"/g, "'");
+
+    let lines = clean.split('\n');
+    lines = lines.map(line => {
+        let l = line.trim();
+        
         let changed = true;
         while(changed) {
-            const match = cl.match(/^([-—–−\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
-            if (match) cl = match[1] + match[3].trim(); else changed = false;
+            const match = l.match(/^([-—–−\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
+            if (match) {
+                l = match[1] + match[3].trim();
+            } else {
+                changed = false;
+            }
         }
-        return /^[-—–−.,!?\s]*$/.test(cl) ? '' : cl;
-    }).filter(l => l !== '').map(l => /^[-—–−]/.test(l) ? l.replace(/^[-—–−]+\s*/, '- ') : l).join('\n').trim() || ' ';
+
+        if (/^[-—–−.,!?\s]*$/.test(l)) {
+            return '';
+        }
+        
+        l = l.replace(/[♪♫♬♩#]/gi, '');
+        l = l.replace(/\[\s*\]/g, ''); 
+        l = l.replace(/\(\s*\)/g, '');
+        
+        return l;
+    });
+
+    let validLines = lines.filter(l => l !== '');
+    
+    validLines = validLines.map(l => {
+        if (/^[-—–−]/.test(l)) {
+            return l.replace(/^[-—–−]+\s*/, '- '); 
+        }
+        return l;
+    });
+
+    clean = validLines.join('\n');
+
+    if (clean.trim() === '') return ' ';
+    return clean.trim();
 }
 
 function chunkArray(array, size) {
-    const r = []; for (let i = 0; i < array.length; i += size) r.push(array.slice(i, i + size)); return r;
+    const result = [];
+    for (let i = 0; i < array.length; i += size) {
+        result.push(array.slice(i, i + size));
+    }
+    return result;
 }
 
 function formatSubtitleLine(text) {
     if (!text) return text;
-    text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș').replace(/<[^>]+>/g, '').replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
     
-    let lines = text.split('\n').map(l => {
-        let cl = l.trim();
-        return /^([-—–−\s]*)(ă+|m+|mm+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl) \vert{}\vert{} /^[-—–−.,!?\s]*$/.test(cl) ? '' : cl;
-    }).filter(l => l !== '');
-    
-    text = lines.reduce((acc, l, i) => i === 0 ? l : (/^[-—–−]/.test(l) ? acc + '\n' + l : acc + ' ' + l), '').split('\n').map(l => l.trim().replace(/^[-—–−]+\s*/g, '')).join('\n');
-    text = text.replace(/[♪♫♬♩#]/gi, '').replace(/\[[\s\S]*?\]/g, '').replace(/\([\s\S]*?\)/g, '');
+    text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
+    text = text.replace(/<[^>]+>/g, '');
+    text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
-    const rw = (txt, search, replace, flags='g') => txt.replace(new RegExp(`(^|[^a-zA-Z0-9ăâîșțĂÂÎȘȚ])(${search})(?=[^a-zA-Z0-9ăâîșțĂÂÎȘȚ]|$)`, flags), `$1${replace}`);
+    let lines = text.split('\n');
+    lines = lines.map(l => {
+        let cl = l.trim();
+        if (/^([-—–−\s]*)(ă+|m+|mm+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl)) return '';
+        if (/^[-—–−.,!?\s]*$/.test(cl)) return '';
+        return cl;
+    });
+    
+    let validLines = lines.filter(l => l !== '');
+    
+    let mergedText = '';
+    for (let i = 0; i < validLines.length; i++) {
+        let l = validLines[i];
+        if (i === 0) {
+            mergedText = l;
+        } else {
+            if (/^[-—–−]/.test(l)) { 
+                mergedText += '\n' + l;
+            } else {
+                mergedText += ' ' + l; 
+            }
+        }
+    }
+    
+    let finalMergedLines = mergedText.split('\n');
+    finalMergedLines = finalMergedLines.map(l => {
+        return l.trim().replace(/^[-—–−]+\s*/g, ''); 
+    });
+    
+    text = finalMergedLines.join('\n');
+    
+    text = text.replace(/[♪♫♬♩#]/gi, '');
+    text = text.replace(/\[[\s\S]*?\]/g, ''); 
+    text = text.replace(/\([\s\S]*?\)/g, '');
+
+    const rw = (txt, search, replace, flags='g') => {
+        const regex = new RegExp(`(^|[^a-zA-Z0-9ăâîșțĂÂÎȘȚ])(${search})(?=[^a-zA-Z0-9ăâîșțĂÂÎȘȚ]|$)`, flags);
+        return txt.replace(regex, `$1${replace}`);
+    };
 
     text = rw(text, 'ăă', '', 'gi');
     text = rw(text, 'hă', '', 'gi');
@@ -231,7 +475,6 @@ function formatSubtitleLine(text) {
     text = rw(text, 'Stucați', 'Scuzați', 'gi');
     text = rw(text, 'putemos', 'putem', 'gi');
     text = rw(text, 'Robinei', 'lui Robin', 'gi');
-    
     text = rw(text, 'măsurą', 'măsura', 'gi');
     text = rw(text, 'să fiică', 'să fie', 'gi');
     text = text.replace(/lemnul de divorț/gi, 'divorț');
@@ -241,6 +484,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'bet merici', 'dar meriți', 'gi');
     text = rw(text, 'usile', 'ușile', 'gi');
 
+    // Marea curățenie
     text = text.replace(/în toată regla/gi, 'în toată regula');
     text = text.replace(/sunt extinși/gi, 'sunt pe cale de dispariție');
     text = text.replace(/Nu-mi vine să crezi/gi, 'Nu-mi vine să cred');
@@ -292,7 +536,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'vumat', 'vomat', 'gi');
     text = rw(text, 'unzn', 'un', 'gi');
     text = text.replace(/să veimă mănânci/gi, 'să mănânci');
-    text = rw(text, 'ești nevoie/gi', 'este nevoie');
+    text = rw(text, 'ești nevoie', 'este nevoie');
     text = rw(text, 'știen', 'știm', 'gi');
     text = rw(text, 'cafond', 'profund', 'gi');
     text = text.replace(/să fi ratat-o/gi, 'să fi ratat');
