@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.7',
+    version: '2.3.8',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -358,7 +358,6 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // Desparte dialogurile unite din greșeală
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     let lines = text.split('\n');
@@ -371,7 +370,6 @@ function formatSubtitleLine(text) {
     
     let validLines = lines.filter(l => l !== '');
     
-    // Lipim liniile fragmentate pentru a rezolva problema celor 3 rânduri
     let mergedText = '';
     for (let i = 0; i < validLines.length; i++) {
         let l = validLines[i];
@@ -386,7 +384,6 @@ function formatSubtitleLine(text) {
         }
     }
     
-    // Curățăm din interior liniuțele lăsate în urmă
     let finalMergedLines = mergedText.split('\n');
     finalMergedLines = finalMergedLines.map(l => {
         return l.trim().replace(/^[-—–−]+\s*/g, ''); 
@@ -394,7 +391,6 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // Filtre mecanice de curățare
     text = text.replace(/[♪♫♬♩#]/gi, '');
     text = text.replace(/\[[\s\S]*?\]/g, ''); 
     text = text.replace(/\([\s\S]*?\)/g, '');
@@ -423,8 +419,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bjți\b/g, 'îți');
     text = text.replace(/\bât ai clipi\b/gi, 'cât ai clipi');
     text = text.replace(/\bvumat\b/gi, 'vomat');
-
-    // Marea curățenie din v2.3.7
     text = text.replace(/\bunzn\b/gi, 'un');
     text = text.replace(/\bsă veimă mănânci\b/gi, 'să mănânci');
     text = text.replace(/\bești nevoie\b/gi, 'este nevoie');
@@ -473,7 +467,6 @@ function formatSubtitleLine(text) {
         }
     }
 
-    // REGULA DE BAROS - Sterge ABSOLUT ORICE liniuță de la început de rând 
     return wrappedLines.map(l => l.replace(/^[-—–−]+\s*/g, '')).join('\n');
 }
 
@@ -568,7 +561,8 @@ RULES:
 4. IDIOMS & SLANG: "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". "Stop doing X" = "Nu mai face X". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
 5. NOISES, HESITATIONS & STUTTERS: Completely remove audio tags like [music]. Completely remove ALL hesitations, stutters, and interjections (e.g., Oh, Ah, Uh, Ăă, hă) from EVERYWHERE in the sentence.
 6. NO DIGITS IN WORDS: Never put numbers inside words. 
-7. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
+7. STRICT ACCURACY (CRITICAL): DO NOT invent words (e.g. do not write 'unzn' instead of 'un'). DO NOT skip letters. DO NOT replace the letter 'L' with the number '1' (e.g. write 'l-ar', never '1-ar'). Check your spelling carefully before outputting the JSON.
+8. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
 
 Input JSON:
 ${JSON.stringify(batchToProcess)}`;
@@ -577,7 +571,10 @@ ${JSON.stringify(batchToProcess)}`;
                 `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
                 {
                     contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { response_mime_type: "application/json" },
+                    generationConfig: { 
+                        response_mime_type: "application/json",
+                        temperature: 0.1 
+                    },
                     safetySettings: [
                         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
                         { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
