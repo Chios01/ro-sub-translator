@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.18',
+    version: '2.3.19',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -482,12 +482,13 @@ function formatSubtitleLine(text) {
     // Nume proprii stâlcite
     text = rw(text, 'Robinei', 'lui Robin', 'gi');
 
-    // Familia de aberații "vă"
+    // Familia de aberații "vă" (Update v2.3.19)
     text = rw(text, 'Jreți', 'vă', 'gi');
     text = rw(text, '[Jj]ă', 'vă', 'g');
     text = rw(text, 'Jți', 'Îți', 'g');
     text = rw(text, 'jți', 'îți', 'g');
     text = rw(text, 'Jne', 'vă', 'gi');
+    text = rw(text, 'Jetați', 'vă pare rău', 'gi');
 
     // Marea curățenie
     text = rw(text, 'ineam', 'țineam', 'g');
