@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.12',
+    version: '2.3.13',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -411,7 +411,6 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // Curăță orice urmă de cod HTML pe care AI-ul ar putea să o genereze din greșeală
     text = text.replace(/<[^>]+>/g, '');
 
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
@@ -456,7 +455,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bP-Păi\b/gi, 'Păi');
     text = text.replace(/\b[wW]-Well\b/gi, 'Păi');
 
-    // NOU: Filtrele adăugate din analiza arhivelor SRT
     text = text.replace(/\bfrom\b/gi, 'de la');
     text = text.replace(/\bkensevasem\b/gi, 'convinsesem');
     text = text.replace(/\bprăjicina\b/gi, 'prăjiturica');
@@ -473,8 +471,10 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bnithe\b/gi, 'niște');
     text = text.replace(/\bStucați\b/gi, 'Scuzați');
     text = text.replace(/\bputemos\b/gi, 'putem');
+    
+    // NOU: Filtru adăugat v2.3.13
+    text = text.replace(/\bJreți\b/gi, 'vă');
 
-    // Marea curățenie din trecut
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = text.replace(/\b1-ar\b/gi, 'l-ar');
     text = text.replace(/\baire\b/g, 'ai');
