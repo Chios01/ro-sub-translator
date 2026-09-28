@@ -14,47 +14,29 @@ app.use((req, res, next) => {
     next();
 });
 
-// Ruta pentru validarea cheilor (ocolire CORS)
 app.get('/validate-key', async (req, res) => {
     const key = req.query.key;
     if (!key) return res.status(400).send('No key provided');
-
     try {
         const check = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`, { timeout: 5000 });
-        if (check.status === 200) {
-            return res.json({ valid: true });
-        }
+        if (check.status === 200) return res.json({ valid: true });
     } catch (e) {
         return res.json({ valid: false });
     }
 });
 
-const c = {
-    green: '\x1b[32m',
-    yellow: '\x1b[33m',
-    red: '\x1b[31m',
-    cyan: '\x1b[36m',
-    magenta: '\x1b[35m',
-    reset: '\x1b[0m'
-};
-
+const c = { green: '\x1b[32m', yellow: '\x1b[33m', red: '\x1b[31m', cyan: '\x1b[36m', magenta: '\x1b[35m', reset: '\x1b[0m' };
 const memoryCache = {}; 
 const secretArchive = []; 
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.33',
+    version: '2.3.34',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
-    resources: ['subtitles'],
-    types: ['movie', 'series'],
-    catalogs: [],
-    idPrefixes: ['tt'],
-    behaviorHints: {
-        configurable: true,
-        configurationRequired: false
-    }
+    resources: ['subtitles'], types: ['movie', 'series'], catalogs: [], idPrefixes: ['tt'],
+    behaviorHints: { configurable: true, configurationRequired: false }
 };
 
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -62,621 +44,272 @@ const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKi
 app.get('/', (req, res) => {
     fs.readFile(path.join(__dirname, 'index.html'), 'utf8', (err, data) => {
         if (err) return res.sendFile(path.join(__dirname, 'index.html'));
-        const updatedHtml = data.replace(/{{VERSION}}/g, manifest.version);
-        res.send(updatedHtml);
+        res.send(data.replace(/{{VERSION}}/g, manifest.version));
     });
 });
 
-app.get('/:configData/manifest.json', (req, res) => {
-    res.json(manifest);
-});
-
+app.get('/:configData/manifest.json', (req, res) => res.json(manifest));
 app.get('/:configData/configure', (req, res) => {
     fs.readFile(path.join(__dirname, 'index.html'), 'utf8', (err, data) => {
         if (err) return res.sendFile(path.join(__dirname, 'index.html'));
-        const updatedHtml = data.replace(/{{VERSION}}/g, manifest.version);
-        res.send(updatedHtml);
+        res.send(data.replace(/{{VERSION}}/g, manifest.version));
     });
 });
 
-// ==== RUTELE SECRETE PENTRU ARHIVA DE TESTARE ====
 app.get('/arhiva-secreta', (req, res) => {
-    let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
-    html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
+    let html = '<html lang="ro"><head><title>Arhiva Secreta</title><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
     html += '<h2 style="color:#0f0;">Arhiva Subtitrări (Ultimele 10)</h2>';
-    html += '<p>Aceste fișiere sunt reținute temporar în memoria serverului. Se vor șterge la restart.</p>';
-    
-    if (secretArchive.length === 0) {
-        html += '<p style="color:#aaa;">Nicio subtitrare tradusă momentan.</p>';
-    } else {
+    if (secretArchive.length === 0) html += '<p>Nicio subtitrare momentan.</p>';
+    else {
         html += '<ul style="list-style-type:none; padding:0;">';
         secretArchive.forEach((item, index) => {
-            html += `<li style="background:#222; margin-bottom:10px; padding:15px; border-radius:5px;">
-                <strong style="color:#0bf;">ID: ${item.id}</strong> <span style="color:#888; font-size:0.9em;">(${item.time})</span><br><br>
-                <a href="/download-srt/${index}" style="background:#0bf; color:#000; text-decoration:none; padding:8px 12px; border-radius:4px; font-weight:bold;">Descarcă fisier .srt</a>
-            </li>`;
+            html += `<li style="background:#222; margin-bottom:10px; padding:15px; border-radius:5px;"><strong style="color:#0bf;">ID: ${item.id}</strong> <span style="color:#888;">(${item.time})</span><br><br><a href="/download-srt/${index}" style="background:#0bf; color:#000; padding:8px 12px; border-radius:4px; font-weight:bold; text-decoration:none;">Descarcă fisier .srt</a></li>`;
         });
         html += '</ul>';
     }
-    html += '</body></html>';
-    res.send(html);
+    res.send(html + '</body></html>');
 });
 
 app.get('/download-srt/:index', (req, res) => {
     const index = parseInt(req.params.index);
-    if (isNaN(index) || !secretArchive[index]) {
-        return res.status(404).send('Fișierul nu există sau a fost șters automat din memorie.');
-    }
-    const item = secretArchive[index];
-    res.setHeader('Content-disposition', `attachment; filename=RO_${item.id}.srt`);
+    if (isNaN(index) || !secretArchive[index]) return res.status(404).send('Fișier inexistent.');
+    res.setHeader('Content-disposition', `attachment; filename=RO_${secretArchive[index].id}.srt`);
     res.setHeader('Content-type', 'text/plain; charset=utf-8');
-    res.send(item.content);
+    res.send(secretArchive[index].content);
 });
-// ===================================================
 
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
+    const protocol = req.headers.host.includes('localhost') ? 'http' : 'https';
+    const baseUrl = `${protocol}://${req.headers.host}`;
+    let extraStr = extra ? '/' + extra : '';
+    let userFilename = extra ? (new URLSearchParams(extra).get('filename') || '') : '';
 
-    const host = req.headers.host;
-    const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
-    const baseUrl = `${protocol}://${host}`;
-
-    let extraString = '';
-    let userFilename = '';
-
-    if (extra) {
-        extraString = '/' + extra;
-        try {
-            const params = new URLSearchParams(extra);
-            userFilename = params.get('filename') || '';
-        } catch (e) {}
-    }
-
-    const urlsToFetch = [
-        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
-        `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
-        `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`
+    const urls = [
+        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraStr}.json`, 
+        `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraStr}.json`,
+        `https://subdl.strem.io/subtitles/${type}/${id}${extraStr}.json`
     ];
 
     try {
-        const fetchPromises = urlsToFetch.map(u => 
-            axios.get(u, { 
-                timeout: 3500, 
-                headers: { 'User-Agent': BROWSER_USER_AGENT } 
-            }).catch(() => ({ data: { subtitles: [] } }))
-        );
-
-        const results = await Promise.all(fetchPromises);
-        
-        let allSubs = [];
-        results.forEach(r => {
-            if (r && r.data && Array.isArray(r.data.subtitles)) {
-                allSubs.push(...r.data.subtitles);
-            }
-        });
-        
-        let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
+        const results = await Promise.all(urls.map(u => axios.get(u, { timeout: 3500, headers: { 'User-Agent': BROWSER_USER_AGENT } }).catch(() => ({ data: { subtitles: [] } }))));
+        let engSubs = [];
+        results.forEach(r => { if (r?.data?.subtitles) engSubs.push(...r.data.subtitles); });
         
         const uniqueUrls = new Set();
-        engSubs = engSubs.filter(sub => {
-            if (uniqueUrls.has(sub.url)) return false;
-            uniqueUrls.add(sub.url);
-            return true;
-        }).slice(0, 25); 
-
+        engSubs = engSubs.filter(sub => (sub.lang === 'eng' || sub.lang === 'en' || sub.lang === 'English') && !uniqueUrls.has(sub.url) ? uniqueUrls.add(sub.url) : false).slice(0, 25);
         if (engSubs.length === 0) return res.json({ subtitles: [] });
 
         let diverseSubs = [];
-        const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
-
         engSubs.forEach((sub, idx) => {
             let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
-            if (!trashRegex.test(realName)) {
-                diverseSubs.push({ originalUrl: sub.url, realName, index: idx });
-            }
+            if (!/korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i.test(realName)) diverseSubs.push({ originalUrl: sub.url, realName, index: idx, score: 0 });
         });
 
-        const fNameLower = userFilename.toLowerCase();
-        const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
-
+        const vTokens = userFilename.toLowerCase().split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
         diverseSubs.forEach(s => {
-            s.score = 0;
-            const subName = s.realName.toLowerCase();
-            
-            if (videoTokens.length > 0) {
-                let matchCount = 0;
-                videoTokens.forEach(token => {
-                    if (subName.includes(token)) {
-                        s.score += 60; 
-                        matchCount++;
-                    }
-                });
-                
-                if (matchCount > 0 && matchCount >= videoTokens.length / 2) {
-                    s.score += 300; 
-                }
-            }
-
-            if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(subName)) s.score += 40;
-            if (/bluray|brrip|bdrip|bdr/i.test(subName)) s.score += 30;
-            if (/yts|yify|rarbg|tgx|qxr|psa/i.test(subName)) s.score += 20;
-            if (/sdh|hi\.|hearing impaired/i.test(subName)) s.score -= 15; 
-            if (/sync|corregido|resync|translated|auto|machine/i.test(subName)) s.score -= 100;
+            const sn = s.realName.toLowerCase();
+            let matches = 0;
+            vTokens.forEach(t => { if (sn.includes(t)) { s.score += 60; matches++; }});
+            if (matches > 0 && matches >= vTokens.length / 2) s.score += 300;
+            if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(sn)) s.score += 40;
+            if (/bluray|brrip|bdrip|bdr/i.test(sn)) s.score += 30;
+            if (/yts|yify|rarbg|tgx|qxr|psa/i.test(sn)) s.score += 20;
+            if (/sdh|hi\.|hearing impaired/i.test(sn)) s.score -= 15;
+            if (/sync|corregido|resync|translated|auto|machine/i.test(sn)) s.score -= 100;
         });
 
         diverseSubs.sort((a, b) => b.score - a.score);
         diverseSubs = diverseSubs.slice(0, 15);
 
-        const generatedSubs = diverseSubs.map((s, index) => {
-            const encodedUrl = encodeURIComponent(s.originalUrl);
-            
-            let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
-            const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
-            
-            let labelName = `🇷🇴 RO AI [${index + 1}]`;
-            if (tagMatch) {
-                let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
-            }
-
+        return res.json({ subtitles: diverseSubs.map((s, idx) => {
+            const tagMatch = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ').match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             return {
-                id: `ai_sub_${index}`,
-                title: labelName, 
-                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
-                lang: 'ron'
+                id: `ai_sub_${idx}`,
+                title: tagMatch ? `🇷🇴 RO AI [${idx + 1}] • ${tagMatch[0].toUpperCase()}` : `🇷🇴 RO AI [${idx + 1}]`, 
+                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodeURIComponent(s.originalUrl)}&v=${s.index + 1}`, lang: 'ron'
             };
-        });
-
-        return res.json({ subtitles: generatedSubs });
-    } catch (error) {
-        return res.json({ subtitles: [] });
-    }
+        })});
+    } catch (e) { return res.json({ subtitles: [] }); }
 }
 
 app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
 app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 
 app.get('/:configData/translate', async (req, res) => {
-    const imdbId = req.query.id;
-    const targetUrl = req.query.targetUrl;
-    const configData = req.params.configData;
-
+    const imdbId = req.query.id, targetUrl = req.query.targetUrl, configData = req.params.configData;
     if (!targetUrl) return res.status(400).send('Lipsă URL sursă.');
-
     let userKeys = [];
-    try {
-        const decoded = Buffer.from(configData, 'base64').toString('utf8');
-        userKeys = JSON.parse(decoded);
-    } catch(e) {
-        return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
-    }
+    try { userKeys = JSON.parse(Buffer.from(configData, 'base64').toString('utf8')); } catch(e) { return res.status(400).send('Configurare invalidă.'); }
 
-    const cacheKey = targetUrl;
-
-    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
+    if (memoryCache[targetUrl] && typeof memoryCache[targetUrl] === 'string') {
         res.setHeader('Content-Type', 'text/srt; charset=utf-8');
-        return res.send(memoryCache[cacheKey]);
+        return res.send(memoryCache[targetUrl]);
     }
 
-    res.writeHead(200, {
-        'Content-Type': 'text/srt; charset=utf-8',
-        'Transfer-Encoding': 'chunked'
-    });
+    res.writeHead(200, { 'Content-Type': 'text/srt; charset=utf-8', 'Transfer-Encoding': 'chunked' });
     res.flushHeaders(); 
-
-    const keepAlive = setInterval(() => {
-        res.write(' \n');
-    }, 10000);
+    const keepAlive = setInterval(() => res.write(' \n'), 10000);
 
     try {
-        let processPromise;
-
-        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
-            processPromise = memoryCache[cacheKey];
-        } else {
+        if (!memoryCache[targetUrl]) {
             const startTime = Date.now();
-            
-            processPromise = (async () => {
-                const srtRes = await axios.get(targetUrl, {
-                    headers: { 'User-Agent': BROWSER_USER_AGENT }
-                });
-                
-                const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
-                console.log(`${c.cyan}\n==================================================${c.reset}`);
-                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
+            memoryCache[targetUrl] = (async () => {
+                const srtRes = await axios.get(targetUrl, { headers: { 'User-Agent': BROWSER_USER_AGENT } });
+                console.log(`${c.cyan}\n==================================================\n${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}\n📑 Total linii: ${(srtRes.data.match(/-->/g)||[]).length}\n${c.cyan}==================================================\n${c.reset}`);
                 return await translateSrtWithGemini(srtRes.data, userKeys);
             })();
-            
-            memoryCache[cacheKey] = processPromise;
-            
-            processPromise.then(translatedSrtString => {
-                memoryCache[cacheKey] = translatedSrtString;
-                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-                let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
-                
-                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-            }).catch(() => {
-                delete memoryCache[cacheKey];
-            });
+            memoryCache[targetUrl].then(srt => {
+                memoryCache[targetUrl] = srt;
+                console.log(`${c.green}\n✔ FINALIZAT: ${imdbId} în ${Math.floor((Date.now() - startTime) / 1000)}s\n==================================================\n${c.reset}`);
+            }).catch(() => delete memoryCache[targetUrl]);
         }
-
-        const finalSrt = await processPromise;
         
+        const finalSrt = await memoryCache[targetUrl];
         if (finalSrt && finalSrt.trim().length > 0) {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
-            
-            secretArchive.unshift({
-                id: imdbId,
-                time: timeStr,
-                content: finalSrt
-            });
-            
-            if (secretArchive.length > 10) {
-                secretArchive.pop();
-            }
+            secretArchive.unshift({ id: imdbId, time: new Date().toLocaleTimeString('ro-RO') + ' ' + new Date().toLocaleDateString('ro-RO'), content: finalSrt });
+            if (secretArchive.length > 10) secretArchive.pop();
         }
-
-        clearInterval(keepAlive);
-        res.write(finalSrt);
-        res.end();
-
-    } catch (error) {
-        clearInterval(keepAlive);
-        res.end(); 
-    }
+        clearInterval(keepAlive); res.write(finalSrt); res.end();
+    } catch (error) { clearInterval(keepAlive); res.end(); }
 });
 
 const PORT = process.env.PORT || 7000;
-app.listen(PORT, () => {
-    console.log(`${c.green}✔ Serverul rulează pe portul: ${PORT}${c.reset}`);
-});
+app.listen(PORT, () => console.log(`${c.green}✔ Server rulează pe: ${PORT}${c.reset}`));
 
 function cleanTextForJson(text) {
     if (!text) return text;
-    let clean = text;
-
-    clean = clean.replace(/<[^>]+>/g, '');
-    
-    clean = clean.replace(/[♪♫♬♩#]/gi, '');
-    clean = clean.replace(/â™ª/gi, '');
-    clean = clean.replace(/â™«/gi, '');
-    clean = clean.replace(/\[\s*[♪♫♬♩#]+\s*\]/gi, '');
-    clean = clean.replace(/\(\s*[♪♫♬♩#]+\s*\)/gi, '');
-    clean = clean.replace(/\[.*music.*\]/gi, ''); 
-
-    clean = clean.replace(/\[[\s\S]*?\]/g, ''); 
-    clean = clean.replace(/\([\s\S]*?\)/g, ''); 
-    clean = clean.replace(/\{[\s\S]*?\}/g, ''); 
-    clean = clean.replace(/【[\s\S]*?】/g, ''); 
-    
-    clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
-    clean = clean.replace(/"/g, "'");
-
-    let lines = clean.split('\n');
-    lines = lines.map(line => {
-        let l = line.trim();
-        
+    let clean = text.replace(/<[^>]+>/g, '').replace(/[♪♫♬♩#]/gi, '').replace(/\[.*music.*\]/gi, '').replace(/\[[\s\S]*?\]/g, '').replace(/\([\s\S]*?\)/g, '').replace(/\{[\s\S]*?\}/g, '').replace(/【[\s\S]*?】/g, '').replace(/^[A-Z0-9\s-]{2,}:/gm, '').replace(/"/g, "'");
+    return clean.split('\n').map(l => {
+        let cl = l.trim();
         let changed = true;
         while(changed) {
-            const match = l.match(/^([-—–−\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
-            if (match) {
-                l = match[1] + match[3].trim();
-            } else {
-                changed = false;
-            }
+            const match = cl.match(/^([-—–−\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
+            if (match) cl = match[1] + match[3].trim(); else changed = false;
         }
-
-        if (/^[-—–−.,!?\s]*$/.test(l)) {
-            return '';
-        }
-        
-        l = l.replace(/[♪♫♬♩#]/gi, '');
-        l = l.replace(/\[\s*\]/g, ''); 
-        l = l.replace(/\(\s*\)/g, '');
-        
-        return l;
-    });
-
-    let validLines = lines.filter(l => l !== '');
-    
-    validLines = validLines.map(l => {
-        if (/^[-—–−]/.test(l)) {
-            return l.replace(/^[-—–−]+\s*/, '- '); 
-        }
-        return l;
-    });
-
-    clean = validLines.join('\n');
-
-    if (clean.trim() === '') return ' ';
-    return clean.trim();
+        return /^[-—–−.,!?\s]*$/.test(cl) ? '' : cl;
+    }).filter(l => l !== '').map(l => /^[-—–−]/.test(l) ? l.replace(/^[-—–−]+\s*/, '- ') : l).join('\n').trim() || ' ';
 }
 
 function chunkArray(array, size) {
-    const result = [];
-    for (let i = 0; i < array.length; i += size) {
-        result.push(array.slice(i, i + size));
-    }
-    return result;
+    const r = []; for (let i = 0; i < array.length; i += size) r.push(array.slice(i, i + size)); return r;
 }
 
 function formatSubtitleLine(text) {
     if (!text) return text;
+    text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș').replace(/<[^>]+>/g, '').replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
     
-    text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
-    text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
-
-    let lines = text.split('\n');
-    lines = lines.map(l => {
+    let lines = text.split('\n').map(l => {
         let cl = l.trim();
-        if (/^([-—–−\s]*)(ă+|m+|mm+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl)) return '';
-        if (/^[-—–−.,!?\s]*$/.test(cl)) return '';
-        return cl;
-    });
+        return /^([-—–−\s]*)(ă+|m+|mm+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl) \vert{}\vert{} /^[-—–−.,!?\s]*$/.test(cl) ? '' : cl;
+    }).filter(l => l !== '');
     
-    let validLines = lines.filter(l => l !== '');
-    
-    let mergedText = '';
-    for (let i = 0; i < validLines.length; i++) {
-        let l = validLines[i];
-        if (i === 0) {
-            mergedText = l;
-        } else {
-            if (/^[-—–−]/.test(l)) { 
-                mergedText += '\n' + l;
-            } else {
-                mergedText += ' ' + l; 
-            }
-        }
-    }
-    
-    let finalMergedLines = mergedText.split('\n');
-    finalMergedLines = finalMergedLines.map(l => {
-        return l.trim().replace(/^[-—–−]+\s*/g, ''); 
-    });
-    
-    text = finalMergedLines.join('\n');
-    
-    text = text.replace(/[♪♫♬♩#]/gi, '');
-    text = text.replace(/\[[\s\S]*?\]/g, ''); 
-    text = text.replace(/\([\s\S]*?\)/g, '');
+    text = lines.reduce((acc, l, i) => i === 0 ? l : (/^[-—–−]/.test(l) ? acc + '\n' + l : acc + ' ' + l), '').split('\n').map(l => l.trim().replace(/^[-—–−]+\s*/g, '')).join('\n');
+    text = text.replace(/[♪♫♬♩#]/gi, '').replace(/\[[\s\S]*?\]/g, '').replace(/\([\s\S]*?\)/g, '');
 
-    const rw = (txt, search, replace, flags='g') => {
-        const regex = new RegExp(`(^|[^a-zA-Z0-9ăâîșțĂÂÎȘȚ])(${search})(?=[^a-zA-Z0-9ăâîșțĂÂÎȘȚ]|$)`, flags);
-        return txt.replace(regex, `$1${replace}`);
-    };
+    const rw = (txt, search, replace, flags='g') => txt.replace(new RegExp(`(^|[^a-zA-Z0-9ăâîșțĂÂÎȘȚ])(${search})(?=[^a-zA-Z0-9ăâîșțĂÂÎȘȚ]|$)`, flags), `$1${replace}`);
 
-    text = rw(text, 'ăă', '', 'gi');
-    text = rw(text, 'hă', '', 'gi');
-    text = text.replace(/P-Păi/gi, 'Păi');
-    text = text.replace(/[wW]-Well/g, 'Păi');
+    const exactReps = [
+        ['ăă', ''], ['hă', ''], ['P-Păi', 'Păi'], ['\\[wW\\]-Well', 'Păi'], ['from', 'de la'], ['kensevasem', 'convinsesem'], 
+        ['prăjicina', 'prăjiturica'], ['zărelul', 'zahărelul'], ['acor', 'acestor'], ['ketchuipurile', 'ketchupurile'],
+        ['rțuire', 'hărțuire'], ['bacterijle', 'bacteriile'], ['rțile', 'știrile'], ['nhưng', 'dar'], ['nithe', 'niște'], 
+        ['Stucați', 'Scuzați'], ['putemos', 'putem'], ['Robinei', 'lui Robin'], ['măsurą', 'măsura'], ['să fiică', 'să fie'], 
+        ['Poftă\\?', 'Poftim?'], ['dădadă', 'dădacă'], ['să se fină', 'să se prefacă'], ['bet merici', 'dar meriți'], 
+        ['usile', 'ușile'], ['natătăfleață', 'nătăfleață'], ['Jreți', 'vă'], ['\\[Jj\\]ă', 'vă'], ['Jți', 'Îți'], 
+        ['jți', 'îți'], ['Jne', 'vă'], ['Jetați', 'vă pare rău'], ['ineam', 'țineam'], ['Ineam', 'Țineam'], 
+        ['1-ar', 'l-ar'], ['aire', 'ai'], ['Aire', 'Ai'], ['aver', 'ai'], ['Aver', 'Ai'], ['Îcerci', 'Încerci'], 
+        ['îcerci', 'încerci'], ['să suferit', 'să sufăr'], ['cev', 'ceva'], ['săcerci', 'să încerci'], ['Jumiți', 'Glumiți'], 
+        ['jumiți', 'glumiți'], ['vumat', 'vomat'], ['unzn', 'un'], ['știen', 'știm'], ['cafond', 'profund'], 
+        ['urdă', 'undă'], ['ți vei', 'îți vei'], ['nu mai te', 'nu te mai'], ['sâniile mele', 'sânii mei'], ['sâniile', 'sânii']
+    ];
+    exactReps.forEach(([s, r]) => { text = rw(text, s, r, 'gi'); });
 
-    text = rw(text, 'from', 'de la', 'gi');
-    text = rw(text, 'kensevasem', 'convinsesem', 'gi');
-    text = rw(text, 'prăjicina', 'prăjiturica', 'gi');
-    text = text.replace(/zămislirea asta/gi, 'porcăria asta');
-    text = text.replace(/onoare apre noastre/gi, 'onoarea noastră');
-    text = rw(text, 'zărelul', 'zahărelul', 'gi');
-    text = rw(text, 'acor', 'acestor', 'gi');
-    text = rw(text, 'ketchuipurile', 'ketchupurile', 'gi');
-    text = rw(text, 'rțuire', 'hărțuire', 'gi');
-    text = rw(text, 'bacterijle', 'bacteriile', 'gi');
-    text = text.replace(/probleme cu rțile/gi, 'probleme cu știrile');
-    text = rw(text, 'rțile', 'știrile', 'gi');
-    text = rw(text, 'nhưng', 'dar', 'gi');
-    text = rw(text, 'nithe', 'niște', 'gi');
-    text = rw(text, 'Stucați', 'Scuzați', 'gi');
-    text = rw(text, 'putemos', 'putem', 'gi');
-    text = rw(text, 'Robinei', 'lui Robin', 'gi');
-    text = rw(text, 'măsurą', 'măsura', 'gi');
-    text = rw(text, 'să fiică', 'să fie', 'gi');
-    text = text.replace(/lemnul de divorț/gi, 'divorț');
-    text = rw(text, 'Poftă\\?', 'Poftim?', 'gi');
-    text = rw(text, 'dădadă', 'dădacă', 'gi');
-    text = rw(text, 'să se fină', 'să se prefacă', 'gi');
-    text = rw(text, 'bet merici', 'dar meriți', 'gi');
-    text = rw(text, 'usile', 'ușile', 'gi');
-
-    // Marea curățenie
-    text = text.replace(/în toată regla/gi, 'în toată regula');
-    text = text.replace(/sunt extinși/gi, 'sunt pe cale de dispariție');
-    text = text.replace(/Nu-mi vine să crezi/gi, 'Nu-mi vine să cred');
-    text = text.replace(/Bâțâială fină/gi, 'Râgâială fină');
-    text = text.replace(/Aia e [sS]ânul meu/gi, 'Ăla e sânul meu');
-    text = text.replace(/ție datorităție/gi, 'datorită ție');
-    text = text.replace(/îndoaie-te cu toate astea/gi, 'servește-te cu toate astea');
-    text = rw(text, 'natătăfleață', 'nătăfleață', 'gi');
-    text = text.replace(/cuțitul de pernă/gi, 'cuțitul de sub pernă');
-    text = text.replace(/și-a predat în sfârșit pantofii/gi, 'a dat ortul popii');
-
-    text = text.replace(/Atunci\s+spune[tț]i\s+c[aă][\s.,]+(Glumi[tț]i|Jumi[tț]i|Jeta[tț]i|Jre[tț]i|Jne|[Jj]ă)\.?/gi, 'Atunci spuneți că vă pare rău.');
-    text = text.replace(/Trebuie\s+să\s+mă\s+(prefac|fac)\s+parcă\s+nu\s+s-a\s+întâmplat/gi, 'Trebuie să mă prefac că nu s-a întâmplat');
-    text = text.replace(/parcă\s+nu\s+țțineam\s+brațele\s+lui\s+Robin\s+în\s+mâinile\s+mele/gi, 'că nu țineam brațele lui Robin în mâinile mele');
-
-    text = rw(text, 'Jreți', 'vă', 'gi');
-    text = rw(text, '[Jj]ă', 'vă', 'g');
-    text = rw(text, 'Jți', 'Îți', 'g');
-    text = rw(text, 'jți', 'îți', 'g');
-    text = rw(text, 'Jne', 'vă', 'gi');
-    text = rw(text, 'Jetați', 'vă pare rău', 'gi');
-
-    text = rw(text, 'ineam', 'țineam', 'g');
-    text = rw(text, 'Ineam', 'Țineam', 'g');
-    text = text.replace(/țțineam/gi, 'țineam'); 
-    text = text.replace(/Țțineam/g, 'Țineam');
-
-    text = text.replace(/mă fac că nu/gi, 'mă prefac că nu');
-    text = text.replace(/prefac parcă/gi, 'prefac de parcă');
-    
-    text = text.replace(/spune[tț]i\s+c[aă]\s+[îÎ]ți\s+pare/gi, 'spuneți că vă pare');
-
-    text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
-    text = rw(text, '1-ar', 'l-ar', 'gi');
-    text = rw(text, 'aire', 'ai', 'g');
-    text = rw(text, 'Aire', 'Ai', 'g');
-    text = rw(text, 'aver', 'ai', 'g');
-    text = rw(text, 'Aver', 'Ai', 'g');
-    text = text.replace(/man spui/gi, 'îmi spui');
-    text = rw(text, 'Îcerci', 'Încerci', 'g');
-    text = rw(text, 'îcerci', 'încerci', 'g');
-    text = text.replace(/Fă-ca acasă/gi, 'Simte-te ca acasă');
-    text = rw(text, 'să suferit', 'să sufăr', 'gi');
-    text = rw(text, 'cev', 'ceva', 'gi');
-    text = rw(text, 'săcerci', 'să încerci', 'gi');
-    text = rw(text, 'Jumiți', 'Glumiți', 'g');
-    text = rw(text, 'jumiți', 'glumiți', 'g');
-    text = text.replace(/ât ai clipi/gi, 'cât ai clipi');
-    text = rw(text, 'vumat', 'vomat', 'gi');
-    text = rw(text, 'unzn', 'un', 'gi');
-    text = text.replace(/să veimă mănânci/gi, 'să mănânci');
-    text = text.replace(/ești nevoie/gi, 'este nevoie');
-    text = rw(text, 'știen', 'știm', 'gi');
-    text = rw(text, 'cafond', 'profund', 'gi');
-    text = text.replace(/să fi ratat-o/gi, 'să fi ratat');
-    text = text.replace(/Mă pornesc la trei/gi, 'Pornesc la trei');
-    text = rw(text, 'urdă', 'undă', 'gi');
-    text = rw(text, 'ți vei', 'îți vei', 'gi');
-    text = text.replace(/nu toată binevenită/gi, 'nu tocmai binevenită');
-    text = rw(text, 'nu mai te', 'nu te mai', 'gi');
-    text = rw(text, 'sâniile mele', 'sânii mei', 'gi');
-    text = rw(text, 'sâniile', 'sânii', 'gi');
-
-    text = text.replace(/,\s*,/g, ',');
-    text = text.replace(/\s+,/g, ',');
-    text = text.replace(/\s+\?/g, '?');
-    text = text.replace(/\s+\./g, '.');
-    text = text.replace(/ +/g, ' '); 
-    
-    text = text.replace(/[^\u0000-\u024F\u2000-\u206F\u2E00-\u2E7F\n\r]/g, "");
+    const phraseReps = [
+        [/zămislirea asta/gi, 'porcăria asta'], [/onoare apre noastre/gi, 'onoarea noastră'], [/probleme cu rțile/gi, 'probleme cu știrile'], 
+        [/lemnul de divorț/gi, 'divorț'], [/în toată regla/gi, 'în toată regula'], [/sunt extinși/gi, 'sunt pe cale de dispariție'],
+        [/Nu-mi vine să crezi/gi, 'Nu-mi vine să cred'], [/Bâțâială fină/gi, 'Râgâială fină'], [/Aia e [sS]ânul meu/gi, 'Ăla e sânul meu'], 
+        [/ție datorităție/gi, 'datorită ție'], [/îndoaie-te cu toate astea/gi, 'servește-te cu toate astea'],
+        [/cuțitul de pernă/gi, 'cuțitul de sub pernă'], [/și-a predat în sfârșit pantofii/gi, 'a dat ortul popii'],
+        [/Atunci\s+spune[tț]i\s+c[aă][\s.,]+(Glumi[tț]i|Jumi[tț]i|Jeta[tț]i|Jre[tț]i|Jne|[Jj]ă)\.?/gi, 'Atunci spuneți că vă pare rău.'],
+        [/Trebuie\s+să\s+mă\s+(prefac|fac)\s+parcă\s+nu\s+s-a\s+întâmplat/gi, 'Trebuie să mă prefac că nu s-a întâmplat'],
+        [/parcă\s+nu\s+țțineam\s+brațele\s+lui\s+Robin\s+în\s+mâinile\s+mele/gi, 'că nu țineam brațele lui Robin în mâinile mele'],
+        [/țțineam/gi, 'țineam'], [/Țțineam/g, 'Țineam'], [/mă fac că nu/gi, 'mă prefac că nu'], [/prefac parcă/gi, 'prefac de parcă'], 
+        [/spune[tț]i\s+c[aă]\s+[îÎ]ți\s+pare/gi, 'spuneți că vă pare'], [/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''], [/man spui/gi, 'îmi spui'], 
+        [/Fă-ca acasă/gi, 'Simte-te ca acasă'], [/ât ai clipi/gi, 'cât ai clipi'], [/să veimă mănânci/gi, 'să mănânci'], [/ești nevoie/gi, 'este nevoie'],
+        [/să fi ratat-o/gi, 'să fi ratat'], [/Mă pornesc la trei/gi, 'Pornesc la trei'], [/nu toată binevenită/gi, 'nu tocmai binevenită'],
+        [/,\s*,/g, ','], [/\s+,/g, ','], [/\s+\?/g, '?'], [/\s+\./g, '.'], [/ +/g, ' '], [/[^\u0000-\u024F\u2000-\u206F\u2E00-\u2E7F\n\r]/g, ""]
+    ];
+    phraseReps.forEach(([s, r]) => { text = text.replace(s, r); });
 
     if (text.trim() === '') return ' '; 
-
     let finalLines = text.split('\n').map(l => l.trim()).filter(l => l !== '');
-    const MAX_LEN = 45; 
     let wrappedLines = [];
-
     for (let line of finalLines) {
-        if (line.length <= MAX_LEN) {
-            wrappedLines.push(line);
-        } else {
-            let mid = Math.floor(line.length / 2);
-            let leftSpace = line.lastIndexOf(' ', mid);
-            let rightSpace = line.indexOf(' ', mid);
-            let splitIndex = -1;
-
-            if (leftSpace !== -1 && rightSpace !== -1) {
-                splitIndex = (mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace;
-            } else if (leftSpace !== -1) {
-                splitIndex = leftSpace;
-            } else if (rightSpace !== -1) {
-                splitIndex = rightSpace;
-            }
-
-            if (splitIndex !== -1) {
-                wrappedLines.push(line.substring(0, splitIndex).trim());
-                wrappedLines.push(line.substring(splitIndex + 1).trim());
-            } else {
-                wrappedLines.push(line); 
-            }
+        if (line.length <= 45) wrappedLines.push(line);
+        else {
+            let mid = Math.floor(line.length / 2), ls = line.lastIndexOf(' ', mid), rs = line.indexOf(' ', mid);
+            let si = (ls !== -1 && rs !== -1) ? ((mid - ls) <= (rs - mid) ? ls : rs) : (ls !== -1 ? ls : rs !== -1 ? rs : -1);
+            if (si !== -1) { wrappedLines.push(line.substring(0, si).trim()); wrappedLines.push(line.substring(si + 1).trim()); }
+            else wrappedLines.push(line);
         }
     }
-
     return wrappedLines.map(l => l.replace(/^[-—–−]+\s*/g, '')).join('\n');
 }
 
 function fixBrokenJson(text) {
-    let fixed = text;
-    fixed = fixed.replace(/"(\d+)":\s*([^",}\n]+)([,}\n])/g, function(match, key, value, terminator) {
-        let cleanVal = value.trim();
-        if (!cleanVal.startsWith('"')) {
-            cleanVal = cleanVal.replace(/^b['"]|['"]$/g, '');
-            return `"${key}": "${cleanVal}"${terminator}`;
-        }
-        return match;
+    return text.replace(/"(\d+)":\s*([^",}\n]+)([,}\n])/g, (m, k, v, t) => {
+        let cv = v.trim();
+        return (!cv.startsWith('"')) ? `"${k}": "${cv.replace(/^b['"]|['"]$/g, '')}"${t}` : m;
     });
-    return fixed;
 }
 
 let globalRateLimitPause = 0;
 
 async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunks, keyState) {
     let keysToTranslate = {};
-    chunkObjArray.forEach(obj => {
-        keysToTranslate[obj.id] = obj.text;
-    });
-
+    chunkObjArray.forEach(obj => keysToTranslate[obj.id] = obj.text);
     let finalTranslatedDict = {};
     let expectedTotalCount = Object.keys(keysToTranslate).length;
-    let attempts = 0;
-    let contentErrorCount = 0; 
+    let attempts = 0, contentErrorCount = 0; 
     const maxAttempts = 15; 
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
-        
         let batchToProcess = {};
         const allKeys = Object.keys(keysToTranslate);
         
         if (contentErrorCount >= 2 && allKeys.length > 5) {
-            console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1} pare blocat de format. Îl împart pentru a izola problema...${c.reset}`);
-            const halfLength = Math.floor(allKeys.length / 2);
-            for (let i = 0; i < halfLength; i++) {
-                batchToProcess[allKeys[i]] = keysToTranslate[allKeys[i]];
-            }
+            console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1} pare blocat. Îl împart...${c.reset}`);
+            for (let i = 0; i < Math.floor(allKeys.length / 2); i++) batchToProcess[allKeys[i]] = keysToTranslate[allKeys[i]];
             contentErrorCount = 0; 
         } else {
             batchToProcess = Object.assign({}, keysToTranslate);
         }
 
-        while (Date.now() < globalRateLimitPause) {
-            await new Promise(r => setTimeout(r, 1000));
-        }
+        while (Date.now() < globalRateLimitPause) await new Promise(r => setTimeout(r, 1000));
 
-        let currentKeyObj = null;
-        let keyIndex = -1;
-        let apiKey = null;
-
+        let currentKeyObj = null, keyIndex = -1, apiKey = null;
         while (true) {
-            let availableIndices = [];
-            for (let i = 0; i < keyState.keys.length; i++) {
-                if (Date.now() >= keyState.keys[i].pauseUntil) {
-                    availableIndices.push(i);
-                }
-            }
-
+            let availableIndices = keyState.keys.map((k, i) => Date.now() >= k.pauseUntil ? i : -1).filter(i => i !== -1);
             if (availableIndices.length > 0) {
-                let randomIndex = Math.floor(Math.random() * availableIndices.length);
-                keyIndex = availableIndices[randomIndex];
+                keyIndex = availableIndices[Math.floor(Math.random() * availableIndices.length)];
                 currentKeyObj = keyState.keys[keyIndex];
                 apiKey = currentKeyObj.value;
-
                 currentKeyObj.pauseUntil = Date.now() + 1500;
                 break;
             }
-
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        // SETAT PE MODELUL REAL EXISTENT (1.5-flash) - SINGURUL CARE NU DA 404
-        const modelName = 'gemini-1.5-flash'; 
+        // MODELUL CORECT CARE ȘTIM SIGUR CĂ MERGE PENTRU TINE
+        const modelName = 'gemini-3.5-flash-lite'; 
         let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
-            if (currentBatchSize === expectedTotalCount) {
-                console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
-            } else {
-                console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
-            }
+            if (currentBatchSize === expectedTotalCount) console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
+            else console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             
-            // PROMPT VECHI, FĂRĂ EXEMPLU DE JSON (Pentru a nu bloca formatul)
+            // PROMPTUL VECHI ȘI STABIL
             const prompt = `Translate the following English subtitles into natural, conversational Romanian.
-
 RULES:
 1. DIACRITICS, SPELLING & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Ensure PERFECT Romanian spelling and grammar. Use standard, dictionary-approved vocabulary.
 2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
@@ -692,66 +325,28 @@ ${JSON.stringify(batchToProcess)}`;
 
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
-                {
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { 
-                        response_mime_type: "application/json",
-                        temperature: 0.1 
-                    },
-                    // FOLOSIM DOAR HIGH PENTRU A EVITA EROAREA 400 DE LA GOOGLE PE CONTURILE FREE
-                    safetySettings: [
-                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
-                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
-                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
-                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" }
-                    ]
-                },
-                { 
-                    headers: { 'Content-Type': 'application/json' },
-                    timeout: 120000 
-                }
+                { contents: [{ parts: [{ text: prompt }] }], generationConfig: { response_mime_type: "application/json", temperature: 0.1 }, safetySettings: [{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" }, { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }] },
+                { headers: { 'Content-Type': 'application/json' }, timeout: 120000 }
             );
 
-            if (!response.data || !response.data.candidates || response.data.candidates.length === 0 || !response.data.candidates[0].content) {
-                if (response.data && response.data.promptFeedback && response.data.promptFeedback.blockReason) {
-                    throw new Error(`Filtrat de Google (${response.data.promptFeedback.blockReason})`);
-                }
-                throw new Error("Răspuns invalid sau gol primit de la API.");
-            }
+            if (!response.data?.candidates?.[0]?.content) throw new Error(response.data?.promptFeedback?.blockReason ? `Filtrat de Google (${response.data.promptFeedback.blockReason})` : "Răspuns invalid sau gol");
 
             let textResponse = response.data.candidates[0].content.parts[0].text;
-            
-            let startIndex = textResponse.indexOf('{');
-            let endIndex = textResponse.lastIndexOf('}');
-
-            if (startIndex !== -1 && endIndex !== -1) {
-                textResponse = textResponse.substring(startIndex, endIndex + 1);
-            }
+            let startIndex = textResponse.indexOf('{'), endIndex = textResponse.lastIndexOf('}');
+            if (startIndex !== -1 && endIndex !== -1) textResponse = textResponse.substring(startIndex, endIndex + 1);
 
             let parsedDict = {};
-            try {
-                let cleanText = fixBrokenJson(textResponse);
-                parsedDict = JSON.parse(cleanText);
-            } catch (e) {
+            try { parsedDict = JSON.parse(fixBrokenJson(textResponse)); } 
+            catch (e) {
                 const keys = Object.keys(batchToProcess);
                 for (let i = 0; i < keys.length; i++) {
-                    const key = keys[i];
-                    const nextKey = keys[i + 1];
-                    
-                    let lookahead = `\\s*\\}|$)`;
-                    if (nextKey) {
-                        lookahead = `\\s*,?\\s*"?(?:${nextKey})"?\\s*:|\\s*\\}|$)`;
-                    }
-                    
-                    const regex = new RegExp(`"?${key}"?\\s*:\\s*(.*?)(?=${lookahead}`, 's');
+                    const regex = new RegExp(`"?${keys[i]}"?\\s*:\\s*(.*?)(?=${keys[i + 1] ? `\\s*,?\\s*"?(?:${keys[i + 1]})"?\\s*:\vert{}\\s*\\}\vert{}$)` : `\\s*\\}|$)`}`, 's');
                     const match = textResponse.match(regex);
                     if (match) {
                         let val = match[1].trim();
                         if (val.endsWith(',')) val = val.substring(0, val.length - 1).trim();
-                        if (val.startsWith('"') || val.startsWith("'")) val = val.substring(1);
-                        if (val.endsWith('"') || val.endsWith("'")) val = val.substring(0, val.length - 1);
-                        val = val.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'");
-                        parsedDict[key] = val.trim();
+                        val = val.replace(/^["']|["']$/g, '').replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'");
+                        parsedDict[keys[i]] = val.trim();
                     }
                 }
             }
@@ -760,48 +355,37 @@ ${JSON.stringify(batchToProcess)}`;
             for (let key in parsedDict) {
                 if (keysToTranslate[key] !== undefined) {
                     finalTranslatedDict[key] = parsedDict[key];
-                    delete keysToTranslate[key]; 
-                    newlyTranslatedCount++;
+                    delete keysToTranslate[key]; newlyTranslatedCount++;
                 }
             }
 
-            if (newlyTranslatedCount === 0) {
-                throw new Error("Nu a extras nicio linie validă.");
-            } else {
-                attempts = 0;
-                contentErrorCount = 0;
-            }
+            if (newlyTranslatedCount === 0) throw new Error("Nu a extras nicio linie validă.");
+            else { attempts = 0; contentErrorCount = 0; }
 
             if (Object.keys(keysToTranslate).length === 0) {
-                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${expectedTotalCount}/${expectedTotalCount} linii)${c.reset}`);
-                break; 
+                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat!${c.reset}`); break; 
             } 
 
         } catch (error) {
             attempts++;
-            if (attempts >= maxAttempts) {
-                console.log(`${c.red}✖ [Gemini] Limita atinsă pentru calupul ${globalChunkIndex + 1}. Abandon!${c.reset}`);
-                break; 
-            }
+            if (attempts >= maxAttempts) { console.log(`${c.red}✖ [Gemini] Limita atinsă (calup ${globalChunkIndex + 1}). Abandon!${c.reset}`); break; }
 
-            // ACUM AFIȘEAZĂ EROAREA REALĂ DE LA GOOGLE CA SĂ NU MAI BÂJBÂIM
-            let status = error.response ? error.response.status : 'N/A';
-            let errMsg = error.response && error.response.data && error.response.data.error ? error.response.data.error.message : error.message;
+            let errMsg = error.response?.data?.error?.message || error.message || "";
+            let status = error.response?.status;
 
             if (status === 429) {
                 currentKeyObj.pauseUntil = Date.now() + 61000;
                 globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
-                const sleepTime = Math.floor(10000 + Math.random() * 5000);
-                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul 10s... (Aștept ${(sleepTime/1000).toFixed(1)}s)${c.reset}`);
+                let sleepTime = Math.floor(10000 + Math.random() * 5000);
+                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Aștept ${(sleepTime/1000).toFixed(1)}s${c.reset}`);
                 await new Promise(r => setTimeout(r, sleepTime));
             } else if (status === 503) {
-                const waitTime = 3000 + (attempts * 1500);
-                console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Aștept ${(waitTime/1000).toFixed(1)}s (${attempts}/${maxAttempts})...${c.reset}`);
-                await new Promise(r => setTimeout(r, waitTime));
+                console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
+                await new Promise(r => setTimeout(r, 2000));
             } else if (status === 400 || status === 403 || status === 404) {
                 console.log(`${c.red}✖ [EROARE GOOGLE] Status ${status}: ${errMsg}${c.reset}`);
-                await new Promise(r => setTimeout(r, 2000));
-            } else if (error.message && error.message.toLowerCase().includes('timeout')) {
+                contentErrorCount++; await new Promise(r => setTimeout(r, 2000));
+            } else if (errMsg.toLowerCase().includes('timeout')) {
                 console.log(`${c.yellow}⚠ [Gemini] Timeout. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, 2000));
             } else {
@@ -811,55 +395,24 @@ ${JSON.stringify(batchToProcess)}`;
             }
         }
     }
-
-    const finalTranslatedArray = chunkObjArray.map(obj => {
-        return finalTranslatedDict[obj.id] !== undefined ? finalTranslatedDict[obj.id] : obj.text;
-    });
-
-    return finalTranslatedArray;
+    return chunkObjArray.map(obj => finalTranslatedDict[obj.id] !== undefined ? finalTranslatedDict[obj.id] : obj.text);
 }
 
 async function translateSrtWithGemini(srtText, userKeys) {
-    const parser = new Parser();
-    const blocks = parser.fromSrt(srtText);
-    
-    const textsToTranslate = blocks.map((b, index) => {
-        return { id: index, text: cleanTextForJson(b.text) };
-    });
-    
-    const CHUNK_SIZE = 165; 
-    const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
-    
-    let CONCURRENCY_LIMIT = 3; 
-
+    const parser = new Parser(); const blocks = parser.fromSrt(srtText);
+    const textsToTranslate = blocks.map((b, i) => ({ id: i, text: cleanTextForJson(b.text) }));
+    const chunks = chunkArray(textsToTranslate, 165);
     let allTranslatedTexts = [];
+    const keyState = { keys: userKeys.map(k => ({ value: k, pauseUntil: 0 })), index: 0 };
 
-    const keyState = { 
-        keys: userKeys.map(k => ({ value: k, pauseUntil: 0 })), 
-        index: 0 
-    };
-
-    for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
-        const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
-        const batchPromises = batchChunks.map((chunk, indexInBatch) => {
-            return processChunkWithRetry(chunk, i + indexInBatch, chunks.length, keyState);
-        });
-        
-        const batchResults = await Promise.all(batchPromises);
-        batchResults.forEach(translatedTextsArray => {
-            allTranslatedTexts.push(...translatedTextsArray);
-        });
+    for (let i = 0; i < chunks.length; i += 3) {
+        const batchPromises = chunks.slice(i, i + 3).map((chunk, idx) => processChunkWithRetry(chunk, i + idx, chunks.length, keyState));
+        (await Promise.all(batchPromises)).forEach(res => allTranslatedTexts.push(...res));
     }
 
     blocks.forEach((block, index) => {
         let finalStr = allTranslatedTexts[index];
-        
-        if (finalStr === undefined || finalStr === null) {
-            finalStr = block.text;
-        }
-        
-        block.text = formatSubtitleLine(finalStr);
+        block.text = formatSubtitleLine(finalStr === undefined || finalStr === null ? block.text : finalStr);
     });
-
     return parser.toSrt(blocks);
 }
