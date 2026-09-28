@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.31',
+    version: '2.3.33',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -453,11 +453,38 @@ function formatSubtitleLine(text) {
         return txt.replace(regex, `$1${replace}`);
     };
 
-    // Marea curățenie condensată
+    text = rw(text, 'ăă', '', 'gi');
+    text = rw(text, 'hă', '', 'gi');
+    text = text.replace(/P-Păi/gi, 'Păi');
+    text = text.replace(/[wW]-Well/g, 'Păi');
+
+    text = rw(text, 'from', 'de la', 'gi');
+    text = rw(text, 'kensevasem', 'convinsesem', 'gi');
+    text = rw(text, 'prăjicina', 'prăjiturica', 'gi');
     text = text.replace(/zămislirea asta/gi, 'porcăria asta');
     text = text.replace(/onoare apre noastre/gi, 'onoarea noastră');
+    text = rw(text, 'zărelul', 'zahărelul', 'gi');
+    text = rw(text, 'acor', 'acestor', 'gi');
+    text = rw(text, 'ketchuipurile', 'ketchupurile', 'gi');
+    text = rw(text, 'rțuire', 'hărțuire', 'gi');
+    text = rw(text, 'bacterijle', 'bacteriile', 'gi');
     text = text.replace(/probleme cu rțile/gi, 'probleme cu știrile');
+    text = rw(text, 'rțile', 'știrile', 'gi');
+    text = rw(text, 'nhưng', 'dar', 'gi');
+    text = rw(text, 'nithe', 'niște', 'gi');
+    text = rw(text, 'Stucați', 'Scuzați', 'gi');
+    text = rw(text, 'putemos', 'putem', 'gi');
+    text = rw(text, 'Robinei', 'lui Robin', 'gi');
+    text = rw(text, 'măsurą', 'măsura', 'gi');
+    text = rw(text, 'să fiică', 'să fie', 'gi');
     text = text.replace(/lemnul de divorț/gi, 'divorț');
+    text = rw(text, 'Poftă\\?', 'Poftim?', 'gi');
+    text = rw(text, 'dădadă', 'dădacă', 'gi');
+    text = rw(text, 'să se fină', 'să se prefacă', 'gi');
+    text = rw(text, 'bet merici', 'dar meriți', 'gi');
+    text = rw(text, 'usile', 'ușile', 'gi');
+
+    // Marea curățenie
     text = text.replace(/în toată regla/gi, 'în toată regula');
     text = text.replace(/sunt extinși/gi, 'sunt pe cale de dispariție');
     text = text.replace(/Nu-mi vine să crezi/gi, 'Nu-mi vine să cred');
@@ -465,48 +492,61 @@ function formatSubtitleLine(text) {
     text = text.replace(/Aia e [sS]ânul meu/gi, 'Ăla e sânul meu');
     text = text.replace(/ție datorităție/gi, 'datorită ție');
     text = text.replace(/îndoaie-te cu toate astea/gi, 'servește-te cu toate astea');
+    text = rw(text, 'natătăfleață', 'nătăfleață', 'gi');
     text = text.replace(/cuțitul de pernă/gi, 'cuțitul de sub pernă');
     text = text.replace(/și-a predat în sfârșit pantofii/gi, 'a dat ortul popii');
+
     text = text.replace(/Atunci\s+spune[tț]i\s+c[aă][\s.,]+(Glumi[tț]i|Jumi[tț]i|Jeta[tț]i|Jre[tț]i|Jne|[Jj]ă)\.?/gi, 'Atunci spuneți că vă pare rău.');
     text = text.replace(/Trebuie\s+să\s+mă\s+(prefac|fac)\s+parcă\s+nu\s+s-a\s+întâmplat/gi, 'Trebuie să mă prefac că nu s-a întâmplat');
     text = text.replace(/parcă\s+nu\s+țțineam\s+brațele\s+lui\s+Robin\s+în\s+mâinile\s+mele/gi, 'că nu țineam brațele lui Robin în mâinile mele');
+
+    text = rw(text, 'Jreți', 'vă', 'gi');
+    text = rw(text, '[Jj]ă', 'vă', 'g');
+    text = rw(text, 'Jți', 'Îți', 'g');
+    text = rw(text, 'jți', 'îți', 'g');
+    text = rw(text, 'Jne', 'vă', 'gi');
+    text = rw(text, 'Jetați', 'vă pare rău', 'gi');
+
+    text = rw(text, 'ineam', 'țineam', 'g');
+    text = rw(text, 'Ineam', 'Țineam', 'g');
     text = text.replace(/țțineam/gi, 'țineam'); 
     text = text.replace(/Țțineam/g, 'Țineam');
+
     text = text.replace(/mă fac că nu/gi, 'mă prefac că nu');
     text = text.replace(/prefac parcă/gi, 'prefac de parcă');
+    
     text = text.replace(/spune[tț]i\s+c[aă]\s+[îÎ]ți\s+pare/gi, 'spuneți că vă pare');
+
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
+    text = rw(text, '1-ar', 'l-ar', 'gi');
+    text = rw(text, 'aire', 'ai', 'g');
+    text = rw(text, 'Aire', 'Ai', 'g');
+    text = rw(text, 'aver', 'ai', 'g');
+    text = rw(text, 'Aver', 'Ai', 'g');
     text = text.replace(/man spui/gi, 'îmi spui');
+    text = rw(text, 'Îcerci', 'Încerci', 'g');
+    text = rw(text, 'îcerci', 'încerci', 'g');
     text = text.replace(/Fă-ca acasă/gi, 'Simte-te ca acasă');
+    text = rw(text, 'să suferit', 'să sufăr', 'gi');
+    text = rw(text, 'cev', 'ceva', 'gi');
+    text = rw(text, 'săcerci', 'să încerci', 'gi');
+    text = rw(text, 'Jumiți', 'Glumiți', 'g');
+    text = rw(text, 'jumiți', 'glumiți', 'g');
     text = text.replace(/ât ai clipi/gi, 'cât ai clipi');
+    text = rw(text, 'vumat', 'vomat', 'gi');
+    text = rw(text, 'unzn', 'un', 'gi');
     text = text.replace(/să veimă mănânci/gi, 'să mănânci');
     text = text.replace(/ești nevoie/gi, 'este nevoie');
+    text = rw(text, 'știen', 'știm', 'gi');
+    text = rw(text, 'cafond', 'profund', 'gi');
     text = text.replace(/să fi ratat-o/gi, 'să fi ratat');
     text = text.replace(/Mă pornesc la trei/gi, 'Pornesc la trei');
+    text = rw(text, 'urdă', 'undă', 'gi');
+    text = rw(text, 'ți vei', 'îți vei', 'gi');
     text = text.replace(/nu toată binevenită/gi, 'nu tocmai binevenită');
-
-    const exactWordReplacements = [
-        ['ăă', ''], ['hă', ''], ['P-Păi', 'Păi'], ['\\[wW\\]-Well', 'Păi'],
-        ['from', 'de la'], ['kensevasem', 'convinsesem'], ['prăjicina', 'prăjiturica'],
-        ['zărelul', 'zahărelul'], ['acor', 'acestor'], ['ketchuipurile', 'ketchupurile'],
-        ['rțuire', 'hărțuire'], ['bacterijle', 'bacteriile'], ['rțile', 'știrile'],
-        ['nhưng', 'dar'], ['nithe', 'niște'], ['Stucați', 'Scuzați'], ['putemos', 'putem'], 
-        ['Robinei', 'lui Robin'], ['măsurą', 'măsura'], ['să fiică', 'să fie'], 
-        ['Poftă\\?', 'Poftim?'], ['dădadă', 'dădacă'], ['să se fină', 'să se prefacă'], 
-        ['bet merici', 'dar meriți'], ['usile', 'ușile'], ['natătăfleață', 'nătăfleață'],
-        ['Jreți', 'vă'], ['\\[Jj\\]ă', 'vă'], ['Jți', 'Îți'], ['jți', 'îți'],
-        ['Jne', 'vă'], ['Jetați', 'vă pare rău'], ['ineam', 'țineam'], ['Ineam', 'Țineam'], 
-        ['1-ar', 'l-ar'], ['aire', 'ai'], ['Aire', 'Ai'], ['aver', 'ai'], ['Aver', 'Ai'], 
-        ['Îcerci', 'Încerci'], ['îcerci', 'încerci'], ['să suferit', 'să sufăr'], 
-        ['cev', 'ceva'], ['săcerci', 'să încerci'], ['Jumiți', 'Glumiți'], ['jumiți', 'glumiți'], 
-        ['vumat', 'vomat'], ['unzn', 'un'], ['știen', 'știm'], ['cafond', 'profund'], 
-        ['urdă', 'undă'], ['ți vei', 'îți vei'], ['nu mai te', 'nu te mai'], 
-        ['sâniile mele', 'sânii mei'], ['sâniile', 'sânii']
-    ];
-    
-    exactWordReplacements.forEach(([search, replace]) => {
-        text = rw(text, search, replace, 'gi');
-    });
+    text = rw(text, 'nu mai te', 'nu te mai', 'gi');
+    text = rw(text, 'sâniile mele', 'sânii mei', 'gi');
+    text = rw(text, 'sâniile', 'sânii', 'gi');
 
     text = text.replace(/,\s*,/g, ',');
     text = text.replace(/\s+,/g, ',');
@@ -623,7 +663,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        const modelName = 'gemini-3.5-flash-lite'; 
+        // SETAT PE MODELUL REAL EXISTENT (1.5-flash) - SINGURUL CARE NU DA 404
+        const modelName = 'gemini-1.5-flash'; 
         let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
@@ -633,6 +674,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
+            // PROMPT VECHI, FĂRĂ EXEMPLU DE JSON (Pentru a nu bloca formatul)
             const prompt = `Translate the following English subtitles into natural, conversational Romanian.
 
 RULES:
@@ -656,11 +698,12 @@ ${JSON.stringify(batchToProcess)}`;
                         response_mime_type: "application/json",
                         temperature: 0.1 
                     },
+                    // FOLOSIM DOAR HIGH PENTRU A EVITA EROAREA 400 DE LA GOOGLE PE CONTURILE FREE
                     safetySettings: [
-                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
+                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
+                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" }
                     ]
                 },
                 { 
@@ -741,16 +784,23 @@ ${JSON.stringify(batchToProcess)}`;
                 break; 
             }
 
-            if (error.response && error.response.status === 429) {
+            // ACUM AFIȘEAZĂ EROAREA REALĂ DE LA GOOGLE CA SĂ NU MAI BÂJBÂIM
+            let status = error.response ? error.response.status : 'N/A';
+            let errMsg = error.response && error.response.data && error.response.data.error ? error.response.data.error.message : error.message;
+
+            if (status === 429) {
                 currentKeyObj.pauseUntil = Date.now() + 61000;
                 globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
                 console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul 10s... (Aștept ${(sleepTime/1000).toFixed(1)}s)${c.reset}`);
                 await new Promise(r => setTimeout(r, sleepTime));
-            } else if (error.response && error.response.status === 503) {
+            } else if (status === 503) {
                 const waitTime = 3000 + (attempts * 1500);
                 console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Aștept ${(waitTime/1000).toFixed(1)}s (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, waitTime));
+            } else if (status === 400 || status === 403 || status === 404) {
+                console.log(`${c.red}✖ [EROARE GOOGLE] Status ${status}: ${errMsg}${c.reset}`);
+                await new Promise(r => setTimeout(r, 2000));
             } else if (error.message && error.message.toLowerCase().includes('timeout')) {
                 console.log(`${c.yellow}⚠ [Gemini] Timeout. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, 2000));
