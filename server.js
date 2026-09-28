@@ -548,6 +548,24 @@ function formatSubtitleLine(text) {
     text = rw(text, 'sâniile mele', 'sânii mei', 'gi');
     text = rw(text, 'sâniile', 'sânii', 'gi');
 
+    // === CORECȚII GENERALE PUNCTUAȚIE, DIACRITICE ȘI HALUCINAȚII ===
+    text = text.replace(/ą/g, 'ă').replace(/Ą/g, 'Ă');
+    text = text.replace(/,\s*\?/g, '?');
+    text = rw(text, 'alcineva', 'altcineva', 'gi');
+    text = rw(text, 'paranoi', 'paranoia', 'gi');
+    text = rw(text, 'nicideun loc', 'nicăieri', 'gi');
+    text = text.replace(/ți se sângereze/gi, 'îți sângereze');
+    text = text.replace(/să le urmat/gi, 'să le urmez');
+
+    // === CORECȚII HALUCINAȚIE PRONUME "MAN" -> "ÎMI/TE" ===
+    text = text.replace(/\bman\s+pas[aă]/gi, 'îmi pasă');
+    text = text.replace(/\bman\s+pl[aă]cem/gi, 'îmi placi');
+
+    // === CORECȚII TRADUCERI LITERALE (IDIOMS & SLANG ENGLEZESC) ===
+    text = text.replace(/lăsându-se pe o mână/gi, 'făcând o labă');
+    text = text.replace(/mănânci curul meu încordat/gi, 'mă pupi în cur');
+    text = text.replace(/Băiete,\s*mamii\s*tale/gi, 'Futu-i mama mă-sii');
+
     text = text.replace(/,\s*,/g, ',');
     text = text.replace(/\s+,/g, ',');
     text = text.replace(/\s+\?/g, '?');
