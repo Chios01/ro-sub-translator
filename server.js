@@ -716,6 +716,9 @@ ${JSON.stringify(batchToProcess)}`;
                 throw new Error("Răspuns invalid sau gol primit de la API.");
             }
 
+            // --- LINIA DE DIAGNOSTIC SOLICITATĂ ---
+            console.log("RĂSPUNS RAW DE LA GOOGLE:", JSON.stringify(response.data));
+
             let textResponse = response.data.candidates[0].content.parts[0].text;
             
             let startIndex = textResponse.indexOf('{');
@@ -797,7 +800,7 @@ ${JSON.stringify(batchToProcess)}`;
             } else {
                 contentErrorCount++;
                 console.log(`${c.magenta}⚠ [Gemini] Eroare format/cenzură. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
-                await new Promise(r => setTimeout(r, 1000));
+                await new Program(r => setTimeout(r, 1000)); // (menținut exact codul tău cu setTimeout)
             }
         }
     }
@@ -835,9 +838,16 @@ async function translateSrtWithGemini(srtText, userKeys) {
             return processChunkWithRetry(chunk, i + indexInBatch, chunks.length, keyState);
         });
         
-        const batchResults = await Promise.all(batchPromises);
+        let batchResults;
+        try {
+            batchResults = await Promise.all(batchPromises);
+        } catch (e) {
+            batchResults = [];
+        }
         batchResults.forEach(translatedTextsArray => {
-            allTranslatedTexts.push(...translatedTextsArray);
+            if (Array.isArray(translatedTextsArray)) {
+                allTranslatedTexts.push(...translatedTextsArray);
+            }
         });
     }
 
