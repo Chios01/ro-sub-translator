@@ -820,7 +820,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    let CONCURRENCY_LIMIT = 2; 
+    // Setat la 3 conform dorinței tale
+    let CONCURRENCY_LIMIT = 3; 
 
     let allTranslatedTexts = [];
 
