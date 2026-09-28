@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.16',
+    version: '2.3.17',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -307,7 +307,6 @@ app.get('/:configData/translate', async (req, res) => {
 
         const finalSrt = await processPromise;
         
-        // --- LOGICA DE ARHIVARE A SUBTITRĂRII FINALIZATE ---
         if (finalSrt && finalSrt.trim().length > 0) {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
@@ -322,7 +321,6 @@ app.get('/:configData/translate', async (req, res) => {
                 secretArchive.pop();
             }
         }
-        // ---------------------------------------------------
 
         clearInterval(keepAlive);
         res.write(finalSrt);
@@ -411,9 +409,7 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // Curăță orice urmă de cod HTML pe care AI-ul ar putea să o genereze din greșeală
     text = text.replace(/<[^>]+>/g, '');
-
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     let lines = text.split('\n');
@@ -451,72 +447,81 @@ function formatSubtitleLine(text) {
     text = text.replace(/\[[\s\S]*?\]/g, ''); 
     text = text.replace(/\([\s\S]*?\)/g, '');
 
-    text = text.replace(/\băă\b/gi, '');
-    text = text.replace(/\bhă\b/gi, '');
-    text = text.replace(/\bP-Păi\b/gi, 'Păi');
-    text = text.replace(/\b[wW]-Well\b/gi, 'Păi');
+    // NOUA FUNCȚIE DE CURĂȚARE (Rezolvă problema diacriticelor românești în JS)
+    const rw = (txt, search, replace, flags='g') => {
+        const regex = new RegExp(`(^|[^a-zA-Z0-9ăâîșțĂÂÎȘȚ])(${search})(?=[^a-zA-Z0-9ăâîșțĂÂÎȘȚ]|$)`, flags);
+        return txt.replace(regex, `$1${replace}`);
+    };
 
-    text = text.replace(/\bfrom\b/gi, 'de la');
-    text = text.replace(/\bkensevasem\b/gi, 'convinsesem');
-    text = text.replace(/\bprăjicina\b/gi, 'prăjiturica');
-    text = text.replace(/\bzămislirea asta\b/gi, 'porcăria asta');
-    text = text.replace(/\bonoare apre noastre\b/gi, 'onoarea noastră');
-    text = text.replace(/\bzărelul\b/gi, 'zahărelul');
-    text = text.replace(/\bacor\b/gi, 'acestor');
-    text = text.replace(/\bketchuipurile\b/gi, 'ketchupurile');
-    text = text.replace(/\brțuire\b/gi, 'hărțuire');
-    text = text.replace(/\bbacterijle\b/gi, 'bacteriile');
-    text = text.replace(/\bprobleme cu rțile\b/gi, 'probleme cu știrile');
-    text = text.replace(/\brțile\b/gi, 'știrile');
-    text = text.replace(/\bnhưng\b/gi, 'dar');
-    text = text.replace(/\bnithe\b/gi, 'niște');
-    text = text.replace(/\bStucați\b/gi, 'Scuzați');
-    text = text.replace(/\bputemos\b/gi, 'putem');
-    
-    // Corecțiile pentru halucinațiile pe cuvântul "vă" (Update v2.3.16)
-    text = text.replace(/\bJreți\b/gi, 'vă');
-    text = text.replace(/\b[Jj]ă\b/g, 'vă');
-    text = text.replace(/\bJți\b/g, 'Îți');
-    text = text.replace(/\bjți\b/g, 'îți');
-    text = text.replace(/\bJne\b/gi, 'vă');
+    text = rw(text, 'ăă', '', 'gi');
+    text = rw(text, 'hă', '', 'gi');
+    text = text.replace(/P-Păi/gi, 'Păi');
+    text = text.replace(/[wW]-Well/g, 'Păi');
 
-    text = text.replace(/\bineam\b/g, 'țineam');
-    text = text.replace(/\bIneam\b/g, 'Țineam');
-    text = text.replace(/\bmă fac că nu\b/gi, 'mă prefac că nu');
+    text = rw(text, 'from', 'de la', 'gi');
+    text = rw(text, 'kensevasem', 'convinsesem', 'gi');
+    text = rw(text, 'prăjicina', 'prăjiturica', 'gi');
+    text = text.replace(/zămislirea asta/gi, 'porcăria asta');
+    text = text.replace(/onoare apre noastre/gi, 'onoarea noastră');
+    text = rw(text, 'zărelul', 'zahărelul', 'gi');
+    text = rw(text, 'acor', 'acestor', 'gi');
+    text = rw(text, 'ketchuipurile', 'ketchupurile', 'gi');
+    text = rw(text, 'rțuire', 'hărțuire', 'gi');
+    text = rw(text, 'bacterijle', 'bacteriile', 'gi');
+    text = text.replace(/probleme cu rțile/gi, 'probleme cu știrile');
+    text = rw(text, 'rțile', 'știrile', 'gi');
+    text = rw(text, 'nhưng', 'dar', 'gi');
+    text = rw(text, 'nithe', 'niște', 'gi');
+    text = rw(text, 'Stucați', 'Scuzați', 'gi');
+    text = rw(text, 'putemos', 'putem', 'gi');
+
+    // Familia de aberații "vă"
+    text = rw(text, 'Jreți', 'vă', 'gi');
+    text = rw(text, '[Jj]ă', 'vă', 'g');
+    text = rw(text, 'Jți', 'Îți', 'g');
+    text = rw(text, 'jți', 'îți', 'g');
+    text = rw(text, 'Jne', 'vă', 'gi');
+
+    // Marea curățenie
+    text = rw(text, 'ineam', 'țineam', 'g');
+    text = rw(text, 'Ineam', 'Țineam', 'g');
+    text = text.replace(/țțineam/gi, 'țineam'); 
+    text = text.replace(/Țțineam/g, 'Țineam');
+
+    text = text.replace(/mă fac că nu/gi, 'mă prefac că nu');
+    text = text.replace(/prefac parcă/gi, 'prefac de parcă');
     text = text.replace(/spuneți că [îÎ]ți pare/gi, 'spuneți că vă pare');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
-    text = text.replace(/\b1-ar\b/gi, 'l-ar');
-    text = text.replace(/\baire\b/g, 'ai');
-    text = text.replace(/\bAire\b/g, 'Ai');
-    text = text.replace(/\baver\b/g, 'ai');
-    text = text.replace(/\bAver\b/g, 'Ai');
-    text = text.replace(/\bman spui\b/gi, 'îmi spui');
-    text = text.replace(/\bÎcerci\b/g, 'Încerci');
-    text = text.replace(/\bîcerci\b/g, 'încerci');
+    text = rw(text, '1-ar', 'l-ar', 'gi');
+    text = rw(text, 'aire', 'ai', 'g');
+    text = rw(text, 'Aire', 'Ai', 'g');
+    text = rw(text, 'aver', 'ai', 'g');
+    text = rw(text, 'Aver', 'Ai', 'g');
+    text = text.replace(/man spui/gi, 'îmi spui');
+    text = rw(text, 'Îcerci', 'Încerci', 'g');
+    text = rw(text, 'îcerci', 'încerci', 'g');
     text = text.replace(/Fă-ca acasă/gi, 'Simte-te ca acasă');
-    text = text.replace(/\bsă suferit\b/gi, 'să sufăr');
-    text = text.replace(/\bcev\b/gi, 'ceva');
-    text = text.replace(/\bsăcerci\b/gi, 'să încerci');
-    text = text.replace(/\bJumiți\b/g, 'Glumiți');
-    text = text.replace(/\bjumiți\b/g, 'glumiți');
-    text = text.replace(/\bJți\b/g, 'Îți');
-    text = text.replace(/\bjți\b/g, 'îți');
-    text = text.replace(/\bât ai clipi\b/gi, 'cât ai clipi');
-    text = text.replace(/\bvumat\b/gi, 'vomat');
-    text = text.replace(/\bunzn\b/gi, 'un');
-    text = text.replace(/\bsă veimă mănânci\b/gi, 'să mănânci');
-    text = text.replace(/\bești nevoie\b/gi, 'este nevoie');
-    text = text.replace(/\bștien\b/gi, 'știm');
-    text = text.replace(/\bcafond\b/gi, 'profund');
-    text = text.replace(/\bsă fi ratat-o\b/gi, 'să fi ratat');
+    text = rw(text, 'să suferit', 'să sufăr', 'gi');
+    text = rw(text, 'cev', 'ceva', 'gi');
+    text = rw(text, 'săcerci', 'să încerci', 'gi');
+    text = rw(text, 'Jumiți', 'Glumiți', 'g');
+    text = rw(text, 'jumiți', 'glumiți', 'g');
+    text = text.replace(/ât ai clipi/gi, 'cât ai clipi');
+    text = rw(text, 'vumat', 'vomat', 'gi');
+    text = rw(text, 'unzn', 'un', 'gi');
+    text = text.replace(/să veimă mănânci/gi, 'să mănânci');
+    text = text.replace(/ești nevoie/gi, 'este nevoie');
+    text = rw(text, 'știen', 'știm', 'gi');
+    text = rw(text, 'cafond', 'profund', 'gi');
+    text = text.replace(/să fi ratat-o/gi, 'să fi ratat');
     text = text.replace(/Mă pornesc la trei/gi, 'Pornesc la trei');
-    text = text.replace(/\burdă\b/gi, 'undă');
-    text = text.replace(/\bți vei\b/gi, 'îți vei');
-    text = text.replace(/\bnu toată binevenită\b/gi, 'nu tocmai binevenită');
-    text = text.replace(/\bnu mai te\b/gi, 'nu te mai');
-    text = text.replace(/\bsâniile mele\b/gi, 'sânii mei');
-    text = text.replace(/\bsâniile\b/gi, 'sânii');
+    text = rw(text, 'urdă', 'undă', 'gi');
+    text = rw(text, 'ți vei', 'îți vei', 'gi');
+    text = text.replace(/nu toată binevenită/gi, 'nu tocmai binevenită');
+    text = rw(text, 'nu mai te', 'nu te mai', 'gi');
+    text = rw(text, 'sâniile mele', 'sânii mei', 'gi');
+    text = rw(text, 'sâniile', 'sânii', 'gi');
 
     text = text.replace(/,\s*,/g, ',');
     text = text.replace(/\s+,/g, ',');
