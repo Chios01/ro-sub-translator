@@ -39,10 +39,11 @@ const c = {
 };
 
 const memoryCache = {}; 
+const secretArchive = []; // Aici vom stoca ultimele 10 traduceri pentru verificare
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.10',
+    version: '2.3.11',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -77,6 +78,41 @@ app.get('/:configData/configure', (req, res) => {
         res.send(updatedHtml);
     });
 });
+
+// ==== RUTELE SECRETE PENTRU ARHIVA DE TESTARE ====
+app.get('/arhiva-secreta', (req, res) => {
+    let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
+    html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
+    html += '<h2 style="color:#0f0;">Arhiva Subtitrări (Ultimele 10)</h2>';
+    html += '<p>Aceste fișiere sunt reținute temporar în memoria serverului. Se vor șterge la restart.</p>';
+    
+    if (secretArchive.length === 0) {
+        html += '<p style="color:#aaa;">Nicio subtitrare tradusă momentan.</p>';
+    } else {
+        html += '<ul style="list-style-type:none; padding:0;">';
+        secretArchive.forEach((item, index) => {
+            html += `<li style="background:#222; margin-bottom:10px; padding:15px; border-radius:5px;">
+                <strong style="color:#0bf;">ID: ${item.id}</strong> <span style="color:#888; font-size:0.9em;">(${item.time})</span><br><br>
+                <a href="/download-srt/${index}" style="background:#0bf; color:#000; text-decoration:none; padding:8px 12px; border-radius:4px; font-weight:bold;">Descarcă fisier .srt</a>
+            </li>`;
+        });
+        html += '</ul>';
+    }
+    html += '</body></html>';
+    res.send(html);
+});
+
+app.get('/download-srt/:index', (req, res) => {
+    const index = parseInt(req.params.index);
+    if (isNaN(index) || !secretArchive[index]) {
+        return res.status(404).send('Fișierul nu există sau a fost șters automat din memorie.');
+    }
+    const item = secretArchive[index];
+    res.setHeader('Content-disposition', `attachment; filename=RO_${item.id}.srt`);
+    res.setHeader('Content-type', 'text/plain; charset=utf-8');
+    res.send(item.content);
+});
+// ===================================================
 
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
@@ -271,6 +307,23 @@ app.get('/:configData/translate', async (req, res) => {
 
         const finalSrt = await processPromise;
         
+        // --- LOGICA DE ARHIVARE A SUBTITRĂRII FINALIZATE ---
+        if (finalSrt && finalSrt.trim().length > 0) {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
+            
+            secretArchive.unshift({
+                id: imdbId,
+                time: timeStr,
+                content: finalSrt
+            });
+            
+            if (secretArchive.length > 10) {
+                secretArchive.pop();
+            }
+        }
+        // ---------------------------------------------------
+
         clearInterval(keepAlive);
         res.write(finalSrt);
         res.end();
@@ -429,8 +482,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/\burdă\b/gi, 'undă');
     text = text.replace(/\bți vei\b/gi, 'îți vei');
     text = text.replace(/\bnu toată binevenită\b/gi, 'nu tocmai binevenită');
-
-    // NOU: Corecții pentru topica greșită și dezacorduri hilare 
     text = text.replace(/\bnu mai te\b/gi, 'nu te mai');
     text = text.replace(/\bsâniile mele\b/gi, 'sânii mei');
     text = text.replace(/\bsâniile\b/gi, 'sânii');
