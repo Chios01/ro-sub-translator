@@ -14,6 +14,7 @@ app.use((req, res, next) => {
     next();
 });
 
+// Ruta pentru validarea cheilor (ocolire CORS)
 app.get('/validate-key', async (req, res) => {
     const key = req.query.key;
     if (!key) return res.status(400).send('No key provided');
@@ -78,10 +79,12 @@ app.get('/:configData/configure', (req, res) => {
     });
 });
 
+// ==== RUTELE SECRETE PENTRU ARHIVA DE TESTARE ====
 app.get('/arhiva-secreta', (req, res) => {
     let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
     html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
     html += '<h2 style="color:#0f0;">Arhiva Subtitrări (Ultimele 10)</h2>';
+    html += '<p>Aceste fișiere sunt reținute temporar în memoria serverului. Se vor șterge la restart.</p>';
     
     if (secretArchive.length === 0) {
         html += '<p style="color:#aaa;">Nicio subtitrare tradusă momentan.</p>';
@@ -109,6 +112,7 @@ app.get('/download-srt/:index', (req, res) => {
     res.setHeader('Content-type', 'text/plain; charset=utf-8');
     res.send(item.content);
 });
+// ===================================================
 
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
@@ -338,22 +342,26 @@ function cleanTextForJson(text) {
     let clean = text;
 
     clean = clean.replace(/<[^>]+>/g, '');
+    
     clean = clean.replace(/[♪♫♬♩#]/gi, '');
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
     clean = clean.replace(/\[\s*[♪♫♬♩#]+\s*\]/gi, '');
     clean = clean.replace(/\(\s*[♪♫♬♩#]+\s*\)/gi, '');
     clean = clean.replace(/\[.*music.*\]/gi, ''); 
+
     clean = clean.replace(/\[[\s\S]*?\]/g, ''); 
     clean = clean.replace(/\([\s\S]*?\)/g, ''); 
     clean = clean.replace(/\{[\s\S]*?\}/g, ''); 
     clean = clean.replace(/【[\s\S]*?】/g, ''); 
+    
     clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
     clean = clean.replace(/"/g, "'");
 
     let lines = clean.split('\n');
     lines = lines.map(line => {
         let l = line.trim();
+        
         let changed = true;
         while(changed) {
             const match = l.match(/^([-—–−\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
@@ -363,16 +371,20 @@ function cleanTextForJson(text) {
                 changed = false;
             }
         }
+
         if (/^[-—–−.,!?\s]*$/.test(l)) {
             return '';
         }
+        
         l = l.replace(/[♪♫♬♩#]/gi, '');
         l = l.replace(/\[\s*\]/g, ''); 
         l = l.replace(/\(\s*\)/g, '');
+        
         return l;
     });
 
     let validLines = lines.filter(l => l !== '');
+    
     validLines = validLines.map(l => {
         if (/^[-—–−]/.test(l)) {
             return l.replace(/^[-—–−]+\s*/, '- '); 
@@ -381,6 +393,7 @@ function cleanTextForJson(text) {
     });
 
     clean = validLines.join('\n');
+
     if (clean.trim() === '') return ' ';
     return clean.trim();
 }
@@ -395,9 +408,10 @@ function chunkArray(array, size) {
 
 function formatSubtitleLine(text) {
     if (!text) return text;
+    
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/([.?!])\s+[-—–−\s]+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
+    text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     let lines = text.split('\n');
     lines = lines.map(l => {
@@ -408,6 +422,7 @@ function formatSubtitleLine(text) {
     });
     
     let validLines = lines.filter(l => l !== '');
+    
     let mergedText = '';
     for (let i = 0; i < validLines.length; i++) {
         let l = validLines[i];
@@ -428,6 +443,7 @@ function formatSubtitleLine(text) {
     });
     
     text = finalMergedLines.join('\n');
+    
     text = text.replace(/[♪♫♬♩#]/gi, '');
     text = text.replace(/\[[\s\S]*?\]/g, ''); 
     text = text.replace(/\([\s\S]*?\)/g, '');
@@ -441,6 +457,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'hă', '', 'gi');
     text = text.replace(/P-Păi/gi, 'Păi');
     text = text.replace(/[wW]-Well/g, 'Păi');
+
     text = rw(text, 'from', 'de la', 'gi');
     text = rw(text, 'kensevasem', 'convinsesem', 'gi');
     text = rw(text, 'prăjicina', 'prăjiturica', 'gi');
@@ -467,6 +484,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'bet merici', 'dar meriți', 'gi');
     text = rw(text, 'usile', 'ușile', 'gi');
 
+    // Marea curățenie
     text = text.replace(/în toată regla/gi, 'în toată regula');
     text = text.replace(/sunt extinși/gi, 'sunt pe cale de dispariție');
     text = text.replace(/Nu-mi vine să crezi/gi, 'Nu-mi vine să cred');
@@ -496,6 +514,7 @@ function formatSubtitleLine(text) {
 
     text = text.replace(/mă fac că nu/gi, 'mă prefac că nu');
     text = text.replace(/prefac parcă/gi, 'prefac de parcă');
+    
     text = text.replace(/spune[tț]i\s+c[aă]\s+[îÎ]ți\s+pare/gi, 'spuneți că vă pare');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
@@ -534,6 +553,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/\s+\?/g, '?');
     text = text.replace(/\s+\./g, '.');
     text = text.replace(/ +/g, ' '); 
+    
     text = text.replace(/[^\u0000-\u024F\u2000-\u206F\u2E00-\u2E7F\n\r]/g, "");
 
     if (text.trim() === '') return ' '; 
@@ -599,6 +619,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     const maxAttempts = 15; 
 
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
+        
         let batchToProcess = {};
         const allKeys = Object.keys(keysToTranslate);
         
@@ -634,6 +655,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 keyIndex = availableIndices[randomIndex];
                 currentKeyObj = keyState.keys[keyIndex];
                 apiKey = currentKeyObj.value;
+
                 currentKeyObj.pauseUntil = Date.now() + 1500;
                 break;
             }
