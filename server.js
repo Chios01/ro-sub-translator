@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.9',
+    version: '2.3.10',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -426,11 +426,14 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bcafond\b/gi, 'profund');
     text = text.replace(/\bsă fi ratat-o\b/gi, 'să fi ratat');
     text = text.replace(/Mă pornesc la trei/gi, 'Pornesc la trei');
-
-    // NOU: Filtrele adăugate din ultima rundă de corecții
     text = text.replace(/\burdă\b/gi, 'undă');
     text = text.replace(/\bți vei\b/gi, 'îți vei');
     text = text.replace(/\bnu toată binevenită\b/gi, 'nu tocmai binevenită');
+
+    // NOU: Corecții pentru topica greșită și dezacorduri hilare 
+    text = text.replace(/\bnu mai te\b/gi, 'nu te mai');
+    text = text.replace(/\bsâniile mele\b/gi, 'sânii mei');
+    text = text.replace(/\bsâniile\b/gi, 'sânii');
 
     text = text.replace(/,\s*,/g, ',');
     text = text.replace(/\s+,/g, ',');
