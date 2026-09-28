@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.24',
+    version: '2.3.25',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -475,6 +475,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'Stucați', 'Scuzați', 'gi');
     text = rw(text, 'putemos', 'putem', 'gi');
     text = rw(text, 'Robinei', 'lui Robin', 'gi');
+    
     text = rw(text, 'măsurą', 'măsura', 'gi');
     text = rw(text, 'să fiică', 'să fie', 'gi');
     text = text.replace(/lemnul de divorț/gi, 'divorț');
@@ -484,7 +485,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'bet merici', 'dar meriți', 'gi');
     text = rw(text, 'usile', 'ușile', 'gi');
 
-    // Marea curățenie
+    // Marea curățenie - 2.3.25
     text = text.replace(/în toată regla/gi, 'în toată regula');
     text = text.replace(/sunt extinși/gi, 'sunt pe cale de dispariție');
     text = text.replace(/Nu-mi vine să crezi/gi, 'Nu-mi vine să cred');
@@ -673,17 +674,19 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            const prompt = `Translate the following English subtitles into natural, conversational Romanian.
+            // Noul Prompt Optimizat psihologic pentru a reduce halucinațiile (Few-Shot)
+            const prompt = `You are an expert Romanian movie translator. Translate the following English subtitles into natural, conversational Romanian.
 
-RULES:
-1. DIACRITICS, SPELLING & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Ensure PERFECT Romanian spelling and grammar. Use standard, dictionary-approved vocabulary.
-2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
-3. TV BROADCAST CENSORSHIP (CRITICAL): To prevent safety blocks, DO NOT translate extreme swear words literally. Soften vulgarities to PG-13 TV standards. Preserve the scene's tension but maintain civilized language. Omit swear words entirely if they are just filler words.
-4. IDIOMS & SLANG: "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". "Stop doing X" = "Nu mai face X". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
-5. NOISES, HESITATIONS & STUTTERS: Completely remove audio tags like [music]. Completely remove ALL hesitations, stutters, and interjections (e.g., Oh, Ah, Uh, Ăă, hă) from EVERYWHERE in the sentence.
-6. NO DIGITS IN WORDS: Never put numbers inside words. 
-7. STRICT ACCURACY (CRITICAL): DO NOT invent words (e.g. do not write 'unzn' instead of 'un'). DO NOT skip letters. DO NOT replace the letter 'L' with the number '1' (e.g. write 'l-ar', never '1-ar'). Check your spelling carefully before outputting the JSON.
-8. FORMAT: You MUST reply ONLY with a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text.
+CRITICAL RULES:
+1. DIACRITICS & SPELLING: Use correct Romanian diacritics (ă, â, î, ș, ț). Ensure perfect grammar.
+2. GENDER BLINDNESS: You cannot see the video. Avoid gendered adjectives for "I" if possible (use neutral phrasing).
+3. CENSORSHIP: Soften extreme vulgarities to PG-13 standards. Do not translate literally.
+4. NO AUDIO TAGS & HESITATIONS: Completely remove audio tags like [music], (sighs), and hesitations (Oh, Ah, Uh, Ăă).
+5. FORMAT: Return ONLY a valid JSON object. Keep the exact same keys as the input. Do NOT add extra text or formatting.
+
+EXAMPLE:
+Input: {"1": "Oh, what the fuck?", "2": "I am tired, man.", "3": "[music playing]"}
+Output: {"1": "Ce naiba?", "2": "Sunt obosit, omule.", "3": " "}
 
 Input JSON:
 ${JSON.stringify(batchToProcess)}`;
@@ -788,9 +791,8 @@ ${JSON.stringify(batchToProcess)}`;
                 console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul 10s... (Aștept ${(sleepTime/1000).toFixed(1)}s)${c.reset}`);
                 await new Promise(r => setTimeout(r, sleepTime));
             } else if (error.response && error.response.status === 503) {
-                const waitTime = 3000 + (attempts * 1500);
-                console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Aștept ${(waitTime/1000).toFixed(1)}s (${attempts}/${maxAttempts})...${c.reset}`);
-                await new Promise(r => setTimeout(r, waitTime));
+                console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
+                await new Promise(r => setTimeout(r, 2000));
             } else if (error.message && error.message.toLowerCase().includes('timeout')) {
                 console.log(`${c.yellow}⚠ [Gemini] Timeout. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, 2000));
@@ -820,7 +822,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    let CONCURRENCY_LIMIT = 2; 
+    let CONCURRENCY_LIMIT = 3; 
 
     let allTranslatedTexts = [];
 
