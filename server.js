@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.24',
+    version: '2.3.25',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -677,9 +677,9 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
 
 RULES:
 1. DIACRITICS, SPELLING & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Ensure PERFECT Romanian spelling and grammar. Use standard, dictionary-approved vocabulary.
-2. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
-3. TV BROADCAST CENSORSHIP (CRITICAL): To prevent safety blocks, DO NOT translate extreme swear words literally. Soften vulgarities to PG-13 TV standards. Preserve the scene's tension but maintain civilized language. Omit swear words entirely if they are just filler words.
-4. IDIOMS & SLANG: "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". "Stop doing X" = "Nu mai face X". Do NOT translate "fucking looking" as "fute ochiul", use "te holbezi".
+2. CHARACTER NAMES (CRITICAL): DO NOT translate character names (e.g. Homelander, Butcher, Starlight, Hughie, A-Train). Leave them exactly as they are in English.
+3. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
+4. TV BROADCAST CENSORSHIP & SLANG: Soften extreme vulgarities to maintain civilized language, but preserve the scene's dark or tense tone. Omit swear words entirely if they are just filler words. "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". 
 5. NOISES, HESITATIONS & STUTTERS: Completely remove audio tags like [music]. Completely remove ALL hesitations, stutters, and interjections (e.g., Oh, Ah, Uh, Ăă, hă) from EVERYWHERE in the sentence.
 6. NO DIGITS IN WORDS: Never put numbers inside words. 
 7. STRICT ACCURACY (CRITICAL): DO NOT invent words (e.g. do not write 'unzn' instead of 'un'). DO NOT skip letters. DO NOT replace the letter 'L' with the number '1' (e.g. write 'l-ar', never '1-ar'). Check your spelling carefully before outputting the JSON.
