@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.24',
+    version: '2.3.25',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -536,7 +536,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'vumat', 'vomat', 'gi');
     text = rw(text, 'unzn', 'un', 'gi');
     text = text.replace(/să veimă mănânci/gi, 'să mănânci');
-    text = rw(text, 'ești nevoie', 'este nevoie');
+    text = text.replace(/ești nevoie/gi, 'este nevoie');
     text = rw(text, 'știen', 'știm', 'gi');
     text = rw(text, 'cafond', 'profund', 'gi');
     text = text.replace(/să fi ratat-o/gi, 'să fi ratat');
@@ -544,7 +544,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'urdă', 'undă', 'gi');
     text = rw(text, 'ți vei', 'îți vei', 'gi');
     text = text.replace(/nu toată binevenită/gi, 'nu tocmai binevenită');
-    text = text.replace(/nu mai te/gi, 'nu te mai');
+    text = rw(text, 'nu mai te', 'nu te mai', 'gi');
     text = rw(text, 'sâniile mele', 'sânii mei', 'gi');
     text = rw(text, 'sâniile', 'sânii', 'gi');
 
@@ -820,7 +820,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    let CONCURRENCY_LIMIT = 3; 
+    let CONCURRENCY_LIMIT = 2; 
 
     let allTranslatedTexts = [];
 
