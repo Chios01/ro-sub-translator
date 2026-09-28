@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.20',
+    version: '2.3.21',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -307,7 +307,6 @@ app.get('/:configData/translate', async (req, res) => {
 
         const finalSrt = await processPromise;
         
-        // --- LOGICA DE ARHIVARE A SUBTITRĂRII FINALIZATE ---
         if (finalSrt && finalSrt.trim().length > 0) {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
@@ -322,7 +321,6 @@ app.get('/:configData/translate', async (req, res) => {
                 secretArchive.pop();
             }
         }
-        // ---------------------------------------------------
 
         clearInterval(keepAlive);
         res.write(finalSrt);
@@ -411,9 +409,7 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // NOU: Normalizare completă a diacriticelor înainte de orice alt filtru (rezolvă bug-uri JS invizibile)
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
-
     text = text.replace(/<[^>]+>/g, '');
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
@@ -480,9 +476,18 @@ function formatSubtitleLine(text) {
     text = rw(text, 'putemos', 'putem', 'gi');
     
     text = rw(text, 'Robinei', 'lui Robin', 'gi');
+    
+    // Corecții halucinații noi
+    text = rw(text, 'măsurą', 'măsura', 'gi');
+    text = rw(text, 'să fiică', 'să fie', 'gi');
+    text = text.replace(/lemnul de divorț/gi, 'divorț');
+    text = rw(text, 'Poftă\\?', 'Poftim?', 'gi');
+    text = rw(text, 'dădadă', 'dădacă', 'gi');
+    text = rw(text, 'să se fină', 'să se prefacă', 'gi');
+    text = rw(text, 'bet merici', 'dar meriți', 'gi');
+    text = rw(text, 'usile', 'ușile', 'gi');
 
     // Suprascriere de context THE BOYS (Soluția Nucleară v2.3.20)
-    // Va prinde "Atunci spuneți că Glumiți", "Jumiți", "Jreți", "Jă", indiferent de spații
     text = text.replace(/Atunci\s+spune[tț]i\s+c[aă][\s.,]+(Glumi[tț]i|Jumi[tț]i|Jeta[tț]i|Jre[tț]i|Jne|[Jj]ă)\.?/gi, 'Atunci spuneți că vă pare rău.');
 
     text = rw(text, 'Jreți', 'vă', 'gi');
