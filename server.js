@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.17',
+    version: '2.3.18',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -307,6 +307,7 @@ app.get('/:configData/translate', async (req, res) => {
 
         const finalSrt = await processPromise;
         
+        // --- LOGICA DE ARHIVARE A SUBTITRĂRII FINALIZATE ---
         if (finalSrt && finalSrt.trim().length > 0) {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
@@ -321,6 +322,7 @@ app.get('/:configData/translate', async (req, res) => {
                 secretArchive.pop();
             }
         }
+        // ---------------------------------------------------
 
         clearInterval(keepAlive);
         res.write(finalSrt);
@@ -409,7 +411,9 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
+    // Curăță orice urmă de cod HTML pe care AI-ul ar putea să o genereze din greșeală
     text = text.replace(/<[^>]+>/g, '');
+
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     let lines = text.split('\n');
@@ -447,7 +451,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/\[[\s\S]*?\]/g, ''); 
     text = text.replace(/\([\s\S]*?\)/g, '');
 
-    // NOUA FUNCȚIE DE CURĂȚARE (Rezolvă problema diacriticelor românești în JS)
+    // Funcția robustă de căutare-înlocuire pentru diacritice în JS
     const rw = (txt, search, replace, flags='g') => {
         const regex = new RegExp(`(^|[^a-zA-Z0-9ăâîșțĂÂÎȘȚ])(${search})(?=[^a-zA-Z0-9ăâîșțĂÂÎȘȚ]|$)`, flags);
         return txt.replace(regex, `$1${replace}`);
@@ -474,6 +478,9 @@ function formatSubtitleLine(text) {
     text = rw(text, 'nithe', 'niște', 'gi');
     text = rw(text, 'Stucați', 'Scuzați', 'gi');
     text = rw(text, 'putemos', 'putem', 'gi');
+    
+    // Nume proprii stâlcite
+    text = rw(text, 'Robinei', 'lui Robin', 'gi');
 
     // Familia de aberații "vă"
     text = rw(text, 'Jreți', 'vă', 'gi');
@@ -490,6 +497,9 @@ function formatSubtitleLine(text) {
 
     text = text.replace(/mă fac că nu/gi, 'mă prefac că nu');
     text = text.replace(/prefac parcă/gi, 'prefac de parcă');
+    
+    // Suprascriere de context pentru The Boys
+    text = text.replace(/Atunci spuneți că [gG]lumiți\.?/gi, 'Atunci spuneți că vă pare rău.');
     text = text.replace(/spuneți că [îÎ]ți pare/gi, 'spuneți că vă pare');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
