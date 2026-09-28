@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.15',
+    version: '2.3.16',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -411,6 +411,7 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
+    // Curăță orice urmă de cod HTML pe care AI-ul ar putea să o genereze din greșeală
     text = text.replace(/<[^>]+>/g, '');
 
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
@@ -472,12 +473,13 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bStucați\b/gi, 'Scuzați');
     text = text.replace(/\bputemos\b/gi, 'putem');
     
+    // Corecțiile pentru halucinațiile pe cuvântul "vă" (Update v2.3.16)
     text = text.replace(/\bJreți\b/gi, 'vă');
     text = text.replace(/\b[Jj]ă\b/g, 'vă');
     text = text.replace(/\bJți\b/g, 'Îți');
     text = text.replace(/\bjți\b/g, 'îți');
+    text = text.replace(/\bJne\b/gi, 'vă');
 
-    // NOU v2.3.15
     text = text.replace(/\bineam\b/g, 'țineam');
     text = text.replace(/\bIneam\b/g, 'Țineam');
     text = text.replace(/\bmă fac că nu\b/gi, 'mă prefac că nu');
