@@ -42,7 +42,7 @@ const memoryCache = {};
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.6',
+    version: '2.3.7',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -334,7 +334,6 @@ function cleanTextForJson(text) {
 
     let validLines = lines.filter(l => l !== '');
     
-    // TRUCUL 1: Lăsăm liniuțele vizibile pentru AI (prindem absolut orice tip de liniuță)
     validLines = validLines.map(l => {
         if (/^[-—–−]/.test(l)) {
             return l.replace(/^[-—–−]+\s*/, '- '); 
@@ -359,7 +358,7 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // Desparte dialogurile unite din greșeală (căutăm orice tip de liniuță folosită de AI)
+    // Desparte dialogurile unite din greșeală
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     let lines = text.split('\n');
@@ -416,7 +415,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bîcerci\b/g, 'încerci');
     text = text.replace(/Fă-ca acasă/gi, 'Simte-te ca acasă');
     text = text.replace(/\bsă suferit\b/gi, 'să sufăr');
-
     text = text.replace(/\bcev\b/gi, 'ceva');
     text = text.replace(/\bsăcerci\b/gi, 'să încerci');
     text = text.replace(/\bJumiți\b/g, 'Glumiți');
@@ -425,6 +423,15 @@ function formatSubtitleLine(text) {
     text = text.replace(/\bjți\b/g, 'îți');
     text = text.replace(/\bât ai clipi\b/gi, 'cât ai clipi');
     text = text.replace(/\bvumat\b/gi, 'vomat');
+
+    // Marea curățenie din v2.3.7
+    text = text.replace(/\bunzn\b/gi, 'un');
+    text = text.replace(/\bsă veimă mănânci\b/gi, 'să mănânci');
+    text = text.replace(/\bești nevoie\b/gi, 'este nevoie');
+    text = text.replace(/\bștien\b/gi, 'știm');
+    text = text.replace(/\bcafond\b/gi, 'profund');
+    text = text.replace(/\bsă fi ratat-o\b/gi, 'să fi ratat');
+    text = text.replace(/Mă pornesc la trei/gi, 'Pornesc la trei');
 
     text = text.replace(/,\s*,/g, ',');
     text = text.replace(/\s+,/g, ',');
@@ -436,7 +443,6 @@ function formatSubtitleLine(text) {
 
     if (text.trim() === '') return ' '; 
 
-    // NOUL SISTEM DE TĂIERE A LINIILOR (Word Wrap Inteligent)
     let finalLines = text.split('\n').map(l => l.trim()).filter(l => l !== '');
     const MAX_LEN = 45; 
     let wrappedLines = [];
@@ -467,8 +473,7 @@ function formatSubtitleLine(text) {
         }
     }
 
-    // REGULA DE BAROS: Executată absolut la final. 
-    // Nu permite NICIODATĂ ca o linie de pe ecran să înceapă cu vreo liniuță!
+    // REGULA DE BAROS - Sterge ABSOLUT ORICE liniuță de la început de rând 
     return wrappedLines.map(l => l.replace(/^[-—–−]+\s*/g, '')).join('\n');
 }
 
