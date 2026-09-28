@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.21',
+    version: '2.3.24',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -474,10 +474,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'nithe', 'niște', 'gi');
     text = rw(text, 'Stucați', 'Scuzați', 'gi');
     text = rw(text, 'putemos', 'putem', 'gi');
-    
     text = rw(text, 'Robinei', 'lui Robin', 'gi');
-    
-    // Corecții halucinații noi
     text = rw(text, 'măsurą', 'măsura', 'gi');
     text = rw(text, 'să fiică', 'să fie', 'gi');
     text = text.replace(/lemnul de divorț/gi, 'divorț');
@@ -487,8 +484,21 @@ function formatSubtitleLine(text) {
     text = rw(text, 'bet merici', 'dar meriți', 'gi');
     text = rw(text, 'usile', 'ușile', 'gi');
 
-    // Suprascriere de context THE BOYS (Soluția Nucleară v2.3.20)
+    // Marea curățenie
+    text = text.replace(/în toată regla/gi, 'în toată regula');
+    text = text.replace(/sunt extinși/gi, 'sunt pe cale de dispariție');
+    text = text.replace(/Nu-mi vine să crezi/gi, 'Nu-mi vine să cred');
+    text = text.replace(/Bâțâială fină/gi, 'Râgâială fină');
+    text = text.replace(/Aia e [sS]ânul meu/gi, 'Ăla e sânul meu');
+    text = text.replace(/ție datorităție/gi, 'datorită ție');
+    text = text.replace(/îndoaie-te cu toate astea/gi, 'servește-te cu toate astea');
+    text = rw(text, 'natătăfleață', 'nătăfleață', 'gi');
+    text = text.replace(/cuțitul de pernă/gi, 'cuțitul de sub pernă');
+    text = text.replace(/și-a predat în sfârșit pantofii/gi, 'a dat ortul popii');
+
     text = text.replace(/Atunci\s+spune[tț]i\s+c[aă][\s.,]+(Glumi[tț]i|Jumi[tț]i|Jeta[tț]i|Jre[tț]i|Jne|[Jj]ă)\.?/gi, 'Atunci spuneți că vă pare rău.');
+    text = text.replace(/Trebuie\s+să\s+mă\s+(prefac|fac)\s+parcă\s+nu\s+s-a\s+întâmplat/gi, 'Trebuie să mă prefac că nu s-a întâmplat');
+    text = text.replace(/parcă\s+nu\s+țțineam\s+brațele\s+lui\s+Robin\s+în\s+mâinile\s+mele/gi, 'că nu țineam brațele lui Robin în mâinile mele');
 
     text = rw(text, 'Jreți', 'vă', 'gi');
     text = rw(text, '[Jj]ă', 'vă', 'g');
@@ -778,8 +788,9 @@ ${JSON.stringify(batchToProcess)}`;
                 console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul 10s... (Aștept ${(sleepTime/1000).toFixed(1)}s)${c.reset}`);
                 await new Promise(r => setTimeout(r, sleepTime));
             } else if (error.response && error.response.status === 503) {
-                console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
-                await new Promise(r => setTimeout(r, 2000));
+                const waitTime = 3000 + (attempts * 1500);
+                console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Aștept ${(waitTime/1000).toFixed(1)}s (${attempts}/${maxAttempts})...${c.reset}`);
+                await new Promise(r => setTimeout(r, waitTime));
             } else if (error.message && error.message.toLowerCase().includes('timeout')) {
                 console.log(`${c.yellow}⚠ [Gemini] Timeout. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
                 await new Promise(r => setTimeout(r, 2000));
@@ -809,7 +820,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    let CONCURRENCY_LIMIT = 3; 
+    let CONCURRENCY_LIMIT = 2; 
 
     let allTranslatedTexts = [];
 
