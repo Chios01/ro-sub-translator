@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.25',
+    version: '2.3.26',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -484,7 +484,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'bet merici', 'dar meriți', 'gi');
     text = rw(text, 'usile', 'ușile', 'gi');
 
-    // Marea curățenie
+    // Marea curățenie The Boys
     text = text.replace(/în toată regla/gi, 'în toată regula');
     text = text.replace(/sunt extinși/gi, 'sunt pe cale de dispariție');
     text = text.replace(/Nu-mi vine să crezi/gi, 'Nu-mi vine să cred');
@@ -517,6 +517,39 @@ function formatSubtitleLine(text) {
     
     text = text.replace(/spune[tț]i\s+c[aă]\s+[îÎ]ți\s+pare/gi, 'spuneți că vă pare');
 
+    // === CORECȚII GENERALE CRATIME LIPSĂ (Plasa de siguranță) ===
+    const cratime = ['s a', 's au', 'm am', 'm a', 'm ai', 'n am', 'n a', 'n au', 'n ai', 'n o', 'l a', 'l am', 'l au', 'l ai', 'v ați', 'ne am', 'ne a', 'mi a', 'mi au', 'ți a', 'ți au', 'i a', 'i au'];
+    cratime.forEach(combo => {
+        text = rw(text, combo, combo.replace(' ', '-'), 'gi');
+    });
+    
+    text = rw(text, 'îmbrăcați vă', 'îmbrăcați-vă', 'gi');
+    text = rw(text, 'luându ți', 'luându-ți', 'gi');
+    
+    // === CORECȚII HALUCINAȚII DIVERSE ȘI TRADUCERI LITERALE ===
+    text = text.replace(/ą/g, 'ă').replace(/Ą/g, 'Ă');
+    text = rw(text, 'alcineva', 'altcineva', 'gi');
+    text = rw(text, 'paranoi', 'paranoia', 'gi');
+    text = rw(text, 'nicideun loc', 'nicăieri', 'gi');
+    text = text.replace(/ți se sângereze/gi, 'îți sângereze');
+    text = text.replace(/să le urmat/gi, 'să le urmez');
+    text = text.replace(/\bman\s+pas[aă]/gi, 'îmi pasă');
+    text = text.replace(/\bman\s+pl[aă]cem/gi, 'îmi placi');
+    
+    // Corecturi specifice textului 2 Broke Girls
+    text = rw(text, 'înulam', 'comandam', 'gi');
+    text = rw(text, 'poșta mea preferată', 'poșeta mea preferată', 'gi');
+    text = text.replace(/un acnee/gi, 'o acnee');
+    text = text.replace(/umele dinților/gi, 'numele dinților');
+    text = text.replace(/cântec a lui/gi, 'cântec al lui');
+    text = text.replace(/cam aștia/gi, 'cam ăsta');
+    text = text.replace(/Obișnuiam să mă furișam/gi, 'Obișnuiam să mă furișez');
+    text = text.replace(/Ștergelui total/gi, 'Șterpelind');
+
+    text = text.replace(/lăsându-se pe o mână/gi, 'făcând o labă');
+    text = text.replace(/mănânci curul meu încordat/gi, 'mă pupi în cur');
+    text = text.replace(/Băiete,\s*mamii\s*tale/gi, 'Futu-i mama mă-sii');
+
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = rw(text, '1-ar', 'l-ar', 'gi');
     text = rw(text, 'aire', 'ai', 'g');
@@ -547,24 +580,6 @@ function formatSubtitleLine(text) {
     text = rw(text, 'nu mai te', 'nu te mai', 'gi');
     text = rw(text, 'sâniile mele', 'sânii mei', 'gi');
     text = rw(text, 'sâniile', 'sânii', 'gi');
-
-    // === CORECȚII GENERALE PUNCTUAȚIE, DIACRITICE ȘI HALUCINAȚII ===
-    text = text.replace(/ą/g, 'ă').replace(/Ą/g, 'Ă');
-    text = text.replace(/,\s*\?/g, '?');
-    text = rw(text, 'alcineva', 'altcineva', 'gi');
-    text = rw(text, 'paranoi', 'paranoia', 'gi');
-    text = rw(text, 'nicideun loc', 'nicăieri', 'gi');
-    text = text.replace(/ți se sângereze/gi, 'îți sângereze');
-    text = text.replace(/să le urmat/gi, 'să le urmez');
-
-    // === CORECȚII HALUCINAȚIE PRONUME "MAN" -> "ÎMI/TE" ===
-    text = text.replace(/\bman\s+pas[aă]/gi, 'îmi pasă');
-    text = text.replace(/\bman\s+pl[aă]cem/gi, 'îmi placi');
-
-    // === CORECȚII TRADUCERI LITERALE (IDIOMS & SLANG ENGLEZESC) ===
-    text = text.replace(/lăsându-se pe o mână/gi, 'făcând o labă');
-    text = text.replace(/mănânci curul meu încordat/gi, 'mă pupi în cur');
-    text = text.replace(/Băiete,\s*mamii\s*tale/gi, 'Futu-i mama mă-sii');
 
     text = text.replace(/,\s*,/g, ',');
     text = text.replace(/\s+,/g, ',');
@@ -694,10 +709,10 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             const prompt = `Translate the following English subtitles into natural, conversational Romanian.
 
 RULES:
-1. DIACRITICS, SPELLING & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Ensure PERFECT Romanian spelling and grammar. Use standard, dictionary-approved vocabulary.
+1. DIACRITICS, SPELLING & GRAMMAR (CRITICAL): Use correct Romanian diacritics (ă, â, î, ș, ț). Ensure PERFECT Romanian spelling and grammar. CRITICAL: NEVER omit hyphens (cratimă) for pronouns and auxiliary verbs (e.g., MUST write 's-a', 'm-am', 'n-am', 'dându-și', 'îmbrăcați-vă' - NEVER 's a', 'm am'). Use standard, dictionary-approved vocabulary.
 2. CHARACTER NAMES (CRITICAL): DO NOT translate character names (e.g. Homelander, Butcher, Starlight, Hughie, A-Train). Leave them exactly as they are in English.
 3. GENDER BLINDNESS: You cannot see the video. To avoid gender mistakes for "I", use neutral phrasing ("Mi-am primit banii" instead of "Am fost plătit/plătită").
-4. TV BROADCAST CENSORSHIP & SLANG: Soften extreme vulgarities to maintain civilized language, but preserve the scene's dark or tense tone. Omit swear words entirely if they are just filler words. "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". 
+4. TV BROADCAST CENSORSHIP & SLANG: Soften extreme vulgarities to maintain civilized language, but preserve the scene's dark or tense tone. DO NOT translate English idioms or slang literally (e.g. 'jerking off' is NOT 'lăsându-se pe o mână'). Use natural Romanian equivalents. Omit swear words entirely if they are just filler words. "Why do I give a shit?" = "Ce-mi pasă mie?". "Man" = "omule". 
 5. NOISES, HESITATIONS & STUTTERS: Completely remove audio tags like [music]. Completely remove ALL hesitations, stutters, and interjections (e.g., Oh, Ah, Uh, Ăă, hă) from EVERYWHERE in the sentence.
 6. NO DIGITS IN WORDS: Never put numbers inside words. 
 7. STRICT ACCURACY (CRITICAL): DO NOT invent words (e.g. do not write 'unzn' instead of 'un'). DO NOT skip letters. DO NOT replace the letter 'L' with the number '1' (e.g. write 'l-ar', never '1-ar'). Check your spelling carefully before outputting the JSON.
