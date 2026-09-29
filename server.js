@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.39',
+    version: '2.3.40',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -627,6 +627,19 @@ function formatSubtitleLine(text) {
     text = rw(text, 'impermiabile', 'impermeabile', 'gi');
     text = rw(text, 'fulul', 'pachetul', 'gi');
 
+    // NOU: Corecturi pentru The Ark
+    text = text.replace(/Data\s+anteriori/gi, 'Data trecută');
+    text = text.replace(/mai\s+inferior/gi, 'inferior');
+    text = text.replace(/bloodshed/gi, 'vărsare de sânge');
+    text = text.replace(/nu\s+parți\s+să/gi, 'nu pari să');
+    text = text.replace(/tatăle\s+tău/gi, 'tatăl tău');
+    text = text.replace(/vom\s+putea\s+ne\s+Vom\s+apropia/gi, 'ne vom putea apropia');
+    text = text.replace(/necesarias/gi, 'necesare');
+    text = text.replace(/erau\s+moarte/gi, 'erau morți');
+    text = text.replace(/Măriți!\s+Din\s+nou!/gi, 'Minți! Din nou!');
+    text = text.replace(/man\s+raportezi/gi, 'îmi raportezi');
+    text = text.replace(/holdului/gi, 'calei');
+
     // NOU: Corecturi pentru "Disclosure Day"
     text = text.replace(/caceagmată/gi, 'cacealma');
     text = text.replace(/depărtător\s+de\s+jaw/gi, 'depărtător de maxilar');
@@ -708,36 +721,39 @@ function formatSubtitleLine(text) {
     if (text.trim() === '') return ' '; 
 
     let finalLines = text.split('\n').map(l => l.trim()).filter(l => l !== '');
-    const MAX_LEN = 45; 
-    let wrappedLines = [];
-
-    for (let line of finalLines) {
-        if (line.length <= MAX_LEN) {
-            wrappedLines.push(line);
+    
+    // NOUĂ LOGICĂ: FORȚEAZĂ MAXIMUM 2 LINII PENTRU A EVITA SUPRAPUNERILE ȘI IEȘIREA DE PE ECRAN
+    if (finalLines.length > 2) {
+        // Dacă AI-ul a generat 3 linii, le unim într-un singur string, apoi le tăiem fix la jumătate
+        let joined = finalLines.join(' ');
+        let mid = Math.floor(joined.length / 2);
+        let leftSpace = joined.lastIndexOf(' ', mid);
+        let rightSpace = joined.indexOf(' ', mid);
+        let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
+            ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
+            Math.max(leftSpace, rightSpace);
+        
+        if (splitIndex !== -1) {
+            finalLines = [joined.substring(0, splitIndex).trim(), joined.substring(splitIndex + 1).trim()];
         } else {
-            let mid = Math.floor(line.length / 2);
-            let leftSpace = line.lastIndexOf(' ', mid);
-            let rightSpace = line.indexOf(' ', mid);
-            let splitIndex = -1;
-
-            if (leftSpace !== -1 && rightSpace !== -1) {
-                splitIndex = (mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace;
-            } else if (leftSpace !== -1) {
-                splitIndex = leftSpace;
-            } else if (rightSpace !== -1) {
-                splitIndex = rightSpace;
-            }
-
-            if (splitIndex !== -1) {
-                wrappedLines.push(line.substring(0, splitIndex).trim());
-                wrappedLines.push(line.substring(splitIndex + 1).trim());
-            } else {
-                wrappedLines.push(line); 
-            }
+            finalLines = [joined];
+        }
+    } else if (finalLines.length === 1 && finalLines[0].length > 60) {
+        // Dacă avem o singură linie extrem de lungă (>60 caractere), o tăiem în 2 pentru vizibilitate optimă
+        let line = finalLines[0];
+        let mid = Math.floor(line.length / 2);
+        let leftSpace = line.lastIndexOf(' ', mid);
+        let rightSpace = line.indexOf(' ', mid);
+        let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
+            ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
+            Math.max(leftSpace, rightSpace);
+        
+        if (splitIndex !== -1) {
+            finalLines = [line.substring(0, splitIndex).trim(), line.substring(splitIndex + 1).trim()];
         }
     }
 
-    return wrappedLines.map(l => l.replace(/^[-—–−]+\s*/g, '')).join('\n');
+    return finalLines.map(l => l.replace(/^[-—–−]+\s*/g, '')).join('\n');
 }
 
 function fixBrokenJson(text) {
