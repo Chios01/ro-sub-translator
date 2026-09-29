@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.35',
+    version: '2.3.37',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -514,8 +514,20 @@ function formatSubtitleLine(text) {
 
     text = text.replace(/mă fac că nu/gi, 'mă prefac că nu');
     text = text.replace(/prefac parcă/gi, 'prefac de parcă');
-    
     text = text.replace(/spune[tț]i\s+c[aă]\s+[îÎ]ți\s+pare/gi, 'spuneți că vă pare');
+
+    // Erori specifice The Boys Ep 1
+    text = text.replace(/eu\s+chiar\s+mai\s+sunt\s+foame/gi, 'mie chiar mi-e foame');
+    text = text.replace(/\bînd\b/gi, 'când');
+    text = rw(text, 'concururile', 'concursurile', 'gi');
+    text = rw(text, 'emigru', 'imigrant', 'gi');
+    text = text.replace(/n-ofi/gi, 'să nu fii');
+    text = text.replace(/și-și/gi, 'și');
+    text = text.replace(/ținea\s+so\s+cu\s+aia/gi, 'ținea sus cu aia');
+    text = text.replace(/sunt\s+ștearsă/gi, 'sunt șterse');
+    text = rw(text, 'cacealmită', 'toaletă', 'gi');
+    text = rw(text, 'gogși', 'gogoși', 'gi');
+    text = text.replace(/nu\s+se\s+gată/gi, 'nu se termină');
 
     // === CORECȚII GENERALE CRATIME LIPSĂ (Plasa de siguranță) ===
     const cratime = ['s a', 's au', 'm am', 'm a', 'm ai', 'n am', 'n a', 'n au', 'n ai', 'n o', 'l a', 'l am', 'l au', 'l ai', 'v ați', 'ne am', 'ne a', 'mi a', 'mi au', 'ți a', 'ți au', 'i a', 'i au'];
@@ -602,6 +614,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/să\s+defin\b/gi, 'să definim');
     text = text.replace(/(Nu, trebuie să răspunzi, altfel pierzi punctele\.?\s*){2,}/gi, 'Nu, trebuie să răspunzi, altfel pierzi punctele.\n');
     
+    // Corecturi pentru Project Hail Mary & "fulul" din The Boys
     text = rw(text, 'Viridienii', 'Eridanienii', 'gi');
     text = rw(text, 'iridienii', 'eridanienii', 'gi');
     text = text.replace(/din\s+Aaron/gi, 'din Erid');
@@ -612,6 +625,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'propulsorespin', 'propulsoare spin', 'gi');
     text = rw(text, 'Nuștiu', 'Nu știu', 'gi');
     text = rw(text, 'impermiabile', 'impermeabile', 'gi');
+    text = rw(text, 'fulul', 'pachetul', 'gi');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = rw(text, '1-ar', 'l-ar', 'gi');
