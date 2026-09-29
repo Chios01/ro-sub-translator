@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.45',
+    version: '2.3.46',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -692,7 +692,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/aceași/gi, 'aceeași');
     text = text.replace(/Man,\s+îmi\s+era/gi, 'Omule, îmi era');
 
-    // Corecturi The Boys S1E6 (Revizuite)
+    // Corecturi The Boys S1E6 & S1E7
     text = text.replace(/jeftină/gi, 'ieftină');
     text = text.replace(/mai\s+de\s+la\s+sat/gi, 'mai cu picioarele pe pământ');
     text = text.replace(/N-a\s+s-a\s+schimbat/gi, 'Nu s-a schimbat');
@@ -717,8 +717,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/în\s+piarda\s+naibii/gi, 'în rahat până-n gât');
     text = text.replace(/aiberă\s+grijă/gi, 'aibă grijă');
     text = text.replace(/cinci\s+cvartale/gi, 'cinci străzi');
-    
-    // Corecturi The Boys S1E7
     text = text.replace(/nă\s+câteva/gi, 'na, câteva');
     text = text.replace(/tată-mi\s+te-ar/gi, 'tată-meu ți-ar');
     text = text.replace(/coisecle/gi, 'coaiele');
@@ -726,6 +724,15 @@ function formatSubtitleLine(text) {
     text = text.replace(/misecundă/gi, 'milisecundă');
     text = text.replace(/prin\s+care-un\s+ființă/gi, 'printr-o ființă');
     text = text.replace(/Ticoasă/gi, 'Ticăloasă');
+
+    // NOU: Corecturi The Boys S1E8
+    text = text.replace(/vreoâun/gi, 'vreun');
+    text = text.replace(/O\s+morman/gi, 'Un morman');
+    text = text.replace(/pe\s+federali\s+de/gi, 'pe federalii de');
+    text = text.replace(/L\.M\.:\s*/gi, '');
+    text = text.replace(/M\.M\.:\s*/gi, '');
+    text = text.replace(/te\s+ajutai\s+cu/gi, 'te-ai înhăitat cu');
+    text = text.replace(/fugi\s+dracului/gi, 'du-te dracului');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = rw(text, '1-ar', 'l-ar', 'gi');
@@ -884,7 +891,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // Noul prompt hibrid (Few-Shot Contrastive) pentru a elimina gafele de traducere
+            // Prompt hibrid (Few-Shot Contrastive) pentru a elimina gafele de traducere
             const prompt = `You are a high-end cinematic subtitle translator. Your job is to adapt English JSON subtitles into natural, conversational Romanian. DO NOT translate word-for-word. Focus heavily on avoiding typos and preserving perfect Romanian grammar.
 
 <rules>
