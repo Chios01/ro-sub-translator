@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.44',
+    version: '2.3.45',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -884,19 +884,35 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            const prompt = `You are a high-end cinematic subtitle translator. Your job is to adapt English JSON subtitles into natural, conversational Romanian. DO NOT translate word-for-word.
+            // Noul prompt hibrid (Few-Shot Contrastive) pentru a elimina gafele de traducere
+            const prompt = `You are a high-end cinematic subtitle translator. Your job is to adapt English JSON subtitles into natural, conversational Romanian. DO NOT translate word-for-word. Focus heavily on avoiding typos and preserving perfect Romanian grammar.
 
 <rules>
-1. ADAPT IDIOMS & CONTEXT: Never translate idioms literally (e.g., "hit like a ton of bricks" -> "a picat ca un trăsnet", not "tonă de cărămizi"). Use natural Romanian equivalents for slang.
-2. PERFECT GRAMMAR: You MUST use proper Romanian diacritics (ă, â, î, ș, ț). You MUST use hyphens correctly for pronouns/verbs (e.g., "s-a", "m-am", "n-am", "dându-și", "îmbrăcați-vă"). DO NOT invent words or drop letters.
-3. CLEAN UP: Remove all audio tags (e.g., [sighs], [music]) and hesitations (uh, ah, um). DO NOT translate proper names (e.g. Homelander, Butcher, Starlight, Hughie, A-Train).
-4. GENDER NEUTRALITY: You cannot see the video. Use neutral phrasing for "I" if the speaker's gender is ambiguous.
-5. JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact input keys. Do not add markdown or extra text.
+1. ADAPT IDIOMS & CONTEXT: Never translate idioms literally. Use natural Romanian equivalents for slang.
+2. PERFECT GRAMMAR & NO TYPOS: You MUST use proper Romanian diacritics (ă, â, î, ș, ț). Double-check your spelling! Avoid nonsensical typos (e.g., write "ții minte" NOT "ații minte", "aibă" NOT "aiberă"). Use hyphens correctly ("s-a", "m-am", "l-a").
+3. CLEAN UP: Remove all audio tags (e.g., [sighs]) and hesitations (uh, ah, um). DO NOT translate proper names (Homelander, Starlight, etc.).
+4. JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact input keys. Do not add markdown or extra text.
 </rules>
 
 <examples>
-Input: {"1": "I am gonna beat his ass.", "2": "She played my ass like jazz.", "3": "What's up, man?"}
-Output: {"1": "O să-i rup oasele.", "2": "M-a jucat pe degete.", "3": "Ce faci, omule?"}
+Input: {
+  "1": "I am gonna beat his ass.",
+  "2": "She played my ass like jazz.",
+  "3": "Are you afraid?",
+  "4": "What's up, man?"
+}
+BAD Output (DO NOT DO THIS): {
+  "1": "O să-i bat fundul.",
+  "2": "Mi-a cântat la fund ca la jazz.",
+  "3": "Ești frică?",
+  "4": "Ce faci, man?"
+}
+GOOD Output (DO THIS): {
+  "1": "O să-i rup oasele.",
+  "2": "M-a jucat pe degete.",
+  "3": "Ți-e frică?",
+  "4": "Ce faci, omule?"
+}
 </examples>
 
 Translate this JSON:
@@ -949,8 +965,8 @@ ${JSON.stringify(batchToProcess)}`;
                     const key = keys[i];
                     const nextKey = keys[i + 1];
                     
-                    // Noul lookahead Regex ultra-sigur pentru a preveni "scurgerea" de cod JSON pe ecran
-                    const lookahead = `\\s*,?\\s*"?[0-9]+"?\\s*:|\\s*\\}|$)`;
+                    // Regex optimizat pentru a preveni scurgerea de cod (Fallback extraction)
+                    const lookahead = `\\s*,?\\s*"?\\d+"?\\s*:|\\s*\\}|$)`;
                     const regex = new RegExp(`"?${key}"?\\s*:\\s*(.*?)(?=${lookahead}`, 's');
                     
                     const match = textResponse.match(regex);
