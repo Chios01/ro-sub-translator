@@ -692,7 +692,24 @@ function formatSubtitleLine(text) {
     text = text.replace(/aceași/gi, 'aceeași');
     text = text.replace(/Man,\s+îmi\s+era/gi, 'Omule, îmi era');
 
-    // NOU: Corecturi The Boys S1E6 (Noul Prompt)
+    // Corecturi The Boys S1E6 (Revizuite)
+    text = text.replace(/jeftină/gi, 'ieftină');
+    text = text.replace(/mai\s+de\s+la\s+sat/gi, 'mai cu picioarele pe pământ');
+    text = text.replace(/N-a\s+s-a\s+schimbat/gi, 'Nu s-a schimbat');
+    text = text.replace(/nimfomana\s+ta\s+sălbatică/gi, 'fata aia a ta zurlie');
+    text = text.replace(/o\s+favor\b/gi, 'o favoare');
+    text = text.replace(/Ești\s+frică/gi, 'Ți-e frică');
+    text = text.replace(/ații\s+minte/gi, 'ții minte');
+    text = text.replace(/înțel\s+cum/gi, 'învăț cum');
+    text = text.replace(/Cruciadatul/gi, 'Cruciatul');
+    text = text.replace(/o\s+îndoaie\s+cu\s+Compusul/gi, 'o îndoapă cu Compusul');
+    text = text.replace(/nitrogenul/gi, 'azotul');
+    text = text.replace(/Bitch\s+dracului/gi, 'Târfă dracului');
+    text = text.replace(/că\s+căutai/gi, 'că erai în căutarea');
+    text = text.replace(/înfig\s+pe\s+gât\s+în\s+sus\s+în\s+fund/gi, 'înfig în fund atât de adânc încât îți ies pe gât');
+    text = text.replace(/Mâncă-mi-ar\.\.\.\s*/gi, '');
+    text = text.replace(/juării/gi, 'jucării');
+    text = text.replace(/Sala\s+Fecilor/gi, 'Sala Faimei');
     text = text.replace(/păturii\s+dracului/gi, 'pătura dracului');
     text = text.replace(/Mai\s+bine\s+spere/gi, 'Mai bine speri');
     text = text.replace(/ți-ar\s+teferi/gi, 's-ar căca');
