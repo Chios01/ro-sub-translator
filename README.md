@@ -32,6 +32,34 @@ Pentru ca sistemul avansat de Anti-Cenzură și Anti-Spam (rotația cheilor) să
 
 Dacă lași o căsuță goală sau dacă o cheie este invalidă, butonul final de instalare va rămâne ascuns.
 
+## 🔑 Cum să generezi 10 Chei API pentru Viteză Maximă (Bypass Rate Limits)
+
+Deoarece Google impune limite de solicitări (Rate Limits) pentru conturile gratuite, addon-ul este conceput să rotească automat cheile API. Pentru a traduce un film întreg în doar câteva secunde, recomandăm adăugarea a **10 chei API diferite**, generate din **10 proiecte separate**.
+
+### Pașii de urmat:
+
+**Pasul 1: Conectarea la Google AI Studio**
+1. Accesează [Google AI Studio - API Keys](https://aistudio.google.com/app/apikey).
+2. Conectează-te folosind contul tău Google.
+
+**Pasul 2: Generarea primei chei**
+1. Dă click pe butonul albastru **Create API key**.
+2. Selectează opțiunea **Create API key in new project**. 
+3. Așteaptă câteva secunde. Sistemul va crea automat un proiect nou în Google Cloud și va genera o cheie.
+4. Copiază cheia generată și salvează-o într-un fișier text (Notepad).
+
+**Pasul 3: Crearea următoarelor 9 chei (în proiecte noi)**
+Pentru a evita limitele de viteză, **NU** genera mai multe chei în același proiect. Repetă exact pașii de mai sus:
+1. Dă din nou click pe **Create API key**.
+2. Alege din nou **Create API key in new project** (Ignoră proiectul creat anterior care va apărea în listă).
+3. Copiază noua cheie în fișierul tău text.
+4. Repetă acest proces până când ai adunat **10 chei distincte**.
+
+**Pasul 4: Adăugarea cheilor în Addon**
+1. Deschide pagina de configurare a addon-ului RO Sub Translator.
+2. În secțiunea "API Keys", lipește fiecare cheie pe un rând nou (sau adaugă-le pe rând, în funcție de interfață).
+3. Apasă **Install** și bucură-te de subtitrări traduse instantaneu!
+
 ### 🛠️ Cum se instalează:
 1. Generează gratuit cele 10 chei API Gemini din Google AI Studio.
 2. Lipește-le cu atenție în cele 10 căsuțe de pe pagina de configurare a add-on-ului.
