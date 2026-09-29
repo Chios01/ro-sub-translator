@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.37',
+    version: '2.3.38',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -514,6 +514,7 @@ function formatSubtitleLine(text) {
 
     text = text.replace(/mă fac că nu/gi, 'mă prefac că nu');
     text = text.replace(/prefac parcă/gi, 'prefac de parcă');
+    
     text = text.replace(/spune[tț]i\s+c[aă]\s+[îÎ]ți\s+pare/gi, 'spuneți că vă pare');
 
     // Erori specifice The Boys Ep 1
@@ -562,7 +563,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/mănânci curul meu încordat/gi, 'mă pupi în cur');
     text = text.replace(/Băiete,\s*mamii\s*tale/gi, 'Futu-i mama mă-sii');
 
-    // Corecturi specifice The Ark / Scrubs / The Boys / X-Men / Unabomber / Horror / Project Hail Mary
+    // Toate corecțiile adunate (The Ark / Scrubs / The Boys / X-Men / Unabomber / Horror / Project Hail Mary / Disclosure Day)
     text = text.replace(/kconvinsesem/gi, 'convinsesem');
     text = text.replace(/moști/gi, 'morți');
     text = text.replace(/un femeie/gi, 'o femeie');
@@ -614,7 +615,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/să\s+defin\b/gi, 'să definim');
     text = text.replace(/(Nu, trebuie să răspunzi, altfel pierzi punctele\.?\s*){2,}/gi, 'Nu, trebuie să răspunzi, altfel pierzi punctele.\n');
     
-    // Corecturi pentru Project Hail Mary & "fulul" din The Boys
     text = rw(text, 'Viridienii', 'Eridanienii', 'gi');
     text = rw(text, 'iridienii', 'eridanienii', 'gi');
     text = text.replace(/din\s+Aaron/gi, 'din Erid');
@@ -626,6 +626,18 @@ function formatSubtitleLine(text) {
     text = rw(text, 'Nuștiu', 'Nu știu', 'gi');
     text = rw(text, 'impermiabile', 'impermeabile', 'gi');
     text = rw(text, 'fulul', 'pachetul', 'gi');
+
+    // NOU: Corecturi pentru "Disclosure Day"
+    text = text.replace(/caceagmată/gi, 'cacealma');
+    text = text.replace(/depărtător\s+de\s+jaw/gi, 'depărtător de maxilar');
+    text = text.replace(/troopelor/gi, 'trupelor');
+    text = text.replace(/Vdem/g, 'Vedem');
+    text = text.replace(/vdem/g, 'vedem');
+    text = text.replace(/aproxximativ/gi, 'aproximativ');
+    text = text.replace(/iai\s+pragul/gi, 'treci pragul');
+    text = text.replace(/A\s+trecut\s+brici\s+prin\s+ea/gi, 'S-a descurcat de minune');
+    text = text.replace(/Ești\s+ieșit\s+din\s+minți\?/gi, 'Ți-ai pierdut mințile?');
+    text = text.replace(/tot\s+ordinea/gi, 'toată ordinea');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = rw(text, '1-ar', 'l-ar', 'gi');
