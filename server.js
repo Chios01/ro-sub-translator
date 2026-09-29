@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.34',
+    version: '2.3.35',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -496,7 +496,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/cuțitul de pernă/gi, 'cuțitul de sub pernă');
     text = text.replace(/și-a predat în sfârșit pantofii/gi, 'a dat ortul popii');
 
-    text = text.replace(/Atunci\s+spune[tț]i\s+c[aă][\s.,]+(Glumi[tț]i|Jumi[tț]i|Jeta[tț]i|Jre[tț]i|Jne|[Jj]ă)\.?/gi, 'Atunci spuneți că vă pare rău.');
+    text = text.replace(/Atunci\s+spune[tț]i\s+c[aă][\s.,]+(Glumi[tț]i|Jumi[tț]i|Jeta[tț]i|Jre[tț]i|Jura[tț]i|Jne|[Jj]ă)\.?/gi, 'Atunci spuneți că vă pare rău.');
     text = text.replace(/Trebuie\s+să\s+mă\s+(prefac|fac)\s+parcă\s+nu\s+s-a\s+întâmplat/gi, 'Trebuie să mă prefac că nu s-a întâmplat');
     text = text.replace(/parcă\s+nu\s+țțineam\s+brațele\s+lui\s+Robin\s+în\s+mâinile\s+mele/gi, 'că nu țineam brațele lui Robin în mâinile mele');
 
@@ -602,7 +602,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/să\s+defin\b/gi, 'să definim');
     text = text.replace(/(Nu, trebuie să răspunzi, altfel pierzi punctele\.?\s*){2,}/gi, 'Nu, trebuie să răspunzi, altfel pierzi punctele.\n');
     
-    // Corecturi pentru Project Hail Mary
     text = rw(text, 'Viridienii', 'Eridanienii', 'gi');
     text = rw(text, 'iridienii', 'eridanienii', 'gi');
     text = text.replace(/din\s+Aaron/gi, 'din Erid');
