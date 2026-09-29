@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.29',
+    version: '2.3.30',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -550,7 +550,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/mănânci curul meu încordat/gi, 'mă pupi în cur');
     text = text.replace(/Băiete,\s*mamii\s*tale/gi, 'Futu-i mama mă-sii');
 
-    // Corecturi specifice The Ark / Scrubs / The Boys / 2 Broke Girls
+    // Corecturi specifice The Ark / Scrubs / The Boys / X-Men / Unabomber / Horror etc.
     text = text.replace(/kconvinsesem/gi, 'convinsesem');
     text = text.replace(/moști/gi, 'morți');
     text = text.replace(/un femeie/gi, 'o femeie');
@@ -581,6 +581,28 @@ function formatSubtitleLine(text) {
     text = rw(text, 'penthaină', 'penthouse', 'gi');
     text = rw(text, 'drum runner', 'Road Runner', 'gi');
     text = text.replace(/c[aă]ntat\s+la\s+fund\s+ca\s+la\s+jazz/gi, 'cântat la fund ca la un instrument');
+    
+    // Calupul nou de corecții (X-Men, Unabomber, Ungentlemanly Warfare, The Boy Behind the Door)
+    text = rw(text, 'nebunizați', 'nebuni', 'gi');
+    text = rw(text, 'raiuk', 'raiul', 'gi');
+    text = rw(text, 'Iafu', 'Iau', 'gi');
+    text = rw(text, 'uniții', 'muniții', 'gi');
+    text = text.replace(/filetat\s+vânat/gi, 'jupuit vânat');
+    text = rw(text, 'U-barce', 'U-boot-uri', 'gi');
+    text = rw(text, 'U-barc', 'U-boot', 'gi');
+    text = text.replace(/să\s+fieți\s+educați/gi, 'să fiți educați');
+    text = text.replace(/Lăsați-mi-vă\s+să\s+vă\s+arăt/gi, 'Lăsați-mă să vă arăt');
+    text = rw(text, 'misia', 'misiunea', 'gi');
+    text = text.replace(/Senatule/gi, 'Senatorule');
+    text = rw(text, 'Roți', 'Wheels', 'g');
+    text = text.replace(/M,\s*,\s*\./g, '');
+    text = text.replace(/tristă\s+și\s+supărați/gi, 'triști și supărați');
+    text = rw(text, 'abnormal', 'anormal', 'gi');
+    text = text.replace(/toate\s+liberul\s+arbitru/gi, 'tot liberul arbitru');
+    text = rw(text, 'ecanarhiști', 'eco-anarhiști', 'gi');
+    text = text.replace(/ridică\s+balena\s+albă/gi, 'zărește balena albă');
+    text = text.replace(/să\s+defin\b/gi, 'să definim');
+    text = text.replace(/(Nu, trebuie să răspunzi, altfel pierzi punctele\.?\s*){2,}/gi, 'Nu, trebuie să răspunzi, altfel pierzi punctele.\n');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = rw(text, '1-ar', 'l-ar', 'gi');
@@ -728,7 +750,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        const modelName = 'gemini-3.5-flash-lite';
+        // Am setat modelul suprem conform dorinței tale
+        const modelName = 'gemini-3.5-flash';
         let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
