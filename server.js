@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.40',
+    version: '2.3.41',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -627,20 +627,7 @@ function formatSubtitleLine(text) {
     text = rw(text, 'impermiabile', 'impermeabile', 'gi');
     text = rw(text, 'fulul', 'pachetul', 'gi');
 
-    // NOU: Corecturi pentru The Ark
-    text = text.replace(/Data\s+anteriori/gi, 'Data trecută');
-    text = text.replace(/mai\s+inferior/gi, 'inferior');
-    text = text.replace(/bloodshed/gi, 'vărsare de sânge');
-    text = text.replace(/nu\s+parți\s+să/gi, 'nu pari să');
-    text = text.replace(/tatăle\s+tău/gi, 'tatăl tău');
-    text = text.replace(/vom\s+putea\s+ne\s+Vom\s+apropia/gi, 'ne vom putea apropia');
-    text = text.replace(/necesarias/gi, 'necesare');
-    text = text.replace(/erau\s+moarte/gi, 'erau morți');
-    text = text.replace(/Măriți!\s+Din\s+nou!/gi, 'Minți! Din nou!');
-    text = text.replace(/man\s+raportezi/gi, 'îmi raportezi');
-    text = text.replace(/holdului/gi, 'calei');
-
-    // NOU: Corecturi pentru "Disclosure Day"
+    // Corecturi pentru "Disclosure Day"
     text = text.replace(/caceagmată/gi, 'cacealma');
     text = text.replace(/depărtător\s+de\s+jaw/gi, 'depărtător de maxilar');
     text = text.replace(/troopelor/gi, 'trupelor');
@@ -652,12 +639,12 @@ function formatSubtitleLine(text) {
     text = text.replace(/Ești\s+ieșit\s+din\s+minți\?/gi, 'Ți-ai pierdut mințile?');
     text = text.replace(/tot\s+ordinea/gi, 'toată ordinea');
 
-    // NOU: Corecturi suplimentare 2 Broke Girls
+    // Corecturi suplimentare 2 Broke Girls
     text = text.replace(/Să\s+nu\s+ajuți\s+niciodată\s+la\s+telefonul/gi, 'Să nu răspunzi niciodată la telefonul');
     text = text.replace(/m-a\s+învățat\s+rele\s+despre\s+finanțe/gi, 'm-a învățat despre finanțe');
     text = text.replace(/if\s+all\s+the\s+cool\s+cats\s+shooting\s+dope\s+dacă\s+toți\s+băieții\s+cool\s+drogați/gi, 'dacă toți drogații');
     
-    // NOU: Corecturi Scrubs Ep 3, 4, 5
+    // Corecturi Scrubs Ep 3, 4, 5
     text = rw(text, 'doamne doctor', 'doamna doctor', 'gi');
     text = rw(text, 'o indiciu', 'un indiciu', 'gi');
     text = rw(text, 'tabëra', 'tabăra', 'gi');
@@ -678,6 +665,19 @@ function formatSubtitleLine(text) {
     text = text.replace(/vei\s+merge\s+de-a\s+latul/gi, 'vei merge crăcănată');
     text = text.replace(/Noapte\s+bună,\s+Irene!/gi, 'Asta da lovitură!');
     text = text.replace(/să\s+bagi\s+o\s+crosă/gi, 'să te bagi la joc');
+
+    // NOU: Corecturi Oppenheimer
+    text = text.replace(/Dresorul\s+Hill/gi, 'Doctore Hill');
+    text = text.replace(/ca\s+s-o\s+spunem\s+pe\s+roate/gi, 'ca s-o spunem pe șleau');
+    text = text.replace(/doda\s+un\s+moment/gi, 'acorda un moment');
+    text = text.replace(/propriutei/gi, 'propriei');
+    text = text.replace(/mi-a\s+prânat/gi, 'mi-a prins');
+    text = text.replace(/feșiști/gi, 'fasciști');
+    text = text.replace(/aș\s+bucura-mă/gi, 'm-aș bucura');
+    text = text.replace(/util\s+deât/gi, 'utili decât');
+    text = text.replace(/noiile/gi, 'noile');
+    text = text.replace(/aceași/gi, 'aceeași');
+    text = text.replace(/Man,\s+îmi\s+era/gi, 'Omule, îmi era');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = rw(text, '1-ar', 'l-ar', 'gi');
@@ -722,7 +722,7 @@ function formatSubtitleLine(text) {
 
     let finalLines = text.split('\n').map(l => l.trim()).filter(l => l !== '');
     
-    // NOUĂ LOGICĂ: FORȚEAZĂ MAXIMUM 2 LINII PENTRU A EVITA SUPRAPUNERILE ȘI IEȘIREA DE PE ECRAN
+    // LOGICĂ: FORȚEAZĂ MAXIMUM 2 LINII PENTRU A EVITA SUPRAPUNERILE ȘI IEȘIREA DE PE ECRAN
     if (finalLines.length > 2) {
         // Dacă AI-ul a generat 3 linii, le unim într-un singur string, apoi le tăiem fix la jumătate
         let joined = finalLines.join(' ');
