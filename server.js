@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.32',
+    version: '2.3.33',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -750,8 +750,8 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        // Varianta "full", dar setată la un calup pe rând în funcția de mai jos
-        const modelName = 'gemini-3.5-flash';
+        // Trecem înapoi la modelul Lite pe care putem folosi concurența
+        const modelName = 'gemini-3.5-flash-lite';
         let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
@@ -908,8 +908,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // Setat la 1 conform cerinței "calup cu calup"
-    let CONCURRENCY_LIMIT = 1; 
+    // Revenim la 3 simultan!
+    let CONCURRENCY_LIMIT = 3; 
 
     let allTranslatedTexts = [];
 
