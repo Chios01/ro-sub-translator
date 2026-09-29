@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.38',
+    version: '2.3.39',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -638,6 +638,33 @@ function formatSubtitleLine(text) {
     text = text.replace(/A\s+trecut\s+brici\s+prin\s+ea/gi, 'S-a descurcat de minune');
     text = text.replace(/Ești\s+ieșit\s+din\s+minți\?/gi, 'Ți-ai pierdut mințile?');
     text = text.replace(/tot\s+ordinea/gi, 'toată ordinea');
+
+    // NOU: Corecturi suplimentare 2 Broke Girls
+    text = text.replace(/Să\s+nu\s+ajuți\s+niciodată\s+la\s+telefonul/gi, 'Să nu răspunzi niciodată la telefonul');
+    text = text.replace(/m-a\s+învățat\s+rele\s+despre\s+finanțe/gi, 'm-a învățat despre finanțe');
+    text = text.replace(/if\s+all\s+the\s+cool\s+cats\s+shooting\s+dope\s+dacă\s+toți\s+băieții\s+cool\s+drogați/gi, 'dacă toți drogații');
+    
+    // NOU: Corecturi Scrubs Ep 3, 4, 5
+    text = rw(text, 'doamne doctor', 'doamna doctor', 'gi');
+    text = rw(text, 'o indiciu', 'un indiciu', 'gi');
+    text = rw(text, 'tabëra', 'tabăra', 'gi');
+    text = text.replace(/abureli-olog/gi, 'expert în abureli');
+    text = text.replace(/secund\s+minoritar/gi, 'partener minoritar');
+    text = text.replace(/Nu\s+te\s+stresat/gi, 'Nu te stresa');
+    text = rw(text, 'pușchiule', 'puștiule', 'gi');
+    text = rw(text, 'nicikand', 'nicicând', 'gi');
+    text = text.replace(/în\s+merg/gi, 'în mișcare');
+    text = text.replace(/tonă\s+de\s+cărămizi/gi, 'veste șocantă');
+    text = text.replace(/perceptor\s+de\s+primă\s+clasă/gi, 'lingău de primă clasă');
+    text = rw(text, 'sațuitație', 'sațietate', 'gi');
+    text = text.replace(/pasiunează\s+golul/gi, 'pasionează golful');
+    text = text.replace(/cu\s+a\s+ființe/gi, 'cu ființe');
+    text = text.replace(/Îl\s+urăsc\s+familia/gi, 'Îl urăște familia');
+    text = text.replace(/voi\s+doi\s+întâlniți/gi, 'voi doi vă întâlniți');
+    text = text.replace(/Femeile\s+latinos/gi, 'Femeile latine');
+    text = text.replace(/vei\s+merge\s+de-a\s+latul/gi, 'vei merge crăcănată');
+    text = text.replace(/Noapte\s+bună,\s+Irene!/gi, 'Asta da lovitură!');
+    text = text.replace(/să\s+bagi\s+o\s+crosă/gi, 'să te bagi la joc');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = rw(text, '1-ar', 'l-ar', 'gi');
