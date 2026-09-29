@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.28',
+    version: '2.3.29',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -550,7 +550,31 @@ function formatSubtitleLine(text) {
     text = text.replace(/mănânci curul meu încordat/gi, 'mă pupi în cur');
     text = text.replace(/Băiete,\s*mamii\s*tale/gi, 'Futu-i mama mă-sii');
 
-    // Corecturi specifice Scrubs / The Boys / 2 Broke Girls
+    // Corecturi specifice The Ark / Scrubs / The Boys / 2 Broke Girls
+    text = text.replace(/kconvinsesem/gi, 'convinsesem');
+    text = text.replace(/moști/gi, 'morți');
+    text = text.replace(/un femeie/gi, 'o femeie');
+    text = text.replace(/o a s[aă]rut/gi, 'o s-o sărut');
+    text = text.replace(/resemnând/gi, 'referitor la');
+    text = text.replace(/unindiciu/gi, 'un indiciu');
+    text = text.replace(/să sperezi/gi, 'să speri');
+    text = text.replace(/la ținut/gi, 'l-a ținut');
+    text = text.replace(/S-ar pulea/gi, 'S-ar putea');
+    text = text.replace(/lărimile/gi, 'lacrimile');
+    text = text.replace(/ute-ai/gi, 'te-ai');
+    text = text.replace(/construgeam/gi, 'construiam');
+    text = text.replace(/pătură dracului/gi, 'pătura dracului');
+    text = text.replace(/ca cadou/gi, 'drept cadou');
+    text = text.replace(/șneșteai/gi, 'regulai');
+    text = text.replace(/N-ai știi/gi, 'N-ai ști');
+    text = text.replace(/I-a ținuți/gi, 'I-a ținut');
+    text = text.replace(/Bivolă/gi, 'Vacă');
+    text = text.replace(/Vreo, Vought/gi, 'Frate, Vought');
+    text = text.replace(/Supei/g, 'Eroii');
+    text = text.replace(/Privire de tigru/gi, 'Ochi de tigru');
+    text = text.replace(/I tu, neurotico, circ de o singură femeie/gi, 'Iar tu, neurotico, ești un circ ambulant');
+    text = text.replace(/Dă cu teancul acela în palmă/gi, 'Lovește teancul de palmă');
+    text = text.replace(/căci capul lui e/gi, 'pentru că are capul');
     text = rw(text, 'butorii', 'băutorii', 'gi');
     text = text.replace(/am\s+fost\s+alege[tț]i/gi, 'am fost aleși');
     text = text.replace(/tras\s+în\s+piepie/gi, 'tras în piept');
