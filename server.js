@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.33',
+    version: '2.3.34',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -550,7 +550,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/mănânci curul meu încordat/gi, 'mă pupi în cur');
     text = text.replace(/Băiete,\s*mamii\s*tale/gi, 'Futu-i mama mă-sii');
 
-    // Corecturi specifice The Ark / Scrubs / The Boys / X-Men / Unabomber / Horror etc.
+    // Corecturi specifice The Ark / Scrubs / The Boys / X-Men / Unabomber / Horror / Project Hail Mary
     text = text.replace(/kconvinsesem/gi, 'convinsesem');
     text = text.replace(/moști/gi, 'morți');
     text = text.replace(/un femeie/gi, 'o femeie');
@@ -581,8 +581,6 @@ function formatSubtitleLine(text) {
     text = rw(text, 'penthaină', 'penthouse', 'gi');
     text = rw(text, 'drum runner', 'Road Runner', 'gi');
     text = text.replace(/c[aă]ntat\s+la\s+fund\s+ca\s+la\s+jazz/gi, 'cântat la fund ca la un instrument');
-    
-    // Calupul nou de corecții (X-Men, Unabomber, Ungentlemanly Warfare, The Boy Behind the Door)
     text = rw(text, 'nebunizați', 'nebuni', 'gi');
     text = rw(text, 'raiuk', 'raiul', 'gi');
     text = rw(text, 'Iafu', 'Iau', 'gi');
@@ -603,6 +601,18 @@ function formatSubtitleLine(text) {
     text = text.replace(/ridică\s+balena\s+albă/gi, 'zărește balena albă');
     text = text.replace(/să\s+defin\b/gi, 'să definim');
     text = text.replace(/(Nu, trebuie să răspunzi, altfel pierzi punctele\.?\s*){2,}/gi, 'Nu, trebuie să răspunzi, altfel pierzi punctele.\n');
+    
+    // Corecturi pentru Project Hail Mary
+    text = rw(text, 'Viridienii', 'Eridanienii', 'gi');
+    text = rw(text, 'iridienii', 'eridanienii', 'gi');
+    text = text.replace(/din\s+Aaron/gi, 'din Erid');
+    text = rw(text, 'Tomeva', 'Taumoeba', 'gi');
+    text = rw(text, 'Astrofafele', 'Astrofagele', 'gi');
+    text = rw(text, 'Păzește-mă', 'Privește-mă', 'gi');
+    text = text.replace(/Fii\s+pe\s+stânga/gi, 'Ține stânga');
+    text = rw(text, 'propulsorespin', 'propulsoare spin', 'gi');
+    text = rw(text, 'Nuștiu', 'Nu știu', 'gi');
+    text = rw(text, 'impermiabile', 'impermeabile', 'gi');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = rw(text, '1-ar', 'l-ar', 'gi');
@@ -750,7 +760,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        // Trecem înapoi la modelul Lite pe care putem folosi concurența
         const modelName = 'gemini-3.5-flash-lite';
         let currentBatchSize = Object.keys(batchToProcess).length;
 
@@ -908,7 +917,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // Revenim la 3 simultan!
     let CONCURRENCY_LIMIT = 3; 
 
     let allTranslatedTexts = [];
