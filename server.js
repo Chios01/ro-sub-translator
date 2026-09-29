@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.43',
+    version: '2.3.44',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -717,6 +717,15 @@ function formatSubtitleLine(text) {
     text = text.replace(/în\s+piarda\s+naibii/gi, 'în rahat până-n gât');
     text = text.replace(/aiberă\s+grijă/gi, 'aibă grijă');
     text = text.replace(/cinci\s+cvartale/gi, 'cinci străzi');
+    
+    // Corecturi The Boys S1E7
+    text = text.replace(/nă\s+câteva/gi, 'na, câteva');
+    text = text.replace(/tată-mi\s+te-ar/gi, 'tată-meu ți-ar');
+    text = text.replace(/coisecle/gi, 'coaiele');
+    text = text.replace(/asuri\s+în\s+mânecă/gi, 'ași în mânecă');
+    text = text.replace(/misecundă/gi, 'milisecundă');
+    text = text.replace(/prin\s+care-un\s+ființă/gi, 'printr-o ființă');
+    text = text.replace(/Ticoasă/gi, 'Ticăloasă');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = rw(text, '1-ar', 'l-ar', 'gi');
@@ -940,12 +949,10 @@ ${JSON.stringify(batchToProcess)}`;
                     const key = keys[i];
                     const nextKey = keys[i + 1];
                     
-                    let lookahead = `\\s*\\}|$)`;
-                    if (nextKey) {
-                        lookahead = `\\s*,?\\s*"?(?:${nextKey})"?\\s*:|\\s*\\}|$)`;
-                    }
-                    
+                    // Noul lookahead Regex ultra-sigur pentru a preveni "scurgerea" de cod JSON pe ecran
+                    const lookahead = `\\s*,?\\s*"?[0-9]+"?\\s*:|\\s*\\}|$)`;
                     const regex = new RegExp(`"?${key}"?\\s*:\\s*(.*?)(?=${lookahead}`, 's');
+                    
                     const match = textResponse.match(regex);
                     if (match) {
                         let val = match[1].trim();
