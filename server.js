@@ -14,7 +14,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// Ruta pentru validarea cheilor (ocolire CORS)
 app.get('/validate-key', async (req, res) => {
     const key = req.query.key;
     if (!key) return res.status(400).send('No key provided');
@@ -29,7 +28,6 @@ app.get('/validate-key', async (req, res) => {
     }
 });
 
-// Ruta specială, super-ușoară, pentru cron-job
 app.get('/ping', (req, res) => {
     res.status(200).send('OK');
 });
@@ -48,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.73',
+    version: '2.3.75',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -84,7 +82,6 @@ app.get('/:configData/configure', (req, res) => {
     });
 });
 
-// ==== RUTELE SECRETE PENTRU ARHIVA DE TESTARE ====
 app.get('/arhiva-secreta', (req, res) => {
     let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
     html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
@@ -117,7 +114,6 @@ app.get('/download-srt/:index', (req, res) => {
     res.setHeader('Content-type', 'text/plain; charset=utf-8');
     res.send(item.content);
 });
-// ===================================================
 
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
@@ -347,7 +343,6 @@ function cleanTextForJson(text) {
     let clean = text;
 
     clean = clean.replace(/<[^>]+>/g, '');
-    
     clean = clean.replace(/[♪♫♬♩#]/gi, '');
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
@@ -366,7 +361,6 @@ function cleanTextForJson(text) {
     let lines = clean.split('\n');
     lines = lines.map(line => {
         let l = line.trim();
-        
         let changed = true;
         while(changed) {
             const match = l.match(/^([-—–−\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
@@ -376,20 +370,15 @@ function cleanTextForJson(text) {
                 changed = false;
             }
         }
-
-        if (/^[-—–−.,!?\s]*$/.test(l)) {
-            return '';
-        }
+        if (/^[-—–−.,!?\s]*$/.test(l)) return '';
         
         l = l.replace(/[♪♫♬♩#]/gi, '');
         l = l.replace(/\[\s*\]/g, ''); 
         l = l.replace(/\(\s*\)/g, '');
-        
         return l;
     });
 
     let validLines = lines.filter(l => l !== '');
-    
     validLines = validLines.map(l => {
         if (/^[-—–−]/.test(l)) {
             return l.replace(/^[-—–−]+\s*/, '- '); 
@@ -398,7 +387,6 @@ function cleanTextForJson(text) {
     });
 
     clean = validLines.join('\n');
-
     if (clean.trim() === '') return ' ';
     return clean.trim();
 }
@@ -449,24 +437,18 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
+    // REGULI BLINDATE - PRIND ORICE VARIAȚIE A AI-ULUI
     const dictionar = [
-        [/încetează s\b/gi, 'nu te mai'],
-        [/încetează să/gi, 'nu te mai'],
-        [/te uiți la țâțele/gi, 'holba la sânii'],
-        [/țâțele/gi, 'sânii'],
-        [/Ț-a dat-o/gi, 'Ți-a dat-o'],
-        [/ți-s dragi/gi, 'îți plac'],
-        [/când aire un moment/gi, 'când ai un moment'],
-        [/când aire puțin timp/gi, 'când ai puțin timp'],
-        [/când aire o secund/gi, 'când ai o secundă'],
-        [/când aimai un secund/gi, 'când ai puțin timp'],
-        [/Aproape am gata,\s*Bronco\./gi, 'Suntem aproape acolo, Bronco.'],
-        [/Aproape am gata/gi, 'Suntem aproape acolo'],
-        [/Suntem aproape acolo/gi, 'Imediat ajungem'],
-        [/Am fost plătit\./gi, 'Mi-am primit banii.'],
-        [/Am fost plătit\b/gi, 'Mi-am primit banii'],
-        [/oprește-te din a-mi oferi decolteul/gi, 'nu te mai holba la sânii mei'],
-        [/oprește-te din a-mi privi sânii/gi, 'nu te mai holba la sânii mei'],
+        [/c[aă]nd\s+ai[a-z]*\s+(o\s+secund[aă]?|un\s+secund|un\s+moment|pu[țt]in\s+timp)/gi, 'când ai o secundă'],
+        [/opre[șs]te-te\s+din\s+a-mi.*?s[âa]nii/gi, 'nu te mai holba la sânii mei'],
+        [/opre[șs]te-te\s+din\s+a-mi.*?decolteul/gi, 'nu te mai holba la sânii mei'],
+        [/[îi]nceteaz[aă]\s+s[ăa]?\s+te\s+ui[țt]i.*?(\bțâțele\b|\bsânii\b)/gi, 'nu te mai holba la sânii mei'],
+        [/[ȚTțt]-a\s+dat-o/g, 'Ți-a dat-o'],
+        [/[țt]ie\s+[țt]i-s\s+dragi/gi, 'ție îți plac'],
+        [/Am\s+fost\s+pl[ăa]tit[aă]?\b/gi, 'Mi-am primit banii'],
+        [/Aproape\s+am\s+gata\b/gi, 'Suntem aproape acolo'],
+        [/Suntem\s+aproape\s+acolo\b/gi, 'Imediat ajungem'],
+
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
         [/zămislirea asta/gi, 'porcăria asta'], [/onoare apre noastre/gi, 'onoarea noastră'],
