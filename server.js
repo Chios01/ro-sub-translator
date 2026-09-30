@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.53',
+    version: '2.3.54',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -886,10 +886,10 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // REDUS LA 75 PENTRU O PRECIZIE MAI BUNĂ A MODELULUI
     const CHUNK_SIZE = 75; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
+    // PĂSTRĂM CONCURENȚA LA 3
     let CONCURRENCY_LIMIT = 3; 
 
     let allTranslatedTexts = [];
@@ -902,10 +902,10 @@ async function translateSrtWithGemini(srtText, userKeys) {
     for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
         const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
         
-        // DECALAJ DE 400MS ÎNTRE CALUPURI PENTRU A PROTEJA CHEILE
         const batchPromises = batchChunks.map(async (chunk, indexInBatch) => {
+            // PAUZĂ DE 1.5 SECUNDE ÎNTRE CELE 3 CERERI SIMULTANE PENTRU A PROTEJA IP-UL
             if (indexInBatch > 0) {
-                await new Promise(r => setTimeout(r, indexInBatch * 400));
+                await new Promise(r => setTimeout(r, indexInBatch * 1500));
             }
             return processChunkWithRetry(chunk, i + indexInBatch, chunks.length, keyState);
         });
@@ -914,6 +914,9 @@ async function translateSrtWithGemini(srtText, userKeys) {
         batchResults.forEach(translatedTextsArray => {
             allTranslatedTexts.push(...translatedTextsArray);
         });
+
+        // PAUZĂ DE 4 SECUNDE DUPĂ FIECARE GRUP PENTRU A NU DEPĂȘI LIMITA DE 15 RPM
+        await new Promise(r => setTimeout(r, 4000));
     }
 
     blocks.forEach((block, index) => {
