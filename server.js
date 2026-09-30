@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.59',
+    version: '2.3.60',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -749,9 +749,9 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             const prompt = `You are a high-end cinematic subtitle translator. Your job is to adapt English JSON subtitles into natural, conversational Romanian. DO NOT translate word-for-word.
 
 <rules>
-1. ADAPT IDIOMS & CONTEXT: Never translate idioms literally. Use natural Romanian equivalents for slang.
-2. STRICT ORTHOGRAPHY: Do not rush. NEVER invent words. NEVER combine English words with Romanian suffixes (e.g., do not write "galaxitul" or "dobandit"). Use ONLY valid words from the standard Romanian dictionary.
-3. PERFECT GRAMMAR: You MUST use proper Romanian diacritics (ă, â, î, ș, ț). Double-check your spelling! Avoid nonsensical typos (e.g., write "ții minte" NOT "ații minte"). Use hyphens correctly ("s-a", "m-am", "l-a").
+1. CRITICAL - DO NOT SKIP ANY LINES: You MUST return EXACTLY the same number of keys as the input. If the input has ${currentBatchSize} lines, your JSON output MUST contain exactly ${currentBatchSize} lines. Do not truncate the JSON. Do not combine two lines into one. 
+2. STRICT ORTHOGRAPHY: Do not rush. NEVER invent words. NEVER combine English words with Romanian suffixes. Use ONLY valid words from the standard Romanian dictionary.
+3. PERFECT GRAMMAR: You MUST use proper Romanian diacritics (ă, â, î, ș, ț). Double-check your spelling! Use hyphens correctly ("s-a", "m-am", "l-a").
 4. CLEAN UP: Remove all audio tags (e.g., [sighs]) and hesitations (uh, ah, um). DO NOT translate proper names (Homelander, Starlight, etc.).
 5. JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact input keys. Do not add markdown or extra text.
 </rules>
