@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.72',
+    version: '2.3.73',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -258,7 +258,6 @@ app.get('/:configData/translate', async (req, res) => {
 
     const cacheKey = targetUrl;
 
-    // AM READUS CACHE-UL EXACT CUM ERA ÎNAINTE, CA SĂ NU MAI TRADUCĂ IAR LA DERULARE
     if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
         res.setHeader('Content-Type', 'text/srt; charset=utf-8');
         return res.send(memoryCache[cacheKey]);
@@ -450,19 +449,24 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // AICI SUNT TOATE REZOLVĂRILE PRECISE
     const dictionar = [
-        [/când aimai un secund/gi, 'când ai puțin timp'],
+        [/încetează s\b/gi, 'nu te mai'],
+        [/încetează să/gi, 'nu te mai'],
+        [/te uiți la țâțele/gi, 'holba la sânii'],
+        [/țâțele/gi, 'sânii'],
+        [/Ț-a dat-o/gi, 'Ți-a dat-o'],
+        [/ți-s dragi/gi, 'îți plac'],
+        [/când aire un moment/gi, 'când ai un moment'],
         [/când aire puțin timp/gi, 'când ai puțin timp'],
         [/când aire o secund/gi, 'când ai o secundă'],
-        [/când aire un moment/gi, 'când ai un moment'],
+        [/când aimai un secund/gi, 'când ai puțin timp'],
         [/Aproape am gata,\s*Bronco\./gi, 'Suntem aproape acolo, Bronco.'],
         [/Aproape am gata/gi, 'Suntem aproape acolo'],
+        [/Suntem aproape acolo/gi, 'Imediat ajungem'],
         [/Am fost plătit\./gi, 'Mi-am primit banii.'],
         [/Am fost plătit\b/gi, 'Mi-am primit banii'],
         [/oprește-te din a-mi oferi decolteul/gi, 'nu te mai holba la sânii mei'],
         [/oprește-te din a-mi privi sânii/gi, 'nu te mai holba la sânii mei'],
-        
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
         [/zămislirea asta/gi, 'porcăria asta'], [/onoare apre noastre/gi, 'onoarea noastră'],
