@@ -687,7 +687,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let contentErrorCount = 0; 
     const maxAttempts = 15; 
 
-    // Cheia este setată ÎNAFARA buclei, astfel încât o păstrăm pentru recuperări (reciclam cererile eșuate parțial)
+    // Cheia este setată ÎNAFARA buclei, astfel încât o păstrăm pentru recuperări
     let currentKeyObj = null;
     let keyIndex = -1;
     let apiKey = null;
@@ -736,7 +736,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         }
 
         const modelName = 'gemini-3.5-flash-lite';
-        
         let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
@@ -746,36 +745,19 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise (Calup ${globalChunkIndex + 1} | Aceeași cheie: ${keyIndex})...${c.reset}`);
             }
             
-            const prompt = `You are a high-end cinematic subtitle translator. Your job is to adapt English JSON subtitles into natural, conversational Romanian. DO NOT translate word-for-word.
+            const prompt = `You are an automated JSON translation engine. Your ONLY purpose is to translate English subtitle arrays into Romanian while strictly preserving the exact JSON structure.
+
+CRITICAL SYSTEM REQUIREMENT:
+The input JSON contains EXACTLY ${currentBatchSize} items. You MUST output EXACTLY ${currentBatchSize} items. 
+Do NOT merge lines. Do NOT skip any keys. Every single key from the input must be present in the output JSON. Stopping early or omitting a key will cause a fatal system crash.
 
 <rules>
-1. CRITICAL - DO NOT SKIP ANY LINES: You MUST return EXACTLY the same number of keys as the input. If the input has ${currentBatchSize} lines, your JSON output MUST contain exactly ${currentBatchSize} lines. Do not truncate the JSON. Do not combine two lines into one. 
-2. STRICT ORTHOGRAPHY: Do not rush. NEVER invent words. NEVER combine English words with Romanian suffixes. Use ONLY valid words from the standard Romanian dictionary.
+1. ADAPT IDIOMS & CONTEXT: Translate naturally into conversational Romanian, not word-for-word.
+2. STRICT ORTHOGRAPHY: NEVER invent words. NEVER combine English words with Romanian suffixes. Use ONLY standard valid words.
 3. PERFECT GRAMMAR: You MUST use proper Romanian diacritics (ă, â, î, ș, ț). Double-check your spelling! Use hyphens correctly ("s-a", "m-am", "l-a").
-4. CLEAN UP: Remove all audio tags (e.g., [sighs]) and hesitations (uh, ah, um). DO NOT translate proper names (Homelander, Starlight, etc.).
+4. CLEAN UP: Remove all audio tags (e.g., [sighs], [music]). DO NOT translate character names.
 5. JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact input keys. Do not add markdown or extra text.
 </rules>
-
-<examples>
-Input: {
-  "1": "I am gonna beat his ass.",
-  "2": "She played my ass like jazz.",
-  "3": "Are you afraid?",
-  "4": "What's up, man?"
-}
-BAD Output (DO NOT DO THIS): {
-  "1": "O să-i bat fundul.",
-  "2": "Mi-a cântat la fund ca la jazz.",
-  "3": "Ești frică?",
-  "4": "Ce faci, man?"
-}
-GOOD Output (DO THIS): {
-  "1": "O să-i rup oasele.",
-  "2": "M-a jucat pe degete.",
-  "3": "Ți-e frică?",
-  "4": "Ce faci, omule?"
-}
-</examples>
 
 Translate this JSON:
 ${JSON.stringify(batchToProcess)}`;
@@ -877,7 +859,7 @@ ${JSON.stringify(batchToProcess)}`;
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
                 console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul...${c.reset}`);
                 
-                // Forțăm alegerea unei chei noi pentru următoarea iterație a acestui calup
+                // Forțăm alegerea unei chei noi
                 apiKey = null;
                 
                 await new Promise(r => setTimeout(r, sleepTime));
@@ -911,7 +893,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    // MĂRIM CALUPUL LA 165 PENTRU A SCĂDEA NUMĂRUL DE CERERI LA GOOGLE
     const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     let CONCURRENCY_LIMIT = 3; 
@@ -927,7 +908,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
         const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
         
         const batchPromises = batchChunks.map(async (chunk, indexInBatch) => {
-            // Pauză de 1.5 secunde între cererile simultane (staggering)
             if (indexInBatch > 0) {
                 await new Promise(r => setTimeout(r, indexInBatch * 1500));
             }
@@ -939,7 +919,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
             allTranslatedTexts.push(...translatedTextsArray);
         });
 
-        // Pauza redusă la 1.5 secunde la final de grup pentru a recâștiga din timp
+        // Pauza redusă la 1.5 secunde la final de grup
         await new Promise(r => setTimeout(r, 1500));
     }
 
