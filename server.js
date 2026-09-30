@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.64',
+    version: '2.3.66',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -450,9 +450,12 @@ function formatSubtitleLine(text) {
     text = finalMergedLines.join('\n');
     
     const dictionar = [
-        [/când aimai un secund/gi, 'când mai am o secundă'],
+        [/când aimai un secund/gi, 'când ai puțin timp'],
         [/când aire puțin timp/gi, 'când ai puțin timp'],
         [/oprește-te din a-mi privi sânii/gi, 'nu te mai holba la sânii mei'],
+        [/Am fost plătit\./gi, 'Am fost plătită.'],
+        [/Am fost plătit\b/gi, 'Am fost plătită'],
+        [/Suntem aproape acolo/gi, 'Imediat ajungem'],
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
         [/zămislirea asta/gi, 'porcăria asta'], [/onoare apre noastre/gi, 'onoarea noastră'],
@@ -660,7 +663,7 @@ function formatSubtitleLine(text) {
         }
     }
 
-    return finalLines.map(l => l.replace(/^[-—–−]+\s*/g, '')).join('\n');
+    return finalLines.map(l => l.replace(/^[-—–−+\s*/g, '')).join('\n');
 }
 
 function fixBrokenJson(text) {
