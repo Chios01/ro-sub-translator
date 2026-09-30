@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.61',
+    version: '2.3.60',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -172,25 +172,14 @@ async function handleSubtitles(req, res) {
         if (engSubs.length === 0) return res.json({ subtitles: [] });
 
         let diverseSubs = [];
-        // Filtru extins: elimină tot ce e CAM, TS, Telesync, Telecine și resurse fără o rezoluție clară
-        const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet|ts|cam/i;
+        const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
 
         engSubs.forEach((sub, idx) => {
             let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
-            
-            // Verificăm dacă titlul conține o rezoluție clară sau un format bun
-            const hasValidResolution = /(2160p|1080p|720p|4k|bluray|web-dl|webrip|remux)/i.test(realName);
-
-            // Filtrăm gunoiul și păstrăm doar ce are o calitate menționată în titlu
-            if (!trashRegex.test(realName) && hasValidResolution) {
+            if (!trashRegex.test(realName)) {
                 diverseSubs.push({ originalUrl: sub.url, realName, index: idx });
             }
         });
-
-        // Dacă filtrul a fost prea dur și n-a rămas nimic, luăm măcar prima variantă disponibilă să nu lăsăm gol
-        if (diverseSubs.length === 0 && engSubs.length > 0) {
-            diverseSubs.push({ originalUrl: engSubs[0].url, realName: engSubs[0].title || 'Fallback', index: 0 });
-        }
 
         const fNameLower = userFilename.toLowerCase();
         const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
