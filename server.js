@@ -29,6 +29,11 @@ app.get('/validate-key', async (req, res) => {
     }
 });
 
+// Ruta specială, super-ușoară, pentru cron-job
+app.get('/ping', (req, res) => {
+    res.status(200).send('OK');
+});
+
 const c = {
     green: '\x1b[32m',
     yellow: '\x1b[33m',
@@ -43,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.51',
+    version: '2.3.52',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -554,7 +559,7 @@ function formatSubtitleLine(text) {
         [/L\.D\.M\.:\s*/gi, ''], [/MOTHER'S\s+MILK:\s*/gi, ''],
         [/CĂCAT:\s*/gi, ''], [/Francezule/gi, 'Frenchie'],
         [/Găt\s+cu\s+minciunile/gi, 'Gata cu minciunile'], [/unde\s+băts/gi, 'unde bați'],
-        [/\bisiune/gi, 'presiune'], [/vei\s+să\s+fii/gi, 'vrei să fii'],
+        [/\bisiune/gi, 'presiune'], [/vei\s+s+fii/gi, 'vrei să fii'],
         [/Transfer\s+is\s+available/gi, 'Transferul este disponibil'], [/Cosmic\s+rationale/gi, 'Raționament cosmic'],
         [/are\s+fiecare\s+oase/gi, 'are toate oasele'], [/ju-i\s+vadă/gi, 'să-i vadă'],
         [/blugi\s+Imițație/gi, 'blugi imitație'], [/paranoiad/gi, 'paranoic'],
@@ -579,17 +584,6 @@ function formatSubtitleLine(text) {
         [/\bmi au\b/gi, 'mi-au'], [/\bți a\b/gi, 'ți-a'], [/\bți au\b/gi, 'ți-au'],
         [/\bi a\b/gi, 'i-a'], [/\bi au\b/gi, 'i-au'],
         [/îmbrăcați vă/gi, 'îmbrăcați-vă'], [/luându ți/gi, 'luându-ți'],
-        [/\b1-ar\b/gi, 'l-ar'], [/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''],
-        [/\baire\b/g, 'ai'], [/\bAire\b/g, 'Ai'], [/\baver\b/g, 'ai'], [/\bAver\b/g, 'Ai'],
-        [/\bman spui\b/gi, 'îmi spui'], [/\b[Îî]cerci\b/g, 'încerci'],
-        [/Fă-ca acasă/gi, 'Simte-te ca acasă'], [/să suferit/gi, 'să sufăr'],
-        [/\bcev\b/gi, 'ceva'], [/săcerci/gi, 'să încerci'], [/\b[Jj]umiți\b/g, 'glumiți'],
-        [/ât ai clipi/gi, 'cât ai clipi'], [/vumat/gi, 'vomat'], [/\bunzn\b/gi, 'un'],
-        [/să veimă mănânci/gi, 'să mănânci'], [/ești nevoie/gi, 'este nevoie'],
-        [/\bștien\b/gi, 'știm'], [/\bcafond\b/gi, 'profund'], [/să fi ratat-o/gi, 'să fi ratat'],
-        [/Mă pornesc la trei/gi, 'Pornesc la trei'], [/\burdă\b/gi, 'undă'],
-        [/\bți vei\b/gi, 'îți vei'], [/nu toată binevenită/gi, 'nu tocmai binevenită'],
-        [/nu mai te/gi, 'nu te mai'], [/sâniile mele/gi, 'sânii mei'], [/sâniile/gi, 'sânii']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
