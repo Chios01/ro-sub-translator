@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.49',
+    version: '2.3.50',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -444,7 +444,7 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // Dicționar centralizat de corecții Array (Toate serialele + noile erori Temp 0.0)
+    // Dicționar centralizat de corecții Array
     const dictionar = [
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
@@ -550,28 +550,15 @@ function formatSubtitleLine(text) {
         [/despre\s+vorbești/gi, 'despre ce vorbești'], [/poate\s+omori/gi, 'poate omorî'], 
         [/Franchiza/gi, 'Franciza'], [/\bP\s+urmă\s+pierdută/gi, 'Urmă pierdută'], 
         [/cât\s+de\s+mult\s+vei\s+în/gi, 'cât de mult vei rezista în'],
-        
-        // NOU: Erori The Boys apărute la Temp 0.0
-        [/Lapte\s+de\s+Mamă/gi, "Mother's Milk"],
-        [/LAPTELE\s+MAMEI:?\s*/gi, ''],
-        [/L\.D\.M\.:\s*/gi, ''],
-        [/MOTHER'S\s+MILK:\s*/gi, ''],
-        [/CĂCAT:\s*/gi, ''],
-        [/Francezule/gi, 'Frenchie'],
-        [/Găt\s+cu\s+minciunile/gi, 'Gata cu minciunile'],
-        [/unde\s+băts/gi, 'unde bați'],
-        [/\bisiune/gi, 'presiune'],
-        [/vei\s+să\s+fii/gi, 'vrei să fii'],
-        [/Transfer\s+is\s+available/gi, 'Transferul este disponibil'],
-        [/Cosmic\s+rationale/gi, 'Raționament cosmic'],
-        [/are\s+fiecare\s+oase/gi, 'are toate oasele'],
-        [/ju-i\s+vadă/gi, 'să-i vadă'],
-        [/blugi\s+Imițație/gi, 'blugi imitație'],
-        [/paranoiad/gi, 'paranoic'],
-        [/\bă\.\.\./gi, ''],
-        [/L\.M\.:\s*/gi, ''],
-        [/M\.M\.:\s*/gi, ''],
-
+        [/Lapte\s+de\s+Mamă/gi, "Mother's Milk"], [/LAPTELE\s+MAMEI:?\s*/gi, ''],
+        [/L\.D\.M\.:\s*/gi, ''], [/MOTHER'S\s+MILK:\s*/gi, ''],
+        [/CĂCAT:\s*/gi, ''], [/Francezule/gi, 'Frenchie'],
+        [/Găt\s+cu\s+minciunile/gi, 'Gata cu minciunile'], [/unde\s+băts/gi, 'unde bați'],
+        [/\bisiune/gi, 'presiune'], [/vei\s+să\s+fii/gi, 'vrei să fii'],
+        [/Transfer\s+is\s+available/gi, 'Transferul este disponibil'], [/Cosmic\s+rationale/gi, 'Raționament cosmic'],
+        [/are\s+fiecare\s+oase/gi, 'are toate oasele'], [/ju-i\s+vadă/gi, 'să-i vadă'],
+        [/blugi\s+Imițație/gi, 'blugi imitație'], [/paranoiad/gi, 'paranoic'],
+        [/\bă\.\.\./gi, ''], [/L\.M\.:\s*/gi, ''], [/M\.M\.:\s*/gi, ''],
         [/\bs a\b/gi, 's-a'], [/\bs au\b/gi, 's-au'], [/\bm am\b/gi, 'm-am'],
         [/\bm a\b/gi, 'm-a'], [/\bm ai\b/gi, 'm-ai'], [/\bn am\b/gi, 'n-am'],
         [/\bn a\b/gi, 'n-a'], [/\bn au\b/gi, 'n-au'], [/\bn ai\b/gi, 'n-ai'],
@@ -889,7 +876,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 165; 
+    const CHUNK_SIZE = 100; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
     let CONCURRENCY_LIMIT = 3; 
