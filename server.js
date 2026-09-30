@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.54',
+    version: '2.3.55',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -606,7 +606,6 @@ function formatSubtitleLine(text) {
 
     let finalLines = text.split('\n').map(l => l.trim()).filter(l => l !== '');
     
-    // LOGICĂ: FORȚEAZĂ MAXIMUM 2 LINII PENTRU A EVITA SUPRAPUNERILE ȘI IEȘIREA DE PE ECRAN
     if (finalLines.length > 2) {
         let joined = finalLines.join(' ');
         let mid = Math.floor(joined.length / 2);
@@ -710,11 +709,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        // =========================================================================
-        // AICI ESTE DEFINIT MODELUL! 
-        // Dacă vrei să testezi modelul standard, schimbă din 'gemini-3.5-flash-lite' 
-        // în 'gemini-3.5-flash' pe linia de mai jos:
-        // =========================================================================
         const modelName = 'gemini-3.5-flash-lite';
         
         let currentBatchSize = Object.keys(batchToProcess).length;
@@ -889,7 +883,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
     const CHUNK_SIZE = 75; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
-    // PĂSTRĂM CONCURENȚA LA 3
     let CONCURRENCY_LIMIT = 3; 
 
     let allTranslatedTexts = [];
@@ -903,7 +896,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
         const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
         
         const batchPromises = batchChunks.map(async (chunk, indexInBatch) => {
-            // PAUZĂ DE 1.5 SECUNDE ÎNTRE CELE 3 CERERI SIMULTANE PENTRU A PROTEJA IP-UL
+            // PAUZĂ DE 1.5 SECUNDE ÎNTRE CELE 3 CERERI SIMULTANE 
             if (indexInBatch > 0) {
                 await new Promise(r => setTimeout(r, indexInBatch * 1500));
             }
@@ -915,8 +908,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
             allTranslatedTexts.push(...translatedTextsArray);
         });
 
-        // PAUZĂ DE 4 SECUNDE DUPĂ FIECARE GRUP PENTRU A NU DEPĂȘI LIMITA DE 15 RPM
-        await new Promise(r => setTimeout(r, 4000));
+        // PAUZĂ DE 8.5 SECUNDE DUPĂ FIECARE GRUP PENTRU A RĂMÂNE SUB 15 RPM
+        await new Promise(r => setTimeout(r, 8500));
     }
 
     blocks.forEach((block, index) => {
