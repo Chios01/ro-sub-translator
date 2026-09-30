@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.68',
+    version: '2.3.70',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -258,9 +258,8 @@ app.get('/:configData/translate', async (req, res) => {
 
     const cacheKey = targetUrl;
 
-    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
-        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
-        return res.send(memoryCache[cacheKey]);
+    if (memoryCache[cacheKey]) {
+        delete memoryCache[cacheKey];
     }
 
     res.writeHead(200, {
@@ -276,39 +275,35 @@ app.get('/:configData/translate', async (req, res) => {
     try {
         let processPromise;
 
-        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
-            processPromise = memoryCache[cacheKey];
-        } else {
-            const startTime = Date.now();
-            
-            processPromise = (async () => {
-                const srtRes = await axios.get(targetUrl, {
-                    headers: { 'User-Agent': BROWSER_USER_AGENT }
-                });
-                
-                const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
-                console.log(`${c.cyan}\n==================================================${c.reset}`);
-                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
-                return await translateSrtWithGemini(srtRes.data, userKeys);
-            })();
-            
-            memoryCache[cacheKey] = processPromise;
-            
-            processPromise.then(translatedSrtString => {
-                memoryCache[cacheKey] = translatedSrtString;
-                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-                let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
-                
-                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-            }).catch(() => {
-                delete memoryCache[cacheKey];
+        const startTime = Date.now();
+        
+        processPromise = (async () => {
+            const srtRes = await axios.get(targetUrl, {
+                headers: { 'User-Agent': BROWSER_USER_AGENT }
             });
-        }
+            
+            const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
+            console.log(`${c.cyan}\n==================================================${c.reset}`);
+            console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
+            console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
+            console.log(`${c.cyan}==================================================\n${c.reset}`);
+            
+            return await translateSrtWithGemini(srtRes.data, userKeys);
+        })();
+        
+        memoryCache[cacheKey] = processPromise;
+        
+        processPromise.then(translatedSrtString => {
+            memoryCache[cacheKey] = translatedSrtString;
+            const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+            let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+            
+            console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+            console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
+            console.log(`${c.cyan}==================================================\n${c.reset}`);
+        }).catch(() => {
+            delete memoryCache[cacheKey];
+        });
 
         const finalSrt = await processPromise;
         
@@ -450,12 +445,15 @@ function formatSubtitleLine(text) {
     text = finalMergedLines.join('\n');
     
     const dictionar = [
+        [/când ai o secund/gi, 'când ai o secundă'],
         [/când aimai un secund/gi, 'când ai puțin timp'],
         [/când aire puțin timp/gi, 'când ai puțin timp'],
         [/când aire o secund/gi, 'când ai o secundă'],
         [/Suntem aproape acolo/gi, 'Imediat ajungem'],
+        [/Aproape am gata/gi, 'Aproape am gata'],
         [/Am fost plătit\./gi, 'Am fost plătită.'],
         [/Am fost plătit\b/gi, 'Am fost plătită'],
+        [/oprește-te din a-mi oferi decolteul/gi, 'nu te mai holba la sânii mei'],
         [/oprește-te din a-mi privi sânii/gi, 'nu te mai holba la sânii mei'],
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
