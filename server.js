@@ -444,7 +444,7 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // Dicționar centralizat de corecții (Regex, Înlocuire)
+    // Dicționar centralizat de corecții Array (Toate serialele + noile erori Temp 0.0)
     const dictionar = [
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
@@ -535,8 +535,7 @@ function formatSubtitleLine(text) {
         [/asuri\s+în\s+mânecă/gi, 'ași în mânecă'], [/misecundă/gi, 'milisecundă'],
         [/prin\s+care-un\s+ființă/gi, 'printr-o ființă'], [/Ticoasă/gi, 'Ticăloasă'],
         [/\bvreoâun\b/gi, 'vreun'], [/O\s+morman/gi, 'Un morman'],
-        [/pe\s+federali\s+de/gi, 'pe federalii de'], [/L\.M\.:\s*/gi, ''],
-        [/M\.M\.:\s*/gi, ''], [/te\s+ajutai\s+cu/gi, 'te-ai înhăitat cu'],
+        [/pe\s+federali\s+de/gi, 'pe federalii de'], [/te\s+ajutai\s+cu/gi, 'te-ai înhăitat cu'],
         [/fugi\s+dracului/gi, 'du-te dracului'], [/Fiul\s+tăia/gi, 'Fiul tău'],
         [/dobandit/gi, 'bandit'], [/Voresc\s+cu/gi, 'Vorbesc cu'],
         [/Ai\s+grijer[ă]?/gi, 'Ai grijă'], [/te\s+foști/gi, 'te foiești'],
@@ -551,6 +550,28 @@ function formatSubtitleLine(text) {
         [/despre\s+vorbești/gi, 'despre ce vorbești'], [/poate\s+omori/gi, 'poate omorî'], 
         [/Franchiza/gi, 'Franciza'], [/\bP\s+urmă\s+pierdută/gi, 'Urmă pierdută'], 
         [/cât\s+de\s+mult\s+vei\s+în/gi, 'cât de mult vei rezista în'],
+        
+        // NOU: Erori The Boys apărute la Temp 0.0
+        [/Lapte\s+de\s+Mamă/gi, "Mother's Milk"],
+        [/LAPTELE\s+MAMEI:?\s*/gi, ''],
+        [/L\.D\.M\.:\s*/gi, ''],
+        [/MOTHER'S\s+MILK:\s*/gi, ''],
+        [/CĂCAT:\s*/gi, ''],
+        [/Francezule/gi, 'Frenchie'],
+        [/Găt\s+cu\s+minciunile/gi, 'Gata cu minciunile'],
+        [/unde\s+băts/gi, 'unde bați'],
+        [/\bisiune/gi, 'presiune'],
+        [/vei\s+să\s+fii/gi, 'vrei să fii'],
+        [/Transfer\s+is\s+available/gi, 'Transferul este disponibil'],
+        [/Cosmic\s+rationale/gi, 'Raționament cosmic'],
+        [/are\s+fiecare\s+oase/gi, 'are toate oasele'],
+        [/ju-i\s+vadă/gi, 'să-i vadă'],
+        [/blugi\s+Imițație/gi, 'blugi imitație'],
+        [/paranoiad/gi, 'paranoic'],
+        [/\bă\.\.\./gi, ''],
+        [/L\.M\.:\s*/gi, ''],
+        [/M\.M\.:\s*/gi, ''],
+
         [/\bs a\b/gi, 's-a'], [/\bs au\b/gi, 's-au'], [/\bm am\b/gi, 'm-am'],
         [/\bm a\b/gi, 'm-a'], [/\bm ai\b/gi, 'm-ai'], [/\bn am\b/gi, 'n-am'],
         [/\bn a\b/gi, 'n-a'], [/\bn au\b/gi, 'n-au'], [/\bn ai\b/gi, 'n-ai'],
