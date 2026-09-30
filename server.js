@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.48',
+    version: '2.3.49',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -546,8 +546,12 @@ function formatSubtitleLine(text) {
         [/s-a\s+urat/gi, 's-a urcat'], [/Praguesc\s+o/gi, 'Detectez o'],
         [/te\s+ați\s+dat/gi, 'te-ai dat'], [/manții\s+de\s+urât/gi, 'îmi ții de urât'],
         [/gitară/gi, 'chitară'], [/Literal\s+tip/gi, 'Exact ca'],
-        [/noviceule/gi, 'începătorule'], [/\bs a\b/gi, 's-a'], 
-        [/\bs au\b/gi, 's-au'], [/\bm am\b/gi, 'm-am'],
+        [/noviceule/gi, 'începătorule'], [/Aceeai\s+persoană/gi, 'Aceeași persoană'], 
+        [/târâșul\s+ăla\s+cu\s+arcul/gi, 'tirul cu arcul'], [/e\s+este\s+atemporal/gi, 'este atemporal'], 
+        [/despre\s+vorbești/gi, 'despre ce vorbești'], [/poate\s+omori/gi, 'poate omorî'], 
+        [/Franchiza/gi, 'Franciza'], [/\bP\s+urmă\s+pierdută/gi, 'Urmă pierdută'], 
+        [/cât\s+de\s+mult\s+vei\s+în/gi, 'cât de mult vei rezista în'],
+        [/\bs a\b/gi, 's-a'], [/\bs au\b/gi, 's-au'], [/\bm am\b/gi, 'm-am'],
         [/\bm a\b/gi, 'm-a'], [/\bm ai\b/gi, 'm-ai'], [/\bn am\b/gi, 'n-am'],
         [/\bn a\b/gi, 'n-a'], [/\bn au\b/gi, 'n-au'], [/\bn ai\b/gi, 'n-ai'],
         [/\bn o\b/gi, 'n-o'], [/\bl a\b/gi, 'l-a'], [/\bl am\b/gi, 'l-am'],
