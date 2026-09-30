@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.50',
+    version: '2.3.51',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -444,7 +444,7 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // Dicționar centralizat de corecții Array (Toate serialele + noile erori Temp 0.0 + Oppenheimer calup 100)
+    // Dicționar centralizat complet (Toate serialele, Oppenheimer și ultimul episod The Boys)
     const dictionar = [
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
@@ -561,7 +561,14 @@ function formatSubtitleLine(text) {
         [/\bă\.\.\./gi, ''], [/L\.M\.:\s*/gi, ''], [/M\.M\.:\s*/gi, ''],
         [/feșisti/gi, 'fasciști'], [/nicioicâștig/gi, 'niciun câștig'],
         [/Man\s+a\s+fost\s+dor/gi, 'Mi-a fost dor'], [/o\s+exhortație/gi, 'un îndemn'],
-        [/\bVroiam\b/gi, 'Voiam'],
+        [/\bVroiam\b/gi, 'Voiam'], [/staționăm/gi, 'repartizăm'],
+        [/în\s+asta\s+împreună/gi, 'împreună în treaba asta'],
+        [/\bSupe\b/g, 'Erou'], [/\bSupe\s+Terorist/gi, 'Super-Terorist'],
+        [/\bcoterie\b/gi, 'tolbă'], [/Din\s+toamnă/gi, 'În această toamnă'],
+        [/\bMăi!\b/g, 'Băi!'], [/Imițație/g, 'imitație'],
+        [/Buni\s+a\s+mea/gi, 'Bunica mea'],
+        [/Capes\s+for\s+Christ/gi, 'Tabăra Pelerinelor lui Hristos'],
+        [/o\s+vândută/gi, 'm-am vândut'],
 
         [/\bs a\b/gi, 's-a'], [/\bs au\b/gi, 's-au'], [/\bm am\b/gi, 'm-am'],
         [/\bm a\b/gi, 'm-a'], [/\bm ai\b/gi, 'm-ai'], [/\bn am\b/gi, 'n-am'],
