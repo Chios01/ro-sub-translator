@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.71',
+    version: '2.3.72',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -258,7 +258,7 @@ app.get('/:configData/translate', async (req, res) => {
 
     const cacheKey = targetUrl;
 
-    // Cache restaurat complet și funcțional
+    // AM READUS CACHE-UL EXACT CUM ERA ÎNAINTE, CA SĂ NU MAI TRADUCĂ IAR LA DERULARE
     if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
         res.setHeader('Content-Type', 'text/srt; charset=utf-8');
         return res.send(memoryCache[cacheKey]);
@@ -450,17 +450,19 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
+    // AICI SUNT TOATE REZOLVĂRILE PRECISE
     const dictionar = [
-        [/când aire un moment/gi, 'când ai un moment'],
+        [/când aimai un secund/gi, 'când ai puțin timp'],
         [/când aire puțin timp/gi, 'când ai puțin timp'],
         [/când aire o secund/gi, 'când ai o secundă'],
-        [/când aimai un secund/gi, 'când ai puțin timp'],
-        [/Suntem aproape acolo/gi, 'Imediat ajungem'],
-        [/Aproape am gata/gi, 'Aproape am gata'],
-        [/Am fost plătit\./gi, 'Am fost plătită.'],
-        [/Am fost plătit\b/gi, 'Am fost plătită'],
+        [/când aire un moment/gi, 'când ai un moment'],
+        [/Aproape am gata,\s*Bronco\./gi, 'Suntem aproape acolo, Bronco.'],
+        [/Aproape am gata/gi, 'Suntem aproape acolo'],
+        [/Am fost plătit\./gi, 'Mi-am primit banii.'],
+        [/Am fost plătit\b/gi, 'Mi-am primit banii'],
         [/oprește-te din a-mi oferi decolteul/gi, 'nu te mai holba la sânii mei'],
         [/oprește-te din a-mi privi sânii/gi, 'nu te mai holba la sânii mei'],
+        
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
         [/zămislirea asta/gi, 'porcăria asta'], [/onoare apre noastre/gi, 'onoarea noastră'],
@@ -488,7 +490,7 @@ function formatSubtitleLine(text) {
         [/cacealmită/gi, 'toaletă'], [/gogși/gi, 'gogoși'], [/nu\s+se\s+gată/gi, 'nu se termină'],
         [/\bą\b/g, 'ă'], [/\bĄ\b/g, 'Ă'], [/alcineva/gi, 'altcineva'], [/paranoi/gi, 'paranoia'],
         [/nicideun loc/gi, 'nicăieri'], [/ți se sângereze/gi, 'îți sângereze'], [/să le urmat/gi, 'să le urmez'],
-        [/\bman\s+pas[aă]/gi, 'îmi pasă'], [/\bman\s+pl[aă]cem/gi, 'îmi placi'], [/inulam/gi, 'comandam'],
+        [/\bman\s+pas[aă]/gi, 'îmi pasă'], [/\bman\s+pl[aă]cem/gi, 'îmi placi'], [/înulam/gi, 'comandam'],
         [/poșta mea preferată/gi, 'poșeta mea preferată'], [/un acnee/gi, 'o acnee'], [/umele dinților/gi, 'numele dinților'],
         [/cântec a lui/gi, 'cântec al lui'], [/cam aștia/gi, 'cam ăsta'], [/Obișnuiam să mă furișam/gi, 'Obișnuiam să mă furișez'],
         [/Ștergelui total/gi, 'Șterpelind'], [/lăsându-se pe o mână/gi, 'făcând o labă'], [/mănânci curul meu încordat/gi, 'mă pupi în cur'],
