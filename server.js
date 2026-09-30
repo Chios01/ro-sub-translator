@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.52',
+    version: '2.3.57',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -449,7 +449,6 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // Dicționar centralizat complet (Toate serialele, Oppenheimer și ultimul episod The Boys)
     const dictionar = [
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
@@ -489,7 +488,7 @@ function formatSubtitleLine(text) {
         [/construgeam/gi, 'construiam'], [/pătură dracului/gi, 'pătura dracului'], [/ca cadou/gi, 'drept cadou'],
         [/șneșteai/gi, 'regulai'], [/N-ai știi/gi, 'N-ai ști'], [/I-a ținuți/gi, 'I-a ținut'],
         [/Bivolă/gi, 'Vacă'], [/Vreo, Vought/gi, 'Frate, Vought'], [/Supei/g, 'Eroii'],
-        [/Privire de tigru/gi, 'Ochi de tigru'], [/I tu, neurotico, circ de o singură femeie/gi, 'Iar tu, neurotico, ești un circ ambulant'],
+        [/Privire de tigru/gi, 'Ochi de tigru'], [/I tu, neurotico, circ de o single femeie/gi, 'Iar tu, neurotico, ești un circ ambulant'],
         [/Dă cu teancul acela în palmă/gi, 'Lovește teancul de palmă'], [/căci capul lui e/gi, 'pentru că are capul'],
         [/butorii/gi, 'băutorii'], [/am\s+fost\s+alege[tț]i/gi, 'am fost aleși'], [/tras\s+în\s+piepie/gi, 'tras în piept'],
         [/penthaină/gi, 'penthouse'], [/drum runner/gi, 'Road Runner'], [/c[aă]ntat\s+la\s+fund\s+ca\s+la\s+jazz/gi, 'cântat la fund ca la un instrument'],
@@ -559,7 +558,7 @@ function formatSubtitleLine(text) {
         [/L\.D\.M\.:\s*/gi, ''], [/MOTHER'S\s+MILK:\s*/gi, ''],
         [/CĂCAT:\s*/gi, ''], [/Francezule/gi, 'Frenchie'],
         [/Găt\s+cu\s+minciunile/gi, 'Gata cu minciunile'], [/unde\s+băts/gi, 'unde bați'],
-        [/\bisiune/gi, 'presiune'], [/vei\s+s+fii/gi, 'vrei să fii'],
+        [/\bisiune/gi, 'presiune'], [/vei\s+să\s+fii/gi, 'vrei să fii'],
         [/Transfer\s+is\s+available/gi, 'Transferul este disponibil'], [/Cosmic\s+rationale/gi, 'Raționament cosmic'],
         [/are\s+fiecare\s+oase/gi, 'are toate oasele'], [/ju-i\s+vadă/gi, 'să-i vadă'],
         [/blugi\s+Imițație/gi, 'blugi imitație'], [/paranoiad/gi, 'paranoic'],
@@ -574,6 +573,16 @@ function formatSubtitleLine(text) {
         [/Buni\s+a\s+mea/gi, 'Bunica mea'],
         [/Capes\s+for\s+Christ/gi, 'Tabăra Pelerinelor lui Hristos'],
         [/o\s+vândută/gi, 'm-am vândut'],
+        [/pe\s+opt\s+de\s+acuzare/gi, 'pe banca acuzaților'],
+        [/ți-o\s+plăcea/gi, 'o să-ți placă'],
+        [/națiile\s+evreilor/gi, 'naziștii evreilor'],
+        [/\bdespere\b/gi, 'despre'],
+        [/\bcombinas\b/gi, 'combin'],
+        [/\bororbit\b/gi, 'orbit'],
+        [/\blosem\b/gi, 'fusesem'],
+        [/\$\s*aflu/gi, 'o aflu'],
+        [/smilă\s+de\s+milă/gi, 'să ne plângi de milă'],
+        [/că\s+comisiunea/gi, 'ca respectiva comisie'],
 
         [/\bs a\b/gi, 's-a'], [/\bs au\b/gi, 's-au'], [/\bm am\b/gi, 'm-am'],
         [/\bm a\b/gi, 'm-a'], [/\bm ai\b/gi, 'm-ai'], [/\bn am\b/gi, 'n-am'],
@@ -606,7 +615,6 @@ function formatSubtitleLine(text) {
 
     let finalLines = text.split('\n').map(l => l.trim()).filter(l => l !== '');
     
-    // LOGICĂ: FORȚEAZĂ MAXIMUM 2 LINII PENTRU A EVITA SUPRAPUNERILE ȘI IEȘIREA DE PE ECRAN
     if (finalLines.length > 2) {
         let joined = finalLines.join(' ');
         let mid = Math.floor(joined.length / 2);
@@ -665,6 +673,11 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
     let contentErrorCount = 0; 
     const maxAttempts = 15; 
 
+    // Cheia este setată ÎNAFARA buclei, astfel încât o păstrăm pentru recuperări (reciclam cererile eșuate parțial)
+    let currentKeyObj = null;
+    let keyIndex = -1;
+    let apiKey = null;
+
     while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
         
         let batchToProcess = {};
@@ -685,39 +698,38 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        let currentKeyObj = null;
-        let keyIndex = -1;
-        let apiKey = null;
-
-        while (true) {
-            let availableIndices = [];
-            for (let i = 0; i < keyState.keys.length; i++) {
-                if (Date.now() >= keyState.keys[i].pauseUntil) {
-                    availableIndices.push(i);
+        // Dacă nu avem o cheie activă (prima trecere sau după un 429), luăm una din coadă
+        if (!apiKey) {
+            while (true) {
+                let checkedAll = 0;
+                while (checkedAll < keyState.keys.length) {
+                    let candidateIndex = keyState.index % keyState.keys.length;
+                    keyState.index++; 
+                    checkedAll++;
+                    
+                    if (Date.now() >= keyState.keys[candidateIndex].pauseUntil) {
+                        keyIndex = candidateIndex;
+                        currentKeyObj = keyState.keys[keyIndex];
+                        apiKey = currentKeyObj.value;
+                        currentKeyObj.pauseUntil = Date.now() + 1500; 
+                        break;
+                    }
                 }
+                
+                if (apiKey) break; 
+                await new Promise(r => setTimeout(r, 1000));
             }
-
-            if (availableIndices.length > 0) {
-                let randomIndex = Math.floor(Math.random() * availableIndices.length);
-                keyIndex = availableIndices[randomIndex];
-                currentKeyObj = keyState.keys[keyIndex];
-                apiKey = currentKeyObj.value;
-
-                currentKeyObj.pauseUntil = Date.now() + 1500;
-                break;
-            }
-
-            await new Promise(r => setTimeout(r, 1000));
         }
 
         const modelName = 'gemini-3.5-flash-lite';
+        
         let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
             if (currentBatchSize === expectedTotalCount) {
                 console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
             } else {
-                console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
+                console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise (Calup ${globalChunkIndex + 1} | Aceeași cheie: ${keyIndex})...${c.reset}`);
             }
             
             const prompt = `You are a high-end cinematic subtitle translator. Your job is to adapt English JSON subtitles into natural, conversational Romanian. DO NOT translate word-for-word.
@@ -799,8 +811,6 @@ ${JSON.stringify(batchToProcess)}`;
                 const keys = Object.keys(batchToProcess);
                 for (let i = 0; i < keys.length; i++) {
                     const key = keys[i];
-                    const nextKey = keys[i + 1];
-                    
                     const lookahead = `\\s*,?\\s*"?\\d+"?\\s*:|\\s*\\}|$)`;
                     const regex = new RegExp(`"?${key}"?\\s*:\\s*(.*?)(?=${lookahead}`, 's');
                     
@@ -835,7 +845,10 @@ ${JSON.stringify(batchToProcess)}`;
             if (Object.keys(keysToTranslate).length === 0) {
                 console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${expectedTotalCount}/${expectedTotalCount} linii)${c.reset}`);
                 break; 
-            } 
+            } else {
+                // Recuperare: Păstrăm aceeași cheie și facem pauză de 2 secunde pentru a evita 429
+                await new Promise(r => setTimeout(r, 2000));
+            }
 
         } catch (error) {
             attempts++;
@@ -848,19 +861,23 @@ ${JSON.stringify(batchToProcess)}`;
                 currentKeyObj.pauseUntil = Date.now() + 61000;
                 globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
                 const sleepTime = Math.floor(10000 + Math.random() * 5000);
-                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul 10s... (Aștept ${(sleepTime/1000).toFixed(1)}s)${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul...${c.reset}`);
+                
+                // Forțăm alegerea unei chei noi pentru următoarea iterație a acestui calup
+                apiKey = null;
+                
                 await new Promise(r => setTimeout(r, sleepTime));
             } else if (error.response && error.response.status === 503) {
                 const waitTime = 3000 + (attempts * 1500);
-                console.log(`${c.yellow}⚠ [Gemini] 503 Server Google ocupat. Aștept ${(waitTime/1000).toFixed(1)}s (${attempts}/${maxAttempts})...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] 503 Server ocupat. Aștept ${(waitTime/1000).toFixed(1)}s (Păstrez cheia)...${c.reset}`);
                 await new Promise(r => setTimeout(r, waitTime));
             } else if (error.message && error.message.toLowerCase().includes('timeout')) {
-                console.log(`${c.yellow}⚠ [Gemini] Timeout. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] Timeout. Reîncercare (Păstrez cheia)...${c.reset}`);
                 await new Promise(r => setTimeout(r, 2000));
             } else {
                 contentErrorCount++;
-                console.log(`${c.magenta}⚠ [Gemini] Eroare format/cenzură. Reîncercare (${attempts}/${maxAttempts})...${c.reset}`);
-                await new Promise(r => setTimeout(r, 1000));
+                console.log(`${c.magenta}⚠ [Gemini] Eroare format. Reîncercare (Păstrez cheia)...${c.reset}`);
+                await new Promise(r => setTimeout(r, 1500));
             }
         }
     }
@@ -882,7 +899,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
     
     const CHUNK_SIZE = 100; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
-    
     let CONCURRENCY_LIMIT = 3; 
 
     let allTranslatedTexts = [];
@@ -894,7 +910,12 @@ async function translateSrtWithGemini(srtText, userKeys) {
 
     for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
         const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
-        const batchPromises = batchChunks.map((chunk, indexInBatch) => {
+        
+        const batchPromises = batchChunks.map(async (chunk, indexInBatch) => {
+            // Pauză între cererile simultane (staggering)
+            if (indexInBatch > 0) {
+                await new Promise(r => setTimeout(r, indexInBatch * 1500));
+            }
             return processChunkWithRetry(chunk, i + indexInBatch, chunks.length, keyState);
         });
         
@@ -902,6 +923,9 @@ async function translateSrtWithGemini(srtText, userKeys) {
         batchResults.forEach(translatedTextsArray => {
             allTranslatedTexts.push(...translatedTextsArray);
         });
+
+        // Pauza normală între grupurile de calupuri
+        await new Promise(r => setTimeout(r, 3000));
     }
 
     blocks.forEach((block, index) => {
