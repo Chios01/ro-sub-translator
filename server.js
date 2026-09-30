@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.52',
+    version: '2.3.53',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -449,7 +449,7 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // Dicționar centralizat complet (Toate serialele, Oppenheimer și ultimul episod The Boys)
+    // Dicționar centralizat complet
     const dictionar = [
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
@@ -489,7 +489,7 @@ function formatSubtitleLine(text) {
         [/construgeam/gi, 'construiam'], [/pătură dracului/gi, 'pătura dracului'], [/ca cadou/gi, 'drept cadou'],
         [/șneșteai/gi, 'regulai'], [/N-ai știi/gi, 'N-ai ști'], [/I-a ținuți/gi, 'I-a ținut'],
         [/Bivolă/gi, 'Vacă'], [/Vreo, Vought/gi, 'Frate, Vought'], [/Supei/g, 'Eroii'],
-        [/Privire de tigru/gi, 'Ochi de tigru'], [/I tu, neurotico, circ de o singură femeie/gi, 'Iar tu, neurotico, ești un circ ambulant'],
+        [/Privire de tigru/gi, 'Ochi de tigru'], [/I tu, neurotico, circ de o single femeie/gi, 'Iar tu, neurotico, ești un circ ambulant'],
         [/Dă cu teancul acela în palmă/gi, 'Lovește teancul de palmă'], [/căci capul lui e/gi, 'pentru că are capul'],
         [/butorii/gi, 'băutorii'], [/am\s+fost\s+alege[tț]i/gi, 'am fost aleși'], [/tras\s+în\s+piepie/gi, 'tras în piept'],
         [/penthaină/gi, 'penthouse'], [/drum runner/gi, 'Road Runner'], [/c[aă]ntat\s+la\s+fund\s+ca\s+la\s+jazz/gi, 'cântat la fund ca la un instrument'],
@@ -559,7 +559,7 @@ function formatSubtitleLine(text) {
         [/L\.D\.M\.:\s*/gi, ''], [/MOTHER'S\s+MILK:\s*/gi, ''],
         [/CĂCAT:\s*/gi, ''], [/Francezule/gi, 'Frenchie'],
         [/Găt\s+cu\s+minciunile/gi, 'Gata cu minciunile'], [/unde\s+băts/gi, 'unde bați'],
-        [/\bisiune/gi, 'presiune'], [/vei\s+s+fii/gi, 'vrei să fii'],
+        [/\bisiune/gi, 'presiune'], [/vei\s+să\s+fii/gi, 'vrei să fii'],
         [/Transfer\s+is\s+available/gi, 'Transferul este disponibil'], [/Cosmic\s+rationale/gi, 'Raționament cosmic'],
         [/are\s+fiecare\s+oase/gi, 'are toate oasele'], [/ju-i\s+vadă/gi, 'să-i vadă'],
         [/blugi\s+Imițație/gi, 'blugi imitație'], [/paranoiad/gi, 'paranoic'],
@@ -710,7 +710,13 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
+        // =========================================================================
+        // AICI ESTE DEFINIT MODELUL! 
+        // Dacă vrei să testezi modelul standard, schimbă din 'gemini-3.5-flash-lite' 
+        // în 'gemini-3.5-flash' pe linia de mai jos:
+        // =========================================================================
         const modelName = 'gemini-3.5-flash-lite';
+        
         let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
@@ -880,7 +886,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 100; 
+    // REDUS LA 75 PENTRU O PRECIZIE MAI BUNĂ A MODELULUI
+    const CHUNK_SIZE = 75; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
     let CONCURRENCY_LIMIT = 3; 
@@ -894,7 +901,12 @@ async function translateSrtWithGemini(srtText, userKeys) {
 
     for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
         const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
-        const batchPromises = batchChunks.map((chunk, indexInBatch) => {
+        
+        // DECALAJ DE 400MS ÎNTRE CALUPURI PENTRU A PROTEJA CHEILE
+        const batchPromises = batchChunks.map(async (chunk, indexInBatch) => {
+            if (indexInBatch > 0) {
+                await new Promise(r => setTimeout(r, indexInBatch * 400));
+            }
             return processChunkWithRetry(chunk, i + indexInBatch, chunks.length, keyState);
         });
         
