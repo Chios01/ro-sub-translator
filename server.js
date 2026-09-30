@@ -29,7 +29,7 @@ app.get('/validate-key', async (req, res) => {
     }
 });
 
-// Ruta specială, super-ușoară, pentru cron-job
+// Ruta specială pentru cron-job
 app.get('/ping', (req, res) => {
     res.status(200).send('OK');
 });
@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.55',
+    version: '2.3.56',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -449,7 +449,7 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // Dicționar centralizat complet
+    // Dicționar centralizat
     const dictionar = [
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
@@ -688,24 +688,29 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         let keyIndex = -1;
         let apiKey = null;
 
+        // =========================================================================
+        // NOUA LOGICĂ DE ROTAȚIE SECVENȚIALĂ A CHEILOR (Round-Robin Rigid)
+        // Nu mai luăm chei la întâmplare, ci în ordine: 1, 2, 3, 4, 5...
+        // =========================================================================
         while (true) {
-            let availableIndices = [];
-            for (let i = 0; i < keyState.keys.length; i++) {
-                if (Date.now() >= keyState.keys[i].pauseUntil) {
-                    availableIndices.push(i);
+            let checkedAll = 0;
+            while (checkedAll < keyState.keys.length) {
+                let candidateIndex = keyState.index % keyState.keys.length;
+                keyState.index++; 
+                checkedAll++;
+                
+                if (Date.now() >= keyState.keys[candidateIndex].pauseUntil) {
+                    keyIndex = candidateIndex;
+                    currentKeyObj = keyState.keys[keyIndex];
+                    apiKey = currentKeyObj.value;
+                    currentKeyObj.pauseUntil = Date.now() + 1500; 
+                    break;
                 }
             }
-
-            if (availableIndices.length > 0) {
-                let randomIndex = Math.floor(Math.random() * availableIndices.length);
-                keyIndex = availableIndices[randomIndex];
-                currentKeyObj = keyState.keys[keyIndex];
-                apiKey = currentKeyObj.value;
-
-                currentKeyObj.pauseUntil = Date.now() + 1500;
-                break;
-            }
-
+            
+            if (apiKey) break; 
+            
+            // Dacă absolut TOATE cele 10 chei sunt pe pauză, așteaptă o secundă și reia căutarea
             await new Promise(r => setTimeout(r, 1000));
         }
 
@@ -896,7 +901,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
         const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
         
         const batchPromises = batchChunks.map(async (chunk, indexInBatch) => {
-            // PAUZĂ DE 1.5 SECUNDE ÎNTRE CELE 3 CERERI SIMULTANE 
             if (indexInBatch > 0) {
                 await new Promise(r => setTimeout(r, indexInBatch * 1500));
             }
@@ -908,8 +912,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
             allTranslatedTexts.push(...translatedTextsArray);
         });
 
-        // PAUZĂ DE 8.5 SECUNDE DUPĂ FIECARE GRUP PENTRU A RĂMÂNE SUB 15 RPM
-        await new Promise(r => setTimeout(r, 8500));
+        // Pauză suplimentară la final de grup pentru IP / limită rate (siguranță maximă)
+        await new Promise(r => setTimeout(r, 4500));
     }
 
     blocks.forEach((block, index) => {
