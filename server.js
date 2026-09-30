@@ -444,7 +444,7 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // Dicționar centralizat de corecții Array
+    // Dicționar centralizat de corecții Array (Toate serialele + noile erori Temp 0.0 + Oppenheimer calup 100)
     const dictionar = [
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
@@ -559,6 +559,10 @@ function formatSubtitleLine(text) {
         [/are\s+fiecare\s+oase/gi, 'are toate oasele'], [/ju-i\s+vadă/gi, 'să-i vadă'],
         [/blugi\s+Imițație/gi, 'blugi imitație'], [/paranoiad/gi, 'paranoic'],
         [/\bă\.\.\./gi, ''], [/L\.M\.:\s*/gi, ''], [/M\.M\.:\s*/gi, ''],
+        [/feșisti/gi, 'fasciști'], [/nicioicâștig/gi, 'niciun câștig'],
+        [/Man\s+a\s+fost\s+dor/gi, 'Mi-a fost dor'], [/o\s+exhortație/gi, 'un îndemn'],
+        [/\bVroiam\b/gi, 'Voiam'],
+
         [/\bs a\b/gi, 's-a'], [/\bs au\b/gi, 's-au'], [/\bm am\b/gi, 'm-am'],
         [/\bm a\b/gi, 'm-a'], [/\bm ai\b/gi, 'm-ai'], [/\bn am\b/gi, 'n-am'],
         [/\bn a\b/gi, 'n-a'], [/\bn au\b/gi, 'n-au'], [/\bn ai\b/gi, 'n-ai'],
@@ -715,7 +719,6 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise pentru calupul ${globalChunkIndex + 1}...${c.reset}`);
             }
             
-            // Prompt hibrid blindat: Interzicem combinarea de sufixe si cuvinte inventate
             const prompt = `You are a high-end cinematic subtitle translator. Your job is to adapt English JSON subtitles into natural, conversational Romanian. DO NOT translate word-for-word.
 
 <rules>
@@ -756,7 +759,7 @@ ${JSON.stringify(batchToProcess)}`;
                     contents: [{ parts: [{ text: prompt }] }],
                     generationConfig: { 
                         response_mime_type: "application/json",
-                        temperature: 0.0 // Setat la 0.0 pentru a bloca halucinatiile vocabularului
+                        temperature: 0.0
                     },
                     safetySettings: [
                         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
