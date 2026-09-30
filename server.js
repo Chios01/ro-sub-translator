@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.58',
+    version: '2.3.59',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -911,7 +911,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 100; 
+    // MĂRIM CALUPUL LA 165 PENTRU A SCĂDEA NUMĂRUL DE CERERI LA GOOGLE
+    const CHUNK_SIZE = 165; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     let CONCURRENCY_LIMIT = 3; 
 
@@ -926,7 +927,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
         const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
         
         const batchPromises = batchChunks.map(async (chunk, indexInBatch) => {
-            // Pauză între cererile simultane (staggering)
+            // Pauză de 1.5 secunde între cererile simultane (staggering)
             if (indexInBatch > 0) {
                 await new Promise(r => setTimeout(r, indexInBatch * 1500));
             }
@@ -938,7 +939,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
             allTranslatedTexts.push(...translatedTextsArray);
         });
 
-        // Pauza redusă la 1.5 secunde la final de grup
+        // Pauza redusă la 1.5 secunde la final de grup pentru a recâștiga din timp
         await new Promise(r => setTimeout(r, 1500));
     }
 
