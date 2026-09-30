@@ -29,7 +29,7 @@ app.get('/validate-key', async (req, res) => {
     }
 });
 
-// Ruta specială pentru cron-job
+// Ruta specială, super-ușoară, pentru cron-job
 app.get('/ping', (req, res) => {
     res.status(200).send('OK');
 });
@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.56',
+    version: '2.3.52',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -449,7 +449,7 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // Dicționar centralizat
+    // Dicționar centralizat complet (Toate serialele, Oppenheimer și ultimul episod The Boys)
     const dictionar = [
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
@@ -489,7 +489,7 @@ function formatSubtitleLine(text) {
         [/construgeam/gi, 'construiam'], [/pătură dracului/gi, 'pătura dracului'], [/ca cadou/gi, 'drept cadou'],
         [/șneșteai/gi, 'regulai'], [/N-ai știi/gi, 'N-ai ști'], [/I-a ținuți/gi, 'I-a ținut'],
         [/Bivolă/gi, 'Vacă'], [/Vreo, Vought/gi, 'Frate, Vought'], [/Supei/g, 'Eroii'],
-        [/Privire de tigru/gi, 'Ochi de tigru'], [/I tu, neurotico, circ de o single femeie/gi, 'Iar tu, neurotico, ești un circ ambulant'],
+        [/Privire de tigru/gi, 'Ochi de tigru'], [/I tu, neurotico, circ de o singură femeie/gi, 'Iar tu, neurotico, ești un circ ambulant'],
         [/Dă cu teancul acela în palmă/gi, 'Lovește teancul de palmă'], [/căci capul lui e/gi, 'pentru că are capul'],
         [/butorii/gi, 'băutorii'], [/am\s+fost\s+alege[tț]i/gi, 'am fost aleși'], [/tras\s+în\s+piepie/gi, 'tras în piept'],
         [/penthaină/gi, 'penthouse'], [/drum runner/gi, 'Road Runner'], [/c[aă]ntat\s+la\s+fund\s+ca\s+la\s+jazz/gi, 'cântat la fund ca la un instrument'],
@@ -559,7 +559,7 @@ function formatSubtitleLine(text) {
         [/L\.D\.M\.:\s*/gi, ''], [/MOTHER'S\s+MILK:\s*/gi, ''],
         [/CĂCAT:\s*/gi, ''], [/Francezule/gi, 'Frenchie'],
         [/Găt\s+cu\s+minciunile/gi, 'Gata cu minciunile'], [/unde\s+băts/gi, 'unde bați'],
-        [/\bisiune/gi, 'presiune'], [/vei\s+să\s+fii/gi, 'vrei să fii'],
+        [/\bisiune/gi, 'presiune'], [/vei\s+s+fii/gi, 'vrei să fii'],
         [/Transfer\s+is\s+available/gi, 'Transferul este disponibil'], [/Cosmic\s+rationale/gi, 'Raționament cosmic'],
         [/are\s+fiecare\s+oase/gi, 'are toate oasele'], [/ju-i\s+vadă/gi, 'să-i vadă'],
         [/blugi\s+Imițație/gi, 'blugi imitație'], [/paranoiad/gi, 'paranoic'],
@@ -606,6 +606,7 @@ function formatSubtitleLine(text) {
 
     let finalLines = text.split('\n').map(l => l.trim()).filter(l => l !== '');
     
+    // LOGICĂ: FORȚEAZĂ MAXIMUM 2 LINII PENTRU A EVITA SUPRAPUNERILE ȘI IEȘIREA DE PE ECRAN
     if (finalLines.length > 2) {
         let joined = finalLines.join(' ');
         let mid = Math.floor(joined.length / 2);
@@ -688,34 +689,28 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
         let keyIndex = -1;
         let apiKey = null;
 
-        // =========================================================================
-        // NOUA LOGICĂ DE ROTAȚIE SECVENȚIALĂ A CHEILOR (Round-Robin Rigid)
-        // Nu mai luăm chei la întâmplare, ci în ordine: 1, 2, 3, 4, 5...
-        // =========================================================================
         while (true) {
-            let checkedAll = 0;
-            while (checkedAll < keyState.keys.length) {
-                let candidateIndex = keyState.index % keyState.keys.length;
-                keyState.index++; 
-                checkedAll++;
-                
-                if (Date.now() >= keyState.keys[candidateIndex].pauseUntil) {
-                    keyIndex = candidateIndex;
-                    currentKeyObj = keyState.keys[keyIndex];
-                    apiKey = currentKeyObj.value;
-                    currentKeyObj.pauseUntil = Date.now() + 1500; 
-                    break;
+            let availableIndices = [];
+            for (let i = 0; i < keyState.keys.length; i++) {
+                if (Date.now() >= keyState.keys[i].pauseUntil) {
+                    availableIndices.push(i);
                 }
             }
-            
-            if (apiKey) break; 
-            
-            // Dacă absolut TOATE cele 10 chei sunt pe pauză, așteaptă o secundă și reia căutarea
+
+            if (availableIndices.length > 0) {
+                let randomIndex = Math.floor(Math.random() * availableIndices.length);
+                keyIndex = availableIndices[randomIndex];
+                currentKeyObj = keyState.keys[keyIndex];
+                apiKey = currentKeyObj.value;
+
+                currentKeyObj.pauseUntil = Date.now() + 1500;
+                break;
+            }
+
             await new Promise(r => setTimeout(r, 1000));
         }
 
         const modelName = 'gemini-3.5-flash-lite';
-        
         let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
@@ -885,7 +880,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
         return { id: index, text: cleanTextForJson(b.text) };
     });
     
-    const CHUNK_SIZE = 75; 
+    const CHUNK_SIZE = 100; 
     const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
     
     let CONCURRENCY_LIMIT = 3; 
@@ -899,11 +894,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
 
     for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
         const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
-        
-        const batchPromises = batchChunks.map(async (chunk, indexInBatch) => {
-            if (indexInBatch > 0) {
-                await new Promise(r => setTimeout(r, indexInBatch * 1500));
-            }
+        const batchPromises = batchChunks.map((chunk, indexInBatch) => {
             return processChunkWithRetry(chunk, i + indexInBatch, chunks.length, keyState);
         });
         
@@ -911,9 +902,6 @@ async function translateSrtWithGemini(srtText, userKeys) {
         batchResults.forEach(translatedTextsArray => {
             allTranslatedTexts.push(...translatedTextsArray);
         });
-
-        // Pauză suplimentară la final de grup pentru IP / limită rate (siguranță maximă)
-        await new Promise(r => setTimeout(r, 4500));
     }
 
     blocks.forEach((block, index) => {
