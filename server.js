@@ -43,7 +43,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.46',
+    version: '2.3.47',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -627,8 +627,9 @@ function formatSubtitleLine(text) {
     text = rw(text, 'impermiabile', 'impermeabile', 'gi');
     text = rw(text, 'fulul', 'pachetul', 'gi');
 
-    // Corecturi pentru The Ark
+    // Corecturi The Ark
     text = text.replace(/Data\s+anteriori/gi, 'Data trecută');
+    text = text.replace(/Data\s+anteriore/gi, 'Data anterioară');
     text = text.replace(/mai\s+inferior/gi, 'inferior');
     text = text.replace(/bloodshed/gi, 'vărsare de sânge');
     text = text.replace(/nu\s+parți\s+să/gi, 'nu pari să');
@@ -639,6 +640,13 @@ function formatSubtitleLine(text) {
     text = text.replace(/Măriți!\s+Din\s+nou!/gi, 'Minți! Din nou!');
     text = text.replace(/man\s+raportezi/gi, 'îmi raportezi');
     text = text.replace(/holdului/gi, 'calei');
+    text = text.replace(/cloni\s+născuți/gi, 'clone născute');
+    text = text.replace(/prava\s+de/gi, 'prora de');
+    text = text.replace(/s-a\s+urat/gi, 's-a urcat');
+    text = text.replace(/Praguesc\s+o/gi, 'Detectez o');
+    text = text.replace(/te\s+ați\s+dat/gi, 'te-ai dat');
+    text = text.replace(/manții\s+de\s+urât/gi, 'îmi ții de urât');
+    text = text.replace(/gitară/gi, 'chitară');
 
     // Corecturi pentru "Disclosure Day"
     text = text.replace(/caceagmată/gi, 'cacealma');
@@ -692,7 +700,7 @@ function formatSubtitleLine(text) {
     text = text.replace(/aceași/gi, 'aceeași');
     text = text.replace(/Man,\s+îmi\s+era/gi, 'Omule, îmi era');
 
-    // Corecturi The Boys S1E6 & S1E7
+    // Corecturi The Boys (Toate)
     text = text.replace(/jeftină/gi, 'ieftină');
     text = text.replace(/mai\s+de\s+la\s+sat/gi, 'mai cu picioarele pe pământ');
     text = text.replace(/N-a\s+s-a\s+schimbat/gi, 'Nu s-a schimbat');
@@ -724,8 +732,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/misecundă/gi, 'milisecundă');
     text = text.replace(/prin\s+care-un\s+ființă/gi, 'printr-o ființă');
     text = text.replace(/Ticoasă/gi, 'Ticăloasă');
-
-    // NOU: Corecturi The Boys S1E8
     text = text.replace(/vreoâun/gi, 'vreun');
     text = text.replace(/O\s+morman/gi, 'Un morman');
     text = text.replace(/pe\s+federali\s+de/gi, 'pe federalii de');
@@ -733,6 +739,20 @@ function formatSubtitleLine(text) {
     text = text.replace(/M\.M\.:\s*/gi, '');
     text = text.replace(/te\s+ajutai\s+cu/gi, 'te-ai înhăitat cu');
     text = text.replace(/fugi\s+dracului/gi, 'du-te dracului');
+
+    // NOU: Corecturi The Gentlemen
+    text = text.replace(/Fiul\s+tăia/gi, 'Fiul tău');
+    text = text.replace(/dobandit/gi, 'bandit');
+    text = text.replace(/Voresc\s+cu/gi, 'Vorbesc cu');
+    text = text.replace(/Ai\s+grijer[ă]?/gi, 'Ai grijă');
+    text = text.replace(/te\s+foști/gi, 'te foiești');
+    text = text.replace(/Nu\s+te\s+mai\s+foști/gi, 'Nu te mai foi');
+    text = text.replace(/nepoliTicăloasă/gi, 'nepoliticoasă');
+    text = text.replace(/Dragăo/gi, 'Drago');
+
+    // NOU: Corecturi Green Lantern
+    text = text.replace(/Literal\s+tip/gi, 'Exact ca');
+    text = text.replace(/noviceule/gi, 'începătorule');
 
     text = text.replace(/\b1(?=[a-zăâîșțĂÂÎȘȚ]{2,})/gi, ''); 
     text = rw(text, '1-ar', 'l-ar', 'gi');
