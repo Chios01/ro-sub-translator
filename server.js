@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.66',
+    version: '2.3.67',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -416,7 +416,7 @@ function formatSubtitleLine(text) {
     
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/([.?!])\s+[-—–−\s]+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
+    text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     let lines = text.split('\n');
     lines = lines.map(l => {
@@ -452,10 +452,11 @@ function formatSubtitleLine(text) {
     const dictionar = [
         [/când aimai un secund/gi, 'când ai puțin timp'],
         [/când aire puțin timp/gi, 'când ai puțin timp'],
-        [/oprește-te din a-mi privi sânii/gi, 'nu te mai holba la sânii mei'],
+        [/când aire o secund/gi, 'când ai o secundă'],
+        [/Suntem aproape acolo/gi, 'Imediat ajungem'],
         [/Am fost plătit\./gi, 'Am fost plătită.'],
         [/Am fost plătit\b/gi, 'Am fost plătită'],
-        [/Suntem aproape acolo/gi, 'Imediat ajungem'],
+        [/oprește-te din a-mi privi sânii/gi, 'nu te mai holba la sânii mei'],
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
         [/zămislirea asta/gi, 'porcăria asta'], [/onoare apre noastre/gi, 'onoarea noastră'],
@@ -663,7 +664,7 @@ function formatSubtitleLine(text) {
         }
     }
 
-    return finalLines.map(l => l.replace(/^[-—–−+\s*/g, '')).join('\n');
+    return finalLines.map(l => l.replace(/^[-—–−\s*/g, '')).join('\n');
 }
 
 function fixBrokenJson(text) {
