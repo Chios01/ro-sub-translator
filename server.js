@@ -716,7 +716,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        const modelName = 'gemini-3.5-flash-lite';
+        const modelName = 'gemini-3.5-flash';
         let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
