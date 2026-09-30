@@ -48,7 +48,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.3.57',
+    version: '2.3.58',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -583,6 +583,20 @@ function formatSubtitleLine(text) {
         [/\$\s*aflu/gi, 'o aflu'],
         [/smilă\s+de\s+milă/gi, 'să ne plângi de milă'],
         [/că\s+comisiunea/gi, 'ca respectiva comisie'],
+        [/S-a născut\?\s*S-a născut\./gi, 'Born? Born.'],
+        [/rechizitoriumul/gi, 'rechizitoriul'],
+        [/Oricicum/gi, 'Oricum'],
+        [/umele cuantic/gi, 'universul cuantic'],
+        [/pe sleiau/gi, 'pe șleau'],
+        [/feștiști/gi, 'fasciști'],
+        [/amenințătoare mai mare/gi, 'amenințare mai mare'],
+        [/spune veche despre/gi, 'spune o vorbă despre'],
+        [/nicio scrupulă/gi, 'niciun scrupul'],
+        [/pe pline/gi, 'din plin'],
+        [/să o anihilez/gi, 'să o afirm'],
+        [/Dumnezeule în trei persoane/gi, 'Dumnezeu în trei ipostaze'],
+        [/Comisiunea/g, 'Comisia'],
+        [/Comisiunii/g, 'Comisiei'],
 
         [/\bs a\b/gi, 's-a'], [/\bs au\b/gi, 's-au'], [/\bm am\b/gi, 'm-am'],
         [/\bm a\b/gi, 'm-a'], [/\bm ai\b/gi, 'm-ai'], [/\bn am\b/gi, 'n-am'],
@@ -924,8 +938,8 @@ async function translateSrtWithGemini(srtText, userKeys) {
             allTranslatedTexts.push(...translatedTextsArray);
         });
 
-        // Pauza normală între grupurile de calupuri
-        await new Promise(r => setTimeout(r, 3000));
+        // Pauza redusă la 1.5 secunde la final de grup
+        await new Promise(r => setTimeout(r, 1500));
     }
 
     blocks.forEach((block, index) => {
