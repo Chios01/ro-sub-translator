@@ -1,992 +1,2597 @@
 const express = require('express');
 const axios = require('axios');
-const Parser = require('srt-parser-2').default;
 const path = require('path');
 const fs = require('fs');
 
-console.log = (...args) => process.stdout.write(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ') + '\n');
-
 const app = express();
 
+app.use(express.json({ limit: '2mb' }));
+
 app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header(
+        'Access-Control-Allow-Headers',
+        'Origin, X-Requested-With, Content-Type, Accept'
+    );
     next();
 });
 
-app.get('/validate-key', async (req, res) => {
-    const key = req.query.key;
-    if (!key) return res.status(400).send('No key provided');
+// ============================================================
+// BASIC CONFIG
+// ============================================================
 
-    try {
-        const check = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`, { timeout: 5000 });
-        if (check.status === 200) {
-            return res.json({ valid: true });
-        }
-    } catch (e) {
-        return res.json({ valid: false });
-    }
-});
+const BROWSER_USER_AGENT =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+    '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-app.get('/ping', (req, res) => {
-    res.status(200).send('OK');
-});
+const CHUNK_SIZE = 165;
+
+const CONCURRENCY_LIMIT = Math.max(
+    1,
+    Math.min(
+        3,
+        Number(process.env.TRANSLATION_CONCURRENCY) || 3
+    )
+);
+
+const CONTEXT_LINES_BEFORE = 12;
+const CONTEXT_LINES_AFTER = 12;
+const PREVIOUS_TRANSLATION_CONTEXT = 8;
+
+const MODEL_NAME =
+    process.env.GEMINI_MODEL ||
+    'gemini-3.5-flash-lite';
+
+// ============================================================
+// CONSOLE COLORS
+// ============================================================
 
 const c = {
+    reset: '\x1b[0m',
+    red: '\x1b[31m',
     green: '\x1b[32m',
     yellow: '\x1b[33m',
-    red: '\x1b[31m',
-    cyan: '\x1b[36m',
+    blue: '\x1b[34m',
     magenta: '\x1b[35m',
-    reset: '\x1b[0m'
+    cyan: '\x1b[36m'
 };
 
-const memoryCache = {}; 
-const secretArchive = []; 
+// ============================================================
+// MEMORY
+// ============================================================
+
+const memoryCache = Object.create(null);
+
+const secretArchive = [];
+
+function cleanMemoryCache() {
+    const keys = Object.keys(memoryCache);
+
+    if (keys.length > 30) {
+        for (let i = 0; i < 5; i++) {
+            if (keys[i]) {
+                delete memoryCache[keys[i]];
+            }
+        }
+    }
+}
+
+// ============================================================
+// MANIFEST
+// ============================================================
 
 const manifest = {
-    id: 'community.chios.geminitranslator', 
+    id: 'ro.sub.translator',
     version: '12.8.0',
     name: 'RO Sub Translator',
-    logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
-    description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
-    resources: ['subtitles'],
-    types: ['movie', 'series'],
+    description:
+        'Traducere cinematică automată English → Romanian cu Gemini',
+    resources: [
+        'subtitles'
+    ],
+    types: [
+        'movie',
+        'series'
+    ],
     catalogs: [],
-    idPrefixes: ['tt'],
-    behaviorHints: {
-        configurable: true,
-        configurationRequired: false
-    }
+    idPrefixes: [
+        'tt'
+    ]
 };
 
-const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+// ============================================================
+// ROOT
+// ============================================================
 
 app.get('/', (req, res) => {
-    fs.readFile(path.join(__dirname, 'index.html'), 'utf8', (err, data) => {
-        if (err) return res.sendFile(path.join(__dirname, 'index.html'));
-        const updatedHtml = data.replace(/{{VERSION}}/g, manifest.version);
-        res.send(updatedHtml);
-    });
+    const indexPath = path.join(
+        __dirname,
+        'index.html'
+    );
+
+    if (fs.existsSync(indexPath)) {
+        return res.sendFile(indexPath);
+    }
+
+    res.send(
+        'RO Sub Translator is running.'
+    );
 });
+
+// ============================================================
+// PING
+// ============================================================
+
+app.get('/ping', (req, res) => {
+    res.send('OK');
+});
+
+// ============================================================
+// VALIDATE GEMINI KEY
+// ============================================================
+
+app.get('/validate-key', async (req, res) => {
+    const key =
+        String(req.query.key || '').trim();
+
+    if (!key) {
+        return res.status(400).json({
+            valid: false,
+            error: 'Missing API key'
+        });
+    }
+
+    try {
+        const response = await axios.get(
+            'https://generativelanguage.googleapis.com/v1beta/models',
+            {
+                params: {
+                    key
+                },
+                timeout: 20000
+            }
+        );
+
+        return res.json({
+            valid: true,
+            models:
+                response.data?.models || []
+        });
+
+    } catch (error) {
+        return res.status(
+            error.response?.status || 500
+        ).json({
+            valid: false,
+            error:
+                error.response?.data ||
+                error.message
+        });
+    }
+});
+
+// ============================================================
+// CONFIGURE
+// ============================================================
+
+app.get('/:configData/configure', (req, res) => {
+    res.send(`
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RO Sub Translator</title>
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #111;
+    color: #eee;
+    padding: 30px;
+}
+.container {
+    max-width: 800px;
+    margin: auto;
+}
+textarea {
+    width: 100%;
+    min-height: 180px;
+    background: #222;
+    color: #fff;
+    border: 1px solid #444;
+    padding: 12px;
+    box-sizing: border-box;
+}
+button {
+    margin-top: 15px;
+    padding: 12px 20px;
+    cursor: pointer;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>RO Sub Translator</h1>
+<p>
+Introdu cheile Gemini, câte una pe linie.
+</p>
+<textarea id="keys"></textarea>
+<br>
+<button onclick="save()">Salvează</button>
+<script>
+function save() {
+    const keys =
+        document.getElementById('keys')
+            .value
+            .split(/\\n+/)
+            .map(x => x.trim())
+            .filter(Boolean);
+
+    if (!keys.length) {
+        alert('Introdu cel puțin o cheie.');
+        return;
+    }
+
+    const encoded =
+        btoa(JSON.stringify(keys));
+
+    const url =
+        location.origin +
+        '/' +
+        encoded +
+        '/manifest.json';
+
+    window.location.href = url;
+}
+</script>
+</div>
+</body>
+</html>
+    `);
+});
+
+// ============================================================
+// MANIFEST ROUTE
+// ============================================================
 
 app.get('/:configData/manifest.json', (req, res) => {
     res.json(manifest);
 });
 
-app.get('/:configData/configure', (req, res) => {
-    fs.readFile(path.join(__dirname, 'index.html'), 'utf8', (err, data) => {
-        if (err) return res.sendFile(path.join(__dirname, 'index.html'));
-        const updatedHtml = data.replace(/{{VERSION}}/g, manifest.version);
-        res.send(updatedHtml);
-    });
+// ============================================================
+// ARCHIVE
+// ============================================================
+
+app.get('/archive', (req, res) => {
+    res.json(secretArchive);
 });
 
-app.get('/arhiva-secreta', (req, res) => {
-    let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
-    html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
-    html += '<h2 style="color:#0f0;">Arhiva Subtitrări (Ultimele 10)</h2>';
-    html += '<p>Aceste fișiere sunt reținute temporar în memoria serverului. Se vor șterge la restart.</p>';
-    
-    if (secretArchive.length === 0) {
-        html += '<p style="color:#aaa;">Nicio subtitrare tradusă momentan.</p>';
-    } else {
-        html += '<ul style="list-style-type:none; padding:0;">';
-        secretArchive.forEach((item, index) => {
-            html += `<li style="background:#222; margin-bottom:10px; padding:15px; border-radius:5px;">
-                <strong style="color:#0bf;">ID: ${item.id}</strong> <span style="color:#888; font-size:0.9em;">(${item.time})</span><br><br>
-                <a href="/download-srt/${index}" style="background:#0bf; color:#000; text-decoration:none; padding:8px 12px; border-radius:4px; font-weight:bold;">Descarcă fisier .srt</a>
-            </li>`;
-        });
-        html += '</ul>';
+app.get('/archive/:index', (req, res) => {
+    const index =
+        Number(req.params.index);
+
+    if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= secretArchive.length
+    ) {
+        return res.status(404).send(
+            'Archive item not found'
+        );
     }
-    html += '</body></html>';
-    res.send(html);
+
+    res.type('text/plain').send(
+        secretArchive[index].content
+    );
 });
 
-app.get('/download-srt/:index', (req, res) => {
-    const index = parseInt(req.params.index);
-    if (isNaN(index) || !secretArchive[index]) {
-        return res.status(404).send('Fișierul nu există sau a fost șters automat din memorie.');
-    }
-    const item = secretArchive[index];
-    res.setHeader('Content-disposition', `attachment; filename=RO_${item.id}.srt`);
-    res.setHeader('Content-type', 'text/plain; charset=utf-8');
-    res.send(item.content);
-});
+// ============================================================
+// SUBTITLE FETCHING
+// ============================================================
 
 async function handleSubtitles(req, res) {
-    const { configData, type, id, extra } = req.params;
+    const type =
+        req.params.type;
 
-    const host = req.headers.host;
-    const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
-    const baseUrl = `${protocol}://${host}`;
+    const id =
+        req.params.id;
 
-    let extraString = '';
-    let userFilename = '';
+    const extra =
+        req.params.extra || '';
 
-    if (extra) {
-        extraString = '/' + extra;
-        try {
-            const params = new URLSearchParams(extra);
-            userFilename = params.get('filename') || '';
-        } catch (e) {}
+    const params =
+        new URLSearchParams(extra);
+
+    let targetUrl =
+        params.get('url') ||
+        req.query.url ||
+        req.query.targetUrl;
+
+    if (!targetUrl) {
+        return res.json({
+            subtitles: []
+        });
     }
 
-    const urlsToFetch = [
-        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
-        `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
-        `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`
-    ];
+    targetUrl =
+        decodeURIComponent(targetUrl);
 
     try {
-        const fetchPromises = urlsToFetch.map(u => 
-            axios.get(u, { 
-                timeout: 3500, 
-                headers: { 'User-Agent': BROWSER_USER_AGENT } 
-            }).catch(() => ({ data: { subtitles: [] } }))
-        );
-
-        const results = await Promise.all(fetchPromises);
-        
-        let allSubs = [];
-        results.forEach(r => {
-            if (r && r.data && Array.isArray(r.data.subtitles)) {
-                allSubs.push(...r.data.subtitles);
-            }
-        });
-        
-        let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
-        
-        const uniqueUrls = new Set();
-        engSubs = engSubs.filter(sub => {
-            if (uniqueUrls.has(sub.url)) return false;
-            uniqueUrls.add(sub.url);
-            return true;
-        }).slice(0, 25); 
-
-        if (engSubs.length === 0) return res.json({ subtitles: [] });
-
-        let diverseSubs = [];
-        const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
-
-        engSubs.forEach((sub, idx) => {
-            let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
-            if (!trashRegex.test(realName)) {
-                diverseSubs.push({ originalUrl: sub.url, realName, index: idx });
-            }
-        });
-
-        const fNameLower = userFilename.toLowerCase();
-        const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
-
-        diverseSubs.forEach(s => {
-            s.score = 0;
-            const subName = s.realName.toLowerCase();
-            
-            if (videoTokens.length > 0) {
-                let matchCount = 0;
-                videoTokens.forEach(token => {
-                    if (subName.includes(token)) {
-                        s.score += 60; 
-                        matchCount++;
-                    }
-                });
-                
-                if (matchCount > 0 && matchCount >= videoTokens.length / 2) {
-                    s.score += 300; 
-                }
-            }
-
-            if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(subName)) s.score += 40;
-            if (/bluray|brrip|bdrip|bdr/i.test(subName)) s.score += 30;
-            if (/yts|yify|rarbg|tgx|qxr|psa/i.test(subName)) s.score += 20;
-            if (/sdh|hi\.|hearing impaired/i.test(subName)) s.score -= 15; 
-            if (/sync|corregido|resync|translated|auto|machine/i.test(subName)) s.score -= 100;
-        });
-
-        diverseSubs.sort((a, b) => b.score - a.score);
-        diverseSubs = diverseSubs.slice(0, 15);
-
-        const generatedSubs = diverseSubs.map((s, index) => {
-            const encodedUrl = encodeURIComponent(s.originalUrl);
-            
-            let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
-            const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
-            
-            let labelName = `🇷🇴 RO AI [${index + 1}]`;
-            if (tagMatch) {
-                let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
-            }
-
-            return {
-                id: `ai_sub_${index}`,
-                title: labelName, 
-                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
-                lang: 'ron'
-            };
-        });
-
-        return res.json({ subtitles: generatedSubs });
-    } catch (error) {
-        return res.json({ subtitles: [] });
-    }
-}
-
-app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
-app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
-
-function cleanMemoryCache() {
-    const keys = Object.keys(memoryCache);
-    if (keys.length > 30) { 
-        for(let i = 0; i < 5; i++) {
-            if (keys[i]) delete memoryCache[keys[i]];
-        }
-    }
-}
-
-app.get('/:configData/translate', async (req, res) => {
-    const imdbId = req.query.id;
-    const targetUrl = req.query.targetUrl;
-    const configData = req.params.configData;
-
-    if (!targetUrl) return res.status(400).send('Lipsă URL sursă.');
-
-    let userKeys = [];
-    try {
-        const decoded = Buffer.from(configData, 'base64').toString('utf8');
-        userKeys = JSON.parse(decoded);
-    } catch(e) {
-        return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
-    }
-
-    const cacheKey = targetUrl;
-
-    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
-        res.setHeader('Content-Type', 'text/srt; charset=utf-8');
-        return res.send(memoryCache[cacheKey]);
-    }
-
-    res.writeHead(200, {
-        'Content-Type': 'text/srt; charset=utf-8',
-        'Transfer-Encoding': 'chunked'
-    });
-    res.flushHeaders(); 
-
-    const keepAlive = setInterval(() => {
-        res.write(' \n');
-    }, 10000);
-
-    req.on('close', () => {
-        clearInterval(keepAlive);
-    });
-
-    try {
-        let processPromise;
-
-        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
-            processPromise = memoryCache[cacheKey];
-        } else {
-            const startTime = Date.now();
-            
-            processPromise = (async () => {
-                const srtRes = await axios.get(targetUrl, {
-                    headers: { 'User-Agent': BROWSER_USER_AGENT }
-                });
-                
-                const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
-                console.log(`${c.cyan}\n==================================================${c.reset}`);
-                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
-                return await translateSrtWithGemini(srtRes.data, userKeys);
-            })();
-            
-            memoryCache[cacheKey] = processPromise;
-            cleanMemoryCache(); 
-            
-            processPromise.then(translatedSrtString => {
-                memoryCache[cacheKey] = translatedSrtString;
-                cleanMemoryCache(); 
-                
-                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-                let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
-                
-                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
-            }).catch((err) => {
-                console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
-                delete memoryCache[cacheKey];
-            });
-        }
-
-        const finalSrt = await processPromise;
-        
-        if (finalSrt && finalSrt.trim().length > 0) {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
-            
-            secretArchive.unshift({
-                id: imdbId,
-                time: timeStr,
-                content: finalSrt
-            });
-            
-            if (secretArchive.length > 10) {
-                secretArchive.pop();
-            }
-        }
-
-        clearInterval(keepAlive);
-        res.write(finalSrt);
-        res.end();
-
-    } catch (error) {
-        clearInterval(keepAlive);
-        res.end(); 
-    }
-});
-
-const PORT = process.env.PORT || 7000;
-app.listen(PORT, () => {
-    console.log(`${c.green}✔ Serverul rulează pe portul: ${PORT}${c.reset}`);
-});
-
-function cleanTextForJson(text) {
-    if (!text) return text;
-    let clean = text;
-
-    clean = clean.replace(/<[^>]+>/g, '');
-    clean = clean.replace(/[♪♫♬♩#]/gi, '');
-    clean = clean.replace(/â™ª/gi, '');
-    clean = clean.replace(/â™«/gi, '');
-    clean = clean.replace(/\[\s*[♪♫♬♩#]+\s*\]/gi, '');
-    clean = clean.replace(/\(\s*[♪♫♬♩#]+\s*\)/gi, '');
-    clean = clean.replace(/\[.*music.*\]/gi, ''); 
-
-    clean = clean.replace(/\[[\s\S]*?\]/g, ''); 
-    clean = clean.replace(/\([\s\S]*?\)/g, ''); 
-    clean = clean.replace(/\{[\s\S]*?\}/g, ''); 
-    clean = clean.replace(/【[\s\S]*?】/g, ''); 
-    
-    clean = clean.replace(/^[A-Z0-9\s-]{2,}:/gm, '');
-    clean = clean.replace(/"/g, "'");
-
-    let lines = clean.split('\n');
-    lines = lines.map(line => {
-        let l = line.trim();
-        let changed = true;
-        while(changed) {
-            const match = l.match(/^([-—–−\s]*)(oh+|ah+|ooh+|aah+|uh+|ugh+|hm+|um+|mm+|mhm+|eh+|wow+|hey+|shh+)[.,!?\s]*(.*)$/i);
-            if (match) {
-                l = match[1] + match[3].trim();
-            } else {
-                changed = false;
-            }
-        }
-        if (/^[-—–−.,!?\s]*$/.test(l)) return '';
-        
-        l = l.replace(/[♪♫♬♩#]/gi, '');
-        l = l.replace(/\[\s*\]/g, ''); 
-        l = l.replace(/\(\s*\)/g, '');
-        return l;
-    });
-
-    let validLines = lines.filter(l => l !== '');
-    validLines = validLines.map(l => {
-        if (/^[-—–−]/.test(l)) {
-            return l.replace(/^[-—–−]+\s*/, '- '); 
-        }
-        return l;
-    });
-
-    clean = validLines.join('\n');
-    if (clean.trim() === '') return ' ';
-    return clean.trim();
-}
-
-function chunkArray(array, size) {
-    const result = [];
-    for (let i = 0; i < array.length; i += size) {
-        result.push(array.slice(i, i + size));
-    }
-    return result;
-}
-
-function formatSubtitleLine(text) {
-    if (!text) return text;
-
-    let lowerText = text.toLowerCase();
-    
-    if (lowerText.includes('înțeles') && lowerText.includes('hei') && lowerText.includes('când')) {
-        return 'Am înțeles. Hei, când ai o secundă...';
-    }
-    
-    // Regula mai permisivă pentru blocarea aberațiilor vulgare cu "ochi" și "sâni/țâțe"
-    if ((lowerText.includes('holba') || lowerText.includes('uita') || lowerText.includes('ochii') || lowerText.includes('holbezi') || lowerText.includes('oprește-te') || lowerText.includes('termină')) && (/\bsân(i|ii)?\b/.test(lowerText) || lowerText.includes('țâțe') || lowerText.includes('decolteu') || lowerText.includes('tăiței') || lowerText.includes('piept'))) {
-        return 'Nu te mai holba la sânii mei.';
-    }
-    
-    // =========================================================================
-    // NOUA REGULĂ UNIVERSALĂ PENTRU TĂIEREA LITERELOR DE CĂTRE AI (Modificat cu /gm)
-    // =========================================================================
-    text = text.replace(/(^|[\s])([cCsS])(?=[\s.,!?:;]|$)/gm, function(match, spatiu, litera) {
-        return spatiu + litera + 'ă';
-    });
-    
-    text = text.replace(/(^|[\s])([Aa]dic)(?=[\s.,!?:;]|$)/gm, '$1$2ă');
-    // =========================================================================
-
-    text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
-    text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
-
-    const dictionar = [
-        [/\bînța\b/gi, 'apuca'],
-        [/cafondist/gi, 'mojic'],
-        [/Pu[țt]in-Kournikova/gi, 'Rusoaica Pectorală'],
-        [/ghicercici/gi, 'ghicești'],
-        [/dafirma/gi, 'da afară'],
-        [/judicativ[aă]/gi, 'plină de prejudecăți'],
-        [/le-atâmită/gi, 'le tâmpește'],
-        [/n-o\/să nu-i/gi, 'nu-i'],
-        [/\bEu poartă\b/gi, 'Eu port'],
-        [/\bAleile aia\b/gi, 'Chestia aia'],
-        [/s-ți/gi, 'să-ți'],
-        [/s-l/gi, 'să-l'],
-
-        [/man pasă/gi, 'îmi pasă'],
-        [/Mi s-a plătit/gi, 'Mi-am primit banii'],
-        [/debaclul/gi, 'dezastrul'],
-        
-        [/\b[îi]nceteaz[aă]\s+s(?!\w)/gi, 'încetează să'],
-        [/\bVai,\s+mam(?!\w)/gi, 'Vai, mamă'],
-        [/\bhaina\s+aia\s+ridicol(?!\w)/gi, 'haina aia ridicolă'],
-        [/\bpe\s+s[ăa]pt[ăa]m[âa]n(?!\w)/gi, 'pe săptămână'],
-        [/\bde\s+baz(?!\w)/gi, 'de bază'],
-        [/\bdisear(?!\w)/gi, 'diseară'],
-        
-        [/\bcinva\b/gi, 'cineva'],
-        [/\bAm\s+fus\b/gi, 'Am fost'],
-        [/\bdarme\b/gi, 'doarme'],
-        [/\bai\s+grija(?!\w)/gi, 'Ai grijă'],
-        [/\btrebui\s+s[ăa]\s+te\s+cred/gi, 'trebuie să te cred'],
-        [/Stai,\s*stai\.,\.\.\./gi, 'Stai, stai...'],
-        [/[ȚTțt]-a\s+[îi]nchis-o/g, 'Ți-a închis-o'],
-        [/[ȚTțt]-a\s+dat-o/g, 'Ți-a dat-o'],
-        [/[țt]ie\s+[țt]i-s\s+dragi/gi, 'ție îți plac'],
-        [/Bun[ăa]\s+ziua,\s+azi\./gi, 'Bună ziua.'],
-        [/Ar[ăa][țt]i\s+at[âa]t\s+de\s+frumos\b/gi, 'Arăți atât de frumoasă'], 
-        [/[Șs]i\s+to[țt]i-a\s+trebuit\s+s[ăa]\s+pretind[ăa]/gi, 'Și toți au trebuit să se prefacă'],
-        [/care\s+e\s+a\s+latului\s+drumurilor/gi, 'care a ajuns pe drumuri'],
-        [/\bbutonizi\b/gi, 'butoni'],
-        [/\ble-atrobesc\b/gi, 'le prostesc'],
-        [/\bAm\s+fost\s+pl[ăa]tit\b/gi, 'Am fost plătită'],
-        [/(Aproape\s+am\s+gata|Suntem\s+aproape\s+acolo)/gi, 'Imediat ajungem'],
-        [/O\s+să\s+dea\s+la\s+o\s+parte\s+agresiv/gi, 'O să se dea la tine agresiv'],
-        [/fundul\s+tău\s+strâns/gi, 'fundul tău scorțos'],
-        [/sunetul\s+care-ți\s+aduce\s+servire/gi, 'sunetul la care primești servire'],
-
-        [/(^|\n)\s*tu\s+n-ai\s+un\s+loc/gi, '$1Tu n-ai un loc'],
-        [/(^|\n)\s*femeie\s+sexy/gi, '$1Femeie sexy'],
-        [/(^|\n)\s*ai\s+curte\?/gi, '$1Ai curte?'],
-        [/(^|\n)\s*bun[aă]\./gi, '$1Bună.'],
-        [/(^|\n)\s*da\./gi, '$1Da.'],
-        [/(^|\n)\s*ai\s+grija\./gi, '$1Ai grijă.'],
-
-        [/\b(hă)?rțuire\b/gi, 'hărțuire'],
-        [/\b(m)?usile\b/gi, 'ușile'],
-        [/\bute-ai\b/gi, 'te-ai'],
-        [/\buniții\b/gi, 'muniții'],
-        [/\bmisia\b/gi, 'misiunea'],
-        [/\bbutorii\b/gi, 'băutorii'],
-        [/\bholdului\b/gi, 'calei'],
-        [/umele\s+cuantic/gi, 'universul cuantic'],
-        [/\bdobandit\b/gi, 'bandit'],
-        [/\bTicoasă\b/gi, 'Ticăloasă'],
-        [/\bfulul\b/gi, 'pachetul'],
-        [/\biai\s+pragul\b/gi, 'treci pragul'],
-        
-        [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
-        [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
-        [/zămislirea asta/gi, 'porcăria asta'], [/onoare apre noastre/gi, 'onoarea noastră'],
-        [/zărelul/gi, 'zahărelul'], [/\bacor\b/gi, 'acestor'], [/ketchuipurile/gi, 'ketchupurile'],
-        [/\brțile\b/gi, 'știrile'], [/\bnhưng\b/gi, 'dar'], [/\bnithe\b/gi, 'niște'], [/Stucați/gi, 'Scuzați'],
-        [/putemos/gi, 'putem'], [/Robinei/gi, 'lui Robin'], [/măsurą/gi, 'măsura'], [/să fiică/gi, 'să fie'],
-        [/lemnul de divorț/gi, 'divorț'], [/Poftă\?/gi, 'Poftim?'], [/dădadă/gi, 'dădacă'],
-        [/să se fină/gi, 'să se prefacă'], [/bet merici/gi, 'dar meriți'],
-        [/în toată regla/gi, 'în toată regula'], [/sunt extinși/gi, 'sunt pe cale de dispariție'],
-        [/Nu-mi vine să crezi/gi, 'Nu-mi vine să cred'], [/Bâțâială fină/gi, 'Râgâială fină'],
-        [/Aia e [sS]ânul meu/gi, 'Ăla e sânul meu'], [/ție datorităție/gi, 'datorită ție'],
-        [/îndoaie-te cu toate astea/gi, 'servește-te cu toate astea'], [/natătăfleață/gi, 'nătăfleață'],
-        [/cuțitul de pernă/gi, 'cuțitul de sub pernă'], [/și-a predat în sfârșit pantofii/gi, 'a dat ortul popii'],
-        [/Atunci\s+spune[tț]i\s+c[aă][\s.,]+(Glumi[tț]i|Jumi[tț]i|Jeta[tț]i|Jre[tț]i|Jura[tț]i|Jne|[Jj]ă)\.?/gi, 'Atunci spuneți că vă pare rău.'],
-        [/Trebuie\s+să\s+mă\s+(prefac|fac)\s+parcă\s+nu\s+s-a\s+întâmplat/gi, 'Trebuie să mă prefac că nu s-a întâmplat'],
-        [/parcă\s+nu\s+țțineam\s+brațele\s+lui\s+Robin\s+în\s+mâinile\s+mele/gi, 'că nu țineam brațele lui Robin în mâinile mele'],
-        [/\bJreți\b/gi, 'vă'], [/\b[Jj]ă\b/gi, 'vă'], [/\bJți\b/g, 'Îți'], [/\bjți\b/g, 'îți'],
-        [/\bJne\b/gi, 'vă'], [/Jetați/gi, 'vă pare rău'], [/\bineam\b/g, 'țineam'], [/\bIneam\b/g, 'Țineam'],
-        [/țțineam/gi, 'țineam'], [/Țțineam/g, 'Țineam'], [/mă fac că nu/gi, 'mă prefac că nu'],
-        [/prefac parcă/gi, 'prefac de parcă'], [/spune[tț]i\s+c[aă]\s+[îÎ]ți\s+pare/gi, 'spuneți că vă pare'],
-        [/eu\s+chiar\s+mai\s+sunt\s+foame/gi, 'mie chiar mi-e foame'], [/\bînd\b/gi, 'când'],
-        [/concururile/gi, 'concursurile'], [/emigru/gi, 'imigrant'], [/n-ofi/gi, 'să nu fii'],
-        [/și-și/gi, 'și'], [/ținea\s+so\s+cu\s+aia/gi, 'ținea sus cu aia'], [/sunt\s+ștearsă/gi, 'sunt șterse'],
-        [/cacealmită/gi, 'toaletă'], [/gogși/gi, 'gogoși'], [/nu\s+se\s+gată/gi, 'nu se termină'],
-        [/\bą\b/g, 'ă'], [/\bĄ\b/g, 'Ă'], [/alcineva/gi, 'altcineva'], [/paranoi/gi, 'paranoia'],
-        [/nicideun loc/gi, 'nicăieri'], [/ți se sângereze/gi, 'îți sângereze'], [/să le urmat/gi, 'să le urmez'],
-        [/\bman\s+pl[aă]cem/gi, 'îmi placi'], [/înulam/gi, 'comandam'],
-        [/poșta mea preferată/gi, 'poșeta mea preferată'], [/un acnee/gi, 'o acnee'], [/umele dinților/gi, 'numele dinților'],
-        [/cântec a lui/gi, 'cântec al lui'], [/cam aștia/gi, 'cam ăsta'], [/Obișnuiam să mă furișam/gi, 'Obișnuiam să mă furișez'],
-        [/Ștergelui total/gi, 'Șterpelind'], [/lăsându-se pe o mână/gi, 'făcând o labă'], [/mănânci curul meu încordat/gi, 'mă pupi în cur'],
-        [/Băiete,\s*mamii\s*tale/gi, 'Futu-i mama mă-sii'], [/kconvinsesem/gi, 'convinsesem'], [/moști/gi, 'morți'],
-        [/un femeie/gi, 'o femeie'], [/o a s[aă]rut/gi, 'o s-o sărut'], [/resemnând/gi, 'referitor la'],
-        [/unindiciu/gi, 'un indiciu'], [/să sperezi/gi, 'să speri'], [/la ținut/gi, 'l-a ținut'],
-        [/S-ar pulea/gi, 'S-ar putea'], [/lărimile/gi, 'lacrimile'],
-        [/construgeam/gi, 'construiam'], [/pătură dracului/gi, 'pătura dracului'], [/ca cadou/gi, 'drept cadou'],
-        [/șneșteai/gi, 'regulai'], [/N-ai știi/gi, 'N-ai ști'], [/I-a ținuți/gi, 'I-a ținut'],
-        [/Bivolă/gi, 'Vacă'], [/Vreo, Vought/gi, 'Frate, Vought'], [/Supei/g, 'Eroii'],
-        [/Privire de tigru/gi, 'Ochi de tigru'], [/I tu, neurotico, circ de o single femeie/gi, 'Iar tu, neurotico, ești un circ ambulant'],
-        [/Dă cu teancul acela în palmă/gi, 'Lovește teancul de palmă'], [/căci capul lui e/gi, 'pentru că are capul'],
-        [/am\s+fost\s+alege[tț]i/gi, 'am fost aleși'], [/tras\s+în\s+piepie/gi, 'tras în piept'],
-        [/penthaină/gi, 'penthouse'], [/drum runner/gi, 'Road Runner'], [/c[aă]ntat\s+la\s+fund\s+ca\s+la\s+jazz/gi, 'cântat la fund ca la un instrument'],
-        [/nebunizați/gi, 'nebuni'], [/raiuk/gi, 'raiul'], [/Iafu/gi, 'Iau'],
-        [/filetat\s+vânat/gi, 'jupuit vânat'], [/U-barce/gi, 'U-boot-uri'], [/U-barc/gi, 'U-boot'],
-        [/să\s+fieți\s+educați/gi, 'să fiți educați'], [/Lăsați-mi-vă\s+să\s+vă\s+arăt/gi, 'Lăsați-mă să vă arăt'],
-        [/Senatule/gi, 'Senatorule'], [/\bRoți\b/g, 'Wheels'],
-        [/M,\s*,\s*\./g, ''], [/tristă\s+și\s+supărați/gi, 'triști și supărați'], [/abnormal/gi, 'anormal'],
-        [/toate\s+liberul\s+arbitru/gi, 'tot liberul arbitru'], [/ecanarhiști/gi, 'eco-anarhiști'], [/ridică\s+balena\s+albă/gi, 'zărește balena albă'],
-        [/să\s+defin\b/gi, 'să definim'], [/(Nu, trebuie să răspunzi, altfel pierzi punctele\.?\s*){2,}/gi, 'Nu, trebuie să răspunzi, altfel pierzi punctele.\n'],
-        [/Viridienii/gi, 'Eridanienii'], [/iridienii/gi, 'eridanienii'], [/din\s+Aaron/gi, 'din Erid'],
-        [/Tomeva/gi, 'Taumoeba'], [/Astrofafele/gi, 'Astrofagele'], [/Păzește-mă/gi, 'Privește-mă'],
-        [/Fii\s+pe\s+stânga/gi, 'Ține stânga'], [/propulsorespin/gi, 'propulsoare spin'], [/Nuștiu/gi, 'Nu știu'],
-        [/impermiabile/gi, 'impermeabile'], [/Data\s+anteriori/gi, 'Data trecută'],
-        [/mai\s+inferior/gi, 'inferior'], [/bloodshed/gi, 'vărsare de sânge'], [/nu\s+parți\s+să/gi, 'nu pari să'],
-        [/tatăle\s+tău/gi, 'tatăl tău'], [/vom\s+putea\s+ne\s+Vom\s+apropia/gi, 'ne vom putea apropia'],
-        [/necesarias/gi, 'necesare'], [/erau\s+moarte/gi, 'erau morți'], [/Măriți!\s+Din\s+nou!/gi, 'Minți! Din nou!'],
-        [/man\s+raportezi/gi, 'îmi raportezi'], [/caceagmată/gi, 'cacealma'],
-        [/depărtător\s+de\s+jaw/gi, 'depărtător de maxilar'], [/troopelor/gi, 'trupelor'], [/Vdem/g, 'Vedem'],
-        [/vdem/g, 'vedem'], [/aproxximativ/gi, 'aproximativ'],
-        [/A\s+trecut\s+brici\s+prin\s+ea/gi, 'S-a descurcat de minune'], [/Ești\s+ieșit\s+din\s+minți\?/gi, 'Ți-ai pierdut mințile?'],
-        [/tot\s+ordinea/gi, 'toată ordinea'], [/Să\s+nu\s+ajuți\s+niciodată\s+la\s+telefonul/gi, 'Să nu răspunzi niciodată la telefonul'],
-        [/m-a\s+învățat\s+rele\s+despre\s+finanțe/gi, 'm-a învățat despre finanțe'], [/if\s+all\s+the\s+cool\s+cats\s+shooting\s+dope\s+dacă\s+toți\s+băieții\s+cool\s+drogați/gi, 'dacă toți drogații'],
-        [/doamne doctor/gi, 'doamna doctor'], [/o indiciu/gi, 'un indiciu'], [/tabëra/gi, 'tabăra'],
-        [/abureli-olog/gi, 'expert în abureli'], [/secund\s+minoritar/gi, 'partener minoritar'], [/Nu\s+te\s+stresat/gi, 'Nu te stresa'],
-        [/pușchiule/gi, 'puștiule'], [/nicikand/gi, 'nicicând'], [/în\s+merg/gi, 'în mișcare'],
-        [/tonă\s+de\s+cărămizi/gi, 'veste șocantă'], [/perceptor\s+de\s+primă\s+clasă/gi, 'lingău de primă clasă'],
-        [/sațuitație/gi, 'sațietate'], [/pasiunează\s+golul/gi, 'pasionează golful'], [/cu\s+a\s+ființe/gi, 'cu ființe'],
-        [/Îl\s+urăsc\s+familia/gi, 'Îl urăște familia'], [/voi\s+doi\s+întâlniți/gi, 'voi doi vă întâlniți'],
-        [/Femeile\s+latinos/gi, 'Femeile latine'], [/vei\s+merge\s+de-a\s+latul/gi, 'vei merge crăcănată'],
-        [/Noapte\s+bună,\s+Irene!/gi, 'Asta da lovitură!'], [/să\s+bagi\s+o\s+crosă/gi, 'să te bagi la joc'],
-        [/Dresorul\s+Hill/gi, 'Doctore Hill'], [/ca\s+s-o\s+spunem\s+pe\s+roate/gi, 'ca s-o spunem pe șleau'],
-        [/doda\s+un\s+moment/gi, 'acorda un moment'], [/propriutei/gi, 'propriei'], [/mi-a\s+prânat/gi, 'mi-a prins'],
-        [/feșiști/gi, 'fasciști'], [/aș\s+bucura-mă/gi, 'm-aș bucura'], [/util\s+deât/gi, 'utili decât'],
-        [/noiile/gi, 'noile'], [/aceași/gi, 'aceeași'], [/Man,\s+îmi\s+era/gi, 'Omule, îmi era'],
-        [/jeftină/gi, 'ieftină'], [/mai\s+de\s+la\s+sat/gi, 'mai cu picioarele pe pământ'],
-        [/N-a\s+s-a\s+schimbat/gi, 'Nu s-a schimbat'], [/nimfomana\s+ta\s+sălbatică/gi, 'fata aia a ta zurlie'],
-        [/\bo\s+favor\b/gi, 'o favoare'], [/Ești\s+frică/gi, 'Ți-e frică'], [/\bații\s+minte/gi, 'ții minte'],
-        [/înțel\s+cum/gi, 'învăț cum'], [/Cruciadatul/gi, 'Cruciatul'], [/o\s+îndoaie\s+cu\s+Compusul/gi, 'o îndoapă cu Compusul'],
-        [/nitrogenul/gi, 'azotul'], [/Bitch\s+dracului/gi, 'Târfă dracului'], [/că\s+căutai/gi, 'că erai în căutarea'],
-        [/înfig\s+pe\s+gât\s+în\s+sus\s+în\s+fund/gi, 'înfig în fund atât de adânc încât îți ies pe gât'],
-        [/Mâncă-mi-ar\.\.\.\s*/gi, ''], [/juării/gi, 'jucării'], [/Sala\s+Fecilor/gi, 'Sala Faimei'],
-        [/păturii\s+dracului/gi, 'pătura dracului'], [/Mai\s+bine\s+spere/gi, 'Mai bine speri'],
-        [/ți-ar\s+teferi/gi, 's-ar căca'], [/Vinitați\s+și\s+vă/gi, 'Văitați și vă'],
-        [/în\s+piarda\s+naibii/gi, 'în rahat până-n gât'], [/aiberă\s+grijă/gi, 'aibă grijă'],
-        [/cinci\s+cvartale/gi, 'cinci străzi'], [/nă\s+câteva/gi, 'na, câteva'],
-        [/tată-mi\s+te-ar/gi, 'tată-meu ți-ar'], [/coisecle/gi, 'coaiele'],
-        [/asuri\s+în\s+mânecă/gi, 'ași în mânecă'], [/misecundă/gi, 'milisecundă'],
-        [/prin\s+care-un\s+ființă/gi, 'printr-o ființă'],
-        [/\bvreoâun\b/gi, 'vreun'], [/O\s+morman/gi, 'Un morman'],
-        [/pe\s+federali\s+de/gi, 'pe federalii de'], [/te\s+ajutai\s+cu/gi, 'te-ai înhăitat cu'],
-        [/fugi\s+dracului/gi, 'du-te dracului'], [/Fiul\s+tăia/gi, 'Fiul tău'],
-        [/Voresc\s+cu/gi, 'Vorbesc cu'],
-        [/Ai\s+grijer[ă]?/gi, 'Ai grijă'], [/te\s+foști/gi, 'te foiești'],
-        [/Nu\s+te\s+mai\s+foști/gi, 'Nu te mai foi'], [/nepoliTicăloasă/gi, 'nepoliticoasă'],
-        [/Dragăo/gi, 'Drago'], [/Data\s+anteriore/gi, 'Data anterioară'],
-        [/cloni\s+născuți/gi, 'clone născute'], [/prava\s+de/gi, 'prora de'],
-        [/s-a\s+urat/gi, 's-a urcat'], [/Praguesc\s+o/gi, 'Detectez o'],
-        [/te\s+ați\s+dat/gi, 'te-ai dat'], [/manții\s+de\s+urât/gi, 'îmi ții de urât'],
-        [/gitară/gi, 'chitară'], [/Literal\s+tip/gi, 'Exact ca'],
-        [/noviceule/gi, 'începătorule'], [/Aceeai\s+persoană/gi, 'Aceeași persoană'], 
-        [/târâșul\s+ăla\s+cu\s+arcul/gi, 'tirul cu arcul'], [/e\s+este\s+atemporal/gi, 'este atemporal'], 
-        [/despre\s+vorbești/gi, 'despre ce vorbești'], [/poate\s+omori/gi, 'poate omorî'], 
-        [/Franchiza/gi, 'Franciza'], [/\bP\s+urmă\s+pierdută/gi, 'Urmă pierdută'], 
-        [/cât\s+de\s+mult\s+vei\s+în/gi, 'cât de mult vei rezista în'],
-        [/Lapte\s+de\s+Mamă/gi, "Mother's Milk"], [/LAPTELE\s+MAMEI:?\s*/gi, ''],
-        [/L\.D\.M\.:\s*/gi, ''], [/MOTHER'S\s+MILK:\s*/gi, ''],
-        [/CĂCAT:\s*/gi, ''], [/Francezule/gi, 'Frenchie'],
-        [/Găt\s+cu\s+minciunile/gi, 'Gata cu minciunile'], [/unde\s+băts/gi, 'unde bați'],
-        [/\bisiune/gi, 'presiune'], [/vei\s+să\s+fii/gi, 'vrei să fii'],
-        [/Transfer\s+is\s+available/gi, 'Transferul este disponibil'], [/Cosmic\s+rationale/gi, 'Raționament cosmic'],
-        [/are\s+fiecare\s+oase/gi, 'are toate oasele'], [/ju-i\s+vadă/gi, 'să-i vadă'],
-        [/blugi\s+Imițație/gi, 'blugi imitație'], [/paranoiad/gi, 'paranoic'],
-        [/\bă\.\.\./gi, ''], [/L\.M\.:\s*/gi, ''], [/M\.M\.:\s*/gi, ''],
-        [/feșisti/gi, 'fasciști'], [/nicioicâștig/gi, 'niciun câștig'],
-        [/Man\s+a\s+fost\s+dor/gi, 'Mi-a fost dor'], [/o\s+exhortație/gi, 'un îndemn'],
-        [/\bVroiam\b/gi, 'Voiam'], [/staționăm/gi, 'repartizăm'],
-        [/în\s+asta\s+împreună/gi, 'împreună în treaba asta'],
-        [/\bSupe\b/g, 'Erou'], [/\bSupe\s+Terorist/gi, 'Super-Terorist'],
-        [/\bcoterie\b/gi, 'tolbă'], [/Din\s+toamnă/gi, 'În această toamnă'],
-        [/\bMăi!\b/g, 'Băi!'], [/Imițație/g, 'imitație'],
-        [/Buni\s+a\s+mea/gi, 'Bunica mea'],
-        [/Capes\s+for\s+Christ/gi, 'Tabăra Pelerinelor lui Hristos'],
-        [/o\s+vândută/gi, 'm-am vândut'],
-        [/pe\s+opt\s+de\s+acuzare/gi, 'pe banca acuzaților'],
-        [/ți-o\s+plăcea/gi, 'o să-ți placă'],
-        [/națiile\s+evreilor/gi, 'naziștii evreilor'],
-        [/\bdespere\b/gi, 'despre'],
-        [/\bcombinas\b/gi, 'combin'],
-        [/\bororbit\b/gi, 'orbit'],
-        [/\blosem\b/gi, 'fusesem'],
-        [/\$\s*aflu/gi, 'o aflu'],
-        [/smilă\s+de\s+milă/gi, 'să ne plângi de milă'],
-        [/că\s+comisiunea/gi, 'ca respectiva comisie'],
-        [/S-a născut\?\s*S-a născut\./gi, 'Born? Born.'],
-        [/rechizitoriumul/gi, 'rechizitoriul'],
-        [/Oricicum/gi, 'Oricum'],
-        [/pe sleiau/gi, 'pe șleau'],
-        [/feștiști/gi, 'fasciști'],
-        [/amenințătoare mai mare/gi, 'amenințare mai mare'],
-        [/spune veche despre/gi, 'spune o vorbă despre'],
-        [/nicio scrupulă/gi, 'niciun scrupul'],
-        [/pe pline/gi, 'din plin'],
-        [/să o anihilez/gi, 'să o afirm'],
-        [/Dumnezeule în trei persoane/gi, 'Dumnezeu în trei ipostaze'],
-        [/Comisiunea/g, 'Comisia'],
-        [/Comisiunii/g, 'Comisiei'],
-
-        [/\bs a\b/gi, 's-a'], [/\bs au\b/gi, 's-au'], [/\bm am\b/gi, 'm-am'],
-        [/\bm a\b/gi, 'm-a'], [/\bm ai\b/gi, 'm-ai'], [/\bn am\b/gi, 'n-am'],
-        [/\bn a\b/gi, 'n-a'], [/\bn au\b/gi, 'n-au'], [/\bn ai\b/gi, 'n-ai'],
-        [/\bn o\b/gi, 'n-o'], [/\bl a\b/gi, 'l-a'], [/\bl am\b/gi, 'l-am'],
-        [/\bl au\b/gi, 'l-au'], [/\bl ai\b/gi, 'l-ai'], [/\bv ați\b/gi, 'v-ați'],
-        [/\bne am\b/gi, 'ne-am'], [/\bne a\b/gi, 'ne-a'], [/\bmi a\b/gi, 'mi-a'],
-        [/\bmi au\b/gi, 'mi-au'], [/\bți a\b/gi, 'ți-a'], [/\bți au\b/gi, 'ți-au'],
-        [/\bi a\b/gi, 'i-a'], [/\bi au\b/gi, 'i-au'],
-        [/îmbrăcați vă/gi, 'îmbrăcați-vă'], [/luându ți/gi, 'luându-ți']
-    ];
-
-    for (let i = 0; i < dictionar.length; i++) {
-        text = text.replace(dictionar[i][0], dictionar[i][1]);
-    }
-
-    let linesArray = text.split('\n');
-    let validLinesText = linesArray.filter(l => l.trim() !== '');
-
-    if (validLinesText.length > 2) {
-        let joinedText = validLinesText.join(' ');
-        let mid = Math.floor(joinedText.length / 2);
-        let leftSpace = joinedText.lastIndexOf(' ', mid);
-        let rightSpace = joinedText.indexOf(' ', mid);
-        let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
-            ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
-            Math.max(leftSpace, rightSpace);
-            
-        if (splitIndex !== -1) {
-            validLinesText = [joinedText.substring(0, splitIndex).trim(), joinedText.substring(splitIndex + 1).trim()];
-        } else {
-            validLinesText = [joinedText];
-        }
-    } else if (validLinesText.length === 1 && validLinesText[0].length > 45) {
-        let line = validLinesText[0];
-        let mid = Math.floor(line.length / 2);
-        let leftSpace = line.lastIndexOf(' ', mid);
-        let rightSpace = line.indexOf(' ', mid);
-        let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
-            ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
-            Math.max(leftSpace, rightSpace);
-            
-        if (splitIndex !== -1) {
-            validLinesText = [line.substring(0, splitIndex).trim(), line.substring(splitIndex + 1).trim()];
-        }
-    }
-
-    return validLinesText.map(l => l.replace(/^[-—–−\s*]+/g, '')).join('\n');
-}
-
-function fixBrokenJson(text) {
-    let fixed = text;
-    fixed = fixed.replace(/"(\d+)":\s*([^",}\n]+)([,}\n])/g, function(match, key, value, terminator) {
-        let cleanVal = value.trim();
-        if (!cleanVal.startsWith('"')) {
-            cleanVal = cleanVal.replace(/^b['"]|['"]$/g, '');
-            return `"${key}": "${cleanVal}"${terminator}`;
-        }
-        return match;
-    });
-    return fixed;
-}
-
-let globalRateLimitPause = 0;
-
-async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunks, keyState) {
-    let keysToTranslate = {};
-    chunkObjArray.forEach(obj => {
-        keysToTranslate[obj.id] = obj.text;
-    });
-
-    let finalTranslatedDict = {};
-    let expectedTotalCount = Object.keys(keysToTranslate).length;
-    let attempts = 0;
-    let contentErrorCount = 0; 
-    const maxAttempts = 15; 
-
-    let currentKeyObj = null;
-    let keyIndex = -1;
-    let apiKey = null;
-
-    while (Object.keys(keysToTranslate).length > 0 && attempts < maxAttempts) {
-        
-        let batchToProcess = {};
-        const allKeys = Object.keys(keysToTranslate);
-        
-        if (contentErrorCount >= 2 && allKeys.length > 5) {
-            console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1} pare blocat de format. Îl împart pentru a izola problema...${c.reset}`);
-            const halfLength = Math.floor(allKeys.length / 2);
-            for (let i = 0; i < halfLength; i++) {
-                batchToProcess[allKeys[i]] = keysToTranslate[allKeys[i]];
-            }
-            contentErrorCount = 0; 
-        } else {
-            batchToProcess = Object.assign({}, keysToTranslate);
-        }
-
-        while (Date.now() < globalRateLimitPause) {
-            await new Promise(r => setTimeout(r, 1000));
-        }
-
-        if (!apiKey) {
-            while (true) {
-                let checkedAll = 0;
-                while (checkedAll < keyState.keys.length) {
-                    let candidateIndex = keyState.index % keyState.keys.length;
-                    keyState.index++; 
-                    checkedAll++;
-                    
-                    if (Date.now() >= keyState.keys[candidateIndex].pauseUntil) {
-                        keyIndex = candidateIndex;
-                        currentKeyObj = keyState.keys[keyIndex];
-                        apiKey = currentKeyObj.value;
-                        currentKeyObj.pauseUntil = Date.now() + 1500; 
-                        break;
-                    }
-                }
-                
-                if (apiKey) break; 
-                await new Promise(r => setTimeout(r, 1000));
-            }
-        }
-
-        const modelName = 'gemini-3.5-flash-lite';
-        let currentBatchSize = Object.keys(batchToProcess).length;
-
-        try {
-            if (currentBatchSize === expectedTotalCount) {
-                console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${modelName} | Cheie: ${keyIndex})...${c.reset}`);
-            } else {
-                console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise (Calup ${globalChunkIndex + 1} | Aceeași cheie: ${keyIndex})...${c.reset}`);
-            }
-            
-            const prompt = `You are a professional Romanian cinematic translator. Your ONLY purpose is to translate an English subtitle JSON array into natural, conversational Romanian.
-
-CRITICAL SYSTEM REQUIREMENT:
-The input JSON contains EXACTLY ${currentBatchSize} items. You MUST output EXACTLY ${currentBatchSize} items. Every single key from the input must be present in the output JSON.
-
-<translation_master_rules>
-1. THE GOLDEN RULE: Translate the scene, not just the words. Recreate the dialogue naturally in Romanian. Do not use literal translations, mechanical phrasing, or English word order.
-2. SLANG & PROFANITY: Preserve the original register. Do not censor "fuck", "shit", etc. Adapt them into natural Romanian equivalents (e.g., vulgarity stays vulgar, slang stays slang).
-3. CONTEXT & GENDER: Pay extreme attention to context. If it's clear a female is speaking, use feminine verb agreements ("Am fost plătită"). 
-4. SARCASM & HUMOR: Sarcasm, irony, and jokes must survive the translation. Adapt puns if necessary so the Romanian viewer gets the same emotional effect.
-5. NO INVENTED WORDS: Use ONLY standard Romanian words. Never invent conjugations.
-6. SPLIT LINES & CONTINUITY: Subtitles are often cut mid-sentence. Read the surrounding context and translate so the sentence flows naturally across lines. 
-7. CLEAN UP: Remove all audio tags (e.g., [sighs], [music]). Do not translate character names.
-</translation_master_rules>
-
-<few_shot_examples>
-Learn from these patterns (DO NOT copy them mechanically, understand the principle of natural adaptation):
-- Idiom: "Give me a break." -> "Hai, lasă-mă." (Not literal)
-- Sarcasm: "Great. Just great." -> "Minunat. Pur și simplu minunat."
-- Natural phrasing: "Are you coming with us?" -> "Vii cu noi?" (Not "Vei veni împreună cu noi?")
-- Slang/Casual: "What the hell, man?" -> "Ce naiba, frate?"
-- Contextual meaning: "You better watch yourself." -> "Ai grijă."
-- Short & Natural: "I'm gonna kill you." -> "Te omor." (Not "Eu te voi ucide.")
-- Puns/Idioms: "That's a little fishy." -> "Cam miroase a pește."
-</few_shot_examples>
-
-JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact input keys. Do not add markdown, explanations, or extra text.
-
-Translate this JSON:
-${JSON.stringify(batchToProcess)}`;
-
-            const response = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+        const response =
+            await axios.get(
+                targetUrl,
                 {
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { 
-                        response_mime_type: "application/json",
-                        temperature: 0.0
+                    headers: {
+                        'User-Agent':
+                            BROWSER_USER_AGENT
                     },
-                    safetySettings: [
-                        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-                    ]
-                },
-                { 
-                    headers: { 'Content-Type': 'application/json' },
-                    timeout: 120000 
+                    timeout: 30000,
+                    responseType: 'text'
                 }
             );
 
-            if (!response.data || !response.data.candidates || response.data.candidates.length === 0 || !response.data.candidates[0].content) {
-                if (response.data && response.data.promptFeedback && response.data.promptFeedback.blockReason) {
-                    throw new Error(`Filtrat de Google (${response.data.promptFeedback.blockReason})`);
+        const subtitles =
+            parseSrt(
+                String(response.data || '')
+            );
+
+        const result =
+            subtitles.map(item => ({
+                id:
+                    `${id}-${item.id}`,
+                url:
+                    `${req.protocol}://${req.get('host')}` +
+                    `/${req.params.configData || ''}/translate` +
+                    `?id=${encodeURIComponent(id)}` +
+                    `&targetUrl=${encodeURIComponent(targetUrl)}`,
+                lang: 'ron',
+                name: 'Română',
+                format: 'srt'
+            }));
+
+        if (!result.length) {
+            return res.json({
+                subtitles: []
+            });
+        }
+
+        res.json({
+            subtitles: [
+                {
+                    id:
+                        `${id}-translated`,
+                    url:
+                        `${req.protocol}://${req.get('host')}` +
+                        `/${req.params.configData}/translate` +
+                        `?id=${encodeURIComponent(id)}` +
+                        `&targetUrl=${encodeURIComponent(targetUrl)}`,
+                    lang: 'ron',
+                    name: 'Română',
+                    format: 'srt'
                 }
-                throw new Error("Răspuns invalid sau gol primit de la API.");
-            }
+            ]
+        });
 
-            let textResponse = response.data.candidates[0].content.parts[0].text;
-            
-            let startIndex = textResponse.indexOf('{');
-            let endIndex = textResponse.lastIndexOf('}');
+    } catch (error) {
+        console.error(
+            `${c.red}Subtitle fetch error:${c.reset}`,
+            error.message
+        );
 
-            if (startIndex !== -1 && endIndex !== -1) {
-                textResponse = textResponse.substring(startIndex, endIndex + 1);
-            }
+        if (!res.headersSent) {
+            res.json({
+                subtitles: []
+            });
+        }
+    }
+}
 
-            let parsedDict = {};
-            try {
-                let cleanText = fixBrokenJson(textResponse);
-                parsedDict = JSON.parse(cleanText);
-            } catch (e) {
-                const keys = Object.keys(batchToProcess);
-                for (let i = 0; i < keys.length; i++) {
-                    const key = keys[i];
-                    const lookahead = `\\s*,?\\s*"?\\d+"?\\s*:|\\s*\\}|$)`;
-                    const regex = new RegExp(`"?${key}"?\\s*:\\s*(.*?)(?=${lookahead}`, 's');
-                    
-                    const match = textResponse.match(regex);
-                    if (match) {
-                        let val = match[1].trim();
-                        if (val.endsWith(',')) val = val.substring(0, val.length - 1).trim();
-                        if (val.startsWith('"') || val.startsWith("'")) val = val.substring(1);
-                        if (val.endsWith('"') || val.endsWith("'")) val = val.substring(0, val.length - 1);
-                        val = val.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'");
-                        parsedDict[key] = val.trim();
-                    }
-                }
-            }
+// ============================================================
+// SUBTITLE METADATA
+// ============================================================
 
-            let newlyTranslatedCount = 0;
-            for (let key in parsedDict) {
-                if (keysToTranslate[key] !== undefined) {
-                    finalTranslatedDict[key] = parsedDict[key];
-                    delete keysToTranslate[key]; 
-                    newlyTranslatedCount++;
-                }
-            }
+function subtitleScore(item) {
+    const name =
+        String(
+            item?.name ||
+            item?.label ||
+            ''
+        ).toLowerCase();
 
-            if (newlyTranslatedCount === 0) {
-                throw new Error("Nu a extras nicio linie validă.");
+    let score = 0;
+
+    if (
+        name.includes('english') ||
+        name.includes('eng')
+    ) {
+        score += 50;
+    }
+
+    if (
+        name.includes('forced')
+    ) {
+        score -= 10;
+    }
+
+    if (
+        name.includes('sdh') ||
+        name.includes('hearing')
+    ) {
+        score -= 5;
+    }
+
+    return score;
+}
+
+// ============================================================
+// SUBTITLE ROUTES
+// ============================================================
+
+app.get(
+    '/:configData/subtitles/:type/:id/:extra?.json',
+    handleSubtitles
+);
+
+app.get(
+    '/:configData/subtitles/:type/:id.json',
+    handleSubtitles
+);
+
+// ============================================================
+// TRANSLATION ROUTE
+// ============================================================
+
+app.get(
+    '/:configData/translate',
+    async (req, res) => {
+
+        const imdbId =
+            req.query.id;
+
+        const targetUrl =
+            req.query.targetUrl;
+
+        const configData =
+            req.params.configData;
+
+        if (!targetUrl) {
+            return res.status(400).send(
+                'Lipsă URL sursă.'
+            );
+        }
+
+        let userKeys = [];
+
+        try {
+            const decoded =
+                Buffer
+                    .from(
+                        configData,
+                        'base64'
+                    )
+                    .toString('utf8');
+
+            userKeys =
+                JSON.parse(decoded);
+
+        } catch (e) {
+            return res.status(400).send(
+                'Configurare invalidă. Instalează addon-ul din nou.'
+            );
+        }
+
+        if (!Array.isArray(userKeys)) {
+            userKeys = [];
+        }
+
+        userKeys =
+            userKeys
+                .map(k =>
+                    String(k).trim()
+                )
+                .filter(Boolean);
+
+        if (!userKeys.length) {
+            return res.status(400).send(
+                'Nu există chei Gemini configurate.'
+            );
+        }
+
+        const cacheKey =
+            targetUrl;
+
+        if (
+            memoryCache[cacheKey] &&
+            typeof memoryCache[cacheKey] === 'string'
+        ) {
+            res.setHeader(
+                'Content-Type',
+                'application/x-subrip; charset=utf-8'
+            );
+
+            return res.send(
+                memoryCache[cacheKey]
+            );
+        }
+
+        try {
+
+            let processPromise;
+
+            if (
+                memoryCache[cacheKey] &&
+                typeof memoryCache[cacheKey] !== 'string'
+            ) {
+                processPromise =
+                    memoryCache[cacheKey];
+
             } else {
-                attempts = 0;
-                contentErrorCount = 0;
+
+                const startTime =
+                    Date.now();
+
+                processPromise =
+                    (async () => {
+
+                        const srtRes =
+                            await axios.get(
+                                targetUrl,
+                                {
+                                    headers: {
+                                        'User-Agent':
+                                            BROWSER_USER_AGENT
+                                    },
+                                    timeout: 30000,
+                                    responseType: 'text'
+                                }
+                            );
+
+                        const totalLinesCount =
+                            (
+                                String(
+                                    srtRes.data || ''
+                                )
+                                    .match(/-->/g) ||
+                                []
+                            ).length;
+
+                        console.log(
+                            `${c.cyan}\n==================================================${c.reset}`
+                        );
+
+                        console.log(
+                            `${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`
+                        );
+
+                        console.log(
+                            `${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`
+                        );
+
+                        console.log(
+                            `${c.cyan}==================================================\n${c.reset}`
+                        );
+
+                        return await translateSrtWithGemini(
+                            String(
+                                srtRes.data || ''
+                            ),
+                            userKeys
+                        );
+                    })();
+
+                memoryCache[cacheKey] =
+                    processPromise;
+
+                cleanMemoryCache();
+
+                processPromise
+                    .then(
+                        translatedSrtString => {
+
+                            memoryCache[cacheKey] =
+                                translatedSrtString;
+
+                            cleanMemoryCache();
+
+                            const durationSeconds =
+                                Math.floor(
+                                    (
+                                        Date.now() -
+                                        startTime
+                                    ) / 1000
+                                );
+
+                            const timeFormatted =
+                                durationSeconds < 60
+                                    ? `${durationSeconds} sec`
+                                    : `${Math.floor(
+                                        durationSeconds / 60
+                                    )} min și ${
+                                        durationSeconds % 60
+                                    } sec`;
+
+                            console.log(
+                                `${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`
+                            );
+
+                            console.log(
+                                `${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`
+                            );
+
+                            console.log(
+                                `${c.cyan}==================================================\n${c.reset}`
+                            );
+                        }
+                    )
+                    .catch(
+                        err => {
+
+                            console.log(
+                                `${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`
+                            );
+
+                            delete memoryCache[
+                                cacheKey
+                            ];
+                        }
+                    );
             }
 
-            if (Object.keys(keysToTranslate).length === 0) {
-                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${expectedTotalCount}/${expectedTotalCount} linii)${c.reset}`);
-                break; 
-            } else {
-                await new Promise(r => setTimeout(r, 2000));
+            const finalSrt =
+                await processPromise;
+
+            if (
+                finalSrt &&
+                finalSrt.trim().length > 0
+            ) {
+
+                const now =
+                    new Date();
+
+                const timeStr =
+                    now.toLocaleTimeString(
+                        'ro-RO'
+                    ) +
+                    ' ' +
+                    now.toLocaleDateString(
+                        'ro-RO'
+                    );
+
+                secretArchive.unshift({
+                    id: imdbId,
+                    time: timeStr,
+                    content: finalSrt
+                });
+
+                if (
+                    secretArchive.length > 10
+                ) {
+                    secretArchive.pop();
+                }
             }
+
+            res.setHeader(
+                'Content-Type',
+                'application/x-subrip; charset=utf-8'
+            );
+
+            res.setHeader(
+                'Content-Disposition',
+                'inline; filename="romanian.srt"'
+            );
+
+            return res.send(
+                finalSrt
+            );
 
         } catch (error) {
-            attempts++;
-            if (attempts >= maxAttempts) {
-                console.log(`${c.red}✖ [Gemini] Limita atinsă pentru calupul ${globalChunkIndex + 1}. Abandon!${c.reset}`);
-                break; 
+
+            console.error(
+                'Translation error:',
+                error.message
+            );
+
+            if (!res.headersSent) {
+                return res
+                    .status(500)
+                    .send(
+                        'Translation failed: ' +
+                        error.message
+                    );
             }
 
-            if (error.response && error.response.status === 429) {
-                currentKeyObj.pauseUntil = Date.now() + 61000;
-                globalRateLimitPause = Math.max(globalRateLimitPause, Date.now() + 10000);
-                const sleepTime = Math.floor(10000 + Math.random() * 5000);
-                console.log(`${c.yellow}⚠ [Gemini] 429! Cheia ${keyIndex} pe bancă. Calmez IP-ul...${c.reset}`);
-                
-                apiKey = null;
-                
-                await new Promise(r => setTimeout(r, sleepTime));
-            } else if (error.response && error.response.status === 503) {
-                const waitTime = 3000 + (attempts * 1500);
-                console.log(`${c.yellow}⚠ [Gemini] 503 Server ocupat. Aștept ${(waitTime/1000).toFixed(1)}s (Păstrez cheia)...${c.reset}`);
-                await new Promise(r => setTimeout(r, waitTime));
-            } else if (error.message && error.message.toLowerCase().includes('timeout')) {
-                console.log(`${c.yellow}⚠ [Gemini] Timeout. Reîncercare (Păstrez cheia)...${c.reset}`);
-                await new Promise(r => setTimeout(r, 2000));
-            } else {
-                contentErrorCount++;
-                console.log(`${c.magenta}⚠ [Gemini] Eroare format. Reîncercare (Păstrez cheia)...${c.reset}`);
-                await new Promise(r => setTimeout(r, 1500));
+            return res.end();
+        }
+    }
+);
+
+// ============================================================
+// MASTER CINEMATIC TRANSLATION PROMPT
+// ============================================================
+
+const MASTER_TRANSLATION_PROMPT = `
+You are a professional cinematic subtitle translator.
+
+Your task is to translate English subtitles into natural,
+high-quality Romanian.
+
+This is NOT a literal machine translation task.
+
+The final Romanian subtitles must sound as if they were
+originally written by a professional Romanian subtitler.
+
+============================================================
+1. ABSOLUTE PRIORITY
+============================================================
+
+Preserve:
+
+- exact meaning
+- context
+- intention
+- emotion
+- character personality
+- relationships
+- register
+- sarcasm
+- irony
+- humor
+- subtext
+- tension
+- dramatic impact
+- vulgarity level
+- slang
+- terminology
+- names
+- pronouns
+- continuity
+
+Do NOT invent information.
+
+Do NOT add explanations.
+
+Do NOT remove meaningful information.
+
+Do NOT hallucinate.
+
+If an expression is ambiguous, use the surrounding context
+to determine the most plausible meaning.
+
+Never invent a meaning simply because a word has several
+possible dictionary translations.
+
+============================================================
+2. CINEMATIC ROMANIAN
+============================================================
+
+Romanian must sound natural when spoken by an actor.
+
+Avoid:
+
+- word-for-word English structures
+- English syntax copied into Romanian
+- awkward literal translations
+- dictionary-like phrasing
+- robotic language
+- unnatural repetitions
+- unnecessary formal language
+- unnatural calques
+
+Prefer:
+
+- idiomatic Romanian
+- conversational Romanian
+- concise spoken phrasing
+- natural rhythm
+- natural word order
+- appropriate Romanian punctuation
+
+The translation should feel like dialogue,
+not like a translated document.
+
+============================================================
+3. CONTEXT
+============================================================
+
+You receive contextual subtitle lines.
+
+Use them.
+
+The current subtitle may depend on:
+
+- previous sentence
+- following sentence
+- speaker relationship
+- previous terminology
+- ongoing joke
+- scene
+- emotional state
+- pronoun/register
+- implied subject
+
+Do not translate isolated words blindly.
+
+If a sentence continues across subtitle boundaries,
+maintain grammatical continuity.
+
+============================================================
+4. CHARACTER VOICE
+============================================================
+
+Different characters speak differently.
+
+Preserve:
+
+- educated vs uneducated speech
+- formal vs informal speech
+- aggressive speech
+- polite speech
+- sarcastic speech
+- childish speech
+- military speech
+- scientific speech
+- criminal slang
+- street language
+- aristocratic language
+- professional terminology
+
+Do not make every character sound identical.
+
+============================================================
+5. PRONOUNS AND REGISTER
+============================================================
+
+Respect:
+
+- tu
+- voi
+- dumneavoastră
+
+Do not change register randomly.
+
+If the relationship indicates intimacy,
+use natural informal Romanian.
+
+If the relationship indicates distance,
+authority, respect or hostility,
+preserve that distinction.
+
+============================================================
+6. SARCASM / IRONY / HUMOR
+============================================================
+
+Translate the intended effect.
+
+Do NOT translate sarcasm literally if that destroys
+the joke or meaning.
+
+Preserve:
+
+- irony
+- dry humor
+- dark humor
+- wordplay
+- understatement
+- exaggeration
+
+The Romanian version should communicate the same intent.
+
+============================================================
+7. IDIOMS
+============================================================
+
+English idioms should normally be translated into
+natural Romanian equivalents.
+
+Do not blindly translate the individual words.
+
+Example:
+
+"Break a leg."
+
+Do NOT translate literally.
+
+Use a Romanian expression with the same function
+when context allows it.
+
+============================================================
+8. SLANG / VULGARITY
+============================================================
+
+Preserve the original intensity.
+
+Do not sanitize profanity unless required by context.
+
+Do not make profanity stronger than the original.
+
+Do not turn normal speech into vulgar speech.
+
+Maintain the character's voice.
+
+============================================================
+9. NAMES / PLACES / TECHNICAL TERMS
+============================================================
+
+Never translate personal names.
+
+Do not randomly modify:
+
+- names
+- surnames
+- organizations
+- brands
+- locations
+- scientific terms
+- military terms
+- technical terminology
+
+Use established Romanian forms where clearly appropriate.
+
+============================================================
+10. NUMBERS / DATES / MEASUREMENTS
+============================================================
+
+Preserve factual values exactly.
+
+Do not invent or alter:
+
+- numbers
+- dates
+- percentages
+- times
+- measurements
+- addresses
+- coordinates
+
+Localize formatting naturally when appropriate,
+but never change the underlying value.
+
+============================================================
+11. SUBTITLE STYLE
+============================================================
+
+Keep subtitles concise.
+
+Avoid unnecessary repetition.
+
+Do not add explanations.
+
+Do not add quotation marks unless required.
+
+Do not add speaker names unless present in source.
+
+Do not add stage directions that are not in source.
+
+Maximum two lines per subtitle.
+
+Use natural line breaks.
+
+Never cut a word.
+
+Never create malformed words.
+
+============================================================
+12. CRITICAL ANTI-CORRUPTION RULE
+============================================================
+
+Never output:
+
+- truncated words
+- isolated fragments
+- accidental single letters
+- corrupted Unicode
+- replacement characters
+- broken Romanian words
+- random English fragments
+- duplicated words caused by chunk boundaries
+
+Examples of unacceptable corruption:
+
+"v poate oferi mult mai multe."
+
+"M puneți să fiu urmărit?"
+
+"Alunec disear."
+
+"țais."
+
+"Adâncule."
+
+These indicate translation corruption and must NEVER appear.
+
+============================================================
+13. JSON OUTPUT
+============================================================
+
+Return ONLY valid JSON.
+
+No markdown.
+
+No code fences.
+
+No explanation.
+
+No commentary.
+
+Required structure:
+
+{
+  "translations": [
+    {
+      "id": 1,
+      "text": "..."
+    }
+  ]
+}
+
+The number of translated items MUST exactly match
+the number of input items.
+
+Every input id MUST appear exactly once.
+
+Do not change ids.
+
+============================================================
+14. FEW-SHOT EXAMPLES
+============================================================
+
+Example 1:
+
+English:
+"I don't know what you're talking about."
+
+Natural Romanian:
+"Nu știu despre ce vorbești."
+
+NOT:
+"Nu știu despre ce vorbești tu vorbind."
+
+------------------------------------------------------------
+
+Example 2:
+
+English:
+"Are you kidding me?"
+
+Natural Romanian:
+"Vorbești serios?"
+
+Depending on context:
+"Glumești?"
+
+------------------------------------------------------------
+
+Example 3:
+
+English:
+"Get the hell out of here."
+
+Natural Romanian:
+"Șterge-o de aici."
+
+Depending on character:
+"Dispari naibii de aici."
+
+------------------------------------------------------------
+
+Example 4:
+
+English:
+"You've got to be kidding."
+
+Natural Romanian:
+"Nu se poate."
+
+or:
+
+"Glumești."
+
+depending on emotional context.
+
+------------------------------------------------------------
+
+Example 5:
+
+English:
+"That was a close call."
+
+Natural Romanian:
+"A fost cât pe ce."
+
+------------------------------------------------------------
+
+Example 6:
+
+English:
+"I thought you were dead."
+
+Natural Romanian:
+"Credeam că ești mort."
+
+------------------------------------------------------------
+
+Example 7:
+
+English:
+"Well, that's just great."
+
+If sarcastic:
+
+"Minunat."
+
+NOT:
+
+"Ei bine, asta este foarte grozav."
+
+------------------------------------------------------------
+
+Example 8:
+
+English:
+"Don't push your luck."
+
+Natural Romanian:
+"Nu-ți forța norocul."
+
+------------------------------------------------------------
+
+Example 9:
+
+English:
+"You really screwed this up."
+
+Natural Romanian:
+"Chiar ai dat-o în bară."
+
+------------------------------------------------------------
+
+Example 10:
+
+English:
+"What's your problem?"
+
+Natural Romanian:
+"Care-i problema ta?"
+
+Depending on tone:
+
+"Ce naiba ai?"
+
+============================================================
+15. FINAL SILENT QUALITY CHECK
+============================================================
+
+Before returning JSON, silently verify:
+
+1. Every input subtitle has exactly one translation.
+2. Every id is preserved.
+3. No subtitle is missing.
+4. No subtitle is duplicated.
+5. No meaning was invented.
+6. No important meaning was removed.
+7. Romanian sounds natural.
+8. Pronouns/register are consistent.
+9. Character voice is preserved.
+10. Sarcasm and irony are preserved.
+11. Idioms are natural.
+12. Slang/profanity intensity is preserved.
+13. Names and terminology are preserved.
+14. Numbers and factual data are unchanged.
+15. No word is truncated.
+16. No malformed Romanian appears.
+17. No replacement character appears.
+18. No commentary is included outside JSON.
+19. JSON is valid.
+20. The output count exactly matches the input count.
+
+Return ONLY the JSON object.
+`;
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function sleep(ms) {
+    return new Promise(
+        resolve => setTimeout(resolve, ms)
+    );
+}
+
+function chunkArray(
+    array,
+    size
+) {
+    const chunks = [];
+
+    for (
+        let i = 0;
+        i < array.length;
+        i += size
+    ) {
+        chunks.push(
+            array.slice(
+                i,
+                i + size
+            )
+        );
+    }
+
+    return chunks;
+}
+
+function cleanTextForJson(text) {
+    return String(text || '')
+        .replace(/\r/g, '')
+        .trim();
+}
+
+function buildContextItems(
+    items,
+    start,
+    end
+) {
+    return items.slice(
+        Math.max(0, start),
+        Math.min(
+            items.length,
+            end
+        )
+    );
+}
+
+// ============================================================
+// TRANSLATION PROMPT BUILDER
+// ============================================================
+
+function buildTranslationPrompt(
+    chunk,
+    allItems,
+    chunkStart,
+    chunkEnd,
+    previousTranslatedContext
+) {
+
+    const contextBefore =
+        buildContextItems(
+            allItems,
+            chunkStart -
+                CONTEXT_LINES_BEFORE,
+            chunkStart
+        );
+
+    const contextAfter =
+        buildContextItems(
+            allItems,
+            chunkEnd,
+            chunkEnd +
+                CONTEXT_LINES_AFTER
+        );
+
+    const contextBeforeText =
+        contextBefore.length
+            ? contextBefore
+                .map(
+                    item =>
+                        `[${item.id}] ${item.text}`
+                )
+                .join('\n')
+            : '(none)';
+
+    const contextAfterText =
+        contextAfter.length
+            ? contextAfter
+                .map(
+                    item =>
+                        `[${item.id}] ${item.text}`
+                )
+                .join('\n')
+            : '(none)';
+
+    const previousRomanian =
+        previousTranslatedContext &&
+        previousTranslatedContext.length
+            ? previousTranslatedContext
+                .map(
+                    item =>
+                        `[${item.id}] ${item.text}`
+                )
+                .join('\n')
+            : '(none)';
+
+    const subtitles =
+        chunk
+            .map(
+                item =>
+                    `[${item.id}] ${item.text}`
+            )
+            .join('\n');
+
+    return `
+${MASTER_TRANSLATION_PROMPT}
+
+============================================================
+CURRENT CHUNK
+============================================================
+
+Translate ONLY the following subtitle items:
+
+${subtitles}
+
+============================================================
+SOURCE CONTEXT BEFORE CURRENT CHUNK
+============================================================
+
+${contextBeforeText}
+
+============================================================
+SOURCE CONTEXT AFTER CURRENT CHUNK
+============================================================
+
+${contextAfterText}
+
+============================================================
+PREVIOUS ROMANIAN TRANSLATION CONTEXT
+============================================================
+
+Use this only for continuity and terminology consistency.
+Do NOT copy it blindly.
+
+${previousRomanian}
+
+============================================================
+IMPORTANT
+============================================================
+
+Return exactly one translation for every subtitle id
+in the CURRENT CHUNK.
+
+Do not translate the context lines as additional items.
+
+Return ONLY JSON.
+`;
+}
+
+// ============================================================
+// JSON PARSER
+// ============================================================
+
+function parseStrictTranslationResponse(
+    raw
+) {
+    if (
+        typeof raw !== 'string'
+    ) {
+        throw new Error(
+            'Gemini response is not text'
+        );
+    }
+
+    let text =
+        raw.trim();
+
+    text =
+        text
+            .replace(
+                /^```json\s*/i,
+                ''
+            )
+            .replace(
+                /^```\s*/i,
+                ''
+            )
+            .replace(
+                /\s*```$/i,
+                ''
+            )
+            .trim();
+
+    let parsed;
+
+    try {
+        parsed =
+            JSON.parse(text);
+    } catch (firstError) {
+
+        const start =
+            text.indexOf('{');
+
+        const end =
+            text.lastIndexOf('}');
+
+        if (
+            start >= 0 &&
+            end > start
+        ) {
+            parsed =
+                JSON.parse(
+                    text.slice(
+                        start,
+                        end + 1
+                    )
+                );
+        } else {
+            throw firstError;
+        }
+    }
+
+    if (
+        !parsed ||
+        !Array.isArray(
+            parsed.translations
+        )
+    ) {
+        throw new Error(
+            'JSON fără translations[]'
+        );
+    }
+
+    return parsed.translations;
+}
+
+// ============================================================
+// NORMALIZATION
+// ============================================================
+
+function normalizeSubtitleOutput(
+    text
+) {
+    if (
+        typeof text !== 'string'
+    ) {
+        return '';
+    }
+
+    return text
+        .replace(/\r/g, '')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n{3,}/g, '\n')
+        .trim();
+}
+
+// ============================================================
+// SUBTITLE WRAPPING
+// ============================================================
+
+function wrapSubtitleText(
+    text,
+    maxChars = 45
+) {
+    const normalized =
+        normalizeSubtitleOutput(text);
+
+    if (!normalized) {
+        return normalized;
+    }
+
+    const existing =
+        normalized
+            .split(/\n+/)
+            .map(
+                line =>
+                    line.trim()
+            )
+            .filter(Boolean);
+
+    // Never delete translated content.
+    // Preserve good existing lines.
+    if (
+        existing.length <= 2 &&
+        existing.every(
+            line =>
+                line.length <=
+                maxChars
+        )
+    ) {
+        return existing.join('\n');
+    }
+
+    const words =
+        existing
+            .join(' ')
+            .split(/\s+/)
+            .filter(Boolean);
+
+    if (
+        words.length < 2
+    ) {
+        return normalized;
+    }
+
+    // Reflow to two lines without
+    // dropping any words.
+    let best = 1;
+    let bestScore =
+        Infinity;
+
+    for (
+        let i = 1;
+        i < words.length;
+        i++
+    ) {
+        const left =
+            words
+                .slice(0, i)
+                .join(' ');
+
+        const right =
+            words
+                .slice(i)
+                .join(' ');
+
+        const overflow =
+            Math.max(
+                0,
+                left.length -
+                    maxChars
+            ) +
+            Math.max(
+                0,
+                right.length -
+                    maxChars
+            );
+
+        const balance =
+            Math.abs(
+                left.length -
+                right.length
+            );
+
+        const punctuationBonus =
+            /[,:;!?]$/.test(
+                left
+            )
+                ? -8
+                : 0;
+
+        const score =
+            overflow * 1000 +
+            balance +
+            punctuationBonus;
+
+        if (
+            score < bestScore
+        ) {
+            bestScore =
+                score;
+
+            best = i;
+        }
+    }
+
+    return (
+        words
+            .slice(0, best)
+            .join(' ') +
+        '\n' +
+        words
+            .slice(best)
+            .join(' ')
+    );
+}
+
+// ============================================================
+// QUALITY GATE
+// ============================================================
+
+function findTranslationQualityIssue(
+    text
+) {
+    if (
+        typeof text !== 'string' ||
+        !text.trim()
+    ) {
+        return 'traducere goală';
+    }
+
+    const value =
+        text.trim();
+
+    if (
+        value.includes(' ')
+    ) {
+        return 'caracter Unicode corupt ( )';
+    }
+
+    // Common signs of truncation/corruption.
+    if (
+        /(^|\s)[mMvV](\s|$)/.test(
+            value
+        )
+    ) {
+        return 'fragment suspect de un singur caracter';
+    }
+
+    if (
+        /\b(Adâncule|țais|disear)\b/i.test(
+            value
+        )
+    ) {
+        return 'fragment românesc suspect';
+    }
+
+    if (
+        /\bglisare\b/i.test(
+            value
+        )
+    ) {
+        return 'traducere suspectă pentru dialog';
+    }
+
+    return null;
+}
+
+function validateTranslationQuality(
+    sourceItems,
+    translations
+) {
+    if (
+        translations.length !==
+        sourceItems.length
+    ) {
+        throw new Error(
+            `Număr traduceri invalid: ${translations.length}/${sourceItems.length}`
+        );
+    }
+
+    const expectedIds =
+        new Set(
+            sourceItems.map(
+                item =>
+                    String(item.id)
+            )
+        );
+
+    const seen =
+        new Set();
+
+    for (
+        const item of translations
+    ) {
+        if (
+            !item ||
+            item.id === undefined
+        ) {
+            throw new Error(
+                'Traducere fără id'
+            );
+        }
+
+        const id =
+            String(item.id);
+
+        if (
+            !expectedIds.has(id)
+        ) {
+            throw new Error(
+                `ID neașteptat: ${id}`
+            );
+        }
+
+        if (
+            seen.has(id)
+        ) {
+            throw new Error(
+                `ID duplicat: ${id}`
+            );
+        }
+
+        seen.add(id);
+
+        const issue =
+            findTranslationQualityIssue(
+                item.text
+            );
+
+        if (issue) {
+            throw new Error(
+                `Calitate slabă la ID ${id}: ${issue}`
+            );
+        }
+    }
+
+    if (
+        seen.size !==
+        expectedIds.size
+    ) {
+        throw new Error(
+            'Lipsesc traduceri'
+        );
+    }
+}
+
+// ============================================================
+// API KEY STATE
+// ============================================================
+
+function createKeyState(
+    keys
+) {
+    return keys.map(
+        key => ({
+            key,
+            pausedUntil: 0,
+            disabled: false,
+            failures: 0,
+            lastUsed: 0
+        })
+    );
+}
+
+async function getAvailableKey(
+    keyStates
+) {
+    while (true) {
+
+        const now =
+            Date.now();
+
+        const available =
+            keyStates
+                .filter(
+                    state =>
+                        !state.disabled &&
+                        state.pausedUntil <=
+                            now
+                )
+                .sort(
+                    (a, b) =>
+                        a.lastUsed -
+                        b.lastUsed
+                );
+
+        if (available.length) {
+
+            const state =
+                available[0];
+
+            state.lastUsed =
+                Date.now();
+
+            return state;
+        }
+
+        const waits =
+            keyStates
+                .filter(
+                    state =>
+                        !state.disabled &&
+                        state.pausedUntil >
+                            now
+                )
+                .map(
+                    state =>
+                        state.pausedUntil -
+                        now
+                );
+
+        if (!waits.length) {
+            throw new Error(
+                'Toate cheile Gemini sunt dezactivate.'
+            );
+        }
+
+        const waitMs =
+            Math.max(
+                250,
+                Math.min(
+                    ...waits
+                )
+            );
+
+        console.log(
+            `${c.yellow}⏳ Toate cheile sunt ocupate/în pauză. Aștept ${waitMs} ms.${c.reset}`
+        );
+
+        await sleep(
+            waitMs
+        );
+    }
+}
+
+// ============================================================
+// GEMINI CALL
+// ============================================================
+
+async function callGemini(
+    prompt,
+    keyState
+) {
+
+    const endpoint =
+        `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
+
+    const maxAttempts = 8;
+
+    let lastError =
+        null;
+
+    for (
+        let attempt = 1;
+        attempt <= maxAttempts;
+        attempt++
+    ) {
+
+        try {
+
+            const response =
+                await axios.post(
+                    endpoint,
+                    {
+                        contents: [
+                            {
+                                role: 'user',
+                                parts: [
+                                    {
+                                        text: prompt
+                                    }
+                                ]
+                            }
+                        ],
+
+                        generationConfig: {
+                            temperature: 0.0,
+                            responseMimeType:
+                                'application/json'
+                        },
+
+                        safetySettings: [
+                            {
+                                category:
+                                    'HARM_CATEGORY_HARASSMENT',
+                                threshold:
+                                    'BLOCK_NONE'
+                            },
+                            {
+                                category:
+                                    'HARM_CATEGORY_HATE_SPEECH',
+                                threshold:
+                                    'BLOCK_NONE'
+                            },
+                            {
+                                category:
+                                    'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                                threshold:
+                                    'BLOCK_NONE'
+                            },
+                            {
+                                category:
+                                    'HARM_CATEGORY_DANGEROUS_CONTENT',
+                                threshold:
+                                    'BLOCK_NONE'
+                            }
+                        ]
+                    },
+                    {
+                        params: {
+                            key:
+                                keyState.key
+                        },
+                        timeout:
+                            120000,
+                        headers: {
+                            'Content-Type':
+                                'application/json'
+                        }
+                    }
+                );
+
+            const candidate =
+                response.data
+                    ?.candidates?.[0];
+
+            const parts =
+                candidate
+                    ?.content?.parts ||
+                [];
+
+            const raw =
+                parts
+                    .map(
+                        part =>
+                            part.text ||
+                            ''
+                    )
+                    .join('');
+
+            if (
+                !raw.trim()
+            ) {
+                throw new Error(
+                    'Gemini a returnat conținut gol.'
+                );
+            }
+
+            keyState.failures = 0;
+
+            return raw;
+
+        } catch (error) {
+
+            lastError =
+                error;
+
+            const status =
+                error.response?.status;
+
+            const code =
+                error.code;
+
+            console.error(
+                `${c.yellow}Gemini attempt ${attempt}/${maxAttempts} | status=${status || '-'} | code=${code || '-'} | key=...${keyState.key.slice(-4)}${c.reset}`
+            );
+
+            // Unauthorized / invalid key.
+            if (
+                status === 401 ||
+                status === 403
+            ) {
+                keyState.disabled =
+                    true;
+
+                keyState.failures++;
+
+                throw new Error(
+                    `Cheie Gemini invalidă sau fără acces (${status}).`
+                );
+            }
+
+            // Rate limit.
+            if (
+                status === 429
+            ) {
+                keyState.pausedUntil =
+                    Date.now() +
+                    61000;
+
+                keyState.failures++;
+
+                if (
+                    attempt <
+                    maxAttempts
+                ) {
+                    await sleep(
+                        1500
+                    );
+                    continue;
+                }
+            }
+
+            // Temporary server errors.
+            if (
+                status === 500 ||
+                status === 502 ||
+                status === 503 ||
+                status === 504 ||
+                code ===
+                    'ECONNABORTED' ||
+                code ===
+                    'ETIMEDOUT'
+            ) {
+                keyState.failures++;
+
+                if (
+                    attempt <
+                    maxAttempts
+                ) {
+                    const delay =
+                        Math.min(
+                            10000,
+                            1000 *
+                            Math.pow(
+                                2,
+                                attempt - 1
+                            )
+                        );
+
+                    await sleep(
+                        delay
+                    );
+
+                    continue;
+                }
+            }
+
+            // Any other transient failure.
+            if (
+                attempt <
+                maxAttempts
+            ) {
+                await sleep(
+                    1200
+                );
+
+                continue;
             }
         }
     }
 
-    const finalTranslatedArray = chunkObjArray.map(obj => {
-        return finalTranslatedDict[obj.id] !== undefined ? finalTranslatedDict[obj.id] : obj.text;
-    });
-
-    return finalTranslatedArray;
+    throw (
+        lastError ||
+        new Error(
+            'Gemini request failed.'
+        )
+    );
 }
 
-async function translateSrtWithGemini(srtText, userKeys) {
-    const parser = new Parser();
-    const blocks = parser.fromSrt(srtText);
-    
-    const textsToTranslate = blocks.map((b, index) => {
-        return { id: index, text: cleanTextForJson(b.text) };
-    });
-    
-    const CHUNK_SIZE = 165; 
-    const chunks = chunkArray(textsToTranslate, CHUNK_SIZE);
-    let CONCURRENCY_LIMIT = 3; 
+// ============================================================
+// PROCESS CHUNK WITH RETRY
+// ============================================================
 
-    let allTranslatedTexts = [];
+async function processChunkWithRetry(
+    chunk,
+    allItems,
+    chunkStart,
+    chunkEnd,
+    previousTranslatedContext,
+    keyStates,
+    depth = 0
+) {
 
-    const keyState = { 
-        keys: userKeys.map(k => ({ value: k, pauseUntil: 0 })), 
-        index: 0 
-    };
+    const prompt =
+        buildTranslationPrompt(
+            chunk,
+            allItems,
+            chunkStart,
+            chunkEnd,
+            previousTranslatedContext
+        );
 
-    for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
-        const batchChunks = chunks.slice(i, i + CONCURRENCY_LIMIT);
-        
-        const batchPromises = batchChunks.map(async (chunk, indexInBatch) => {
-            if (indexInBatch > 0) {
-                await new Promise(r => setTimeout(r, indexInBatch * 1500));
+    const maxLocalAttempts = 3;
+
+    let lastError =
+        null;
+
+    for (
+        let attempt = 1;
+        attempt <=
+            maxLocalAttempts;
+        attempt++
+    ) {
+
+        let keyState = null;
+
+        try {
+
+            keyState =
+                await getAvailableKey(
+                    keyStates
+                );
+
+            const raw =
+                await callGemini(
+                    prompt,
+                    keyState
+                );
+
+            const translations =
+                parseStrictTranslationResponse(
+                    raw
+                );
+
+            validateTranslationQuality(
+                chunk,
+                translations
+            );
+
+            const normalized =
+                translations.map(
+                    item => ({
+                        id:
+                            Number(
+                                item.id
+                            ),
+                        text:
+                            wrapSubtitleText(
+                                normalizeSubtitleOutput(
+                                    item.text
+                                )
+                            )
+                    })
+                );
+
+            return normalized;
+
+        } catch (error) {
+
+            lastError =
+                error;
+
+            console.error(
+                `${c.yellow}Chunk ${chunk[0]?.id}-${chunk[chunk.length - 1]?.id} attempt ${attempt}/${maxLocalAttempts}: ${error.message}${c.reset}`
+            );
+
+            if (
+                keyState &&
+                !keyState.disabled
+            ) {
+                keyState.failures++;
             }
-            return processChunkWithRetry(chunk, i + indexInBatch, chunks.length, keyState);
-        });
-        
-        const batchResults = await Promise.all(batchPromises);
-        batchResults.forEach(translatedTextsArray => {
-            allTranslatedTexts.push(...translatedTextsArray);
-        });
 
-        await new Promise(r => setTimeout(r, 1500));
+            await sleep(
+                700 *
+                attempt
+            );
+        }
     }
 
-    blocks.forEach((block, index) => {
-        let finalStr = allTranslatedTexts[index];
-        
-        if (finalStr === undefined || finalStr === null) {
-            finalStr = block.text;
-        }
-        
-        block.text = formatSubtitleLine(finalStr);
-    });
+    // If a large chunk repeatedly fails,
+    // split it into two smaller chunks.
+    if (
+        chunk.length > 20 &&
+        depth < 2
+    ) {
 
-    return parser.toSrt(blocks);
+        const middle =
+            Math.floor(
+                chunk.length / 2
+            );
+
+        const first =
+            chunk.slice(
+                0,
+                middle
+            );
+
+        const second =
+            chunk.slice(
+                middle
+            );
+
+        const firstStart =
+            chunkStart;
+
+        const secondStart =
+            chunkStart +
+            middle;
+
+        const firstEnd =
+            secondStart;
+
+        const secondEnd =
+            chunkEnd;
+
+        console.log(
+            `${c.yellow}⚠️ Chunk mare eșuat. Îl împart în ${first.length} + ${second.length}.${c.reset}`
+        );
+
+        const firstResult =
+            await processChunkWithRetry(
+                first,
+                allItems,
+                firstStart,
+                firstEnd,
+                previousTranslatedContext,
+                keyStates,
+                depth + 1
+            );
+
+        const secondContext =
+            firstResult.slice(
+                -PREVIOUS_TRANSLATION_CONTEXT
+            );
+
+        const secondResult =
+            await processChunkWithRetry(
+                second,
+                allItems,
+                secondStart,
+                secondEnd,
+                secondContext,
+                keyStates,
+                depth + 1
+            );
+
+        return [
+            ...firstResult,
+            ...secondResult
+        ];
+    }
+
+    throw (
+        lastError ||
+        new Error(
+            'Chunk translation failed.'
+        )
+    );
 }
+
+// ============================================================
+// MAIN TRANSLATION ENGINE
+// ============================================================
+
+async function translateSrtWithGemini(
+    srtText,
+    apiKeys
+) {
+
+    const items =
+        parseSrt(srtText);
+
+    if (!items.length) {
+        throw new Error(
+            'Nu s-au găsit subtitrări valide.'
+        );
+    }
+
+    const cleanKeys =
+        Array.from(
+            new Set(
+                apiKeys
+                    .map(
+                        key =>
+                            String(key)
+                                .trim()
+                    )
+                    .filter(Boolean)
+            )
+        );
+
+    if (!cleanKeys.length) {
+        throw new Error(
+            'Nu există chei Gemini valide.'
+        );
+    }
+
+    const keyStates =
+        createKeyState(
+            cleanKeys
+        );
+
+    const chunks =
+        chunkArray(
+            items,
+            CHUNK_SIZE
+        );
+
+    console.log(
+        `${c.cyan}📦 Total chunk-uri: ${chunks.length} | ${c.cyan}Chunk size: ${CHUNK_SIZE} | Paralel: ${CONCURRENCY_LIMIT}${c.reset}`
+    );
+
+    const translatedById =
+        Object.create(null);
+
+    let previousTranslatedContext =
+        [];
+
+    for (
+        let batchStart = 0;
+        batchStart <
+            chunks.length;
+        batchStart +=
+            CONCURRENCY_LIMIT
+    ) {
+
+        const batch =
+            chunks.slice(
+                batchStart,
+                batchStart +
+                    CONCURRENCY_LIMIT
+            );
+
+        console.log(
+            `${c.blue}⚡ Batch ${
+                Math.floor(
+                    batchStart /
+                    CONCURRENCY_LIMIT
+                ) + 1
+            }/${Math.ceil(
+                chunks.length /
+                CONCURRENCY_LIMIT
+            )} — ${batch.length} chunk-uri în paralel${c.reset}`
+        );
+
+        const promises =
+            batch.map(
+                async (
+                    chunk,
+                    localIndex
+                ) => {
+
+                    const globalIndex =
+                        batchStart +
+                        localIndex;
+
+                    const start =
+                        globalIndex *
+                        CHUNK_SIZE;
+
+                    const end =
+                        start +
+                        chunk.length;
+
+                    // Small stagger prevents
+                    // all keys from hitting
+                    // Gemini at exactly the
+                    // same millisecond.
+                    if (
+                        localIndex > 0
+                    ) {
+                        await sleep(
+                            900 *
+                            localIndex
+                        );
+                    }
+
+                    console.log(
+                        `${c.magenta}▶ Chunk ${globalIndex + 1}/${chunks.length}: IDs ${chunk[0].id}-${chunk[chunk.length - 1].id}${c.reset}`
+                    );
+
+                    const result =
+                        await processChunkWithRetry(
+                            chunk,
+                            items,
+                            start,
+                            end,
+                            previousTranslatedContext,
+                            keyStates
+                        );
+
+                    console.log(
+                        `${c.green}✔ Chunk ${globalIndex + 1}/${chunks.length} terminat${c.reset}`
+                    );
+
+                    return {
+                        globalIndex,
+                        result
+                    };
+                }
+            );
+
+        const results =
+            await Promise.all(
+                promises
+            );
+
+        results.sort(
+            (a, b) =>
+                a.globalIndex -
+                b.globalIndex
+        );
+
+        for (
+            const batchResult of
+                results
+        ) {
+
+            for (
+                const item of
+                    batchResult.result
+            ) {
+                translatedById[
+                    String(item.id)
+                ] =
+                    item.text;
+            }
+        }
+
+        // Keep Romanian context from
+        // the last completed chunk of
+        // this batch for continuity
+        // in the next batch.
+        const lastResult =
+            results[
+                results.length - 1
+            ];
+
+        if (
+            lastResult &&
+            lastResult.result
+        ) {
+            previousTranslatedContext =
+                lastResult.result.slice(
+                    -PREVIOUS_TRANSLATION_CONTEXT
+                );
+        }
+    }
+
+    // ========================================================
+    // FINAL INTEGRITY PASS
+    // ========================================================
+
+    for (
+        const item of items
+    ) {
+
+        const translated =
+            translatedById[
+                String(item.id)
+            ];
+
+        if (
+            translated === undefined
+        ) {
+            throw new Error(
+                `Lipsește traducerea pentru ID ${item.id}`
+            );
+        }
+
+        const issue =
+            findTranslationQualityIssue(
+                translated
+            );
+
+        if (issue) {
+            throw new Error(
+                `Integritate finală eșuată la ID ${item.id}: ${issue}`
+            );
+        }
+    }
+
+    // ========================================================
+    // RECONSTRUCT SRT
+    // ========================================================
+
+    const output =
+        items
+            .map(
+                item => {
+
+                    const translated =
+                        translatedById[
+                            String(item.id)
+                        ];
+
+                    return (
+                        `${item.id}\n` +
+                        `${item.start} --> ${item.end}\n` +
+                        `${translated}\n`
+                    );
+                }
+            )
+            .join('\n');
+
+    return output.trim() + '\n';
+}
+
+// ============================================================
+// SRT PARSER
+// ============================================================
+
+function parseSrt(
+    srt
+) {
+
+    const normalized =
+        String(srt || '')
+            .replace(/\r/g, '')
+            .replace(
+                /^\uFEFF/,
+                ''
+            );
+
+    const blocks =
+        normalized
+            .split(/\n{2,}/);
+
+    const result = [];
+
+    for (
+        const block of blocks
+    ) {
+
+        const lines =
+            block
+                .split('\n')
+                .map(
+                    line =>
+                        line.trimEnd()
+                );
+
+        if (
+            lines.length < 3
+        ) {
+            continue;
+        }
+
+        const id =
+            Number(
+                lines[0].trim()
+            );
+
+        if (
+            !Number.isInteger(id)
+        ) {
+            continue;
+        }
+
+        const timing =
+            lines[1].trim();
+
+        const match =
+            timing.match(
+                /^(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})(?:.*)?$/
+            );
+
+        if (!match) {
+            continue;
+        }
+
+        const text =
+            lines
+                .slice(2)
+                .join('\n')
+                .trim();
+
+        if (!text) {
+            continue;
+        }
+
+        result.push({
+            id,
+            start:
+                match[1],
+            end:
+                match[2],
+            text
+        });
+    }
+
+    return result;
+}
+
+// ============================================================
+// HEALTH
+// ============================================================
+
+app.get(
+    '/health',
+    (req, res) => {
+        res.json({
+            ok: true,
+            service:
+                'RO Sub Translator',
+            model:
+                MODEL_NAME,
+            chunkSize:
+                CHUNK_SIZE,
+            concurrency:
+                CONCURRENCY_LIMIT,
+            timestamp:
+                new Date().toISOString()
+        });
+    }
+);
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+const PORT =
+    Number(
+        process.env.PORT
+    ) || 7000;
+
+app.listen(
+    PORT,
+    '0.0.0.0',
+    () => {
+
+        console.log(
+            `${c.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}`
+        );
+
+        console.log(
+            `${c.green}🚀 RO Sub Translator pornit${c.reset}`
+        );
+
+        console.log(
+            `${c.green}🌐 Port: ${PORT}${c.reset}`
+        );
+
+        console.log(
+            `${c.green}🤖 Model: ${MODEL_NAME}${c.reset}`
+        );
+
+        console.log(
+            `${c.green}📦 Chunk: ${CHUNK_SIZE} linii${c.reset}`
+        );
+
+        console.log(
+            `${c.green}⚡ Paralelism: ${CONCURRENCY_LIMIT} chunk-uri${c.reset}`
+        );
+
+        console.log(
+            `${c.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}`
+        );
+    }
+);
