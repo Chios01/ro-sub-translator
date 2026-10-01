@@ -220,11 +220,11 @@ async function handleSubtitles(req, res) {
                 labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
             }
 
-            // AICI ESTE CACHE-BUSTERUL PENTRU STREMIO! (cb=310 forțează clientul să nu folosească memoria locală)
+            // [!] DISTRUGĂTORUL DE CACHE STREMIO: am pus `v2` la ID ca să forțăm playerul să o descarce din nou!
             return {
-                id: `ai_sub_${index}`,
+                id: `ai_sub_v2_${index}`,
                 title: labelName, 
-                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}&cb=310`,
+                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}&cb=v2`,
                 lang: 'ron'
             };
         });
@@ -456,20 +456,19 @@ function formatSubtitleLine(text) {
     text = finalMergedLines.join('\n');
     
     // =========================================================
-    // DICȚIONARUL BLINDAT (Fără evadări!)
+    // DICȚIONARUL BLINDAT
     // =========================================================
     const dictionar = [
-        // --- 1. SOLUȚIA BRUTALĂ PENTRU AIRE/AIMAI/SECUND ---
+        // --- CORECTURILE CRITICE (Brute-Force) ---
         [/\baire\b/gi, 'ai'],
         [/\baimai\b/gi, 'ai'],
-        [/\bo\s+secund(?!\w)/gi, 'o secundă'],
-        [/\bun\s+secund(?!\w)/gi, 'o secundă'],
+        [/\b(un|o)\s+secund(?!\w)/gi, 'o secundă'],
         [/\baver[țt]i\b/gi, 'aveți'],
         
         [/opre[șs]te-te\s+din\s+a-mi.*?(s[âa]ni\b|s[âa]nii\b|decolteu\b|țâțe\b|țâțele\b)/gi, 'nu te mai holba la sânii mei'],
         [/[îi]nceteaz[aă]\s+s[ăa]?\s+te\s+ui[țt]i.*?(\bțâțele\b|\bsânii\b)/gi, 'nu te mai holba la sânii mei'],
         
-        // --- 2. REZOLVĂRI PENTRU SRT ---
+        // REZOLVĂRI PENTRU SRT
         [/\b[îi]nceteaz[aă]\s+s(?!\w)/gi, 'încetează să'],
         [/\b([Aa]șa|[Pp]entru|[Cc]rezi|[Zz]ic)\s+c(?!\w)/g, '$1 că'], 
         [/\bAdic(?!\w)/gi, 'Adică'],
@@ -479,6 +478,7 @@ function formatSubtitleLine(text) {
         [/\bde\s+baz(?!\w)/gi, 'de bază'],
         [/\bdisear(?!\w)/gi, 'diseară'],
         
+        // Erori din SRT si halucinatii
         [/\bcinva\b/gi, 'cineva'],
         [/\bAm\s+fus\b/gi, 'Am fost'],
         [/\bdarme\b/gi, 'doarme'],
@@ -510,7 +510,7 @@ function formatSubtitleLine(text) {
         [/(^|\n)\s*da\./gi, '$1Da.'],
         [/(^|\n)\s*ai\s+grija\./gi, '$1Ai grijă.'],
 
-        // --- 3. REZOLVĂRI VECHI (Curățate) ---
+        // --- REZOLVĂRI VECHI ---
         [/\b(hă)?rțuire\b/gi, 'hărțuire'],
         [/\b(m)?usile\b/gi, 'ușile'],
         [/\bute-ai\b/gi, 'te-ai'],
