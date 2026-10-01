@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.25.0',
+    version: '12.26.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -558,7 +558,6 @@ async function callGemini(prompt, keyState) {
 
 // ============================================================
 // QC V6 FULL — verificare integrală SOURCE → TRANSLATION
-// Fără detector local. Un singur request QC / chunk.
 // ============================================================
 
 const QC_MODEL_NAME = process.env.GEMINI_QC_MODEL || MODEL_NAME;
@@ -890,7 +889,6 @@ function buildQcChunkPayload(originalChunk, translatedChunk) {
 }
 
 async function callGeminiQc(prompt, qcKeyStates) {
-
     let lastError = null;
     let retries503 = 0;
 
@@ -898,7 +896,6 @@ async function callGeminiQc(prompt, qcKeyStates) {
         `[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){QC_MODEL_NAME}:generateContent`;
 
     for (let attempt = 1; attempt <= QC_MAX_ATTEMPTS; attempt++) {
-
         const state = getImmediateQcKey(qcKeyStates);
 
         if (!state) {
@@ -908,10 +905,8 @@ async function callGeminiQc(prompt, qcKeyStates) {
         const key = state.key;
 
         try {
-
             const response = await axios.post(
                 endpoint,
-
                 {
                     contents: [
                         {
@@ -922,12 +917,10 @@ async function callGeminiQc(prompt, qcKeyStates) {
                             ]
                         }
                     ],
-
                     generationConfig: {
                         temperature: 0,
                         responseMimeType: 'application/json'
                     },
-
                     safetySettings: [
                         {
                             category: 'HARM_CATEGORY_HARASSMENT',
@@ -947,14 +940,11 @@ async function callGeminiQc(prompt, qcKeyStates) {
                         }
                     ]
                 },
-
                 {
                     params: {
                         key: key
                     },
-
                     timeout: QC_TIMEOUT_MS,
-
                     headers: {
                         'Content-Type': 'application/json'
                     }
@@ -977,15 +967,12 @@ async function callGeminiQc(prompt, qcKeyStates) {
             return raw;
 
         } catch (error) {
-
             state.busy = false;
             lastError = error;
 
             const status = error?.response?.status;
 
-            // 401 / 403
             if (status === 401 || status === 403) {
-
                 state.disabledUntil =
                     Date.now() + 10 * 60 * 1000;
 
@@ -997,9 +984,7 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 continue;
             }
 
-            // 429
             if (status === 429) {
-
                 state.rateLimitedUntil =
                     Date.now() + QC_RATE_LIMIT_PAUSE_MS;
 
@@ -1013,11 +998,8 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 continue;
             }
 
-            // 503 — maximum un retry
             if (status === 503) {
-
                 if (retries503 < QC_MAX_503_RETRIES) {
-
                     retries503++;
 
                     console.log(
@@ -1032,13 +1014,11 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 throw error;
             }
 
-            // 500 / 502 / 504
             if (
                 status === 500 ||
                 status === 502 ||
                 status === 504
             ) {
-
                 const delay = 1200 * attempt;
 
                 console.log(
@@ -1051,7 +1031,6 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 continue;
             }
 
-            // timeout / network
             if (
                 error?.code === 'ECONNABORTED' ||
                 error?.code === 'ETIMEDOUT' ||
@@ -1059,7 +1038,6 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 error?.code === 'ENOTFOUND' ||
                 error?.code === 'ECONNREFUSED'
             ) {
-
                 const delay = 1000 * attempt;
 
                 console.log(
@@ -1072,8 +1050,6 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 continue;
             }
 
-            // Nu transformăm o eroare necunoscută
-            // într-un fals "timeout".
             throw error;
         }
     }
@@ -1470,4 +1446,93 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     const translatedById = Object.create(null);
     let previousTranslatedContext = [];
 
-    for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY
+    for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY_LIMIT) {
+        const batch = chunks.slice(batchStart, batchStart + CONCURRENCY_LIMIT);
+
+        const promises = batch.map(async (chunk, localIndex) => {
+            const globalIndex = batchStart + localIndex;
+            const start = globalIndex * CHUNK_SIZE;
+            const end = start + chunk.length;
+
+            if (localIndex > 0) await sleep(800 * localIndex);
+
+            const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, qcKeyStates, globalIndex, chunks.length);
+            return { globalIndex, result };
+        });
+
+        const results = await Promise.all(promises);
+        results.sort((a, b) => a.globalIndex - b.globalIndex);
+
+        for (const batchResult of results) {
+            for (const item of batchResult.result) {
+                translatedById[String(item.id)] = item.text;
+            }
+        }
+
+        const lastResult = results[results.length - 1];
+        if (lastResult && lastResult.result) {
+            previousTranslatedContext = lastResult.result.slice(-PREVIOUS_TRANSLATION_CONTEXT);
+        }
+    }
+
+    const output = items.map(item => {
+        const translated = translatedById[String(item.id)] || item.text;
+        return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
+    }).join('\n');
+
+    return output.trim() + '\n';
+}
+
+// ============================================================
+// SRT PARSER NATIV 
+// ============================================================
+
+function parseSrt(srt) {
+    const normalized = String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, '');
+    const blocks = normalized.split(/\n{2,}/);
+    const result = [];
+
+    for (const block of blocks) {
+        const lines = block.split('\n').map(l => l.trimEnd());
+        if (lines.length < 3) continue;
+
+        const id = Number(lines[0].trim());
+        if (!Number.isInteger(id)) continue;
+
+        const timing = lines[1].trim();
+        const match = timing.match(/^(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})(?:.*)?$/);
+        if (!match) continue;
+
+        let rawText = lines.slice(2).join('\n');
+        const text = cleanTextForJson(rawText);
+
+        if (!text || text === ' ') continue;
+
+        result.push({ id, start: match[1], end: match[2], text });
+    }
+
+    return result;
+}
+
+// ============================================================
+// UTILS & START
+// ============================================================
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+app.get('/health', (req, res) => {
+    res.json({ ok: true, service: 'RO Sub Translator', model: MODEL_NAME, version: manifest.version });
+});
+
+const PORT = Number(process.env.PORT) || 7000;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`${c.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}`);
+    console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
+    console.log(`${c.green}🌐 Port: ${PORT}${c.reset}`);
+    console.log(`${c.green}🤖 Model: ${MODEL_NAME}${c.reset}`);
+    console.log(`${c.green}📦 Chunk: ${CHUNK_SIZE} linii${c.reset}`);
+    console.log(`${c.green}⚡ Paralelism: ${CONCURRENCY_LIMIT} chunk-uri${c.reset}`);
+    console.log(`${c.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}`);
+});
