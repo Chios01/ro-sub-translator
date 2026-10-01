@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.27.0',
+    version: '12.28.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -889,13 +889,18 @@ function buildQcChunkPayload(originalChunk, translatedChunk) {
 }
 
 async function callGeminiQc(prompt, qcKeyStates) {
+
     let lastError = null;
     let retries503 = 0;
 
     const endpoint =
         `[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){QC_MODEL_NAME}:generateContent`;
 
+    console.log(`[QC DEBUG] model=${JSON.stringify(QC_MODEL_NAME)}`);
+    console.log(`[QC DEBUG] endpoint=${JSON.stringify(endpoint)}`);
+
     for (let attempt = 1; attempt <= QC_MAX_ATTEMPTS; attempt++) {
+
         const state = getImmediateQcKey(qcKeyStates);
 
         if (!state) {
@@ -905,8 +910,10 @@ async function callGeminiQc(prompt, qcKeyStates) {
         const key = state.key;
 
         try {
+
             const response = await axios.post(
                 endpoint,
+
                 {
                     contents: [
                         {
@@ -917,10 +924,12 @@ async function callGeminiQc(prompt, qcKeyStates) {
                             ]
                         }
                     ],
+
                     generationConfig: {
                         temperature: 0,
                         responseMimeType: 'application/json'
                     },
+
                     safetySettings: [
                         {
                             category: 'HARM_CATEGORY_HARASSMENT',
@@ -940,11 +949,14 @@ async function callGeminiQc(prompt, qcKeyStates) {
                         }
                     ]
                 },
+
                 {
                     params: {
                         key: key
                     },
+
                     timeout: QC_TIMEOUT_MS,
+
                     headers: {
                         'Content-Type': 'application/json'
                     }
@@ -967,12 +979,15 @@ async function callGeminiQc(prompt, qcKeyStates) {
             return raw;
 
         } catch (error) {
+
             state.busy = false;
             lastError = error;
 
             const status = error?.response?.status;
 
+            // 401 / 403
             if (status === 401 || status === 403) {
+
                 state.disabledUntil =
                     Date.now() + 10 * 60 * 1000;
 
@@ -984,7 +999,9 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 continue;
             }
 
+            // 429
             if (status === 429) {
+
                 state.rateLimitedUntil =
                     Date.now() + QC_RATE_LIMIT_PAUSE_MS;
 
@@ -998,8 +1015,11 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 continue;
             }
 
+            // 503 — maximum un retry
             if (status === 503) {
+
                 if (retries503 < QC_MAX_503_RETRIES) {
+
                     retries503++;
 
                     console.log(
@@ -1014,11 +1034,13 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 throw error;
             }
 
+            // 500 / 502 / 504
             if (
                 status === 500 ||
                 status === 502 ||
                 status === 504
             ) {
+
                 const delay = 1200 * attempt;
 
                 console.log(
@@ -1031,6 +1053,7 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 continue;
             }
 
+            // timeout / network
             if (
                 error?.code === 'ECONNABORTED' ||
                 error?.code === 'ETIMEDOUT' ||
@@ -1038,6 +1061,7 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 error?.code === 'ENOTFOUND' ||
                 error?.code === 'ECONNREFUSED'
             ) {
+
                 const delay = 1000 * attempt;
 
                 console.log(
@@ -1050,6 +1074,8 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 continue;
             }
 
+            // Nu transformăm o eroare necunoscută
+            // într-un fals "timeout".
             throw error;
         }
     }
