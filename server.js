@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.16.0',
+    version: '12.17.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -505,6 +505,55 @@ Look for:
     supported by the English source and surrounding context.
 
 ==================================================
+EXEMPLE CONCRETE DE ERORI CARE TREBUIE CORECTATE:
+==================================================
+
+1. Acord/conjugare greșită după pronume:
+   "Eu poart căciuli tricotate."
+   -> "Eu port căciuli tricotate."
+
+2. Forme prescurtate incomplete:
+   "N avem nimic în comun."
+   -> "N-avem nimic în comun."
+   sau
+   -> "Nu avem nimic în comun."
+
+3. Construcții gramaticale incomplete:
+   "Habar n-are despre vorbește."
+   -> "Habar n-are despre ce vorbește."
+
+4. Cuvinte cu litere lipsă sau cuvinte tăiate:
+   "rebuie să plec."
+   -> "trebuie să plec."
+
+5. Litere/cuvinte deformate:
+   "Mă uudzi."
+   -> "Mă uzi."
+
+IMPORTANT:
+Aceste exemple reprezintă ERORI REALE, nu simple preferințe de stil.
+Dacă întâlnești o eroare de același tip, corecteaz-o chiar dacă propoziția poate fi aproximativ înțeleasă.
+
+Nu transforma însă această regulă într-o rescriere generală.
+Dacă formularea românească este gramaticală și are sens, păstreaz-o exact așa cum este.
+
+==================================================
+VERIFICARE SPECIALĂ A GRAMATICII:
+==================================================
+
+Pentru fiecare propoziție, verifică discret:
+- acordul dintre pronume și verb;
+- conjugarea verbului;
+- prepozițiile și pronumele relative lipsă ("ce", "care", etc.);
+- cuvintele tăiate sau cu litere lipsă;
+- formele prescurtate românești incomplete;
+- acordul singular/plural;
+- acordul masculin/feminin atunci când este evident din context.
+
+Corectează numai erorile clare.
+Nu modifica o formulare doar pentru că ai fi ales tu o altă variantă stilistică.
+
+==================================================
 IMPORTANT — SOURCE IS THE AUTHORITY
 ==================================================
 
@@ -622,32 +671,6 @@ negative -> positive
 positive -> negative
 
 Do not invent facts.
-
-==================================================
-ROMANIAN LANGUAGE QUALITY
-==================================================
-
-Correct only obvious Romanian errors.
-
-Examples:
-
-"Eu poart căciuli..."
--> "Eu port căciuli..."
-
-"rebuie să..."
--> "trebuie să..."
-
-"ca ești..."
--> "că ești..."
-
-"Mă uudzi."
--> "Mă uzi."
-
-These are examples of ERROR TYPES.
-
-Do not search mechanically for similar patterns.
-
-Do not force corrections simply because a sentence resembles an example.
 
 ==================================================
 CORRUPTED / PSEUDO WORDS
@@ -1527,13 +1550,16 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 initialResultsDict[obj.id] = formatSubtitleLine(val);
             });
 
-            const results = chunk.map(obj => ({
+            const translatedChunkForQC = chunk.map(obj => ({
                 id: obj.id,
                 text: initialResultsDict[obj.id]
             }));
 
+            // === INTEGRARE QC CONSERVATOR V4 FULL ===
+            const finalResults = await qcChunkFull(chunk, translatedChunkForQC, keyStates, globalChunkIndex, totalChunks);
+
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
-            return results;
+            return finalResults;
         } catch (error) {
             lastError = error;
             console.log(`${c.yellow}⚠ [Gemini] Eroare la calupul ${globalChunkIndex + 1} (Încercarea ${attempt}/${maxLocalAttempts}): ${error.message}${c.reset}`);
@@ -1588,11 +1614,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
             if (localIndex > 0) await sleep(800 * localIndex);
 
             const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, globalIndex, chunks.length);
-            
-            // === INTEGRARE QC V4 FULL ===
-            const qcResult = await qcChunkFull(chunk, result, qcKeyStates, globalIndex, chunks.length);
-
-            return { globalIndex, result: qcResult };
+            return { globalIndex, result };
         });
 
         const results = await Promise.all(promises);
