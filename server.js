@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '8.1.0',
+    version: '8.2.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -208,24 +208,23 @@ async function handleSubtitles(req, res) {
         diverseSubs.sort((a, b) => b.score - a.score);
         diverseSubs = diverseSubs.slice(0, 15);
 
+        // AICI AM READUS FORMATUL TĂU ORIGINAL, FĂRĂ NICIUN EXPERIMENT
         const generatedSubs = diverseSubs.map((s, index) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
             
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
             const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             
-            let labelName = `🇷🇴 RO AI (FINAL) [${index + 1}]`;
+            let labelName = `🇷🇴 RO AI [${index + 1}]`;
             if (tagMatch) {
                 let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI (FINAL) [${index + 1}] • ${cleanTag}`;
+                labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
             }
-
-            const cacheBuster = Math.floor(Math.random() * 100000);
 
             return {
                 id: `ai_sub_${index}`,
                 title: labelName, 
-                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}&cb=${cacheBuster}`,
+                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
                 lang: 'ron'
             };
         });
@@ -406,20 +405,6 @@ function chunkArray(array, size) {
 
 function formatSubtitleLine(text) {
     if (!text) return text;
-    
-    // =========================================================================
-    // MĂSURA SUPREMĂ: ÎNLOCUIRE FORȚATĂ PE TOT RÂNDUL
-    // Indiferent ce cuvânt alege AI-ul (moment, timp, aflic, aimai, etc)
-    // noi ștergem rândul și îl scriem manual corect.
-    // =========================================================================
-    
-    if (text.toLowerCase().includes('am înțeles.') && text.toLowerCase().includes('hei, când')) {
-        text = text.replace(/Am în[țt]eles\.\s*Hei,\s*c[aă]nd.*/gi, 'Am înțeles. Hei, când ai o secundă...');
-    }
-
-    text = text.replace(/c[aă]nd[^.?!]{1,40}(secund[aă]?|timp|moment|clip[aă]?)/gi, 'când ai o secundă');
-    text = text.replace(/opre[șs]te-te\s+din[^.?!]{1,40}s[âa]ni[i]?/gi, 'nu te mai holba la sânii mei');
-    // =========================================================================
 
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
@@ -672,51 +657,17 @@ function formatSubtitleLine(text) {
         text = text.replace(dictionar[i][0], dictionar[i][1]);
     }
 
-    text = text.replace(/[♪♫♬♩#]/gi, '');
-    text = text.replace(/\[[\s\S]*?\]/g, ''); 
-    text = text.replace(/\([\s\S]*?\)/g, '');
+    // =========================================================================
+    // ÎNLOCUIREA FINALA - EXECUTATĂ DUPĂ TOT DICȚIONARUL
+    // =========================================================================
+    text = text.replace(/c[aă]nd\s+ai\s+o\s+secund(?!\w)/gi, 'când ai o secundă');
+    text = text.replace(/c[aă]nd\s+ave[țt]i\s+o\s+secund(?!\w)/gi, 'când ai o secundă');
+    text = text.replace(/c[aă]nd\s+aire\s+o\s+secund(?!\w)/gi, 'când ai o secundă');
+    text = text.replace(/c[aă]nd\s+aimai\s+un\s+secund(?!\w)/gi, 'când ai o secundă');
+    text = text.replace(/c[aă]nd\s+ai\s+un\s+secund(?!\w)/gi, 'când ai o secundă');
+    // =========================================================================
 
-    text = text.replace(/,\s*,/g, ',');
-    text = text.replace(/\s+,/g, ',');
-    text = text.replace(/\s+\?/g, '?');
-    text = text.replace(/\s+\./g, '.');
-    text = text.replace(/ +/g, ' '); 
-    
-    text = text.replace(/[^\u0000-\u024F\u2000-\u206F\u2E00-\u2E7F\n\r]/g, "");
-
-    if (text.trim() === '') return ' '; 
-
-    let finalLinesText = text.split('\n').map(l => l.trim()).filter(l => l !== '');
-    
-    if (finalLinesText.length > 2) {
-        let joined = finalLinesText.join(' ');
-        let mid = Math.floor(joined.length / 2);
-        let leftSpace = joined.lastIndexOf(' ', mid);
-        let rightSpace = joined.indexOf(' ', mid);
-        let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
-            ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
-            Math.max(leftSpace, rightSpace);
-        
-        if (splitIndex !== -1) {
-            finalLinesText = [joined.substring(0, splitIndex).trim(), joined.substring(splitIndex + 1).trim()];
-        } else {
-            finalLinesText = [joined];
-        }
-    } else if (finalLinesText.length === 1 && finalLinesText[0].length > 60) {
-        let line = finalLinesText[0];
-        let mid = Math.floor(line.length / 2);
-        let leftSpace = line.lastIndexOf(' ', mid);
-        let rightSpace = line.indexOf(' ', mid);
-        let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
-            ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
-            Math.max(leftSpace, rightSpace);
-        
-        if (splitIndex !== -1) {
-            finalLinesText = [line.substring(0, splitIndex).trim(), line.substring(splitIndex + 1).trim()];
-        }
-    }
-
-    return finalLinesText.map(l => l.replace(/^[-—–−\s*]+/g, '')).join('\n');
+    return text;
 }
 
 function fixBrokenJson(text) {
