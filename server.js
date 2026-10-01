@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '11.0.1',
+    version: '12.0.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -156,25 +156,25 @@ async function handleSubtitles(req, res) {
             }
         });
         
-        const allowedLangs = ['eng', 'en', 'english', 'spa', 'es', 'spanish', 'ita', 'it', 'italian', 'fre', 'fr', 'french'];
-        let sourceSubs = allSubs.filter(s => s.lang && allowedLangs.includes(s.lang.toLowerCase()));
+        // Revenim strict la limba Engleză
+        let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
         
         const uniqueUrls = new Set();
-        sourceSubs = sourceSubs.filter(sub => {
+        engSubs = engSubs.filter(sub => {
             if (uniqueUrls.has(sub.url)) return false;
             uniqueUrls.add(sub.url);
             return true;
-        }).slice(0, 30); 
+        }).slice(0, 25); 
 
-        if (sourceSubs.length === 0) return res.json({ subtitles: [] });
+        if (engSubs.length === 0) return res.json({ subtitles: [] });
 
         let diverseSubs = [];
         const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
 
-        sourceSubs.forEach((sub, idx) => {
+        engSubs.forEach((sub, idx) => {
             let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
             if (!trashRegex.test(realName)) {
-                diverseSubs.push({ originalUrl: sub.url, realName, index: idx, lang: sub.lang });
+                diverseSubs.push({ originalUrl: sub.url, realName, index: idx });
             }
         });
 
@@ -185,12 +185,6 @@ async function handleSubtitles(req, res) {
             s.score = 0;
             const subName = s.realName.toLowerCase();
             
-            // BONUS URIAȘ PENTRU LIMBILE LATINE CA SĂ FIE PUSE PE LOCURILE 1, 2, 3
-            let langLower = s.lang.toLowerCase();
-            if (['spa', 'es', 'spanish', 'ita', 'it', 'italian', 'fre', 'fr', 'french'].includes(langLower)) {
-                s.score += 100;
-            }
-
             if (videoTokens.length > 0) {
                 let matchCount = 0;
                 videoTokens.forEach(token => {
@@ -775,7 +769,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise (Calup ${globalChunkIndex + 1} | Aceeași cheie: ${keyIndex})...${c.reset}`);
             }
             
-            const prompt = `You are a professional Romanian movie translator. Your ONLY purpose is to translate a subtitle JSON array (source can be English, Spanish, Italian, or French) into natural, conversational Romanian.
+            const prompt = `You are a professional Romanian movie translator. Your ONLY purpose is to translate an English subtitle JSON array into natural, conversational Romanian.
 
 CRITICAL SYSTEM REQUIREMENT:
 The input JSON contains EXACTLY ${currentBatchSize} items. You MUST output EXACTLY ${currentBatchSize} items. Every single key from the input must be present in the output JSON.
