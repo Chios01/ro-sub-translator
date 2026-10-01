@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.28.0',
+    version: '12.29.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -893,11 +893,7 @@ async function callGeminiQc(prompt, qcKeyStates) {
     let lastError = null;
     let retries503 = 0;
 
-    const endpoint =
-        `[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){QC_MODEL_NAME}:generateContent`;
-
-    console.log(`[QC DEBUG] model=${JSON.stringify(QC_MODEL_NAME)}`);
-    console.log(`[QC DEBUG] endpoint=${JSON.stringify(endpoint)}`);
+    const endpoint = `[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){QC_MODEL_NAME}:generateContent`;
 
     for (let attempt = 1; attempt <= QC_MAX_ATTEMPTS; attempt++) {
 
@@ -913,7 +909,6 @@ async function callGeminiQc(prompt, qcKeyStates) {
 
             const response = await axios.post(
                 endpoint,
-
                 {
                     contents: [
                         {
@@ -949,14 +944,9 @@ async function callGeminiQc(prompt, qcKeyStates) {
                         }
                     ]
                 },
-
                 {
-                    params: {
-                        key: key
-                    },
-
+                    params: { key },
                     timeout: QC_TIMEOUT_MS,
-
                     headers: {
                         'Content-Type': 'application/json'
                     }
@@ -1074,8 +1064,6 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 continue;
             }
 
-            // Nu transformăm o eroare necunoscută
-            // într-un fals "timeout".
             throw error;
         }
     }
