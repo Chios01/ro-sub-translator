@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '12.1.0',
+    version: '12.2.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -156,6 +156,7 @@ async function handleSubtitles(req, res) {
             }
         });
         
+        // Căutare doar în engleză
         let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
         
         const uniqueUrls = new Set();
@@ -782,6 +783,17 @@ The input JSON contains EXACTLY ${currentBatchSize} items. You MUST output EXACT
 6. SPLIT LINES & CONTINUITY: Subtitles are often cut mid-sentence. Read the surrounding context and translate so the sentence flows naturally across lines. 
 7. CLEAN UP: Remove all audio tags (e.g., [sighs], [music]). Do not translate character names.
 </translation_master_rules>
+
+<few_shot_examples>
+Learn from these patterns (DO NOT copy them mechanically, understand the principle of natural adaptation):
+- Idiom: "Give me a break." -> "Hai, lasă-mă." (Not literal)
+- Sarcasm: "Great. Just great." -> "Minunat. Pur și simplu minunat."
+- Natural phrasing: "Are you coming with us?" -> "Vii cu noi?" (Not "Vei veni împreună cu noi?")
+- Slang/Casual: "What the hell, man?" -> "Ce naiba, frate?"
+- Contextual meaning: "You better watch yourself." -> "Ai grijă."
+- Short & Natural: "I'm gonna kill you." -> "Te omor." (Not "Eu te voi ucide.")
+- Puns/Idioms: "That's a little fishy." -> "Cam miroase a pește."
+</few_shot_examples>
 
 JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact input keys. Do not add markdown, explanations, or extra text.
 
