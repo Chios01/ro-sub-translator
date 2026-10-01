@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.17.0',
+    version: '12.18.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -879,31 +879,22 @@ function buildQcChunkPayload(originalChunk, translatedChunk) {
 // ============================================================
 
 async function callGeminiQc(prompt, qcKeyStates) {
-    const endpoint =
-        `https://generativelanguage.googleapis.com/v1beta/models/${QC_MODEL_NAME}:generateContent`;
-
     let lastError = null;
 
-    for (
-        let attempt = 1;
-        attempt <= QC_MAX_ATTEMPTS;
-        attempt++
-    ) {
+    for (let attempt = 1; attempt <= QC_MAX_ATTEMPTS; attempt++) {
         const keyState = getImmediateQcKey(qcKeyStates);
 
-        // QC este OPTIONAL.
-        // Dacă nu există momentan o cheie disponibilă,
-        // NU blocăm traducerea.
         if (!keyState) {
-            return null;
+            throw new Error('Nu mai există chei disponibile pentru QC.');
         }
 
         try {
             const response = await axios.post(
-                endpoint,
+                `https://generativelanguage.googleapis.com/v1beta/models/${QC_MODEL_NAME}:generateContent?key=${keyState.key}`,
                 {
                     contents: [
                         {
+                            role: 'user',
                             parts: [
                                 {
                                     text: prompt
@@ -911,12 +902,10 @@ async function callGeminiQc(prompt, qcKeyStates) {
                             ]
                         }
                     ],
-
                     generationConfig: {
-                        temperature: 0.0,
+                        temperature: 0,
                         responseMimeType: 'application/json'
                     },
-
                     safetySettings: [
                         {
                             category: 'HARM_CATEGORY_HARASSMENT',
@@ -936,88 +925,171 @@ async function callGeminiQc(prompt, qcKeyStates) {
                         }
                     ]
                 },
-
                 {
-                    params: {
-                        key: keyState.key
-                    },
-
-                    timeout: QC_TIMEOUT_MS,
-
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
+                    timeout: QC_TIMEOUT_MS
                 }
             );
 
             const raw =
-                response.data
-                    ?.candidates?.[0]
-                    ?.content
-                    ?.parts
-                    ?.map(part => part.text || '')
+                response?.data?.candidates?.[0]?.content?.parts
+                    ?.map(p => p?.text || '')
                     .join('') || '';
 
             if (!raw.trim()) {
-                throw new Error(
-                    'QC Gemini a returnat conținut gol.'
-                );
+                throw new Error('QC Gemini a returnat un răspuns gol.');
             }
-
-            keyState.failures = 0;
 
             return extractQcJsonObject(raw);
 
         } catch (error) {
             lastError = error;
 
-            const status = error.response?.status;
+            const status = error?.response?.status;
 
-            // Key invalidă / expirată
-            if (
-                status === 401 ||
-                status === 403
-            ) {
-                keyState.disabled = true;
-            }
-
-            // Rate limit
-            else if (status === 429) {
-                keyState.pausedUntil =
-                    Date.now() + QC_RATE_LIMIT_PAUSE_MS;
-
-                keyState.failures++;
-            }
-
-            // Alte erori
-            else {
-                keyState.failures++;
-            }
-
-            // Retry scurt pentru QC.
-            // NICIODATĂ nu facem pauza de 61 secunde.
-            if (
-                status !== 401 &&
-                status !== 403 &&
-                attempt < QC_MAX_ATTEMPTS
-            ) {
-                await sleep(
-                    Math.min(
-                        2500,
-                        500 * attempt
-                    )
+            // =========================================================
+            // 429 - RATE LIMIT
+            // Pentru 429 facem retry, dar cu o pauză scurtă.
+            // Nu folosim pauza mare de 61 secunde a traducerii principale.
+            // =========================================================
+            if (status === 429) {
+                console.warn(
+                    `⚠ [QC V4 FULL] 429 Rate Limit ` +
+                    `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}). ` +
+                    `Aștept ${Math.round(QC_RATE_LIMIT_PAUSE_MS / 1000)}s...`
                 );
+
+                if (attempt < QC_MAX_ATTEMPTS) {
+                    await sleep(QC_RATE_LIMIT_PAUSE_MS);
+                    continue;
+                }
+
+                break;
             }
 
+            // =========================================================
+            // 503 - GEMINI TEMPORAR INDISPONIBIL
+            //
+            // Nu lăsăm QC-ul să țină subtitrarea blocată minute întregi.
+            // Facem cel mult un retry rapid.
+            // Dacă 503 continuă, abandonăm QC pentru acest chunk.
+            // Traducerea deja făcută rămâne intactă.
+            // =========================================================
+            if (status === 503) {
+                console.warn(
+                    `⚠ [QC V4 FULL] Gemini indisponibil temporar (503) ` +
+                    `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}).`
+                );
+
+                // Un singur retry rapid pentru 503.
+                if (attempt < QC_MAX_ATTEMPTS) {
+                    const retryDelay = 1200 * attempt;
+
+                    console.warn(
+                        `↻ [QC V4 FULL] Retry QC în ` +
+                        `${(retryDelay / 1000).toFixed(1)}s...`
+                    );
+
+                    await sleep(retryDelay);
+
+                    continue;
+                }
+
+                console.warn(
+                    `⚠ [QC V4 FULL] 503 persistent. ` +
+                    `Sar peste QC și păstrez traducerea existentă.`
+                );
+
+                break;
+            }
+
+            // =========================================================
+            // 500 / 502 / 504 - ERORI TEMPORARE SERVER
+            //
+            // Același principiu: retry scurt, apoi fallback.
+            // =========================================================
+            if (
+                status === 500 ||
+                status === 502 ||
+                status === 504
+            ) {
+                console.warn(
+                    `⚠ [QC V4 FULL] Eroare server ${status} ` +
+                    `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}).`
+                );
+
+                if (attempt < QC_MAX_ATTEMPTS) {
+                    const retryDelay = 1000 * attempt;
+
+                    await sleep(retryDelay);
+
+                    continue;
+                }
+
+                console.warn(
+                    `⚠ [QC V4 FULL] Eroare server persistentă. ` +
+                    `Sar peste QC și păstrez traducerea existentă.`
+                );
+
+                break;
+            }
+
+            // =========================================================
+            // 401 / 403 - CHEIE INVALIDĂ / FĂRĂ PERMISIUNE
+            //
+            // Dezactivăm cheia și trecem imediat la următoarea.
+            // =========================================================
+            if (status === 401 || status === 403) {
+                keyState.disabled = true;
+
+                console.warn(
+                    `⚠ [QC V4 FULL] Cheia ...${keyState.key.slice(-4)} ` +
+                    `a fost respinsă (${status}). Trec la următoarea cheie.`
+                );
+
+                continue;
+            }
+
+            // =========================================================
+            // TIMEOUT / NETWORK
+            // =========================================================
+            if (
+                error?.code === 'ECONNABORTED' ||
+                error?.code === 'ETIMEDOUT' ||
+                error?.code === 'ECONNRESET' ||
+                error?.code === 'ENOTFOUND' ||
+                error?.code === 'EAI_AGAIN'
+            ) {
+                console.warn(
+                    `⚠ [QC V4 FULL] Eroare de rețea ` +
+                    `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}): ` +
+                    `${error.message}`
+                );
+
+                if (attempt < QC_MAX_ATTEMPTS) {
+                    await sleep(1000 * attempt);
+                    continue;
+                }
+
+                break;
+            }
+
+            // =========================================================
+            // ORICE ALTĂ EROARE
+            // Nu blocăm traducerea pentru o problemă de QC.
+            // =========================================================
+            console.warn(
+                `⚠ [QC V4 FULL] Eroare neașteptată: ` +
+                `${error.message || error}`
+            );
+
+            break;
+            
         } finally {
             keyState.inUse = false;
         }
     }
 
-    throw (
-        lastError ||
-        new Error('QC Gemini request failed.')
-    );
+    throw lastError || new Error('QC Gemini a eșuat.');
 }
 
 // ============================================================
@@ -1370,142 +1442,6 @@ app.get('/:configData/translate', async (req, res) => {
         }
     }
 });
-
-// ============================================================
-// MASTER CINEMATIC TRANSLATION PROMPT
-// ============================================================
-
-const MASTER_TRANSLATION_PROMPT = `
-You are a professional cinematic Romanian translator. Your ONLY purpose is to translate an English subtitle JSON array into natural, conversational Romanian.
-
-<translation_master_rules>
-1. THE GOLDEN RULE: Translate the scene, not just the words. Recreate the dialogue naturally in Romanian. Do not use literal translations, mechanical phrasing, or English word order.
-2. SLANG & PROFANITY: Preserve the original register. Do not censor "fuck", "shit", etc. Adapt them into natural Romanian equivalents (e.g., vulgarity stays vulgar, slang stays slang).
-3. CONTEXT & GENDER: Pay extreme attention to context. If it's clear a female is speaking, use feminine verb agreements ("Am fost plătită"). 
-4. SARCASM & HUMOR: Sarcasm, irony, and jokes must survive the translation. Adapt puns if necessary so the Romanian viewer gets the same emotional effect.
-5. NO INVENTED WORDS: Use ONLY standard Romanian dictionary words. Never invent conjugations, mashups, or non-existent words.
-6. SPLIT LINES & CONTINUITY: Subtitles are often cut mid-sentence. Read the surrounding context and translate so the sentence flows naturally across lines. 
-7. CLEAN UP: Remove all audio tags (e.g., [sighs], [music]). Do not translate character names.
-8. 100% TRANSLATION: Do NOT leave any English words or phrases untranslated. Everything must be in Romanian.
-9. NO ALTERNATIVES: Never provide multiple options in brackets like (varianta 1 | varianta 2). Make a firm choice and provide only the final Romanian text.
-10. NO FOREIGN SCRIPTS: Use only the Latin alphabet and standard Romanian diacritics (ă, â, î, ș, ț). Never generate Asian, Cyrillic, or other foreign characters.
-</translation_master_rules>
-
-<few_shot_examples>
-- Idiom: "Give me a break." -> "Hai, lasă-mă."
-- Sarcasm: "Great. Just great." -> "Minunat. Pur și simplu minunat."
-- Natural phrasing: "Are you coming with us?" -> "Vii cu noi?"
-- Slang/Casual: "What the hell, man?" -> "Ce naiba, frate?"
-- Contextual meaning: "You better watch yourself." -> "Ai grijă."
-- Short & Natural: "I'm gonna kill you." -> "Te omor."
-</few_shot_examples>
-
-JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact input keys. Do not add markdown, explanations, or extra text.
-`;
-
-// ============================================================
-// PROMPT BUILDER CU CONTEXT
-// ============================================================
-
-function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext) {
-    const contextBefore = allItems.slice(Math.max(0, chunkStart - CONTEXT_LINES_BEFORE), chunkStart);
-    const contextAfter = allItems.slice(chunkEnd, Math.min(allItems.length, chunkEnd + CONTEXT_LINES_AFTER));
-
-    const keysToTranslate = {};
-    chunk.forEach(obj => { keysToTranslate[obj.id] = obj.text; });
-
-    return `
-${MASTER_TRANSLATION_PROMPT}
-
-Context inainte (pentru referinta):
-${contextBefore.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
-
-Context anterior tradus in Romana (pentru continuitate):
-${previousTranslatedContext.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
-
-Tradu STRICT urmatorul obiect JSON, păstrând exact aceleași chei numerice:
-${JSON.stringify(keysToTranslate, null, 2)}
-`;
-}
-
-// ============================================================
-// API KEY STATE & MANAGEMENT
-// ============================================================
-
-function createKeyState(keys) {
-    return keys.map(key => ({ key, pausedUntil: 0, disabled: false, failures: 0, lastUsed: 0 }));
-}
-
-async function getAvailableKey(keyStates) {
-    while (true) {
-        const now = Date.now();
-        const available = keyStates
-            .filter(s => !s.disabled && s.pausedUntil <= now)
-            .sort((a, b) => a.lastUsed - b.lastUsed);
-
-        if (available.length) {
-            const state = available[0];
-            state.lastUsed = Date.now();
-            return state;
-        }
-
-        const waits = keyStates
-            .filter(s => !s.disabled && s.pausedUntil > now)
-            .map(s => s.pausedUntil - now);
-
-        if (!waits.length) throw new Error('Toate cheile Gemini sunt dezactivate.');
-
-        const waitMs = Math.max(250, Math.min(...waits));
-        await sleep(waitMs);
-    }
-}
-
-async function callGemini(prompt, keyState) {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
-    const maxAttempts = 6;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-            const response = await axios.post(
-                endpoint,
-                {
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.0, responseMimeType: 'application/json' },
-                    safetySettings: [
-                        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
-                    ]
-                },
-                { params: { key: keyState.key }, timeout: 120000, headers: { 'Content-Type': 'application/json' } }
-            );
-
-            const raw = response.data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-            if (!raw.trim()) throw new Error('Gemini a returnat conținut gol.');
-            keyState.failures = 0;
-            return raw;
-        } catch (error) {
-            lastError = error;
-            const status = error.response?.status;
-            if (status === 401 || status === 403) {
-                keyState.disabled = true;
-                throw new Error(`Cheie Gemini invalidă (${status}).`);
-            }
-            if (status === 429) {
-                keyState.pausedUntil = Date.now() + 61000;
-                await sleep(2000);
-                continue;
-            }
-            if (attempt < maxAttempts) {
-                await sleep(2000 * attempt);
-                continue;
-            }
-        }
-    }
-    throw lastError || new Error('Gemini request failed.');
-}
 
 // ============================================================
 // CHUNK ENGINE CU RETRY SI RE-SPLIT
