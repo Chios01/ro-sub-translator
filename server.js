@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.22.0',
+    version: '12.23.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -557,51 +557,69 @@ async function callGemini(prompt, keyState) {
 }
 
 // ============================================================
-// QC V4 FULL — CONSERVATIVE POST-TRANSLATION QUALITY CONTROL
+// QC V5 FULL - CONTROL FINAL CONSERVATOR
 // ============================================================
 
 const QC_MODEL_NAME = process.env.GEMINI_QC_MODEL || MODEL_NAME;
-const QC_MAX_LINES_PER_REQUEST = CHUNK_SIZE;
+
 const QC_TIMEOUT_MS = Math.min(
     45000,
     Math.max(15000, Number(process.env.QC_TIMEOUT_MS) || 30000)
 );
+
 const QC_MAX_ATTEMPTS = Math.max(
     2,
     Math.min(3, Number(process.env.QC_MAX_ATTEMPTS) || 3)
 );
 
+// 503 = maximum UN retry rapid.
+// 429 = retry normal, separat de traducerea principală.
+const QC_MAX_503_RETRIES = 1;
 const QC_RATE_LIMIT_PAUSE_MS = Math.max(
     3000,
     Number(process.env.QC_RATE_LIMIT_PAUSE_MS) || 8000
 );
 
+// ============================================================
+// PROMPT QC V5
+// ============================================================
+
 const QC_FULL_PROMPT = `
 Ești un CONTROLOR FINAL DE CALITATE pentru subtitrări engleză → română.
 
-IMPORTANT:
-Traducerea primită este DEJA BUNĂ în majoritatea cazurilor.
-NU trebuie să o rescrii.
-NU trebuie să o stilizezi.
-NU trebuie să o faci "mai frumoasă".
-NU trebuie să schimbi sinonime corecte.
-NU trebuie să modifici nume, porecle, branduri, titluri, termeni tehnici, slang sau înjurături doar pentru că ai prefera altă formulare.
+Traducerea primită este DEJA TRADUSĂ și, în majoritatea cazurilor,
+este corectă.
 
-Sarcina ta este STRICT să găsești și să corectezi ERORI REALE ȘI CLARE.
+SARCINA TA NU ESTE SĂ RESCRII TRADUCEREA.
 
-Primești:
-1. textul original în engleză
-2. traducerea română existentă
+Trebuie să găsești DOAR erori REALE, CLARE și OBIECTIVE.
 
-Compară-le și returnează DOAR corecțiile care sunt cu adevărat necesare.
+Dacă o traducere este corectă și naturală:
+NU O MODIFICA.
 
-========================
-CE TREBUIE SĂ VERIFICI
-========================
+Dacă există doar o preferință de stil:
+NU O MODIFICA.
 
-1. CUVINTE STRICATE / LITERE LIPSĂ
+Dacă există o formulare alternativă validă:
+NU O MODIFICA.
 
-Caută cuvinte care par evident corupte, trunchiate sau scrise greșit.
+Dacă există o eroare clară:
+CORECTEAZ-O cu modificarea minimă necesară.
+
+============================================================
+VERIFICĂ ÎN SPECIAL
+============================================================
+
+1. CUVINTE STRICATE SAU TRUNCHIATE
+
+Caută:
+- litere lipsă
+- litere în plus
+- cuvinte rupte
+- caractere greșite
+- cuvinte deformate
+- cuvinte cu cifre introduse accidental
+- fragmente evidente
 
 Exemple:
 
@@ -610,201 +628,178 @@ Exemple:
 "rebuie" → "trebuie"
 "poart" → "port"
 "uudzi" → "uzi"
-"știri minute" → "șase minute"
-
-Atenție:
-NU corecta automat orice cuvânt rar.
-Corectează doar când eroarea este clară din context.
-
-========================
-2. CARACTERE SAU SIMBOLURI INTRODUSE GREȘIT
-========================
-
-Caută:
-- cifre introduse în interiorul cuvintelor
-- caractere lipsă
-- caractere în plus
-- cuvinte rupte
-- fragmente evidente
-- caractere Unicode corupte
-- ""
-
-Exemple:
-
 "să1 îmi pară rău" → "să-mi pară rău"
-"cinva" → "cineva"
-"rebuie" → "trebuie"
 
-========================
-3. GRAMATICĂ EVIDENT GREȘITĂ
-========================
+Aceste exemple reprezintă TIPURI DE ERORI.
+Nu face înlocuiri mecanice globale.
+
+============================================================
+2. GRAMATICĂ EVIDENT GREȘITĂ
+============================================================
 
 Verifică:
 
-- acord subiect + verb
+- acordul dintre subiect și verb
 - persoana verbului
 - singular/plural
-- gen, când este evident
-- conjugarea verbelor
+- gen, atunci când este evident
+- conjugarea
 - prepoziții lipsă
-- pronume relative lipsă
+- pronume lipsă
 - cuvinte lipsă
-- forme verbale evident greșite
+- forme gramaticale evident greșite
 
 Exemple:
 
-"Eu poart căciuli." → "Eu port căciuli."
+"Eu poart căciuli."
+→ "Eu port căciuli."
 
-"Habar n-are despre vorbește." → "Habar n-are despre ce vorbește."
+"Tu merge acolo."
+→ "Tu mergi acolo."
 
-"Tu merge acolo." → "Tu mergi acolo."
+"Ei este aici."
+→ "Ei sunt aici."
 
-"Ei este aici." → "Ei sunt aici."
+"Habar n-are despre vorbește."
+→ "Habar n-are despre ce vorbește."
 
-Corectează numai când eroarea este clară.
+Corectează doar erorile clare.
 
-========================
-4. NEGĂRI ȘI SENS
-========================
+============================================================
+3. NEGĂRI ȘI SENS
+============================================================
 
 Verifică dacă traducerea:
-- pierde "not", "never", "no", "nothing", etc.
+
+- pierde "not"
+- pierde "never"
+- pierde "no"
+- pierde "nothing"
 - inversează sensul
-- introduce o afirmație care nu există în original
+- schimbă afirmația în negație sau invers
 - elimină o informație importantă
+- adaugă o informație care nu există în original
 
 Exemplu:
 
-"I don't know." 
-NU trebuie să devină:
+"I don't know."
+NU poate deveni:
 "Știu."
 
-========================
-5. ENGLEZĂ RĂMASĂ DIN GREȘEALĂ
-========================
+============================================================
+4. ENGLEZĂ RĂMASĂ ACCIDENTAL
+============================================================
 
-Caută cuvinte sau expresii englezești obișnuite care au rămas netraduse.
+Caută cuvinte sau expresii englezești obișnuite care au rămas
+netraduse accidental.
 
-Dar NU considera eroare:
+NU considera eroare:
+
 - nume proprii
-- nume de persoane
-- nume de locuri
+- persoane
+- locuri
 - branduri
 - titluri
 - acronime
 - termeni tehnici
+- nume de produse
 - expresii intenționat în engleză
-- cuvinte folosite ca atare în dialog
+- slang folosit intenționat în engleză
 
-Corectează doar engleza care este evident lăsată accidental.
+Corectează doar engleza rămasă evident din greșeală.
 
-========================
-6. NUMERE ȘI DATE
-========================
+============================================================
+5. NUMERE
+============================================================
 
-Verifică dacă numerele importante din original sunt păstrate corect.
+Verifică numerele importante din original.
 
-NU modifica numerele doar pentru că formatul diferă.
+Nu modifica numere corecte doar pentru format.
 
-========================
-EXEMPLE REALE DE ERORI
-========================
+============================================================
+6. CARACTERE CORUPTE
+============================================================
 
-1.
+Este eroare dacă există:
+
+""
+
+sau caractere evident corupte.
+
+============================================================
+EXEMPLE IMPORTANTE DE ERORI
+============================================================
+
 "Eu poart căciuli tricotate."
-→
-"Eu port căciuli tricotate."
+→ "Eu port căciuli tricotate."
 
-2.
 "N avem nimic în comun."
-→
-"N-avem nimic în comun."
+→ "N-avem nimic în comun."
 sau
 "Nu avem nimic în comun."
 
-3.
 "Habar n-are despre vorbește."
-→
-"Habar n-are despre ce vorbește."
+→ "Habar n-are despre ce vorbește."
 
-4.
 "rebuie să plec."
-→
-"trebuie să plec."
+→ "trebuie să plec."
 
-5.
 "Mă uudzi."
-→
-"Mă uzi."
+→ "Mă uzi."
 
-6.
 "cinva a purtat uniforma asta."
-→
-"cineva a purtat uniforma asta."
+→ "cineva a purtat uniforma asta."
 
-7.
 "aceași tabără."
-→
-"aceeași tabără."
+→ "aceeași tabără."
 
-8.
-"să1 îmi pară rău de tine."
-→
-"să-mi pară rău de tine."
+"să1 îmi pară rău."
+→ "să-mi pară rău."
 
-9.
-"atât de tare" trebuie păstrat cu diacritice atunci când acestea lipsesc accidental.
+============================================================
+CE NU TREBUIE SĂ FACI
+============================================================
 
-IMPORTANT:
-Acestea sunt EXEMPLE DE TIPURI DE ERORI.
-Nu face înlocuiri mecanice globale.
-Judecă fiecare linie în context.
+NU rescrie propoziții corecte.
 
-========================
-CE NU AI VOIE SĂ FACI
-========================
+NU schimba sinonime corecte.
 
-NU modifica o traducere doar pentru că:
-- ai o variantă mai elegantă
-- ai un sinonim preferat
-- ai schimba ordinea cuvintelor
-- ai folosi altă punctuație
-- ți se pare mai naturală altă formulare
-- preferi "nu" în loc de "n-am"
-- preferi o altă traducere pentru slang
-- preferi altă formă colocvială validă
+NU schimba ordinea cuvintelor doar pentru stil.
 
-NU transforma:
-"Nu-mi pasă."
-în altceva dacă este deja corect.
+NU transforma o formulare colocvială într-una formală.
 
-NU transforma:
-"Lasă-mă în pace."
-doar pentru că ai o alternativă.
+NU modifica slang-ul corect.
 
-NU corecta nume sau termeni pe care nu îi poți confirma clar ca fiind greșiți.
+NU modifica înjurăturile corecte.
 
-========================
+NU modifica numele proprii.
+
+NU modifica brandurile.
+
+NU modifica titlurile.
+
+NU modifica termenii tehnici.
+
+NU modifica o traducere doar pentru că ai fi tradus-o diferit.
+
+NU adăuga informații.
+
+NU elimina informații.
+
+============================================================
 REGULA PRINCIPALĂ
-========================
+============================================================
 
-Dacă traducerea este corectă și naturală:
+Mai bine lași o posibilă eroare ambiguă decât să strici o traducere
+care este deja corectă.
 
-NU O MODIFICA.
+Corectează NUMAI când poți spune clar:
 
-Dacă există doar o posibilă preferință stilistică:
+"Da, aceasta este o eroare reală."
 
-NU O MODIFICA.
-
-Dacă există o eroare clară:
-
-CORECTEAZ-O.
-
-Mai bine lași o eroare minoră ambiguă decât să strici o traducere corectă.
-
-========================
+============================================================
 FORMAT OBLIGATORIU
-========================
+============================================================
 
 Returnează DOAR JSON valid:
 
@@ -814,7 +809,7 @@ Returnează DOAR JSON valid:
   }
 }
 
-Dacă nu există nicio eroare:
+Dacă nu există erori:
 
 {
   "corrections": {}
@@ -826,34 +821,11 @@ NU returna comentarii.
 NU returna text în afara JSON-ului.
 
 Pentru fiecare corecție:
-- păstrează ID-ul original
-- păstrează sensul original
+- păstrează ID-ul
+- păstrează sensul
 - modifică minimum necesar
 - nu rescrie inutil propoziția
 `;
-
-function detectLikelyQcIssues(originalChunk, translatedChunk) {
-    const suspects = [];
-    const translatedMap = new Map(
-        translatedChunk.map(item => [String(item.id), String(item.text ?? '')])
-    );
-
-    for (const item of originalChunk) {
-        const idStr = String(item.id);
-        const trans = translatedMap.get(idStr) || '';
-        
-        // Căutare rapidă de anomalii evidente pentru a ghida atenția QC-ului
-        if (
-            trans.includes('') ||
-            /\b(rebuie|cinva|aceași|uudzi)\b/i.test(trans) ||
-            /\b(Eu\s+poartă|Tu\s+merge|Ei\s+este)\b/i.test(trans) ||
-            /(^|[\s])(?:m|v|M|V)(?=[\s.,!?;:]|$)/.test(trans)
-        ) {
-            suspects.push(item.id);
-        }
-    }
-    return suspects;
-}
 
 // ============================================================
 // QC KEY STATE
@@ -861,100 +833,222 @@ function detectLikelyQcIssues(originalChunk, translatedChunk) {
 
 function createQcKeyState(keys) {
     return keys.map(key => ({
-        key,
-        pausedUntil: 0,
+        key: String(key).trim(),
         disabled: false,
-        failures: 0,
-        lastUsed: 0,
-        inUse: false
+        pausedUntil: 0,
+        failures: 0
     }));
 }
 
-function getImmediateQcKey(qcKeyStates) {
-    const now = Date.now();
+// ============================================================
+// OBȚINE O CHEIE QC DISPONIBILĂ
+// ============================================================
 
-    const available = qcKeyStates
-        .filter(state =>
-            !state.disabled &&
-            !state.inUse &&
-            state.pausedUntil <= now
-        )
-        .sort((a, b) => a.lastUsed - b.lastUsed);
+async function getImmediateQcKey(qcKeyStates) {
+    while (true) {
+        const now = Date.now();
 
-    if (!available.length) {
-        return null;
+        const available = qcKeyStates.find(
+            state =>
+                !state.disabled &&
+                (!state.pausedUntil || state.pausedUntil <= now)
+        );
+
+        if (available) {
+            return available;
+        }
+
+        const usable = qcKeyStates.filter(state => !state.disabled);
+
+        if (!usable.length) {
+            throw new Error('Nu mai există chei Gemini disponibile pentru QC.');
+        }
+
+        const nextPause = Math.min(
+            ...usable.map(state => state.pausedUntil || now)
+        );
+
+        const waitMs = Math.max(250, nextPause - now);
+
+        await sleep(Math.min(waitMs, 3000));
     }
-
-    const state = available[0];
-
-    state.lastUsed = now;
-    state.inUse = true;
-
-    return state;
 }
 
 // ============================================================
-// SAFE JSON EXTRACTION
+// EXTRAGE JSON DIN RĂSPUNSUL GEMINI
 // ============================================================
 
 function extractQcJsonObject(raw) {
-    let text = String(raw || '').trim();
+    let clean = String(raw || '').trim();
 
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
+    const first = clean.indexOf('{');
+    const last = clean.lastIndexOf('}');
 
-    if (start >= 0 && end > start) {
-        text = text.slice(start, end + 1);
+    if (first >= 0 && last > first) {
+        clean = clean.slice(first, last + 1);
     }
 
-    return JSON.parse(text);
+    return JSON.parse(clean);
 }
 
 // ============================================================
-// BUILD QC PAYLOAD
+// ACCES SIGUR LA TEXT
+// ============================================================
+
+function getQcText(item) {
+    if (!item) return '';
+
+    return String(
+        item.text !== undefined && item.text !== null
+            ? item.text
+            : ''
+    );
+}
+
+// ============================================================
+// DETECTOR LOCAL V5
+// ============================================================
+
+function detectLikelyQcIssues(originalChunk, translatedChunk) {
+    const suspects = new Set();
+
+    for (let i = 0; i < translatedChunk.length; i++) {
+        const originalItem = originalChunk[i];
+        const translatedItem = translatedChunk[i];
+
+        if (!translatedItem) continue;
+
+        const original = String(originalItem?.text || '');
+        const translated = getQcText(translatedItem);
+
+        if (!translated.trim()) {
+            suspects.add(String(translatedItem.id));
+            continue;
+        }
+
+        if (translated.includes('')) {
+            suspects.add(String(translatedItem.id));
+        }
+
+        if (
+            /[A-Za-zĂÂÎȘȚăâîșț]+[0-9]+[A-Za-zĂÂÎȘȚăâîșț]+/u
+                .test(translated)
+        ) {
+            suspects.add(String(translatedItem.id));
+        }
+
+        if (
+            /\b(?:cinva|aceași|rebuie|uudzi|dafirma|ghicercici)\b/i
+                .test(translated)
+        ) {
+            suspects.add(String(translatedItem.id));
+        }
+
+        if (
+            /\bEu\s+(?:poartă|merge|are|face|spune|vine|știe|vrea)\b/i
+                .test(translated)
+        ) {
+            suspects.add(String(translatedItem.id));
+        }
+
+        if (
+            /\bTu\s+(?:merge|are|face|spune|vine|știe|vrea)\b/i
+                .test(translated)
+        ) {
+            suspects.add(String(translatedItem.id));
+        }
+
+        if (
+            /\bdespre\s+(?:vorbește|spune|zice|este|era|sunt)\b/i
+                .test(translated)
+        ) {
+            suspects.add(String(translatedItem.id));
+        }
+
+        const sourceWords =
+            original.trim()
+                ? original.trim().split(/\s+/).length
+                : 0;
+
+        const translatedWords =
+            translated.trim()
+                ? translated.trim().split(/\s+/).length
+                : 0;
+
+        if (
+            sourceWords >= 8 &&
+            translatedWords >= 1 &&
+            translatedWords <= 2 &&
+            translatedWords / sourceWords < 0.30
+        ) {
+            suspects.add(String(translatedItem.id));
+        }
+    }
+
+    const result = [...suspects];
+
+    if (
+        translatedChunk.length >= 20 &&
+        result.length > Math.max(20, Math.floor(translatedChunk.length * 0.20))
+    ) {
+        console.log(
+            `${c.yellow}⚠ [QC V5] Detectorul local a marcat ` +
+            `${result.length}/${translatedChunk.length} linii. ` +
+            `Ignor lista de suspecți pentru acest calup.${c.reset}`
+        );
+
+        return [];
+    }
+
+    return result.slice(0, 12);
+}
+
+// ============================================================
+// CONSTRUIEȘTE PAYLOAD-UL QC
 // ============================================================
 
 function buildQcChunkPayload(originalChunk, translatedChunk) {
-    const translatedMap = new Map(
-        translatedChunk.map(item => [
-            String(item.id),
-            String(item.text ?? '')
-        ])
+    const source = {};
+    const translation = {};
+
+    for (let i = 0; i < translatedChunk.length; i++) {
+        const originalItem = originalChunk[i];
+        const translatedItem = translatedChunk[i];
+
+        if (!originalItem || !translatedItem) continue;
+
+        const id = String(translatedItem.id);
+
+        source[id] = String(originalItem.text || '');
+        translation[id] = getQcText(translatedItem);
+    }
+
+    return JSON.stringify(
+        {
+            source,
+            translation
+        },
+        null,
+        2
     );
-
-    return originalChunk.map((item, index) => ({
-        id: Number(item.id),
-
-        source: String(item.text ?? ''),
-
-        translation:
-            translatedMap.get(String(item.id)) ??
-            String(item.text ?? ''),
-
-        position: index + 1
-    }));
 }
 
 // ============================================================
-// GEMINI QC CALL
+// GEMINI QC
 // ============================================================
 
 async function callGeminiQc(prompt, qcKeyStates) {
     let lastError = null;
-
-    const QC_MAX_503_RETRIES = 1;
-    let qc503Retries = 0;
+    let retries503 = 0;
 
     for (let attempt = 1; attempt <= QC_MAX_ATTEMPTS; attempt++) {
-        const keyState = getImmediateQcKey(qcKeyStates);
-
-        if (!keyState) {
-            throw new Error('Nu mai există chei disponibile pentru QC.');
-        }
+        let keyState = null;
 
         try {
+            keyState = await getImmediateQcKey(qcKeyStates);
+
             const response = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/${QC_MODEL_NAME}:generateContent?key=${keyState.key}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/${QC_MODEL_NAME}:generateContent`,
                 {
                     contents: [
                         {
@@ -990,68 +1084,86 @@ async function callGeminiQc(prompt, qcKeyStates) {
                     ]
                 },
                 {
-                    timeout: QC_TIMEOUT_MS
+                    params: {
+                        key: keyState.key
+                    },
+                    timeout: QC_TIMEOUT_MS,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
                 }
             );
 
             const raw =
-                response?.data?.candidates?.[0]?.content?.parts
-                    ?.map(p => p?.text || '')
+                response.data?.candidates?.[0]?.content?.parts
+                    ?.map(part => part.text || '')
                     .join('') || '';
 
             if (!raw.trim()) {
-                throw new Error('QC Gemini a returnat un răspuns gol.');
+                throw new Error('Gemini QC a returnat conținut gol.');
             }
 
-            return extractQcJsonObject(raw);
+            keyState.failures = 0;
+
+            return raw;
 
         } catch (error) {
             lastError = error;
 
-            const status = error?.response?.status;
+            const status = error.response?.status;
 
-            if (status === 503) {
-                qc503Retries++;
+            if (status === 401 || status === 403) {
+                if (keyState) {
+                    keyState.disabled = true;
+                }
 
-                console.warn(
-                    `⚠ [QC V4 FULL] Gemini indisponibil temporar (503).`
+                console.log(
+                    `${c.yellow}⚠ [QC V5] Cheie QC invalidă (${status}).` +
+                    ` Trec la următoarea cheie.${c.reset}`
                 );
 
-                if (qc503Retries <= QC_MAX_503_RETRIES) {
-                    console.warn(
-                        `↻ [QC V4 FULL] Retry QC o singură dată în 1.5s...`
+                continue;
+            }
+
+            if (status === 503) {
+                if (retries503 < QC_MAX_503_RETRIES) {
+                    retries503++;
+
+                    console.log(
+                        `${c.yellow}⚠ [QC V5] Gemini indisponibil temporar ` +
+                        `(503).${c.reset}`
                     );
 
-                    await new Promise(resolve =>
-                        setTimeout(resolve, 1500)
+                    console.log(
+                        `${c.yellow}↻ [QC V5] Retry QC o singură dată ` +
+                        `în 1.5s...${c.reset}`
                     );
 
+                    await sleep(1500);
                     continue;
                 }
 
-                console.warn(
-                    `⚠ [QC V4 FULL] 503 persistent. ` +
-                    `Sar peste QC pentru acest calup și păstrez traducerea.`
+                console.log(
+                    `${c.yellow}⚠ [QC V5] 503 repetat. ` +
+                    `Sar peste QC pentru acest calup.${c.reset}`
                 );
 
-                break;
+                throw error;
             }
 
             if (status === 429) {
-                console.warn(
-                    `⚠ [QC V4 FULL] 429 Rate Limit ` +
-                    `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}).`
-                );
-
-                if (attempt < QC_MAX_ATTEMPTS) {
-                    await new Promise(resolve =>
-                        setTimeout(resolve, QC_RATE_LIMIT_PAUSE_MS)
-                    );
-
-                    continue;
+                if (keyState) {
+                    keyState.pausedUntil =
+                        Date.now() + QC_RATE_LIMIT_PAUSE_MS;
                 }
 
-                break;
+                console.log(
+                    `${c.yellow}⚠ [QC V5] Rate limit QC (429). ` +
+                    `Schimb cheia și reîncerc.${c.reset}`
+                );
+
+                await sleep(1000);
+                continue;
             }
 
             if (
@@ -1059,79 +1171,41 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 status === 502 ||
                 status === 504
             ) {
-                console.warn(
-                    `⚠ [QC V4 FULL] Eroare server ${status}.`
-                );
-
                 if (attempt < QC_MAX_ATTEMPTS) {
-                    await new Promise(resolve =>
-                        setTimeout(resolve, 1000)
-                    );
-
+                    await sleep(1200 * attempt);
                     continue;
                 }
 
-                console.warn(
-                    `⚠ [QC V4 FULL] Eroare server persistentă. ` +
-                    `Sar peste QC și păstrez traducerea.`
-                );
-
-                break;
-            }
-
-            if (status === 401 || status === 403) {
-                keyState.disabledUntil =
-                    Date.now() + 10 * 60 * 1000;
-
-                console.warn(
-                    `⚠ [QC V4 FULL] Cheia ...${keyState.key.slice(-4)} ` +
-                    `a fost respinsă (${status}). Trec la următoarea cheie.`
-                );
-
-                continue;
+                throw error;
             }
 
             if (
-                error?.code === 'ECONNABORTED' ||
-                error?.code === 'ETIMEDOUT' ||
-                error?.code === 'ECONNRESET' ||
-                error?.code === 'ENOTFOUND' ||
-                error?.code === 'EAI_AGAIN'
+                error.code === 'ECONNABORTED' ||
+                error.code === 'ETIMEDOUT' ||
+                error.code === 'ECONNRESET'
             ) {
-                console.warn(
-                    `⚠ [QC V4 FULL] Eroare de rețea ` +
-                    `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}): ` +
-                    `${error.message}`
-                );
-
                 if (attempt < QC_MAX_ATTEMPTS) {
-                    await new Promise(resolve =>
-                        setTimeout(resolve, 1000)
-                    );
-
+                    await sleep(1000 * attempt);
                     continue;
                 }
 
-                break;
+                throw error;
             }
 
-            console.warn(
-                `⚠ [QC V4 FULL] Eroare neașteptată: ` +
-                `${error.message || error}`
-            );
+            if (attempt < QC_MAX_ATTEMPTS) {
+                await sleep(1000 * attempt);
+                continue;
+            }
 
-            break;
-            
-        } finally {
-            keyState.inUse = false;
+            throw error;
         }
     }
 
-    throw lastError || new Error('QC Gemini a eșuat.');
+    throw lastError || new Error('Gemini QC request failed.');
 }
 
 // ============================================================
-// SANITIZE QC CORRECTIONS
+// SANITIZE CORECȚII QC
 // ============================================================
 
 function sanitizeQcCorrections(
@@ -1147,75 +1221,80 @@ function sanitizeQcCorrections(
         return {};
     }
 
-    const originalIds = new Set(
-        originalChunk.map(item =>
-            String(item.id)
-        )
+    const validIds = new Set(
+        translatedChunk.map(item => String(item.id))
     );
 
-    const currentMap = new Map(
-        translatedChunk.map(item => [
+    const originalById = new Map(
+        originalChunk.map(item => [
             String(item.id),
-            String(item.text ?? '')
+            String(item.text || '')
         ])
     );
 
-    const safe = {};
+    const translatedById = new Map(
+        translatedChunk.map(item => [
+            String(item.id),
+            getQcText(item)
+        ])
+    );
 
-    for (
-        const [id, value]
-        of Object.entries(corrections)
-    ) {
-        if (!originalIds.has(String(id))) {
-            continue;
-        }
+    const clean = {};
 
-        if (typeof value !== 'string') {
-            continue;
-        }
+    for (const [rawId, rawValue] of Object.entries(corrections)) {
+        const id = String(rawId);
 
-        let corrected;
-
-        try {
-            corrected = formatSubtitleLine(value).trim();
-        } catch {
-            corrected = String(value).trim();
-        }
-
-        const current =
-            String(
-                currentMap.get(String(id)) ?? ''
-            ).trim();
-
-        if (!corrected || !current || corrected === current) {
+        if (!validIds.has(id)) {
             continue;
         }
 
         if (
-            corrected.length >
-            Math.max(
-                4000,
-                current.length * 3
-            )
+            typeof rawValue !== 'string' ||
+            !rawValue.trim()
         ) {
+            continue;
+        }
+
+        const value = rawValue.trim();
+
+        if (value.includes('')) {
+            continue;
+        }
+
+        const previous = translatedById.get(id) || '';
+
+        if (value === previous.trim()) {
+            continue;
+        }
+
+        if (value.length > 3000) {
             continue;
         }
 
         if (
-            corrected.includes('\u0000') ||
-            corrected.includes('')
+            value.includes('\u0000') ||
+            value.includes('\uFFFD')
         ) {
             continue;
         }
 
-        safe[String(id)] = corrected;
+        const original = originalById.get(id) || '';
+
+        if (
+            original.trim() &&
+            value.trim().toLowerCase() === original.trim().toLowerCase()
+        ) {
+            continue;
+        }
+
+        clean[id] = value;
     }
 
-    return safe;
+    return clean;
 }
 
 // ============================================================
-// QC V4 FULL — ONE REQUEST PER CHUNK
+// QC V5 PENTRU UN CALUP
 // ============================================================
 
 async function qcChunkFull(
@@ -1226,107 +1305,135 @@ async function qcChunkFull(
     totalChunks
 ) {
     if (
-        !originalChunk?.length ||
-        !translatedChunk?.length
+        !Array.isArray(originalChunk) ||
+        !Array.isArray(translatedChunk) ||
+        !translatedChunk.length
     ) {
         return translatedChunk;
     }
 
-    const suspects = detectLikelyQcIssues(originalChunk, translatedChunk);
-
-    console.log(
-        `🔎 [QC V5] Chunk ${chunkIndex + 1}/${totalChunks}: ${suspects.length} linii suspecte`
+    const suspects = detectLikelyQcIssues(
+        originalChunk,
+        translatedChunk
     );
 
-    const suspectText = suspects.length
-        ? `
+    if (suspects.length) {
+        console.log(
+            `${c.cyan}🔎 [QC V5] Chunk ${chunkIndex + 1}/${totalChunks}: ` +
+            `${suspects.length} linii suspecte.${c.reset}`
+        );
+    } else {
+        console.log(
+            `${c.cyan}🔎 [QC V5] Chunk ${chunkIndex + 1}/${totalChunks}: ` +
+            `nicio anomalie locală evidentă.${c.reset}`
+        );
+    }
+
+    let suspectText = '';
+
+    if (suspects.length) {
+        suspectText = `
 ACESTEA SUNT LINIILE CARE MERITĂ O ATENȚIE SPECIALĂ:
 ${suspects.join(', ')}
 
 IMPORTANT:
 Lista NU înseamnă că aceste linii sunt greșite.
 Verifică-le atent și corectează-le numai dacă eroarea este reală.
-`
-        : `
+`;
+    } else {
+        suspectText = `
 Nu au fost detectate probleme evidente local.
 Verifică totuși traducerea pentru erori clare de gramatică,
 cuvinte trunchiate, litere lipsă și pierderi de sens.
 `;
+    }
 
-    const prompt = QC_FULL_PROMPT
+    const payload = buildQcChunkPayload(
+        originalChunk,
+        translatedChunk
+    );
+
+    const prompt =
+        QC_FULL_PROMPT
         + '\n\n'
         + suspectText
         + '\n\n'
-        + JSON.stringify(buildQcChunkPayload(originalChunk, translatedChunk), null, 2);
+        + payload;
 
     console.log(
-        `${c.yellow}⚠ [QC V4 FULL] Analizez ${originalChunk.length} linii din calupul ${chunkIndex + 1}/${totalChunks}...${c.reset}`
+        `${c.yellow}⚠ [QC V5] Analizez ` +
+        `${translatedChunk.length} linii din calupul ` +
+        `${chunkIndex + 1}/${totalChunks}...${c.reset}`
     );
 
     try {
-        const result =
-            await callGeminiQc(
-                prompt,
-                qcKeyStates
-            );
-
-        if (!result) {
-            console.log(
-                `${c.yellow}⚠ [QC V4 FULL] Nicio cheie QC disponibilă. Păstrez traducerea originală.${c.reset}`
-            );
-
-            return translatedChunk;
-        }
-
-        const corrections =
-            sanitizeQcCorrections(
-                result.corrections,
-                translatedChunk,
-                originalChunk
-            );
-
-        const corrected =
-            translatedChunk.map(item => {
-                const id = String(item.id);
-
-                if (
-                    corrections[id] !== undefined
-                ) {
-                    return {
-                        ...item,
-                        text: corrections[id]
-                    };
-                }
-
-                return item;
-            });
-
-        const correctionIds =
-            Object.keys(corrections);
-
-        for (
-            const id of correctionIds
-        ) {
-            const oldText =
-                translatedChunk.find(
-                    item =>
-                        String(item.id) === id
-                )?.text || '';
-
-            console.log(
-                `${c.green}✔ [QC V4 FULL] Corectez ID ${id}: "${oldText}" → "${corrections[id]}"${c.reset}`
-            );
-        }
-
-        console.log(
-            `${c.green}✔ [QC V4 FULL] Calup ${chunkIndex + 1}/${totalChunks}: ${correctionIds.length} corecții reale.${c.reset}`
+        const raw = await callGeminiQc(
+            prompt,
+            qcKeyStates
         );
+
+        const parsed = extractQcJsonObject(raw);
+
+        const corrections = sanitizeQcCorrections(
+            parsed.corrections || {},
+            translatedChunk,
+            originalChunk
+        );
+
+        const corrected = translatedChunk.map(item => {
+            const id = String(item.id);
+
+            if (corrections[id] !== undefined) {
+                return {
+                    ...item,
+                    text: formatSubtitleLine(corrections[id])
+                };
+            }
+
+            return item;
+        });
+
+        const correctionIds = Object.keys(corrections);
+
+        if (correctionIds.length) {
+            console.log(
+                `${c.green}✔ [QC V5] Calupul ` +
+                `${chunkIndex + 1}/${totalChunks}: ` +
+                `${correctionIds.length} corecții reale.${c.reset}`
+            );
+
+            for (const id of correctionIds) {
+                const before =
+                    translatedChunk.find(
+                        item => String(item.id) === id
+                    )?.text || '';
+
+                const after = corrections[id];
+
+                console.log(
+                    `${c.green}  ID ${id}: "${before}" → "${after}"${c.reset}`
+                );
+            }
+        } else {
+            console.log(
+                `${c.green}✔ [QC V5] Calupul ` +
+                `${chunkIndex + 1}/${totalChunks}: ` +
+                `0 corecții reale.${c.reset}`
+            );
+        }
 
         return corrected;
 
     } catch (error) {
         console.log(
-            `${c.yellow}⚠ [QC V4 FULL] Verificarea calupului ${chunkIndex + 1} a eșuat: ${error.message}. Păstrez traducerea originală.${c.reset}`
+            `${c.yellow}⚠ [QC V5] QC indisponibil pentru calupul ` +
+            `${chunkIndex + 1}/${totalChunks}: ${error.message}` +
+            `${c.reset}`
+        );
+
+        console.log(
+            `${c.yellow}↪ [QC V5] Păstrez traducerea originală ` +
+            `pentru acest calup.${c.reset}`
         );
 
         return translatedChunk;
@@ -1498,16 +1605,25 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 initialResultsDict[obj.id] = formatSubtitleLine(val);
             });
 
-            const translatedChunkForQC = chunk.map(obj => ({
+            let result = chunk.map(obj => ({
                 id: obj.id,
                 text: initialResultsDict[obj.id]
             }));
 
-            // === INTEGRARE QC CONSERVATOR V4 FULL ===
-            const finalResults = await qcChunkFull(chunk, translatedChunkForQC, qcKeyStates, globalChunkIndex, totalChunks);
+            // ========================================================
+            // QC V5 - VERIFICARE FINALĂ
+            // ========================================================
+
+            result = await qcChunkFull(
+                chunk,
+                result,
+                qcKeyStates,
+                globalChunkIndex,
+                totalChunks
+            );
 
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
-            return finalResults;
+            return result;
         } catch (error) {
             lastError = error;
             console.log(`${c.yellow}⚠ [Gemini] Eroare la calupul ${globalChunkIndex + 1} (Încercarea ${attempt}/${maxLocalAttempts}): ${error.message}${c.reset}`);
