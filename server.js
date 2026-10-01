@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '5.0.0',
+    version: '5.1.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -214,10 +214,10 @@ async function handleSubtitles(req, res) {
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
             const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             
-            let labelName = `🇷🇴 RO AI [${index + 1}]`;
+            let labelName = `🇷🇴 RO AI (FIX) [${index + 1}]`;
             if (tagMatch) {
                 let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
+                labelName = `🇷🇴 RO AI (FIX) [${index + 1}] • ${cleanTag}`;
             }
 
             const cacheBuster = Math.floor(Math.random() * 100000);
@@ -407,9 +407,24 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
+    // =========================================================================
+    // FORȚARE TOTALĂ PE SECUNDĂ (Indiferent ce taie AI-ul la final)
+    // =========================================================================
+    text = text.replace(/când ai o secund$/gi, 'când ai o secundă');
+    text = text.replace(/când aveți o secund$/gi, 'când ai o secundă');
+    text = text.replace(/când aire o secund$/gi, 'când ai o secundă');
+    text = text.replace(/când ai o secund\.\.\.$/gi, 'când ai o secundă...');
+    text = text.replace(/când aveți o secund\.\.\.$/gi, 'când ai o secundă...');
+    text = text.replace(/când aire o secund\.\.\.$/gi, 'când ai o secundă...');
+    
+    text = text.replace(/când ai o secund\./gi, 'când ai o secundă.');
+    text = text.replace(/când aveți o secund\./gi, 'când ai o secundă.');
+    text = text.replace(/când aire o secund\./gi, 'când ai o secundă.');
+    // =========================================================================
+
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
+    text = text.replace(/([.?!])\s+[-—–−\s]+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     let lines = text.split('\n');
     lines = lines.map(l => {
@@ -442,24 +457,23 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // =========================================================================
-    // FILTRU SUPREM: PRINDE RĂDĂCINA, INDIFERENT DE PUNCTUAȚIE SAU LITERE GREȘITE
-    // =========================================================================
-    // Prinde orice începe cu "când", urmat de un cuvânt inventat, și se termină în "o secund" sau "un secund"
-    text = text.replace(/c[aă]nd\s+[a-zț]+\s+(o|un)\s+secund/gi, 'când ai o secundă');
-    
-    // Prinde orice între "oprește-te din a-mi" și "sâni/țâțe"
-    text = text.replace(/opre[șs]te-te\s+din\s+a-mi[^.]*(s[âa]ni|decolteu|țâțe)/gi, 'nu te mai holba la sânii mei');
-    
-    text = text.replace(/man\s+pas[aă]/gi, 'îmi pasă');
-    text = text.replace(/Mi\s+s-a\s+pl[ăa]tit/gi, 'Mi-am primit banii');
-    text = text.replace(/debaclul/gi, 'dezastrul');
-    text = text.replace(/[ȚTțt]-a\s+dat-o/g, 'Ți-a dat-o');
-    text = text.replace(/[țt]ie\s+[țt]i-s\s+dragi/gi, 'ție îți plac');
-    text = text.replace(/(Aproape\s+am\s+gata|Suntem\s+aproape\s+acolo)/gi, 'Imediat ajungem');
-    // =========================================================================
-    
     const dictionar = [
+        [/când ai o secund/gi, 'când ai o secundă'],
+        [/când aveți o secund/gi, 'când ai o secundă'],
+        [/când aire o secund/gi, 'când ai o secundă'],
+        [/când aimai un secund/gi, 'când ai o secundă'],
+        [/când ai un secund/gi, 'când ai o secundă'],
+        [/când mai ai un secund/gi, 'când ai o secundă'],
+        
+        [/fura ochii la sâni/gi, 'holba la sânii mei'],
+        [/la rândul tău sânii/gi, 'la sânii mei'],
+        [/man pasă/gi, 'îmi pasă'],
+        [/Mi s-a plătit/gi, 'Mi-am primit banii'],
+        [/debaclul/gi, 'dezastrul'],
+        
+        [/opre[șs]te-te\s+din\s+a-mi.*?(s[âa]ni\b|s[âa]nii\b|decolteu\b|țâțe\b|țâțele\b)/gi, 'nu te mai holba la sânii mei'],
+        [/[îi]nceteaz[aă]\s+s[ăa]?\s+te\s+ui[țt]i.*?(\bțâțele\b|\bsânii\b)/gi, 'nu te mai holba la sânii mei'],
+        
         [/\b[îi]nceteaz[aă]\s+s(?!\w)/gi, 'încetează să'],
         [/\b([Aa]șa|[Pp]entru|[Cc]rezi|[Zz]ic)\s+c(?!\w)/g, '$1 că'], 
         [/\bAdic(?!\w)/gi, 'Adică'],
@@ -468,6 +482,7 @@ function formatSubtitleLine(text) {
         [/\bpe\s+s[ăa]pt[ăa]m[âa]n(?!\w)/gi, 'pe săptămână'],
         [/\bde\s+baz(?!\w)/gi, 'de bază'],
         [/\bdisear(?!\w)/gi, 'diseară'],
+        
         [/\bcinva\b/gi, 'cineva'],
         [/\bAm\s+fus\b/gi, 'Am fost'],
         [/\bdarme\b/gi, 'doarme'],
@@ -475,6 +490,8 @@ function formatSubtitleLine(text) {
         [/\btrebui\s+s[ăa]\s+te\s+cred/gi, 'trebuie să te cred'],
         [/Stai,\s*stai\.,\.\.\./gi, 'Stai, stai...'],
         [/[ȚTțt]-a\s+[îi]nchis-o/g, 'Ți-a închis-o'],
+        [/[ȚTțt]-a\s+dat-o/g, 'Ți-a dat-o'],
+        [/[țt]ie\s+[țt]i-s\s+dragi/gi, 'ție îți plac'],
         [/Bun[ăa]\s+ziua,\s+azi\./gi, 'Bună ziua.'],
         [/Ar[ăa][țt]i\s+at[âa]t\s+de\s+frumos\b/gi, 'Arăți atât de frumoasă'], 
         [/[Șs]i\s+to[țt]i-a\s+trebuit\s+s[ăa]\s+pretind[ăa]/gi, 'Și toți au trebuit să se prefacă'],
@@ -482,15 +499,18 @@ function formatSubtitleLine(text) {
         [/\bbutonizi\b/gi, 'butoni'],
         [/\ble-atrobesc\b/gi, 'le prostesc'],
         [/\bAm\s+fost\s+pl[ăa]tit\b/gi, 'Am fost plătită'],
+        [/(Aproape\s+am\s+gata|Suntem\s+aproape\s+acolo)/gi, 'Imediat ajungem'],
         [/O\s+să\s+dea\s+la\s+o\s+parte\s+agresiv/gi, 'O să se dea la tine agresiv'],
         [/fundul\s+tău\s+strâns/gi, 'fundul tău scorțos'],
         [/sunetul\s+care-ți\s+aduce\s+servire/gi, 'sunetul la care primești servire'],
+
         [/(^|\n)\s*tu\s+n-ai\s+un\s+loc/gi, '$1Tu n-ai un loc'],
         [/(^|\n)\s*femeie\s+sexy/gi, '$1Femeie sexy'],
         [/(^|\n)\s*ai\s+curte\?/gi, '$1Ai curte?'],
         [/(^|\n)\s*bun[aă]\./gi, '$1Bună.'],
         [/(^|\n)\s*da\./gi, '$1Da.'],
         [/(^|\n)\s*ai\s+grija\./gi, '$1Ai grijă.'],
+
         [/\b(hă)?rțuire\b/gi, 'hărțuire'],
         [/\b(m)?usile\b/gi, 'ușile'],
         [/\bute-ai\b/gi, 'te-ai'],
@@ -503,6 +523,7 @@ function formatSubtitleLine(text) {
         [/\bTicoasă\b/gi, 'Ticăloasă'],
         [/\bfulul\b/gi, 'pachetul'],
         [/\biai\s+pragul\b/gi, 'treci pragul'],
+        
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
         [/zămislirea asta/gi, 'porcăria asta'], [/onoare apre noastre/gi, 'onoarea noastră'],
