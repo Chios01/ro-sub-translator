@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.13.0',
+    version: '12.14.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -421,9 +421,9 @@ function formatSubtitleLine(text) {
 }
 
 // ============================================================
-// CONSERVATIVE TRANSLATION QC v2
-// Verifică doar erorile foarte probabile.
-// NU rescrie traduceri bune și NU face corectură stilistică.
+// CONSERVATIVE TRANSLATION QC v3
+// Detectare precisă a erorilor evidente.
+// Nu rescrie traduceri bune.
 // ============================================================
 
 function detectObviousQcIssue(original, translated) {
@@ -433,38 +433,125 @@ function detectObviousQcIssue(original, translated) {
     const dst = String(translated || '').trim();
 
     if (!dst) {
-        reasons.push('traducerea este goală');
-        return reasons;
+        return ['traducerea este goală'];
     }
+
+    // ========================================================
+    // 1. CARACTERE CORUPTE
+    // ========================================================
 
     if (dst.includes('')) {
         reasons.push('caracter Unicode corupt');
     }
 
+    if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(dst)) {
+        reasons.push('caractere de control');
+    }
+
+
+    // ========================================================
+    // 2. FRAGMENTE FOARTE SUSPECTE
+    //
+    // Nu marcăm A / E / O / I / Să / Nu etc.
+    // ========================================================
+
     if (/(^|\s)[mMvV](?=\s|[.,!?;:]|$)/.test(dst)) {
         reasons.push('fragment suspect de un singur caracter');
     }
 
-    const suspiciousFragments = [
-        /\bs['’]?\b/iu,
-        /\bș['’]?\b/iu,
-        /\bî['’]?\b/iu,
-        /\bâ['’]?\b/iu,
-        /\btr['’]?\b/iu,
-        /\bpr['’]?\b/iu
+
+    // ========================================================
+    // 3. FRAGMENTE EVIDENT TĂIATE
+    //
+    // Exemple:
+    // "v"
+    // "m"
+    // "ș"
+    // "î"
+    // "â"
+    //
+    // NU tratăm automat "a", "e", "o", "i", "să", "nu"
+    // ca fiind greșite.
+    // ========================================================
+
+    if (/(^|\s)[șîâ](?=\s|[.,!?;:]|$)/iu.test(dst)) {
+        reasons.push('fragment posibil tăiat');
+    }
+
+
+    // ========================================================
+    // 4. ACORD GRAMATICAL EVIDENT GREȘIT
+    //
+    // Sunt doar semnale pentru QC.
+    // NU facem corectarea automat.
+    // ========================================================
+
+    const grammaticalErrors = [
+
+        // Eu + verb persoana a III-a
+        /\bEu\s+(poartă|merge|are|face|spune|vine|pleacă|știe|poate|vrea|ia|dă|vede|crede|simte|ține|pune|aduce|lasă|trebuie)\b/iu,
+
+        // Tu + verb persoana a III-a
+        /\bTu\s+(merge|are|face|spune|vine|pleacă|știe|poate|vrea|ia|dă|vede|crede|simte|ține|pune|aduce|lasă)\b/iu,
+
+        // El/Ea + forme evidente de plural
+        /\b(?:El|Ea)\s+(merg|fac|spun|vin|pleacă|știu|pot|vor|iau|dau|văd|cred|simt|țin|pun|aduc|lasă)\b/iu,
+
+        // Noi/Voi + forme evidente de singular
+        /\b(?:Noi|Voi)\s+(merge|are|face|spune|vine|știe|poate|vrea|ia|dă|vede|crede|simte|ține|pune|aduce)\b/iu
     ];
 
-    for (const regex of suspiciousFragments) {
+    for (const regex of grammaticalErrors) {
         if (regex.test(dst)) {
-            reasons.push('posibil fragment de cuvânt tăiat');
+            reasons.push('acord gramatical evident suspect');
             break;
         }
     }
 
-    const malformedWordPatterns = [
-        /\b[a-zăâîșț]+[’'][a-zăâîșț]{0,1}\b/iu,
-        /\b[a-zăâîșț]{1,2}[’'][a-zăâîșț]{0,1}\b/iu
-    ];
+
+    // ========================================================
+    // 5. PSEUDO-CUVINTE / CUVINTE EVIDENT DEFORMATE
+    //
+    // Detectăm cuvinte care conțin combinații foarte
+    // neobișnuite, dar evităm să judecăm slang-ul.
+    // ========================================================
+
+    const words = dst.match(/[A-Za-zĂÂÎȘȚăâîșț]+/g) || [];
+
+    let suspiciousWord = null;
+
+    for (const word of words) {
+
+        const lower = word.toLowerCase();
+
+        // Nu atingem cuvintele foarte scurte.
+        if (lower.length < 6) {
+            continue;
+        }
+
+        // Secvențe care apar frecvent la cuvinte deformate.
+        if (
+            /[ăâîșț]{3,}/iu.test(lower) ||
+            /[a-zăâîșț]{2}(?:tt|kk|qq|xx|jj){1,}[a-zăâîșț]*/iu.test(lower)
+        ) {
+            suspiciousWord = word;
+            break;
+        }
+    }
+
+    if (suspiciousWord) {
+        reasons.push(
+            `cuvânt posibil deformat: ${suspiciousWord}`
+        );
+    }
+
+
+    // ========================================================
+    // 6. TEXT ENGLEZESC RĂMAS
+    //
+    // Foarte conservator.
+    // Nu marcăm nume/branduri/termeni scurți.
+    // ========================================================
 
     if (
         src.length >= 25 &&
@@ -476,34 +563,49 @@ function detectObviousQcIssue(original, translated) {
         reasons.push('text posibil rămas netradus');
     }
 
-    if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(dst)) {
-        reasons.push('caractere de control');
-    }
 
-    const sourceNumbers = src.match(/\d+(?:[.,]\d+)?/g);
-    if (sourceNumbers && sourceNumbers.length > 0) {
+    // ========================================================
+    // 7. NUMERE PIERDUTE
+    // ========================================================
+
+    const sourceNumbers =
+        src.match(/\d+(?:[.,]\d+)?/g);
+
+    if (sourceNumbers && sourceNumbers.length) {
+
         for (const number of sourceNumbers) {
+
             if (!dst.includes(number)) {
-                reasons.push(`număr posibil pierdut: ${number}`);
+                reasons.push(
+                    `număr posibil pierdut: ${number}`
+                );
                 break;
             }
         }
     }
 
+
+    // ========================================================
+    // 8. TRADUCERE ANORMAL DE SCURTĂ
+    //
+    // Doar pentru propoziții suficient de lungi.
+    // ========================================================
+
     if (
-        src.length >= 45 &&
+        src.length >= 50 &&
         dst.length >= 1 &&
-        dst.length < src.length * 0.22
+        dst.length < src.length * 0.20
     ) {
-        reasons.push('traducere neobișnuit de scurtă');
+        reasons.push('traducere anormal de scurtă');
     }
+
 
     return [...new Set(reasons)];
 }
 
 
 // ============================================================
-// QC GEMINI v2
+// GEMINI QC v3
 // ============================================================
 
 async function runConservativeTranslationQC(
@@ -515,18 +617,25 @@ async function runConservativeTranslationQC(
     const suspects = [];
 
     for (const item of items) {
-        const translated = translatedResults[item.id];
 
-        if (translated === undefined || translated === null) {
+        const translated =
+            translatedResults[item.id];
+
+        if (
+            translated === undefined ||
+            translated === null
+        ) {
             continue;
         }
 
-        const reasons = detectObviousQcIssue(
-            item.text,
-            translated
-        );
+        const reasons =
+            detectObviousQcIssue(
+                item.text,
+                translated
+            );
 
         if (reasons.length > 0) {
+
             suspects.push({
                 id: String(item.id),
                 original: String(item.text || ''),
@@ -536,26 +645,72 @@ async function runConservativeTranslationQC(
         }
     }
 
+
+    // ========================================================
+    // Nicio problemă evidentă = NU chemăm QC.
+    // ========================================================
+
     if (suspects.length === 0) {
         return translatedResults;
     }
 
-    const limitedSuspects = suspects.slice(0, 8);
-    const suspectIds = new Set(limitedSuspects.map(item => item.id));
+
+    // ========================================================
+    // Maximum 8 linii.
+    //
+    // Dacă apar foarte multe suspecte, nu lăsăm QC-ul să
+    // rescrie masiv traducerea.
+    // ========================================================
+
+    const limitedSuspects =
+        suspects.slice(0, 8);
+
+    const suspectIds =
+        new Set(
+            limitedSuspects.map(
+                item => item.id
+            )
+        );
+
+
+    // ========================================================
+    // CONTEXT
+    // ========================================================
+
     const contextLines = [];
 
     for (const suspect of limitedSuspects) {
-        const index = items.findIndex(item => String(item.id) === suspect.id);
-        if (index === -1) continue;
 
-        const start = Math.max(0, index - 3);
-        const end = Math.min(items.length, index + 4);
+        const index =
+            items.findIndex(
+                item =>
+                    String(item.id) === suspect.id
+            );
 
-        const context = items.slice(start, end).map(item => ({
-            id: String(item.id),
-            original: String(item.text || ''),
-            current_translation: translatedResults[item.id] !== undefined ? String(translatedResults[item.id]) : ''
-        }));
+        if (index === -1) {
+            continue;
+        }
+
+        const start =
+            Math.max(0, index - 3);
+
+        const end =
+            Math.min(items.length, index + 4);
+
+        const context =
+            items
+                .slice(start, end)
+                .map(item => ({
+                    id: String(item.id),
+                    original:
+                        String(item.text || ''),
+                    current_translation:
+                        translatedResults[item.id] !== undefined
+                            ? String(
+                                translatedResults[item.id]
+                            )
+                            : ''
+                }));
 
         contextLines.push({
             suspect_id: suspect.id,
@@ -564,85 +719,157 @@ async function runConservativeTranslationQC(
         });
     }
 
+
+    // ========================================================
+    // PROMPT QC
+    // ========================================================
+
     const qcPrompt = `
-Ești un sistem de CONTROL AL CALITĂȚII pentru subtitrări cinematografice traduse din engleză în română.
+Ești sistemul final de CONTROL AL CALITĂȚII
+pentru subtitrări cinematografice traduse
+din engleză în română.
 
 IMPORTANT:
-Traducerea existentă a fost deja făcută de un translator AI specializat.
-TU NU EȘTI AICI PENTRU A O RESCRIE.
-Rolul tău este exclusiv să identifici și să repari ERORI CLARE ȘI OBIECTIVE.
+
+Traducerea existentă a fost deja realizată de
+un translator AI specializat.
+
+TU NU TREBUIE SĂ RESCRII TRADUCEREA.
+
+Rolul tău este să repari DOAR erori clare,
+obiective și foarte probabile.
 
 ============================================================
-REGULA NR. 1
+REGULA PRINCIPALĂ
 ============================================================
-Dacă traducerea existentă este corectă și are sens:
+
+Dacă traducerea existentă este corectă:
+
 PĂSTREAZ-O EXACT.
+
 Nu schimba formularea.
-Nu o face mai elegantă.
-Nu o face mai literară.
 Nu schimba sinonime.
-Nu schimba ordinea cuvintelor.
 Nu îmbunătăți stilul.
+Nu o face mai literară.
+Nu o face mai naturală doar după preferința ta.
 
-Dacă există cea mai mică incertitudine:
-PĂSTREAZĂ TRADUCEREA EXISTENTĂ.
+Dacă nu ești sigur:
 
-============================================================
-CORECTEAZĂ DOAR:
-============================================================
-1. cuvinte evident tăiate;
-2. fragmente corupte precum: "v", "V", "m", "M" când apar accidental ca fragmente;
-3. caractere Unicode corupte precum: "";
-4. cuvinte evident deformate sau inventate accidental;
-5. text englezesc rămas accidental într-o propoziție care trebuia tradusă;
-6. numere evidente pierdute;
-7. cuvinte evidente lipsă care schimbă sensul;
-8. negații evidente pierdute: not / never / no / don't / doesn't / didn't / can't / won't / isn't etc.;
-9. traduceri evident rupte gramatical din cauza unei erori de generare.
+PĂSTREAZĂ TEXTUL EXISTENT.
 
 ============================================================
-NU CORECTA:
+REPARĂ DOAR:
 ============================================================
-- stilul; preferințele de exprimare; sinonime; punctuația normală; slang; argou; înjurături; umor; sarcasm;
-- nume proprii; persoane; locuri; branduri; filme; seriale; produse; restaurante; acronime; jargon; termeni tehnici; expresii intenționat neobișnuite.
-Nu presupune că o formulare neobișnuită este greșită.
+
+- cuvinte evident tăiate;
+- fragmente precum "v", "V", "m", "M"
+  atunci când sunt evident corupte;
+- caracterul "";
+- cuvinte evident deformate;
+- pseudo-cuvinte generate accidental;
+- acorduri gramaticale evident imposibile;
+- text englezesc rămas accidental;
+- numere evidente pierdute;
+- cuvinte evident lipsă;
+- negații evidente pierdute;
+- traduceri evident rupte.
+
+============================================================
+NU REPARA:
+============================================================
+
+- stilul;
+- sinonimele;
+- slang-ul;
+- argoul;
+- înjurăturile;
+- umorul;
+- sarcasmul;
+- numele;
+- brandurile;
+- locurile;
+- acronimele;
+- jargonul;
+- termenii tehnici;
+- formulările neobișnuite dar corecte.
+
+============================================================
+EXEMPLE DE FORME CORECTE
+============================================================
+
+Nu considera greșite:
+
+A
+E
+O
+I
+Da.
+Nu.
+Să.
+Ei.
+Ah.
+Oh.
+
+Și nu considera automat greșite:
+
+n-am
+n-ai
+n-a
+s-a
+s-au
+să-mi
+să-ți
+mi-a
+ți-a
+l-a
+i-a
+
+============================================================
+ACORD GRAMATICAL
+============================================================
+
+Dacă vezi:
+
+"Eu poartă..."
+"Eu merge..."
+"Eu are..."
+"Eu face..."
+
+verifică dacă este într-adevăr o eroare.
+
+Dacă este clar greșit, corectează.
+
+Dacă există orice îndoială, păstrează originalul.
 
 ============================================================
 CONTEXT
 ============================================================
-Folosește liniile din jur pentru a înțelege sensul, dar NU modifica liniile din jur.
-Corectează DOAR suspect_id.
+
+Folosește liniile din jur pentru sens.
+
+Corectează DOAR linia suspectă.
+
+Nu modifica liniile de context.
 
 ============================================================
-REGULA SPECIALĂ PENTRU NUME
+REGULA DE SIGURANȚĂ
 ============================================================
-Nu traduce și nu modifica nume proprii sau branduri doar pentru că seamănă cu un cuvânt englezesc.
+
+Este preferabil să lași o greșeală minoră
+decât să modifici o traducere corectă.
+
+Nu inventa informații.
+
+Nu adăuga informații.
+
+Nu elimina informații fără motiv clar.
 
 ============================================================
-REGULA SPECIALĂ PENTRU PROPOZIȚII SCURTE
+FORMAT OBLIGATORIU
 ============================================================
-Nu considera automat greșite: A, E, O, I, Da., Nu., Să., Ei., Ah., Oh.
-Acestea pot fi replici perfect valide.
 
-============================================================
-REGULA SPECIALĂ PENTRU APOSTROFURI
-============================================================
-Forme precum: n-am, n-ai, n-a, s-a, s-au, să-mi, să-ți, mi-a, ți-a, l-a, i-a sunt forme românești valide.
-Nu le corecta doar pentru că sunt scurte.
+Răspunde DOAR cu JSON valid:
 
-============================================================
-REGULA ABSOLUTĂ
-============================================================
-Mai bine lași o posibilă greșeală minoră decât să distrugi o traducere corectă.
-NU inventa informații.
-NU completa cuvinte pe baza presupunerilor.
-NU schimba sensul.
-
-============================================================
-FORMAT RĂSPUNS
-============================================================
-Răspunde DOAR cu JSON valid.
-Format:
 {
   "corrections": [
     {
@@ -653,33 +880,54 @@ Format:
   ]
 }
 
-Dacă linia este deja corectă:
+Dacă textul este corect:
+
 {
   "id": "123",
-  "translation": "EXACT traducerea existentă",
+  "translation": "EXACT textul existent",
   "changed": false
 }
 
-Trebuie să returnezi TOATE liniile suspecte primite. Nu modifica ID-urile. Nu adăuga explicații în afara JSON.
+Returnează TOATE liniile suspecte.
+
+Nu modifica ID-urile.
+
+Nu adăuga explicații în afara JSON.
 
 ============================================================
-DATE QC
+DATELE PENTRU VERIFICARE
 ============================================================
+
 ${JSON.stringify(contextLines, null, 2)}
 `;
 
-    try {
-        const keyState = await getAvailableKey(keyStates);
-        console.log(`${c.yellow}⚠ [QC] Verific ${limitedSuspects.length} linii suspecte în calupul ${chunkLabel}...${c.reset}`);
-        
-        const response = await callGemini(qcPrompt, keyState);
 
-        if (!response || typeof response !== 'string') {
-            console.warn(`${c.red}⚠ [QC] Răspuns gol pentru ${chunkLabel}.${c.reset}`);
+    try {
+
+        const keyState = await getAvailableKey(keyStates);
+
+        console.log(
+            `${c.yellow}⚠ [QC] Verific ${limitedSuspects.length} linii suspecte în ${chunkLabel}...${c.reset}`
+        );
+
+        const response =
+            await callGemini(
+                qcPrompt,
+                keyState
+            );
+
+        if (
+            !response ||
+            typeof response !== 'string'
+        ) {
+            console.warn(
+                `${c.red}⚠ [QC] Răspuns gol pentru ${chunkLabel}.${c.reset}`
+            );
             return translatedResults;
         }
 
         let parsed;
+
         try {
             let cleanText = response.trim();
             const startIdx = cleanText.indexOf('{');
@@ -688,55 +936,175 @@ ${JSON.stringify(contextLines, null, 2)}
                 cleanText = cleanText.slice(startIdx, endIdx + 1);
             }
             parsed = JSON.parse(cleanText);
+
         } catch (error) {
-            console.warn(`${c.red}⚠ [QC] JSON invalid pentru ${chunkLabel}.${c.reset}`);
+
+            console.warn(
+                `${c.red}⚠ [QC] JSON invalid pentru ${chunkLabel}.${c.reset}`
+            );
+
             return translatedResults;
         }
 
-        if (!parsed || !Array.isArray(parsed.corrections)) {
+
+        if (
+            !parsed ||
+            !Array.isArray(parsed.corrections)
+        ) {
             return translatedResults;
         }
 
-        const corrected = { ...translatedResults };
+
+        const corrected = {
+            ...translatedResults
+        };
+
         let changedCount = 0;
 
-        for (const correction of parsed.corrections) {
-            if (!correction || correction.id === undefined) continue;
-            const id = String(correction.id);
 
-            if (!suspectIds.has(id)) continue;
-            if (typeof correction.translation !== 'string') continue;
+        for (
+            const correction
+            of parsed.corrections
+        ) {
 
-            const newText = correction.translation.trim();
-            if (!newText) continue;
-            if (newText.includes('')) continue;
+            if (
+                !correction ||
+                correction.id === undefined
+            ) {
+                continue;
+            }
 
-            const originalEntry = limitedSuspects.find(item => item.id === id);
-            if (!originalEntry) continue;
+            const id =
+                String(correction.id);
 
-            const oldText = String(translatedResults[id] || '').trim();
 
-            if (correction.changed === false) continue;
-            if (newText === oldText) continue;
+            // Poate modifica DOAR liniile
+            // detectate inițial ca suspecte.
+            if (!suspectIds.has(id)) {
+                continue;
+            }
 
-            const newIssues = detectObviousQcIssue(originalEntry.original, newText);
-            if (newIssues.includes('fragment suspect de un singur caracter')) continue;
-            if (newIssues.includes('traducerea este goală')) continue;
 
-            corrected[id] = newText;
+            if (
+                typeof correction.translation !==
+                'string'
+            ) {
+                continue;
+            }
+
+
+            const newText =
+                correction.translation.trim();
+
+
+            if (!newText) {
+                continue;
+            }
+
+
+            if (newText.includes('')) {
+                continue;
+            }
+
+
+            const originalEntry =
+                limitedSuspects.find(
+                    item => item.id === id
+                );
+
+            if (!originalEntry) {
+                continue;
+            }
+
+
+            const oldText =
+                String(
+                    translatedResults[id] || ''
+                ).trim();
+
+
+            // QC spune explicit că textul este bun.
+            if (correction.changed === false) {
+                continue;
+            }
+
+
+            // Nu există schimbare reală.
+            if (newText === oldText) {
+                continue;
+            }
+
+
+            // Verificăm din nou textul corectat.
+            const newIssues =
+                detectObviousQcIssue(
+                    originalEntry.original,
+                    newText
+                );
+
+
+            // Nu acceptăm o corectură care produce
+            // din nou un fragment corupt.
+            if (
+                newIssues.includes(
+                    'fragment suspect de un singur caracter'
+                )
+            ) {
+                continue;
+            }
+
+
+            if (
+                newIssues.includes(
+                    'caracter Unicode corupt'
+                )
+            ) {
+                continue;
+            }
+
+
+            if (
+                newIssues.includes(
+                    'traducerea este goală'
+                )
+            ) {
+                continue;
+            }
+
+
+            corrected[id] =
+                newText;
+
             changedCount++;
         }
 
-        if (changedCount > 0) {
-            console.log(`${c.green}✔ [QC] Calup ${chunkLabel}: ${changedCount} linii corectate cu succes!${c.reset}`);
+
+        if (changedCount === 0) {
+
+            console.log(
+                `${c.cyan}✔ [QC] ${chunkLabel}: Toate liniile suspecte erau de fapt corecte.${c.reset}`
+            );
+
         } else {
-            console.log(`${c.cyan}✔ [QC] Calup ${chunkLabel}: Toate liniile suspecte erau de fapt corecte.${c.reset}`);
+
+            console.log(
+                `${c.green}✔ [QC] ${chunkLabel}: ${changedCount} linii corectate din ${limitedSuspects.length} suspecte.${c.reset}`
+            );
         }
+
 
         return corrected;
 
+
     } catch (error) {
-        console.warn(`${c.red}⚠ [QC] Eroare în ${chunkLabel}: ${error?.message || error}. Păstrez traducerea originală.${c.reset}`);
+
+        // Dacă QC-ul eșuează, traducerea principală
+        // rămâne COMPLET neatinsă.
+
+        console.warn(
+            `${c.red}⚠ [QC] Eroare în ${chunkLabel}: ${error?.message || error}. Păstrez traducerea originală.${c.reset}`
+        );
+
         return translatedResults;
     }
 }
@@ -1042,7 +1410,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 initialResultsDict[obj.id] = formatSubtitleLine(val);
             });
 
-            // === INTEGRARE QC CONSERVATOR v2 ===
+            // === INTEGRARE QC CONSERVATOR v3 ===
             const finalResultsDict = await runConservativeTranslationQC(
                 chunk, 
                 initialResultsDict, 
