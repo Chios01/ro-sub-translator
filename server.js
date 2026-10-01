@@ -57,7 +57,7 @@ const c = {
 };
 
 // ============================================================
-// MEMORY
+// MEMORY & SECRET ARCHIVE
 // ============================================================
 
 const memoryCache = Object.create(null);
@@ -81,7 +81,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.8.0',
+    version: '12.8.1',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -96,7 +96,7 @@ const manifest = {
 };
 
 // ============================================================
-// ROOT & PING
+// ROOT, PING & ARHIVA SECRETA
 // ============================================================
 
 app.get('/', (req, res) => {
@@ -111,8 +111,41 @@ app.get('/ping', (req, res) => {
     res.send('OK');
 });
 
+app.get('/arhiva-secreta', (req, res) => {
+    let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
+    html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
+    html += '<h2 style="color:#0f0;">Arhiva Subtitrări (Ultimele 10)</h2>';
+    html += '<p>Aceste fișiere sunt reținute temporar în memoria serverului. Se vor șterge la restart.</p>';
+    
+    if (secretArchive.length === 0) {
+        html += '<p style="color:#aaa;">Nicio subtitrare tradusă momentan.</p>';
+    } else {
+        html += '<ul style="list-style-type:none; padding:0;">';
+        secretArchive.forEach((item, index) => {
+            html += `<li style="background:#222; margin-bottom:10px; padding:15px; border-radius:5px;">
+                <strong style="color:#0bf;">ID: ${item.id}</strong> <span style="color:#888; font-size:0.9em;">(${item.time})</span><br><br>
+                <a href="/download-srt/${index}" style="background:#0bf; color:#000; text-decoration:none; padding:8px 12px; border-radius:4px; font-weight:bold;">Descarcă fișier .srt</a>
+            </li>`;
+        });
+        html += '</ul>';
+    }
+    html += '</body></html>';
+    res.send(html);
+});
+
+app.get('/download-srt/:index', (req, res) => {
+    const index = parseInt(req.params.index);
+    if (isNaN(index) || !secretArchive[index]) {
+        return res.status(404).send('Fișierul nu există sau a fost șters automat din memorie.');
+    }
+    const item = secretArchive[index];
+    res.setHeader('Content-disposition', `attachment; filename=RO_${item.id}.srt`);
+    res.setHeader('Content-type', 'text/plain; charset=utf-8');
+    res.send(item.content);
+});
+
 // ============================================================
-// VALIDATE GEMINI KEY
+// VALIDATE GEMINI KEY & CONFIGURE
 // ============================================================
 
 app.get('/validate-key', async (req, res) => {
@@ -135,10 +168,6 @@ app.get('/validate-key', async (req, res) => {
         });
     }
 });
-
-// ============================================================
-// CONFIGURE
-// ============================================================
 
 app.get('/:configData/configure', (req, res) => {
     const indexPath = path.join(__dirname, 'index.html');
@@ -304,7 +333,7 @@ function formatSubtitleLine(text) {
 
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
+    text = text.replace(/([.?!])\s+[-—–−\s]*([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     const dictionar = [
         [/\bînța\b/gi, 'apuca'],
@@ -572,7 +601,7 @@ function chunkArray(array, size) {
     return chunks;
 }
 
-async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, depth = 0) {
+async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     const maxLocalAttempts = 3;
     let lastError = null;
@@ -581,6 +610,10 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
         let keyState = null;
         try {
             keyState = await getAvailableKey(keyStates);
+            
+            const keyMask = '...' + keyState.key.slice(-4);
+            console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${MODEL_NAME} | Cheie: ${keyMask})...${c.reset}`);
+
             const raw = await callGemini(prompt, keyState);
             
             let cleanText = raw.trim();
@@ -601,9 +634,11 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 };
             });
 
+            console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
             return results;
         } catch (error) {
             lastError = error;
+            console.log(`${c.yellow}⚠ [Gemini] Eroare la calupul ${globalChunkIndex + 1} (Încercarea ${attempt}/${maxLocalAttempts}): ${error.message}${c.reset}`);
             await sleep(1000 * attempt);
         }
     }
@@ -613,13 +648,16 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
         const first = chunk.slice(0, middle);
         const second = chunk.slice(middle);
 
-        const firstResult = await processChunkWithRetry(first, allItems, chunkStart, chunkStart + middle, previousTranslatedContext, keyStates, depth + 1);
+        console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în două părți din cauza erorilor repetate...${c.reset}`);
+
+        const firstResult = await processChunkWithRetry(first, allItems, chunkStart, chunkStart + middle, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth + 1);
         const secondContext = firstResult.slice(-PREVIOUS_TRANSLATION_CONTEXT);
-        const secondResult = await processChunkWithRetry(second, allItems, chunkStart + middle, chunkEnd, secondContext, keyStates, depth + 1);
+        const secondResult = await processChunkWithRetry(second, allItems, chunkStart + middle, chunkEnd, secondContext, keyStates, globalChunkIndex, totalChunks, depth + 1);
 
         return [...firstResult, ...secondResult];
     }
 
+    console.log(`${c.red}✖ [Gemini] Calupul ${globalChunkIndex + 1} a eșuat definitiv.${c.reset}`);
     throw lastError || new Error('Chunk translation failed.');
 }
 
@@ -650,7 +688,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 
             if (localIndex > 0) await sleep(800 * localIndex);
 
-            const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates);
+            const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, globalIndex, chunks.length);
             return { globalIndex, result };
         });
 
@@ -720,5 +758,11 @@ app.get('/health', (req, res) => {
 
 const PORT = Number(process.env.PORT) || 7000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit pe portul ${PORT}${c.green}${c.reset}`);
+    console.log(`${c.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}`);
+    console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
+    console.log(`${c.green}🌐 Port: ${PORT}${c.reset}`);
+    console.log(`${c.green}🤖 Model: ${MODEL_NAME}${c.reset}`);
+    console.log(`${c.green}📦 Chunk: ${CHUNK_SIZE} linii${c.reset}`);
+    console.log(`${c.green}⚡ Paralelism: ${CONCURRENCY_LIMIT} chunk-uri${c.reset}`);
+    console.log(`${c.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}`);
 });
