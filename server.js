@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '3.0.0',
+    version: '3.1.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -220,10 +220,11 @@ async function handleSubtitles(req, res) {
                 labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
             }
 
+            // AICI ESTE CACHE-BUSTERUL PENTRU STREMIO! (cb=310 forțează clientul să nu folosească memoria locală)
             return {
                 id: `ai_sub_${index}`,
                 title: labelName, 
-                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
+                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}&cb=310`,
                 lang: 'ron'
             };
         });
@@ -455,20 +456,20 @@ function formatSubtitleLine(text) {
     text = finalMergedLines.join('\n');
     
     // =========================================================
-    // DICȚIONARUL BLINDAT
+    // DICȚIONARUL BLINDAT (Fără evadări!)
     // =========================================================
     const dictionar = [
-        // --- CORECTURILE CRITICE PENTRU CUVINTE TĂIATE (Atenție la punctele de suspensie!) ---
-        [/c[aă]nd\s+aire\s+(un|o)\s+secund(?!\w)/gi, 'când ai o secundă'],
-        [/c[aă]nd\s+aire/gi, 'când ai'],
-        [/c[aă]nd\s+aimai/gi, 'când ai'],
-        [/(un|o)\s+secund(?!\w)/gi, 'o secundă'],
-        [/aver[țt]i\s+o\s+secund(?!\w)/gi, 'aveți o secundă'],
+        // --- 1. SOLUȚIA BRUTALĂ PENTRU AIRE/AIMAI/SECUND ---
+        [/\baire\b/gi, 'ai'],
+        [/\baimai\b/gi, 'ai'],
+        [/\bo\s+secund(?!\w)/gi, 'o secundă'],
+        [/\bun\s+secund(?!\w)/gi, 'o secundă'],
+        [/\baver[țt]i\b/gi, 'aveți'],
         
         [/opre[șs]te-te\s+din\s+a-mi.*?(s[âa]ni\b|s[âa]nii\b|decolteu\b|țâțe\b|țâțele\b)/gi, 'nu te mai holba la sânii mei'],
         [/[îi]nceteaz[aă]\s+s[ăa]?\s+te\s+ui[țt]i.*?(\bțâțele\b|\bsânii\b)/gi, 'nu te mai holba la sânii mei'],
         
-        // REZOLVĂRI PENTRU SRT (Fără să strice alte cuvinte)
+        // --- 2. REZOLVĂRI PENTRU SRT ---
         [/\b[îi]nceteaz[aă]\s+s(?!\w)/gi, 'încetează să'],
         [/\b([Aa]șa|[Pp]entru|[Cc]rezi|[Zz]ic)\s+c(?!\w)/g, '$1 că'], 
         [/\bAdic(?!\w)/gi, 'Adică'],
@@ -478,7 +479,6 @@ function formatSubtitleLine(text) {
         [/\bde\s+baz(?!\w)/gi, 'de bază'],
         [/\bdisear(?!\w)/gi, 'diseară'],
         
-        // Erori din SRT si halucinatii
         [/\bcinva\b/gi, 'cineva'],
         [/\bAm\s+fus\b/gi, 'Am fost'],
         [/\bdarme\b/gi, 'doarme'],
@@ -510,7 +510,7 @@ function formatSubtitleLine(text) {
         [/(^|\n)\s*da\./gi, '$1Da.'],
         [/(^|\n)\s*ai\s+grija\./gi, '$1Ai grijă.'],
 
-        // --- REZOLVĂRI VECHI ---
+        // --- 3. REZOLVĂRI VECHI (Curățate) ---
         [/\b(hă)?rțuire\b/gi, 'hărțuire'],
         [/\b(m)?usile\b/gi, 'ușile'],
         [/\bute-ai\b/gi, 'te-ai'],
