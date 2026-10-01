@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '10.1.1',
+    version: '11.0.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -156,24 +156,26 @@ async function handleSubtitles(req, res) {
             }
         });
         
-        let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
+        // Căutăm acum și în Spaniolă, Italiană, Franceză (pentru o traducere latină mult mai naturală)
+        const allowedLangs = ['eng', 'en', 'english', 'spa', 'es', 'spanish', 'ita', 'it', 'italian', 'fre', 'fr', 'french'];
+        let sourceSubs = allSubs.filter(s => s.lang && allowedLangs.includes(s.lang.toLowerCase()));
         
         const uniqueUrls = new Set();
-        engSubs = engSubs.filter(sub => {
+        sourceSubs = sourceSubs.filter(sub => {
             if (uniqueUrls.has(sub.url)) return false;
             uniqueUrls.add(sub.url);
             return true;
-        }).slice(0, 25); 
+        }).slice(0, 30); 
 
-        if (engSubs.length === 0) return res.json({ subtitles: [] });
+        if (sourceSubs.length === 0) return res.json({ subtitles: [] });
 
         let diverseSubs = [];
         const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
 
-        engSubs.forEach((sub, idx) => {
+        sourceSubs.forEach((sub, idx) => {
             let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
             if (!trashRegex.test(realName)) {
-                diverseSubs.push({ originalUrl: sub.url, realName, index: idx });
+                diverseSubs.push({ originalUrl: sub.url, realName, index: idx, lang: sub.lang });
             }
         });
 
@@ -184,6 +186,12 @@ async function handleSubtitles(req, res) {
             s.score = 0;
             const subName = s.realName.toLowerCase();
             
+            // Prioritizăm limbile latine dându-le un ușor avantaj de scor, dar păstrăm și engleza dacă e mai potrivită pentru release
+            let langLower = s.lang.toLowerCase();
+            if (['spa', 'es', 'spanish', 'ita', 'it', 'italian', 'fre', 'fr', 'french'].includes(langLower)) {
+                s.score += 15;
+            }
+
             if (videoTokens.length > 0) {
                 let matchCount = 0;
                 videoTokens.forEach(token => {
@@ -426,11 +434,10 @@ function formatSubtitleLine(text) {
         return 'Am înțeles. Hei, când ai o secundă...';
     }
     
-    if (lowerText.includes('oprește-te') && (lowerText.includes('sâni') || lowerText.includes('sânii'))) {
+    if (lowerText.includes('oprește-te') && (/\bsân(i|ii)?\b/.test(lowerText) || lowerText.includes('țâțe') || lowerText.includes('decolteu'))) {
         return 'Nu te mai holba la sânii mei.';
     }
     
-    // Corectie litera tăiată
     text = text.replace(/(crezi|așa|pentru|zic|sper|spun)\s+c(?=\s|[,.!?:;]|$)/gi, '$1 că');
     
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
@@ -655,9 +662,6 @@ function formatSubtitleLine(text) {
     let linesArray = text.split('\n');
     let validLinesText = linesArray.filter(l => l.trim() !== '');
 
-    // =========================================================================
-    // NOUA LOGICĂ DE TĂIERE A RÂNDURILOR (> 45 caractere se taie la jumătate)
-    // =========================================================================
     if (validLinesText.length > 2) {
         let joinedText = validLinesText.join(' ');
         let mid = Math.floor(joinedText.length / 2);
@@ -685,7 +689,6 @@ function formatSubtitleLine(text) {
             validLinesText = [line.substring(0, splitIndex).trim(), line.substring(splitIndex + 1).trim()];
         }
     }
-    // =========================================================================
 
     return validLinesText.map(l => l.replace(/^[-—–−\s*]+/g, '')).join('\n');
 }
@@ -773,7 +776,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise (Calup ${globalChunkIndex + 1} | Aceeași cheie: ${keyIndex})...${c.reset}`);
             }
             
-            const prompt = `You are a professional Romanian movie translator. Your ONLY purpose is to translate an English subtitle JSON array into natural, conversational Romanian.
+            const prompt = `You are a professional Romanian movie translator. Your ONLY purpose is to translate a subtitle JSON array (source can be English, Spanish, Italian, or French) into natural, conversational Romanian.
 
 CRITICAL SYSTEM REQUIREMENT:
 The input JSON contains EXACTLY ${currentBatchSize} items. You MUST output EXACTLY ${currentBatchSize} items. Every single key from the input must be present in the output JSON.
