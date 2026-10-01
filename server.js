@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '12.2.0',
+    version: '12.3.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -156,7 +156,6 @@ async function handleSubtitles(req, res) {
             }
         });
         
-        // Căutare doar în engleză
         let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
         
         const uniqueUrls = new Set();
@@ -431,19 +430,27 @@ function formatSubtitleLine(text) {
         return 'Nu te mai holba la sânii mei.';
     }
     
-    text = text.replace(/(crezi|așa|pentru|zic|sper|spun)\s+c(?=\s|[,.!?:;]|$)/gi, '$1 că');
-    
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     const dictionar = [
+        // CORECȚII PENTRU LITERE TĂIATE (c, s, etc.) SAU EROARE DE FORMAT
+        [/(crezi|așa|pentru|zic|sper|spun|știu)\s+c\b/gi, '$1 că'],
+        [/(crezi|așa|pentru|zic|sper|spun|știu)\s+c\s*$/gmi, '$1 că'],
+        [/\b(vreau|pot|trebuie|încerc)\s+s\b/gi, '$1 să'],
+        [/\b(vreau|pot|trebuie|încerc)\s+s\s*$/gmi, '$1 să'],
+        [/\bAdic\b/gi, 'Adică'],
+        [/\bAdic\s*$/gmi, 'Adică'],
+        [/\bparticipe\b/gi, 'se prefacă'],
+        [/atrăGGE/g, 'atrage'],
+        [/\banune\b/gi, 'audă'],
+
         [/man pasă/gi, 'îmi pasă'],
         [/Mi s-a plătit/gi, 'Mi-am primit banii'],
         [/debaclul/gi, 'dezastrul'],
         
         [/\b[îi]nceteaz[aă]\s+s(?!\w)/gi, 'încetează să'],
-        [/\bAdic(?!\w)/gi, 'Adică'],
         [/\bVai,\s+mam(?!\w)/gi, 'Vai, mamă'],
         [/\bhaina\s+aia\s+ridicol(?!\w)/gi, 'haina aia ridicolă'],
         [/\bpe\s+s[ăa]pt[ăa]m[âa]n(?!\w)/gi, 'pe săptămână'],
