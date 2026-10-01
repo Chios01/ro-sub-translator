@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.11.0',
+    version: '12.11.1',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -333,7 +333,7 @@ function cleanTextForJson(text) {
 }
 
 // ============================================================
-// FORMAT LINE & DICTIONARY (POST-PROCESARE & OPTIMIZARE SPAȚIU)
+// FORMAT LINE & DICTIONARY (POST-PROCESARE, DIALOGURI FĂRĂ LINIUȚE)
 // ============================================================
 
 function formatSubtitleLine(text) {
@@ -356,9 +356,15 @@ function formatSubtitleLine(text) {
 
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/([.?!])\s+[-—–−\s]*([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
+    
+    // Curățarea liniuțelor de dialog enervante de la începutul rândurilor
+    let lines = text.split('\n').map(l => {
+        let cleanLine = l.trim();
+        // Scoate liniuțele de dialog de la început (ex: "- Salut" devine "Salut")
+        cleanLine = cleanLine.replace(/^[-—–−]+\s*/, '');
+        return cleanLine;
+    }).filter(Boolean);
 
-    let lines = text.split('\n').map(l => l.trim()).filter(Boolean);
     let wrappedLines = [];
     for (let line of lines) {
         if (line.length > 55) {
@@ -406,7 +412,7 @@ function formatSubtitleLine(text) {
 }
 
 // ============================================================
-// TRANSLATION ROUTE (CU CACHE RAM, ARHIVĂ UNICĂ ȘI KEEP-ALIVE PENTRU ANDROID)
+// TRANSLATION ROUTE (CU CACHE RAM, ARHIVĂ UNICĂ ȘI KEEP-ALIVE)
 // ============================================================
 
 app.get('/:configData/translate', async (req, res) => {
@@ -433,14 +439,12 @@ app.get('/:configData/translate', async (req, res) => {
 
     const cacheKey = targetUrl;
 
-    // VERIFICARE CACHE RAM INSTANT
     if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
         console.log(`${c.green}⚡ [Cache RAM] Servit instant pentru: ${imdbId}${c.reset}`);
         res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
         return res.send(memoryCache[cacheKey]);
     }
 
-    // Configurare Keep-Alive pentru a nu lăsa playerul (Android/TV) să dea timeout / restart la film
     res.writeHead(200, {
         'Content-Type': 'application/x-subrip; charset=utf-8',
         'Transfer-Encoding': 'chunked'
@@ -505,7 +509,6 @@ app.get('/:configData/translate', async (req, res) => {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
             
-            // Asigură unicitatea în arhivă
             const existingIndex = secretArchive.findIndex(item => item.id === imdbId);
             if (existingIndex !== -1) {
                 secretArchive.splice(existingIndex, 1);
