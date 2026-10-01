@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '3.1.0',
+    version: '4.0.1',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -214,17 +214,18 @@ async function handleSubtitles(req, res) {
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
             const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             
-            let labelName = `🇷🇴 RO AI [${index + 1}]`;
+            let labelName = `🇷🇴 RO AI (FIX) [${index + 1}]`;
             if (tagMatch) {
                 let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
+                labelName = `🇷🇴 RO AI (FIX) [${index + 1}] • ${cleanTag}`;
             }
 
-            // [!] DISTRUGĂTORUL DE CACHE STREMIO: am pus `v2` la ID ca să forțăm playerul să o descarce din nou!
+            const cacheBuster = Math.floor(Math.random() * 100000);
+
             return {
-                id: `ai_sub_v2_${index}`,
+                id: `ai_sub_${index}`,
                 title: labelName, 
-                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}&cb=v2`,
+                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}&cb=${cacheBuster}`,
                 lang: 'ron'
             };
         });
@@ -456,10 +457,16 @@ function formatSubtitleLine(text) {
     text = finalMergedLines.join('\n');
     
     // =========================================================
-    // DICȚIONARUL BLINDAT
+    // DICȚIONARUL BLINDAT 
     // =========================================================
     const dictionar = [
-        // --- CORECTURILE CRITICE (Brute-Force) ---
+        // --- CORECTURILE SPECIFICE CERUTE ---
+        [/când aire o secund(\.\.\.)?/gi, 'când ai o secundă...'],
+        [/când averți o secund(\.\.\.)?/gi, 'când aveți o secundă...'],
+        [/oprește-te din a-mi fura ochii la sâni\.?/gi, 'nu te mai holba la sânii mei.'],
+        [/oprește-te din a-mi la rândul tău sânii\.?/gi, 'nu te mai holba la sânii mei.'],
+        
+        // --- SOLUȚIA BRUTALĂ PENTRU AIRE/AIMAI/SECUND ---
         [/\baire\b/gi, 'ai'],
         [/\baimai\b/gi, 'ai'],
         [/\b(un|o)\s+secund(?!\w)/gi, 'o secundă'],
@@ -550,14 +557,14 @@ function formatSubtitleLine(text) {
         [/cacealmită/gi, 'toaletă'], [/gogși/gi, 'gogoși'], [/nu\s+se\s+gată/gi, 'nu se termină'],
         [/\bą\b/g, 'ă'], [/\bĄ\b/g, 'Ă'], [/alcineva/gi, 'altcineva'], [/paranoi/gi, 'paranoia'],
         [/nicideun loc/gi, 'nicăieri'], [/ți se sângereze/gi, 'îți sângereze'], [/să le urmat/gi, 'să le urmez'],
-        [/\bman\s+pas[aă]/gi, 'îmi pasă'], [/\bman\s+pl[aă]cem/gi, 'îmi placi'], [/înulam/gi, 'comandam'],
+        [/\bman\s+pl[aă]cem/gi, 'îmi placi'], [/înulam/gi, 'comandam'],
         [/poșta mea preferată/gi, 'poșeta mea preferată'], [/un acnee/gi, 'o acnee'], [/umele dinților/gi, 'numele dinților'],
         [/cântec a lui/gi, 'cântec al lui'], [/cam aștia/gi, 'cam ăsta'], [/Obișnuiam să mă furișam/gi, 'Obișnuiam să mă furișez'],
         [/Ștergelui total/gi, 'Șterpelind'], [/lăsându-se pe o mână/gi, 'făcând o labă'], [/mănânci curul meu încordat/gi, 'mă pupi în cur'],
         [/Băiete,\s*mamii\s*tale/gi, 'Futu-i mama mă-sii'], [/kconvinsesem/gi, 'convinsesem'], [/moști/gi, 'morți'],
         [/un femeie/gi, 'o femeie'], [/o a s[aă]rut/gi, 'o s-o sărut'], [/resemnând/gi, 'referitor la'],
         [/unindiciu/gi, 'un indiciu'], [/să sperezi/gi, 'să speri'], [/la ținut/gi, 'l-a ținut'],
-        [/S-ar pulea/gi, 'S-ar putea'], [/lărimile/gi, 'lacrimile'], [/ute-ai/gi, 'te-ai'],
+        [/S-ar pulea/gi, 'S-ar putea'], [/lărimile/gi, 'lacrimile'],
         [/construgeam/gi, 'construiam'], [/pătură dracului/gi, 'pătura dracului'], [/ca cadou/gi, 'drept cadou'],
         [/șneșteai/gi, 'regulai'], [/N-ai știi/gi, 'N-ai ști'], [/I-a ținuți/gi, 'I-a ținut'],
         [/Bivolă/gi, 'Vacă'], [/Vreo, Vought/gi, 'Frate, Vought'], [/Supei/g, 'Eroii'],
