@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '9.0.0',
+    version: '9.1.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -295,6 +295,13 @@ app.get('/:configData/translate', async (req, res) => {
                     headers: { 'User-Agent': BROWSER_USER_AGENT }
                 });
                 
+                // === AICI AM PUS ÎNAPOI LOG-URILE DE START ===
+                const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
+                console.log(`${c.cyan}\n==================================================${c.reset}`);
+                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                
                 return await translateSrtWithGemini(srtRes.data, userKeys);
             })();
             
@@ -304,7 +311,17 @@ app.get('/:configData/translate', async (req, res) => {
             processPromise.then(translatedSrtString => {
                 memoryCache[cacheKey] = translatedSrtString;
                 cleanMemoryCache(); 
-            }).catch(() => {
+                
+                // === AICI AM PUS ÎNAPOI LOG-URILE DE FINAL (SUCCES) ===
+                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+                let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+                
+                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                
+            }).catch((err) => {
+                console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
                 delete memoryCache[cacheKey];
             });
         }
@@ -405,10 +422,6 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
 
-    // =========================================================================
-    // MĂSURA EXTREMĂ - FĂRĂ NICIUN FEL DE REGEX
-    // Dacă detectează cuvintele cheie în frază, suprascrie instant tot rândul
-    // =========================================================================
     let lowerText = text.toLowerCase();
     
     if (lowerText.includes('înțeles') && lowerText.includes('hei') && lowerText.includes('când')) {
@@ -418,7 +431,6 @@ function formatSubtitleLine(text) {
     if (lowerText.includes('oprește-te') && (lowerText.includes('sâni') || lowerText.includes('sânii'))) {
         return 'Nu te mai holba la sânii mei.';
     }
-    // =========================================================================
     
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
