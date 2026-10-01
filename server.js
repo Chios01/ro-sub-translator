@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.14.0',
+    version: '12.15.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -421,692 +421,286 @@ function formatSubtitleLine(text) {
 }
 
 // ============================================================
-// CONSERVATIVE TRANSLATION QC v3
-// Detectare precisă a erorilor evidente.
-// Nu rescrie traduceri bune.
+// QUALITY CONTROL V4 — CONSERVATIVE CINEMATIC QC
 // ============================================================
 
-function detectObviousQcIssue(original, translated) {
-    const reasons = [];
+function detectStrongQCSuspects(items) {
+    const suspects = [];
 
-    const src = String(original || '').trim();
-    const dst = String(translated || '').trim();
+    const euWrong =
+        /\bEu\s+(are|ai|face|faci|merge|mergi|spune|spui|vine|vii|pleacă|pleci|știe|știi|poate|poți|vrea|vrei|ia|iei|dă|dai|vede|vezi|crede|crezi|simte|simți|ține|ții|pune|pui|aduce|aduci|lasă|lași|poartă)\b/i;
 
-    if (!dst) {
-        return ['traducerea este goală'];
-    }
+    const tuWrong =
+        /\bTu\s+(am|avem|a|are|face|faci|merg|merge|spune|spuneți|vine|vin|pleacă|știu|știe|pot|poate|vor|vrea|iau|ia|dau|dă|văd|vede|cred|crede|simt|simte|țin|ține|pun|pune|aduc|aduce|lasă)\b/i;
 
-    // ========================================================
-    // 1. CARACTERE CORUPTE
-    // ========================================================
+    const pluralWrong =
+        /\b(?:El|Ea)\s+(merg|fac|spun|vin|știu|pot|vor|iau|dau|văd|cred|simt|țin|pun|aduc)\b/i;
 
-    if (dst.includes('')) {
-        reasons.push('caracter Unicode corupt');
-    }
+    const noiWrong =
+        /\bNoi\s+(am|ai|are|a|face|faci|merge|mergi|spune|spui|vine|vii|pleacă|pleci|știe|știi|poate|poți|vrea|vrei|ia|iei|dă|dai|vede|vezi|crede|crezi|simte|simți|ține|ții|pune|pui)\b/i;
 
-    if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(dst)) {
-        reasons.push('caractere de control');
-    }
+    const voiWrong =
+        /\bVoi\s+(am|ai|a|are|fac|face|merg|merge|spun|spune|vine|vin|pleacă|pleacă|știu|știe|pot|poate|vor|vrea|iau|ia|dau|dă|văd|vede|cred|crede|simt|simte|țin|ține|pun|pune|aduc|aduce)\b/i;
 
-
-    // ========================================================
-    // 2. FRAGMENTE FOARTE SUSPECTE
-    //
-    // Nu marcăm A / E / O / I / Să / Nu etc.
-    // ========================================================
-
-    if (/(^|\s)[mMvV](?=\s|[.,!?;:]|$)/.test(dst)) {
-        reasons.push('fragment suspect de un singur caracter');
-    }
-
-
-    // ========================================================
-    // 3. FRAGMENTE EVIDENT TĂIATE
-    //
-    // Exemple:
-    // "v"
-    // "m"
-    // "ș"
-    // "î"
-    // "â"
-    //
-    // NU tratăm automat "a", "e", "o", "i", "să", "nu"
-    // ca fiind greșite.
-    // ========================================================
-
-    if (/(^|\s)[șîâ](?=\s|[.,!?;:]|$)/iu.test(dst)) {
-        reasons.push('fragment posibil tăiat');
-    }
-
-
-    // ========================================================
-    // 4. ACORD GRAMATICAL EVIDENT GREȘIT
-    //
-    // Sunt doar semnale pentru QC.
-    // NU facem corectarea automat.
-    // ========================================================
-
-    const grammaticalErrors = [
-
-        // Eu + verb persoana a III-a
-        /\bEu\s+(poartă|merge|are|face|spune|vine|pleacă|știe|poate|vrea|ia|dă|vede|crede|simte|ține|pune|aduce|lasă|trebuie)\b/iu,
-
-        // Tu + verb persoana a III-a
-        /\bTu\s+(merge|are|face|spune|vine|pleacă|știe|poate|vrea|ia|dă|vede|crede|simte|ține|pune|aduce|lasă)\b/iu,
-
-        // El/Ea + forme evidente de plural
-        /\b(?:El|Ea)\s+(merg|fac|spun|vin|pleacă|știu|pot|vor|iau|dau|văd|cred|simt|țin|pun|aduc|lasă)\b/iu,
-
-        // Noi/Voi + forme evidente de singular
-        /\b(?:Noi|Voi)\s+(merge|are|face|spune|vine|știe|poate|vrea|ia|dă|vede|crede|simte|ține|pune|aduce)\b/iu
+    const obviousFragments = [
+        /\bpoart$/i,
+        /\bmerg[ae]$/i,
+        /\bspu[nm]$/i,
+        /\bven[i]$/i,
+        /\bplec[a]$/i
     ];
 
-    for (const regex of grammaticalErrors) {
-        if (regex.test(dst)) {
-            reasons.push('acord gramatical evident suspect');
-            break;
-        }
-    }
+    for (const item of items) {
+        const text = String(item.text || '').trim();
 
+        if (!text) continue;
 
-    // ========================================================
-    // 5. PSEUDO-CUVINTE / CUVINTE EVIDENT DEFORMATE
-    //
-    // Detectăm cuvinte care conțin combinații foarte
-    // neobișnuite, dar evităm să judecăm slang-ul.
-    // ========================================================
+        let score = 0;
+        const reasons = [];
 
-    const words = dst.match(/[A-Za-zĂÂÎȘȚăâîșț]+/g) || [];
-
-    let suspiciousWord = null;
-
-    for (const word of words) {
-
-        const lower = word.toLowerCase();
-
-        // Nu atingem cuvintele foarte scurte.
-        if (lower.length < 6) {
-            continue;
+        if (text.includes('')) {
+            score += 5;
+            reasons.push('caracter Unicode corupt');
         }
 
-        // Secvențe care apar frecvent la cuvinte deformate.
-        if (
-            /[ăâîșț]{3,}/iu.test(lower) ||
-            /[a-zăâîșț]{2}(?:tt|kk|qq|xx|jj){1,}[a-zăâîșț]*/iu.test(lower)
-        ) {
-            suspiciousWord = word;
-            break;
+        if (/(^|[\s])(?:m|v|M|V)(?=[\s.,!?;:]|$)/.test(text)) {
+            score += 5;
+            reasons.push('fragment izolat m/v');
         }
-    }
 
-    if (suspiciousWord) {
-        reasons.push(
-            `cuvânt posibil deformat: ${suspiciousWord}`
-        );
-    }
+        if (euWrong.test(text)) {
+            score += 4;
+            reasons.push('posibil acord greșit după „Eu”');
+        }
 
+        if (tuWrong.test(text)) {
+            score += 4;
+            reasons.push('posibil acord greșit după „Tu”');
+        }
 
-    // ========================================================
-    // 6. TEXT ENGLEZESC RĂMAS
-    //
-    // Foarte conservator.
-    // Nu marcăm nume/branduri/termeni scurți.
-    // ========================================================
+        if (pluralWrong.test(text)) {
+            score += 4;
+            reasons.push('posibil acord singular/plural greșit');
+        }
 
-    if (
-        src.length >= 25 &&
-        dst.length >= 25 &&
-        dst.toLowerCase() === src.toLowerCase() &&
-        /\s/.test(src) &&
-        /[a-zA-Z]{3,}/.test(src)
-    ) {
-        reasons.push('text posibil rămas netradus');
-    }
+        if (noiWrong.test(text)) {
+            score += 4;
+            reasons.push('posibil acord greșit după „Noi”');
+        }
 
+        if (voiWrong.test(text)) {
+            score += 4;
+            reasons.push('posibil acord greșit după „Voi”');
+        }
 
-    // ========================================================
-    // 7. NUMERE PIERDUTE
-    // ========================================================
-
-    const sourceNumbers =
-        src.match(/\d+(?:[.,]\d+)?/g);
-
-    if (sourceNumbers && sourceNumbers.length) {
-
-        for (const number of sourceNumbers) {
-
-            if (!dst.includes(number)) {
-                reasons.push(
-                    `număr posibil pierdut: ${number}`
-                );
+        for (const pattern of obviousFragments) {
+            if (pattern.test(text)) {
+                score += 3;
+                reasons.push('posibil cuvânt tăiat');
                 break;
             }
         }
-    }
 
-
-    // ========================================================
-    // 8. TRADUCERE ANORMAL DE SCURTĂ
-    //
-    // Doar pentru propoziții suficient de lungi.
-    // ========================================================
-
-    if (
-        src.length >= 50 &&
-        dst.length >= 1 &&
-        dst.length < src.length * 0.20
-    ) {
-        reasons.push('traducere anormal de scurtă');
-    }
-
-
-    return [...new Set(reasons)];
-}
-
-
-// ============================================================
-// GEMINI QC v3
-// ============================================================
-
-async function runConservativeTranslationQC(
-    items,
-    translatedResults,
-    keyStates,
-    chunkLabel = ''
-) {
-    const suspects = [];
-
-    for (const item of items) {
-
-        const translated =
-            translatedResults[item.id];
-
-        if (
-            translated === undefined ||
-            translated === null
-        ) {
-            continue;
-        }
-
-        const reasons =
-            detectObviousQcIssue(
-                item.text,
-                translated
-            );
-
-        if (reasons.length > 0) {
-
+        if (score >= 4) {
             suspects.push({
-                id: String(item.id),
-                original: String(item.text || ''),
-                translated: String(translated || ''),
+                id: item.id,
+                text,
+                score,
                 reasons
             });
         }
     }
 
+    return suspects;
+}
 
-    // ========================================================
-    // Nicio problemă evidentă = NU chemăm QC.
-    // ========================================================
+// ============================================================
+// GEMINI QC V4
+// ============================================================
 
-    if (suspects.length === 0) {
-        return translatedResults;
+async function runConservativeQC(items, keyStates) {
+    const suspects = detectStrongQCSuspects(items);
+
+    if (!suspects.length) {
+        return items;
     }
 
+    console.log(
+        `${c.yellow}⚠ [QC V4] Verific ${suspects.length} linii cu semnale puternice...${c.reset}`
+    );
 
-    // ========================================================
-    // Maximum 8 linii.
-    //
-    // Dacă apar foarte multe suspecte, nu lăsăm QC-ul să
-    // rescrie masiv traducerea.
-    // ========================================================
+    const groups = [];
+    for (let i = 0; i < suspects.length; i += 12) {
+        groups.push(suspects.slice(i, i + 12));
+    }
 
-    const limitedSuspects =
-        suspects.slice(0, 8);
+    const corrections = Object.create(null);
 
-    const suspectIds =
-        new Set(
-            limitedSuspects.map(
-                item => item.id
-            )
-        );
+    for (const group of groups) {
+        const payload = {};
 
+        for (const suspect of group) {
+            const index = items.findIndex(x => x.id === suspect.id);
 
-    // ========================================================
-    // CONTEXT
-    // ========================================================
+            const contextBefore = items
+                .slice(Math.max(0, index - 3), index)
+                .map(x => `[${x.id}] ${x.text}`)
+                .join('\n');
 
-    const contextLines = [];
+            const contextAfter = items
+                .slice(index + 1, Math.min(items.length, index + 4))
+                .map(x => `[${x.id}] ${x.text}`)
+                .join('\n');
 
-    for (const suspect of limitedSuspects) {
-
-        const index =
-            items.findIndex(
-                item =>
-                    String(item.id) === suspect.id
-            );
-
-        if (index === -1) {
-            continue;
+            payload[suspect.id] = {
+                translation: suspect.text,
+                context_before: contextBefore,
+                context_after: contextAfter,
+                detected_signals: suspect.reasons
+            };
         }
 
-        const start =
-            Math.max(0, index - 3);
+        const qcPrompt = `
+You are a VERY conservative Romanian subtitle quality-control editor.
 
-        const end =
-            Math.min(items.length, index + 4);
+Your job is NOT to improve style.
 
-        const context =
-            items
-                .slice(start, end)
-                .map(item => ({
-                    id: String(item.id),
-                    original:
-                        String(item.text || ''),
-                    current_translation:
-                        translatedResults[item.id] !== undefined
-                            ? String(
-                                translatedResults[item.id]
-                            )
-                            : ''
-                }));
-
-        contextLines.push({
-            suspect_id: suspect.id,
-            reasons: suspect.reasons,
-            context
-        });
-    }
-
-
-    // ========================================================
-    // PROMPT QC
-    // ========================================================
-
-    const qcPrompt = `
-Ești sistemul final de CONTROL AL CALITĂȚII
-pentru subtitrări cinematografice traduse
-din engleză în română.
+Your job is ONLY to detect and repair CLEAR, OBJECTIVE translation corruption.
 
 IMPORTANT:
 
-Traducerea existentă a fost deja realizată de
-un translator AI specializat.
+1. If the Romanian translation is already correct and natural, KEEP IT EXACTLY.
+2. Do NOT rewrite a correct sentence merely because another wording sounds better.
+3. Do NOT change slang, profanity, tone, sarcasm, names, brands, places or technical terms unless they are objectively corrupted.
+4. Do NOT invent words.
+5. Do NOT make literal translations.
+6. Do NOT "polish" the subtitle.
+7. Do NOT shorten or expand the meaning.
+8. Preserve the original meaning exactly.
+9. Pay special attention to:
+   - cut words
+   - missing letters
+   - corrupted words
+   - isolated fragments such as "m" or "v"
+   - obvious person/verb agreement errors
+   - obvious singular/plural agreement errors
+   - impossible Romanian words
+10. A word that looks unusual is NOT automatically wrong.
+11. Proper names and invented fictional terms may legitimately look unusual.
+12. If uncertain, KEEP THE EXISTING TRANSLATION.
 
-TU NU TREBUIE SĂ RESCRII TRADUCEREA.
+Examples of CLEAR errors:
 
-Rolul tău este să repari DOAR erori clare,
-obiective și foarte probabile.
+"Eu poart căciuli..." -> "Eu port căciuli..."
+"Eu face asta." -> "Eu fac asta."
+"Tu are dreptate." -> "Tu ai dreptate."
+"m-am dus" is valid and must NOT be changed.
+"vrei" is valid and must NOT be changed.
+A fictional name must NOT be changed just because it is unusual.
 
-============================================================
-REGULA PRINCIPALĂ
-============================================================
-
-Dacă traducerea existentă este corectă:
-
-PĂSTREAZ-O EXACT.
-
-Nu schimba formularea.
-Nu schimba sinonime.
-Nu îmbunătăți stilul.
-Nu o face mai literară.
-Nu o face mai naturală doar după preferința ta.
-
-Dacă nu ești sigur:
-
-PĂSTREAZĂ TEXTUL EXISTENT.
-
-============================================================
-REPARĂ DOAR:
-============================================================
-
-- cuvinte evident tăiate;
-- fragmente precum "v", "V", "m", "M"
-  atunci când sunt evident corupte;
-- caracterul "";
-- cuvinte evident deformate;
-- pseudo-cuvinte generate accidental;
-- acorduri gramaticale evident imposibile;
-- text englezesc rămas accidental;
-- numere evidente pierdute;
-- cuvinte evident lipsă;
-- negații evidente pierdute;
-- traduceri evident rupte.
-
-============================================================
-NU REPARA:
-============================================================
-
-- stilul;
-- sinonimele;
-- slang-ul;
-- argoul;
-- înjurăturile;
-- umorul;
-- sarcasmul;
-- numele;
-- brandurile;
-- locurile;
-- acronimele;
-- jargonul;
-- termenii tehnici;
-- formulările neobișnuite dar corecte.
-
-============================================================
-EXEMPLE DE FORME CORECTE
-============================================================
-
-Nu considera greșite:
-
-A
-E
-O
-I
-Da.
-Nu.
-Să.
-Ei.
-Ah.
-Oh.
-
-Și nu considera automat greșite:
-
-n-am
-n-ai
-n-a
-s-a
-s-au
-să-mi
-să-ți
-mi-a
-ți-a
-l-a
-i-a
-
-============================================================
-ACORD GRAMATICAL
-============================================================
-
-Dacă vezi:
-
-"Eu poartă..."
-"Eu merge..."
-"Eu are..."
-"Eu face..."
-
-verifică dacă este într-adevăr o eroare.
-
-Dacă este clar greșit, corectează.
-
-Dacă există orice îndoială, păstrează originalul.
-
-============================================================
-CONTEXT
-============================================================
-
-Folosește liniile din jur pentru sens.
-
-Corectează DOAR linia suspectă.
-
-Nu modifica liniile de context.
-
-============================================================
-REGULA DE SIGURANȚĂ
-============================================================
-
-Este preferabil să lași o greșeală minoră
-decât să modifici o traducere corectă.
-
-Nu inventa informații.
-
-Nu adăuga informații.
-
-Nu elimina informații fără motiv clar.
-
-============================================================
-FORMAT OBLIGATORIU
-============================================================
-
-Răspunde DOAR cu JSON valid:
+Return ONLY valid JSON:
 
 {
-  "corrections": [
-    {
-      "id": "123",
-      "translation": "textul final",
-      "changed": true
-    }
-  ]
+  "corrections": {
+    "ID": "corrected Romanian text"
+  }
 }
 
-Dacă textul este corect:
+CRITICAL:
+- Include ONLY lines that genuinely need correction.
+- If none need correction, return {"corrections":{}}.
+- Never return unchanged lines.
+- Never return explanations.
+- Never return alternatives.
 
-{
-  "id": "123",
-  "translation": "EXACT textul existent",
-  "changed": false
-}
+SUBTITLES TO REVIEW:
 
-Returnează TOATE liniile suspecte.
-
-Nu modifica ID-urile.
-
-Nu adăuga explicații în afara JSON.
-
-============================================================
-DATELE PENTRU VERIFICARE
-============================================================
-
-${JSON.stringify(contextLines, null, 2)}
+${JSON.stringify(payload, null, 2)}
 `;
 
-
-    try {
-
-        const keyState = await getAvailableKey(keyStates);
-
-        console.log(
-            `${c.yellow}⚠ [QC] Verific ${limitedSuspects.length} linii suspecte în ${chunkLabel}...${c.reset}`
-        );
-
-        const response =
-            await callGemini(
-                qcPrompt,
-                keyState
-            );
-
-        if (
-            !response ||
-            typeof response !== 'string'
-        ) {
-            console.warn(
-                `${c.red}⚠ [QC] Răspuns gol pentru ${chunkLabel}.${c.reset}`
-            );
-            return translatedResults;
-        }
-
-        let parsed;
-
         try {
-            let cleanText = response.trim();
-            const startIdx = cleanText.indexOf('{');
-            const endIdx = cleanText.lastIndexOf('}');
-            if (startIdx >= 0 && endIdx > startIdx) {
-                cleanText = cleanText.slice(startIdx, endIdx + 1);
+            const keyState = await getAvailableKey(keyStates);
+            const raw = await callGemini(qcPrompt, keyState);
+
+            let clean = raw.trim();
+
+            const start = clean.indexOf('{');
+            const end = clean.lastIndexOf('}');
+
+            if (start >= 0 && end > start) {
+                clean = clean.slice(start, end + 1);
             }
-            parsed = JSON.parse(cleanText);
+
+            const parsed = JSON.parse(clean);
+            const result = parsed.corrections || {};
+
+            for (const [id, value] of Object.entries(result)) {
+                if (typeof value !== 'string') continue;
+
+                const original = items.find(x => String(x.id) === String(id));
+
+                if (!original) continue;
+
+                const corrected = value.trim();
+
+                if (!corrected) continue;
+
+                const originalLength = original.text.length;
+                const correctedLength = corrected.length;
+
+                const ratio =
+                    Math.max(originalLength, correctedLength) /
+                    Math.max(1, Math.min(originalLength, correctedLength));
+
+                if (ratio > 2.5) {
+                    console.log(
+                        `${c.yellow}⚠ [QC V4] Ignor corecție suspectă pentru ID ${id} (diferență prea mare).${c.reset}`
+                    );
+                    continue;
+                }
+
+                if (corrected === original.text.trim()) {
+                    continue;
+                }
+
+                corrections[String(id)] = corrected;
+            }
 
         } catch (error) {
-
-            console.warn(
-                `${c.red}⚠ [QC] JSON invalid pentru ${chunkLabel}.${c.reset}`
-            );
-
-            return translatedResults;
-        }
-
-
-        if (
-            !parsed ||
-            !Array.isArray(parsed.corrections)
-        ) {
-            return translatedResults;
-        }
-
-
-        const corrected = {
-            ...translatedResults
-        };
-
-        let changedCount = 0;
-
-
-        for (
-            const correction
-            of parsed.corrections
-        ) {
-
-            if (
-                !correction ||
-                correction.id === undefined
-            ) {
-                continue;
-            }
-
-            const id =
-                String(correction.id);
-
-
-            // Poate modifica DOAR liniile
-            // detectate inițial ca suspecte.
-            if (!suspectIds.has(id)) {
-                continue;
-            }
-
-
-            if (
-                typeof correction.translation !==
-                'string'
-            ) {
-                continue;
-            }
-
-
-            const newText =
-                correction.translation.trim();
-
-
-            if (!newText) {
-                continue;
-            }
-
-
-            if (newText.includes('')) {
-                continue;
-            }
-
-
-            const originalEntry =
-                limitedSuspects.find(
-                    item => item.id === id
-                );
-
-            if (!originalEntry) {
-                continue;
-            }
-
-
-            const oldText =
-                String(
-                    translatedResults[id] || ''
-                ).trim();
-
-
-            // QC spune explicit că textul este bun.
-            if (correction.changed === false) {
-                continue;
-            }
-
-
-            // Nu există schimbare reală.
-            if (newText === oldText) {
-                continue;
-            }
-
-
-            // Verificăm din nou textul corectat.
-            const newIssues =
-                detectObviousQcIssue(
-                    originalEntry.original,
-                    newText
-                );
-
-
-            // Nu acceptăm o corectură care produce
-            // din nou un fragment corupt.
-            if (
-                newIssues.includes(
-                    'fragment suspect de un singur caracter'
-                )
-            ) {
-                continue;
-            }
-
-
-            if (
-                newIssues.includes(
-                    'caracter Unicode corupt'
-                )
-            ) {
-                continue;
-            }
-
-
-            if (
-                newIssues.includes(
-                    'traducerea este goală'
-                )
-            ) {
-                continue;
-            }
-
-
-            corrected[id] =
-                newText;
-
-            changedCount++;
-        }
-
-
-        if (changedCount === 0) {
-
             console.log(
-                `${c.cyan}✔ [QC] ${chunkLabel}: Toate liniile suspecte erau de fapt corecte.${c.reset}`
-            );
-
-        } else {
-
-            console.log(
-                `${c.green}✔ [QC] ${chunkLabel}: ${changedCount} linii corectate din ${limitedSuspects.length} suspecte.${c.reset}`
+                `${c.yellow}⚠ [QC V4] Verificarea unui grup a eșuat: ${error.message}. Păstrez traducerea originală.${c.reset}`
             );
         }
+    }
 
+    let correctedCount = 0;
 
-        return corrected;
+    const finalItems = items.map(item => {
+        const correction = corrections[String(item.id)];
 
+        if (!correction) {
+            return item;
+        }
 
-    } catch (error) {
+        correctedCount++;
 
-        // Dacă QC-ul eșuează, traducerea principală
-        // rămâne COMPLET neatinsă.
-
-        console.warn(
-            `${c.red}⚠ [QC] Eroare în ${chunkLabel}: ${error?.message || error}. Păstrez traducerea originală.${c.reset}`
+        console.log(
+            `${c.green}✔ [QC V4] Corectez ID ${item.id}: "${item.text}" → "${correction}"${c.reset}`
         );
 
-        return translatedResults;
+        return {
+            ...item,
+            text: correction
+        };
+    });
+
+    if (correctedCount > 0) {
+        console.log(
+            `${c.green}✔ [QC V4] Corectate ${correctedCount} linii.${c.reset}`
+        );
     }
+
+    return finalItems;
 }
 
 // ============================================================
@@ -1410,21 +1004,16 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 initialResultsDict[obj.id] = formatSubtitleLine(val);
             });
 
-            // === INTEGRARE QC CONSERVATOR v3 ===
-            const finalResultsDict = await runConservativeTranslationQC(
-                chunk, 
-                initialResultsDict, 
-                keyStates, 
-                `${globalChunkIndex + 1}/${totalChunks}`
-            );
-
-            const results = chunk.map(obj => ({
+            const translatedChunkForQC = chunk.map(obj => ({
                 id: obj.id,
-                text: finalResultsDict[obj.id] || initialResultsDict[obj.id]
+                text: initialResultsDict[obj.id]
             }));
 
+            // === INTEGRARE QC CONSERVATOR V4 ===
+            const finalResults = await runConservativeQC(translatedChunkForQC, keyStates);
+
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
-            return results;
+            return finalResults;
         } catch (error) {
             lastError = error;
             console.log(`${c.yellow}⚠ [Gemini] Eroare la calupul ${globalChunkIndex + 1} (Încercarea ${attempt}/${maxLocalAttempts}): ${error.message}${c.reset}`);
