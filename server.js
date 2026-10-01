@@ -81,7 +81,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.8.1',
+    version: '12.9.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -310,7 +310,37 @@ app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
 app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 
 // ============================================================
-// FORMAT LINE & DICTIONARY (POST-PROCESARE SIGURĂ)
+// CLEAN TEXT FOR JSON (ELIMINARE SUNETE ENervante ȘI NOTE MUZICALE)
+// ============================================================
+
+function cleanTextForJson(text) {
+    if (!text) return text;
+    let clean = text;
+
+    // Elimină etichete de poziționare SRT (ex: {an8})
+    clean = clean.replace(/\{[^}]+\}/g, '');
+
+    // Elimină note muzicale și simboluri specifice de zgomot
+    clean = clean.replace(/[♪♫♬♩#]/gi, '');
+    clean = clean.replace(/â™ª/gi, '');
+    clean = clean.replace(/â™«/gi, '');
+
+    // Elimină complet parantezele drepte, rotunde sau acoladele care conțin sunete (ex: [râsete], [urmărește...], [music])
+    clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
+    clean = clean.replace(/\[[^\]]*?\]/g, '');
+    clean = clean.replace(/\([^)]*?(râsete\vert{}murmur\vert{}muzică\vert{}aplauze\vert{}urale\vert{}fluierături\vert{}music\vert{}sighs\vert{}cheering\vert{}applause\vert{}laughter)[^)]*?\)/gi, '');
+    clean = clean.replace(/\([^)]*?\)/g, '');
+
+    // Curăță rândurile rămase goale
+    let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
+    clean = lines.join('\n');
+
+    if (!clean.trim()) return ' ';
+    return clean.trim();
+}
+
+// ============================================================
+// FORMAT LINE & DICTIONARY (POST-PROCESARE & OPTIMIZARE SPAȚIU)
 // ============================================================
 
 function formatSubtitleLine(text) {
@@ -325,6 +355,7 @@ function formatSubtitleLine(text) {
         return 'Nu te mai holba la sânii mei.';
     }
     
+    // Corectare litere tăiate la capăt de rând
     text = text.replace(/(^|[\s])([cCsS])(?=[\s.,!?:;]|$)/gm, function(match, spatiu, litera) {
         return spatiu + litera + 'ă';
     });
@@ -334,6 +365,33 @@ function formatSubtitleLine(text) {
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
     text = text.replace(/([.?!])\s+[-—–−\s]*([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
+
+    // Funcție internă de wrap / scurtare a liniilor lungi (max ~48 caractere per rând pentru a nu ocupa prea mult spațiu pe ecran)
+    let lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    let wrappedLines = [];
+    for (let line of lines) {
+        if (line.length > 55) {
+            let mid = Math.floor(line.length / 2);
+            let leftSpace = line.lastIndexOf(' ', mid);
+            let rightSpace = line.indexOf(' ', mid);
+            let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
+                ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
+                Math.max(leftSpace, rightSpace);
+            if (splitIndex !== -1) {
+                wrappedLines.push(line.substring(0, splitIndex).trim());
+                wrappedLines.push(line.substring(splitIndex + 1).trim());
+            } else {
+                wrappedLines.push(line);
+            }
+        } else {
+            wrappedLines.push(line);
+        }
+    }
+    if (wrappedLines.length > 2) {
+        text = wrappedLines.slice(0, 2).join('\n');
+    } else {
+        text = wrappedLines.join('\n');
+    }
 
     const dictionar = [
         [/\bînța\b/gi, 'apuca'],
@@ -716,7 +774,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 }
 
 // ============================================================
-// SRT PARSER NATIV
+// SRT PARSER NATIV (CU INTEGRARE CLEAN TEXT)
 // ============================================================
 
 function parseSrt(srt) {
@@ -735,8 +793,10 @@ function parseSrt(srt) {
         const match = timing.match(/^(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})(?:.*)?$/);
         if (!match) continue;
 
-        const text = lines.slice(2).join('\n').trim();
-        if (!text) continue;
+        let rawText = lines.slice(2).join('\n');
+        const text = cleanTextForJson(rawText);
+
+        if (!text || text === ' ') continue;
 
         result.push({ id, start: match[1], end: match[2], text });
     }
