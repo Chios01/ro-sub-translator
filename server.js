@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '11.0.0',
+    version: '11.0.1',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -156,7 +156,6 @@ async function handleSubtitles(req, res) {
             }
         });
         
-        // Căutăm acum și în Spaniolă, Italiană, Franceză (pentru o traducere latină mult mai naturală)
         const allowedLangs = ['eng', 'en', 'english', 'spa', 'es', 'spanish', 'ita', 'it', 'italian', 'fre', 'fr', 'french'];
         let sourceSubs = allSubs.filter(s => s.lang && allowedLangs.includes(s.lang.toLowerCase()));
         
@@ -186,10 +185,10 @@ async function handleSubtitles(req, res) {
             s.score = 0;
             const subName = s.realName.toLowerCase();
             
-            // Prioritizăm limbile latine dându-le un ușor avantaj de scor, dar păstrăm și engleza dacă e mai potrivită pentru release
+            // BONUS URIAȘ PENTRU LIMBILE LATINE CA SĂ FIE PUSE PE LOCURILE 1, 2, 3
             let langLower = s.lang.toLowerCase();
             if (['spa', 'es', 'spanish', 'ita', 'it', 'italian', 'fre', 'fr', 'french'].includes(langLower)) {
-                s.score += 15;
+                s.score += 100;
             }
 
             if (videoTokens.length > 0) {
