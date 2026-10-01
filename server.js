@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.26.0',
+    version: '12.27.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -560,7 +560,7 @@ async function callGemini(prompt, keyState) {
 // QC V6 FULL — verificare integrală SOURCE → TRANSLATION
 // ============================================================
 
-const QC_MODEL_NAME = process.env.GEMINI_QC_MODEL || MODEL_NAME;
+const QC_MODEL_NAME = MODEL_NAME;
 
 const QC_TIMEOUT_MS = Math.min(
     45000,
