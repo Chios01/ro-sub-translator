@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '8.0.0',
+    version: '8.1.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -214,10 +214,10 @@ async function handleSubtitles(req, res) {
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
             const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             
-            let labelName = `🇷🇴 RO AI (FIX v8) [${index + 1}]`;
+            let labelName = `🇷🇴 RO AI (FINAL) [${index + 1}]`;
             if (tagMatch) {
                 let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI (FIX v8) [${index + 1}] • ${cleanTag}`;
+                labelName = `🇷🇴 RO AI (FINAL) [${index + 1}] • ${cleanTag}`;
             }
 
             const cacheBuster = Math.floor(Math.random() * 100000);
@@ -408,16 +408,17 @@ function formatSubtitleLine(text) {
     if (!text) return text;
     
     // =========================================================================
-    // NUCLEARA: CURĂȚARE BRUTALĂ A ABERAȚIILOR (CATCH-ALL)
-    // Aceste două linii rad orice cuvânt de gunoi inventează modelul între cuvintele cheie.
+    // MĂSURA SUPREMĂ: ÎNLOCUIRE FORȚATĂ PE TOT RÂNDUL
+    // Indiferent ce cuvânt alege AI-ul (moment, timp, aflic, aimai, etc)
+    // noi ștergem rândul și îl scriem manual corect.
     // =========================================================================
     
-    // Prinde "când" urmat de absolut orice (max 35 caractere fără punctuație) și se termină în "secund" sau "timp"
-    text = text.replace(/c[aă]nd[^.?!]{1,35}(secund[aă]?|timp)/gi, 'când ai o secundă');
-    
-    // Prinde "oprește-te din" urmat de absolut orice (max 40 caractere) și se termină în "sâni" sau "sânii"
+    if (text.toLowerCase().includes('am înțeles.') && text.toLowerCase().includes('hei, când')) {
+        text = text.replace(/Am în[țt]eles\.\s*Hei,\s*c[aă]nd.*/gi, 'Am înțeles. Hei, când ai o secundă...');
+    }
+
+    text = text.replace(/c[aă]nd[^.?!]{1,40}(secund[aă]?|timp|moment|clip[aă]?)/gi, 'când ai o secundă');
     text = text.replace(/opre[șs]te-te\s+din[^.?!]{1,40}s[âa]ni[i]?/gi, 'nu te mai holba la sânii mei');
-    
     // =========================================================================
 
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
