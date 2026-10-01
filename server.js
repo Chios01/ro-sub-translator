@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.21.0',
+    version: '12.22.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -577,354 +577,283 @@ const QC_RATE_LIMIT_PAUSE_MS = Math.max(
 );
 
 const QC_FULL_PROMPT = `
-You are a STRICT final quality-control editor for English -> Romanian cinematic subtitles.
-
-Your job is NOT to rewrite the translation.
-Your job is ONLY to find genuine translation, language, grammar, semantic or generation errors.
-
-The Romanian translation was already produced by a separate professional translation pass.
-Assume that it is correct unless there is clear evidence that it is wrong.
-
-==================================================
-ABSOLUTE RULE — PROTECT GOOD TRANSLATIONS
-==================================================
-
-IF A LINE IS CORRECT, DO NOT CHANGE IT.
-
-If you are uncertain whether something is wrong:
-KEEP THE EXISTING ROMANIAN EXACTLY AS IT IS.
-
-Never make a correction merely because you personally prefer another formulation.
-
-Never rewrite a correct sentence.
-
-Never improve the style.
-
-Never replace a valid Romanian synonym with your preferred synonym.
-
-Never make a sentence more literary, elegant or literal.
-
-The goal is ERROR CORRECTION, not retranslation.
-
-==================================================
-WHAT YOU MUST CHECK
-==================================================
-
-Compare every Romanian subtitle with its original English source.
-
-Look for:
-
-1. Clearly malformed Romanian words.
-2. Invented or pseudo-Romanian words.
-3. Truncated words.
-4. Missing letters.
-5. Duplicated letters.
-6. Accidental character substitutions.
-7. Obvious machine-generation corruption.
-8. Impossible Romanian morphology.
-9. Clear subject/verb agreement errors.
-10. Clear person/number/gender errors.
-11. Missing or incorrect negation.
-12. Missing important words.
-13. Meaning changed or reversed.
-14. Subject or object accidentally changed.
-15. Wrong translation of an important English word or phrase.
-16. Ordinary English words accidentally left untranslated.
-17. Hallucinated information that does not exist in the English source.
-18. Clear diacritic errors when they create a genuine language error.
-19. Cut words caused by generation.
-20. Obvious grammatical errors.
-21. A Romanian word that is clearly impossible in context.
-22. A word that looks corrupted but whose intended correction is clearly
-    supported by the English source and surrounding context.
-
-==================================================
-EXEMPLE CONCRETE DE ERORI CARE TREBUIE CORECTATE:
-==================================================
-
-1. Acord/conjugare greșită după pronume:
-   "Eu poart căciuli tricotate."
-   -> "Eu port căciuli tricotate."
-
-2. Forme prescurtate incomplete:
-   "N avem nimic în comun."
-   -> "N-avem nimic în comun."
-   sau
-   -> "Nu avem nimic în comun."
-
-3. Construcții gramaticale incomplete:
-   "Habar n-are despre vorbește."
-   -> "Habar n-are despre ce vorbește."
-
-4. Cuvinte cu litere lipsă sau cuvinte tăiate:
-   "rebuie să plec."
-   -> "trebuie să plec."
-
-5. Litere/cuvinte deformate:
-   "Mă uudzi."
-   -> "Mă uzi."
+Ești un CONTROLOR FINAL DE CALITATE pentru subtitrări engleză → română.
 
 IMPORTANT:
-Aceste exemple reprezintă ERORI REALE, nu simple preferințe de stil.
-Dacă întâlnești o eroare de același tip, corecteaz-o chiar dacă propoziția poate fi aproximativ înțeleasă.
+Traducerea primită este DEJA BUNĂ în majoritatea cazurilor.
+NU trebuie să o rescrii.
+NU trebuie să o stilizezi.
+NU trebuie să o faci "mai frumoasă".
+NU trebuie să schimbi sinonime corecte.
+NU trebuie să modifici nume, porecle, branduri, titluri, termeni tehnici, slang sau înjurături doar pentru că ai prefera altă formulare.
 
-Nu transforma însă această regulă într-o rescriere generală.
-Dacă formularea românească este gramaticală și are sens, păstreaz-o exact așa cum este.
+Sarcina ta este STRICT să găsești și să corectezi ERORI REALE ȘI CLARE.
 
-==================================================
-VERIFICARE SPECIALĂ A GRAMATICII:
-==================================================
+Primești:
+1. textul original în engleză
+2. traducerea română existentă
 
-Pentru fiecare propoziție, verifică discret:
-- acordul dintre pronume și verb;
-- conjugarea verbului;
-- prepozițiile și pronumele relative lipsă ("ce", "care", etc.);
-- cuvintele tăiate sau cu litere lipsă;
-- formele prescurtate românești incomplete;
-- acordul singular/plural;
-- acordul masculin/feminin atunci când este evident din context.
+Compară-le și returnează DOAR corecțiile care sunt cu adevărat necesare.
 
-Corectează numai erorile clare.
-Nu modifica o formulare doar pentru că ai fi ales tu o altă variantă stilistică.
+========================
+CE TREBUIE SĂ VERIFICI
+========================
 
-==================================================
-IMPORTANT — SOURCE IS THE AUTHORITY
-==================================================
+1. CUVINTE STRICATE / LITERE LIPSĂ
 
-The English source determines the intended meaning.
+Caută cuvinte care par evident corupte, trunchiate sau scrise greșit.
 
-Use the English source to verify:
+Exemple:
 
-- who is speaking;
-- who performs the action;
-- who receives the action;
-- tense;
-- negation;
-- modality;
-- questions;
-- commands;
-- singular/plural;
-- gender when relevant;
-- important nouns and verbs;
-- idioms;
-- slang;
-- factual information.
+"cinva" → "cineva"
+"aceași" → "aceeași"
+"rebuie" → "trebuie"
+"poart" → "port"
+"uudzi" → "uzi"
+"știri minute" → "șase minute"
 
-Use context only to resolve ambiguity.
+Atenție:
+NU corecta automat orice cuvânt rar.
+Corectează doar când eroarea este clară din context.
 
-NEVER invent information that is not supported by the source.
+========================
+2. CARACTERE SAU SIMBOLURI INTRODUSE GREȘIT
+========================
 
-If the English itself is ambiguous, preserve that ambiguity.
+Caută:
+- cifre introduse în interiorul cuvintelor
+- caractere lipsă
+- caractere în plus
+- cuvinte rupte
+- fragmente evidente
+- caractere Unicode corupte
+- ""
 
-==================================================
-DO NOT CHANGE THESE
-==================================================
+Exemple:
 
-Do NOT change:
+"să1 îmi pară rău" → "să-mi pară rău"
+"cinva" → "cineva"
+"rebuie" → "trebuie"
 
-- people's names;
-- place names;
-- fictional character names;
-- organization names;
-- company names;
-- brands;
-- scientific terms;
-- technical terms;
-- historical terminology;
-- jargon;
-- valid loanwords;
-- slang;
-- profanity;
-- insults;
-- colloquial speech;
-- intentional fragments;
-- interruptions;
-- repetitions;
-- stuttering;
-- deliberate informal grammar;
-- natural Romanian expressions;
-- valid Romanian synonyms;
-- unusual words that may reasonably be names, jargon,
-  fictional terminology or context-specific terminology.
+========================
+3. GRAMATICĂ EVIDENT GREȘITĂ
+========================
 
-Do NOT soften profanity.
+Verifică:
 
-Do NOT make slang more formal.
+- acord subiect + verb
+- persoana verbului
+- singular/plural
+- gen, când este evident
+- conjugarea verbelor
+- prepoziții lipsă
+- pronume relative lipsă
+- cuvinte lipsă
+- forme verbale evident greșite
 
-Do NOT make informal speech more elegant.
+Exemple:
 
-Do NOT make Romanian more literal.
+"Eu poart căciuli." → "Eu port căciuli."
 
-Do NOT change sentence structure merely for style.
+"Habar n-are despre vorbește." → "Habar n-are despre ce vorbește."
 
-Do NOT alter valid subtitle line breaks unless they are clearly
-associated with an actual malformed word or integrity problem.
+"Tu merge acolo." → "Tu mergi acolo."
 
-Do NOT change capitalization unless it is clearly erroneous.
+"Ei este aici." → "Ei sunt aici."
 
-==================================================
-SEMANTIC PROTECTION
-==================================================
+Corectează numai când eroarea este clară.
 
-Pay special attention to:
+========================
+4. NEGĂRI ȘI SENS
+========================
 
-- NOT / NEVER / NO;
-- don't / doesn't / didn't;
-- can't / couldn't;
-- won't / wouldn't;
-- should / shouldn't;
-- must / mustn't;
-- may / might / could;
-- questions;
-- conditional statements;
-- sarcasm;
-- threats;
-- accusations;
-- irony;
-- uncertainty;
-- quantities;
-- names;
-- relationships;
-- time;
-- locations.
+Verifică dacă traducerea:
+- pierde "not", "never", "no", "nothing", etc.
+- inversează sensul
+- introduce o afirmație care nu există în original
+- elimină o informație importantă
 
-Do not turn:
+Exemplu:
 
-possibility -> certainty
+"I don't know." 
+NU trebuie să devină:
+"Știu."
 
-question -> statement
+========================
+5. ENGLEZĂ RĂMASĂ DIN GREȘEALĂ
+========================
 
-suggestion -> fact
+Caută cuvinte sau expresii englezești obișnuite care au rămas netraduse.
 
-implication -> explicit fact
+Dar NU considera eroare:
+- nume proprii
+- nume de persoane
+- nume de locuri
+- branduri
+- titluri
+- acronime
+- termeni tehnici
+- expresii intenționat în engleză
+- cuvinte folosite ca atare în dialog
 
-uncertainty -> certainty
+Corectează doar engleza care este evident lăsată accidental.
 
-negative -> positive
+========================
+6. NUMERE ȘI DATE
+========================
 
-positive -> negative
+Verifică dacă numerele importante din original sunt păstrate corect.
 
-Do not invent facts.
+NU modifica numerele doar pentru că formatul diferă.
 
-==================================================
-CORRUPTED / PSEUDO WORDS
-==================================================
+========================
+EXEMPLE REALE DE ERORI
+========================
 
-Be especially careful with words such as:
+1.
+"Eu poart căciuli tricotate."
+→
+"Eu port căciuli tricotate."
 
-- "prontar"
-- "uudzi"
-- "rebuie"
-- "poart"
-- other obviously malformed or accidentally generated words.
+2.
+"N avem nimic în comun."
+→
+"N-avem nimic în comun."
+sau
+"Nu avem nimic în comun."
 
-However:
+3.
+"Habar n-are despre vorbește."
+→
+"Habar n-are despre ce vorbește."
 
-An unusual word is NOT automatically wrong.
+4.
+"rebuie să plec."
+→
+"trebuie să plec."
 
-It may be:
+5.
+"Mă uudzi."
+→
+"Mă uzi."
 
-- a proper noun;
-- a surname;
-- a place;
-- a fictional term;
-- scientific terminology;
-- technical terminology;
-- slang;
-- jargon;
-- a loanword.
+6.
+"cinva a purtat uniforma asta."
+→
+"cineva a purtat uniforma asta."
 
-Only correct an unusual word if the English source and/or immediate context
-clearly proves what the intended Romanian word should be.
+7.
+"aceași tabără."
+→
+"aceeași tabără."
 
-NEVER guess.
+8.
+"să1 îmi pară rău de tine."
+→
+"să-mi pară rău de tine."
 
-==================================================
-CONTEXT
-==================================================
+9.
+"atât de tare" trebuie păstrat cu diacritice atunci când acestea lipsesc accidental.
 
-The payload contains the English source and the current Romanian translation.
+IMPORTANT:
+Acestea sunt EXEMPLE DE TIPURI DE ERORI.
+Nu face înlocuiri mecanice globale.
+Judecă fiecare linie în context.
 
-Use the entire chunk to understand:
+========================
+CE NU AI VOIE SĂ FACI
+========================
 
-- conversation continuity;
-- pronouns;
-- references;
-- repeated terminology;
-- character speech;
-- previous/following meaning.
+NU modifica o traducere doar pentru că:
+- ai o variantă mai elegantă
+- ai un sinonim preferat
+- ai schimba ordinea cuvintelor
+- ai folosi altă punctuație
+- ți se pare mai naturală altă formulare
+- preferi "nu" în loc de "n-am"
+- preferi o altă traducere pentru slang
+- preferi altă formă colocvială validă
 
-However, do NOT rewrite correct lines simply because context allows
-a different stylistic interpretation.
+NU transforma:
+"Nu-mi pasă."
+în altceva dacă este deja corect.
 
-==================================================
-CONSERVATIVE DECISION TEST
-==================================================
+NU transforma:
+"Lasă-mă în pace."
+doar pentru că ai o alternativă.
 
-Before returning a correction, ask:
+NU corecta nume sau termeni pe care nu îi poți confirma clar ca fiind greșiți.
 
-1. Is there clear evidence of a genuine error?
-2. Does the English source support the correction?
-3. Is the intended correction clear?
-4. Would a professional human subtitle translator consider the original
-   Romanian line actually wrong?
+========================
+REGULA PRINCIPALĂ
+========================
 
-If ANY answer is NO or uncertain:
+Dacă traducerea este corectă și naturală:
 
-KEEP THE EXISTING TRANSLATION.
+NU O MODIFICA.
 
-==================================================
-NO MASS REWRITING
-==================================================
+Dacă există doar o posibilă preferință stilistică:
 
-You may return ZERO corrections.
+NU O MODIFICA.
 
-You may return ONE correction.
+Dacă există o eroare clară:
 
-You may return several corrections.
+CORECTEAZ-O.
 
-But every returned correction must represent a REAL error.
+Mai bine lași o eroare minoră ambiguă decât să strici o traducere corectă.
 
-Do NOT attempt to "polish" all 165 lines.
+========================
+FORMAT OBLIGATORIU
+========================
 
-Do NOT rewrite the whole chunk.
-
-Do NOT return lines merely because you would phrase them differently.
-
-==================================================
-OUTPUT FORMAT
-==================================================
-
-Return ONLY valid JSON.
-
-Exactly:
+Returnează DOAR JSON valid:
 
 {
   "corrections": {
-    "123": "corrected Romanian subtitle",
-    "456": "another corrected Romanian subtitle"
+    "ID": "traducerea corectată"
   }
 }
 
-If there are no genuine errors:
+Dacă nu există nicio eroare:
 
 {
   "corrections": {}
 }
 
-Rules:
+NU returna explicații.
+NU returna markdown.
+NU returna comentarii.
+NU returna text în afara JSON-ului.
 
-- Only numeric subtitle IDs.
-- Only genuine corrections.
-- The value must be the COMPLETE replacement Romanian subtitle.
-- Do not include explanations.
-- Do not include reasons.
-- Do not include confidence scores.
-- Do not include markdown.
-- Do not include extra JSON fields.
-- Never return a correction identical to the current translation.
-- Never guess.
+Pentru fiecare corecție:
+- păstrează ID-ul original
+- păstrează sensul original
+- modifică minimum necesar
+- nu rescrie inutil propoziția
 `;
+
+function detectLikelyQcIssues(originalChunk, translatedChunk) {
+    const suspects = [];
+    const translatedMap = new Map(
+        translatedChunk.map(item => [String(item.id), String(item.text ?? '')])
+    );
+
+    for (const item of originalChunk) {
+        const idStr = String(item.id);
+        const trans = translatedMap.get(idStr) || '';
+        
+        // Căutare rapidă de anomalii evidente pentru a ghida atenția QC-ului
+        if (
+            trans.includes('') ||
+            /\b(rebuie|cinva|aceași|uudzi)\b/i.test(trans) ||
+            /\b(Eu\s+poartă|Tu\s+merge|Ei\s+este)\b/i.test(trans) ||
+            /(^|[\s])(?:m|v|M|V)(?=[\s.,!?;:]|$)/.test(trans)
+        ) {
+            suspects.push(item.id);
+        }
+    }
+    return suspects;
+}
 
 // ============================================================
 // QC KEY STATE
@@ -1303,38 +1232,35 @@ async function qcChunkFull(
         return translatedChunk;
     }
 
-    const payload =
-        buildQcChunkPayload(
-            originalChunk,
-            translatedChunk
-        );
-
-    const prompt =
-        `${QC_FULL_PROMPT}
-
-==================================================
-SUBTITLE CHUNK TO CHECK
-==================================================
-
-There are ${payload.length} subtitle lines.
-
-Analyze EVERY line.
-
-Do not return correct lines.
-
-Return ONLY genuine corrections.
-
-DATA:
-
-${JSON.stringify(
-    payload,
-    null,
-    2
-)}
-`;
+    const suspects = detectLikelyQcIssues(originalChunk, translatedChunk);
 
     console.log(
-        `${c.yellow}⚠ [QC V4 FULL] Analizez ${payload.length} linii din calupul ${chunkIndex + 1}/${totalChunks}...${c.reset}`
+        `🔎 [QC V5] Chunk ${chunkIndex + 1}/${totalChunks}: ${suspects.length} linii suspecte`
+    );
+
+    const suspectText = suspects.length
+        ? `
+ACESTEA SUNT LINIILE CARE MERITĂ O ATENȚIE SPECIALĂ:
+${suspects.join(', ')}
+
+IMPORTANT:
+Lista NU înseamnă că aceste linii sunt greșite.
+Verifică-le atent și corectează-le numai dacă eroarea este reală.
+`
+        : `
+Nu au fost detectate probleme evidente local.
+Verifică totuși traducerea pentru erori clare de gramatică,
+cuvinte trunchiate, litere lipsă și pierderi de sens.
+`;
+
+    const prompt = QC_FULL_PROMPT
+        + '\n\n'
+        + suspectText
+        + '\n\n'
+        + JSON.stringify(buildQcChunkPayload(originalChunk, translatedChunk), null, 2);
+
+    console.log(
+        `${c.yellow}⚠ [QC V4 FULL] Analizez ${originalChunk.length} linii din calupul ${chunkIndex + 1}/${totalChunks}...${c.reset}`
     );
 
     try {
