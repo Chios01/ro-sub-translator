@@ -57,7 +57,7 @@ const c = {
 };
 
 // ============================================================
-// MEMORY & SECRET ARCHIVE
+// MEMORY CACHE & SECRET ARCHIVE (MAX 30 ELEMENTE)
 // ============================================================
 
 const memoryCache = Object.create(null);
@@ -65,12 +65,11 @@ const secretArchive = [];
 
 function cleanMemoryCache() {
     const keys = Object.keys(memoryCache);
-
     if (keys.length > 30) {
-        for (let i = 0; i < 5; i++) {
-            if (keys[i]) {
-                delete memoryCache[keys[i]];
-            }
+        // Șterge cele mai vechi elemente rând pe rând până rămân 30
+        const excess = keys.length - 30;
+        for (let i = 0; i < excess; i++) {
+            delete memoryCache[keys[i]];
         }
     }
 }
@@ -81,7 +80,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.9.0',
+    version: '12.10.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -317,21 +316,16 @@ function cleanTextForJson(text) {
     if (!text) return text;
     let clean = text;
 
-    // Elimină etichete de poziționare SRT (ex: {an8})
     clean = clean.replace(/\{[^}]+\}/g, '');
-
-    // Elimină note muzicale și simboluri specifice de zgomot
     clean = clean.replace(/[♪♫♬♩#]/gi, '');
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
 
-    // Elimină complet parantezele drepte, rotunde sau acoladele care conțin sunete (ex: [râsete], [urmărește...], [music])
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
     clean = clean.replace(/\[[^\]]*?\]/g, '');
     clean = clean.replace(/\([^)]*?(râsete\vert{}murmur\vert{}muzică\vert{}aplauze\vert{}urale\vert{}fluierături\vert{}music\vert{}sighs\vert{}cheering\vert{}applause\vert{}laughter)[^)]*?\)/gi, '');
     clean = clean.replace(/\([^)]*?\)/g, '');
 
-    // Curăță rândurile rămase goale
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
     clean = lines.join('\n');
 
@@ -355,7 +349,6 @@ function formatSubtitleLine(text) {
         return 'Nu te mai holba la sânii mei.';
     }
     
-    // Corectare litere tăiate la capăt de rând
     text = text.replace(/(^|[\s])([cCsS])(?=[\s.,!?:;]|$)/gm, function(match, spatiu, litera) {
         return spatiu + litera + 'ă';
     });
@@ -366,7 +359,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/<[^>]+>/g, '');
     text = text.replace(/([.?!])\s+[-—–−\s]*([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
-    // Funcție internă de wrap / scurtare a liniilor lungi (max ~48 caractere per rând pentru a nu ocupa prea mult spațiu pe ecran)
     let lines = text.split('\n').map(l => l.trim()).filter(Boolean);
     let wrappedLines = [];
     for (let line of lines) {
@@ -415,7 +407,7 @@ function formatSubtitleLine(text) {
 }
 
 // ============================================================
-// TRANSLATION ROUTE
+// TRANSLATION ROUTE (CU VERIFICARE CACHE RAM & ARHIVĂ UNICĂ)
 // ============================================================
 
 app.get('/:configData/translate', async (req, res) => {
@@ -442,7 +434,9 @@ app.get('/:configData/translate', async (req, res) => {
 
     const cacheKey = targetUrl;
 
+    // VERIFICARE CACHE RAM INSTANT
     if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
+        console.log(`${c.green}⚡ [Cache RAM] Servit instant pentru: ${imdbId}${c.reset}`);
         res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
         return res.send(memoryCache[cacheKey]);
     }
@@ -497,6 +491,12 @@ app.get('/:configData/translate', async (req, res) => {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
             
+            // Verifică dacă acest film/id există deja în arhivă ca să nu-l duplicăm
+            const existingIndex = secretArchive.findIndex(item => item.id === imdbId);
+            if (existingIndex !== -1) {
+                secretArchive.splice(existingIndex, 1); // Îl scoate din poziția veche
+            }
+
             secretArchive.unshift({ id: imdbId, time: timeStr, content: finalSrt });
             if (secretArchive.length > 10) secretArchive.pop();
         }
