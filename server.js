@@ -759,7 +759,7 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
             }
         }
 
-        const modelName = 'gemini-3.5-flash';
+        const modelName = 'gemini-3.5-flash-lite';
         let currentBatchSize = Object.keys(batchToProcess).length;
 
         try {
