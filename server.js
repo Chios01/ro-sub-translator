@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '10.1.0',
+    version: '10.1.1',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -426,48 +426,18 @@ function formatSubtitleLine(text) {
         return 'Am înțeles. Hei, când ai o secundă...';
     }
     
-    if (lowerText.includes('oprește-te') && (/\bsân(i|ii)?\b/.test(lowerText) || lowerText.includes('țâțe') || lowerText.includes('decolteu'))) {
+    if (lowerText.includes('oprește-te') && (lowerText.includes('sâni') || lowerText.includes('sânii'))) {
         return 'Nu te mai holba la sânii mei.';
     }
+    
+    // Corectie litera tăiată
+    text = text.replace(/(crezi|așa|pentru|zic|sper|spun)\s+c(?=\s|[,.!?:;]|$)/gi, '$1 că');
     
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
-    let lines = text.split('\n');
-    lines = lines.map(l => {
-        let cl = l.trim();
-        if (/^([-—–−\s]*)(ă+|m+|mm+|îm+|îhî|aha|mda|oh+|ah+|um+|hm+)[.,!?\s]*$/i.test(cl)) return '';
-        if (/^[-—–−.,!?\s]*$/.test(cl)) return '';
-        return cl;
-    });
-    
-    let validLines = lines.filter(l => l !== '');
-    
-    let mergedText = '';
-    for (let i = 0; i < validLines.length; i++) {
-        let l = validLines[i];
-        if (i === 0) {
-            mergedText = l;
-        } else {
-            if (/^[-—–−]/.test(l)) { 
-                mergedText += '\n' + l;
-            } else {
-                mergedText += ' ' + l; 
-            }
-        }
-    }
-    
-    let finalMergedLines = mergedText.split('\n');
-    finalMergedLines = finalMergedLines.map(l => {
-        return l.trim().replace(/^[-—–−\s*]+/g, ''); 
-    });
-    
-    text = finalMergedLines.join('\n');
-    
     const dictionar = [
-        [/(crezi|așa|pentru|zic|sper|spun)\s+c(?=\s|[,.!?:;]|$)/gi, '$1 că'],
-
         [/man pasă/gi, 'îmi pasă'],
         [/Mi s-a plătit/gi, 'Mi-am primit banii'],
         [/debaclul/gi, 'dezastrul'],
@@ -682,7 +652,42 @@ function formatSubtitleLine(text) {
         text = text.replace(dictionar[i][0], dictionar[i][1]);
     }
 
-    return text;
+    let linesArray = text.split('\n');
+    let validLinesText = linesArray.filter(l => l.trim() !== '');
+
+    // =========================================================================
+    // NOUA LOGICĂ DE TĂIERE A RÂNDURILOR (> 45 caractere se taie la jumătate)
+    // =========================================================================
+    if (validLinesText.length > 2) {
+        let joinedText = validLinesText.join(' ');
+        let mid = Math.floor(joinedText.length / 2);
+        let leftSpace = joinedText.lastIndexOf(' ', mid);
+        let rightSpace = joinedText.indexOf(' ', mid);
+        let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
+            ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
+            Math.max(leftSpace, rightSpace);
+            
+        if (splitIndex !== -1) {
+            validLinesText = [joinedText.substring(0, splitIndex).trim(), joinedText.substring(splitIndex + 1).trim()];
+        } else {
+            validLinesText = [joinedText];
+        }
+    } else if (validLinesText.length === 1 && validLinesText[0].length > 45) {
+        let line = validLinesText[0];
+        let mid = Math.floor(line.length / 2);
+        let leftSpace = line.lastIndexOf(' ', mid);
+        let rightSpace = line.indexOf(' ', mid);
+        let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
+            ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
+            Math.max(leftSpace, rightSpace);
+            
+        if (splitIndex !== -1) {
+            validLinesText = [line.substring(0, splitIndex).trim(), line.substring(splitIndex + 1).trim()];
+        }
+    }
+    // =========================================================================
+
+    return validLinesText.map(l => l.replace(/^[-—–−\s*]+/g, '')).join('\n');
 }
 
 function fixBrokenJson(text) {
