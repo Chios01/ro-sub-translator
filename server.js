@@ -57,7 +57,7 @@ const c = {
 };
 
 // ============================================================
-// MEMORY CACHE & SECRET ARCHIVE (MAX 30 ELEMENTE)
+// MEMORY CACHE & SECRET ARCHIVE
 // ============================================================
 
 const memoryCache = Object.create(null);
@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.11.2',
+    version: '12.12.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -312,7 +312,7 @@ app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
 app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 
 // ============================================================
-// CLEAN TEXT FOR JSON (ELIMINARE SUNETE ENervante ȘI NOTE MUZICALE)
+// CLEAN TEXT FOR JSON 
 // ============================================================
 
 function cleanTextForJson(text) {
@@ -326,7 +326,7 @@ function cleanTextForJson(text) {
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
     clean = clean.replace(/\[[^\]]*?\]/g, '');
-    clean = clean.replace(/\([^)]*?(râsete\vert{}murmur\vert{}muzică\vert{}aplauze\vert{}urale\vert{}fluierături\vert{}music\vert{}sighs\vert{}cheering\vert{}applause\vert{}laughter)[^)]*?\)/gi, '');
+    clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughter)[^)]*?\)/gi, '');
     clean = clean.replace(/\([^)]*?\)/g, '');
 
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
@@ -337,7 +337,7 @@ function cleanTextForJson(text) {
 }
 
 // ============================================================
-// FORMAT LINE & DICTIONARY (POST-PROCESARE, DIALOGURI FĂRĂ LINIUȚE)
+// FORMAT LINE & DICTIONARY
 // ============================================================
 
 function formatSubtitleLine(text) {
@@ -361,7 +361,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
     
-    // Curățarea liniuțelor de dialog enervante de la începutul rândurilor
     let lines = text.split('\n').map(l => {
         let cleanLine = l.trim();
         cleanLine = cleanLine.replace(/^[-—–−]+\s*/, '');
@@ -422,7 +421,221 @@ function formatSubtitleLine(text) {
 }
 
 // ============================================================
-// TRANSLATION ROUTE (CU CACHE RAM, ARHIVĂ UNICĂ ȘI KEEP-ALIVE)
+// CONSERVATIVE TRANSLATION QC (NOUA TA FUNCȚIE)
+// ============================================================
+
+function detectObviousQcIssue(original, translated) {
+    const reasons = [];
+    const src = String(original || '').trim();
+    const dst = String(translated || '').trim();
+
+    if (!dst) {
+        reasons.push('traducerea este goală');
+        return reasons;
+    }
+
+    if (dst.includes('')) {
+        reasons.push('caracter Unicode corupt');
+    }
+
+    if (/(^|\s)[mMvV](?=\s|[.,!?;:]|$)/.test(dst)) {
+        reasons.push('fragment de un singur caracter');
+    }
+
+    if (/(^|\s)(s|să|î|â|c|d|n|p|t|a|e|o)(?=\s|[.,!?;:]|$)/i.test(dst)) {
+        reasons.push('posibil cuvânt tăiat');
+    }
+
+    if (
+        src.length >= 18 &&
+        dst.toLowerCase() === src.toLowerCase() &&
+        /[a-zA-Z]{3,}/.test(src) &&
+        /\s/.test(src)
+    ) {
+        reasons.push('text englezesc posibil netradus');
+    }
+
+    if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(dst)) {
+        reasons.push('caractere de control');
+    }
+
+    const sourceNumbers = src.match(/\d+(?:[.,]\d+)?/g);
+    if (sourceNumbers && sourceNumbers.length) {
+        for (const number of sourceNumbers) {
+            if (!dst.includes(number)) {
+                reasons.push(`număr posibil pierdut: ${number}`);
+                break;
+            }
+        }
+    }
+
+    return [...new Set(reasons)];
+}
+
+async function runConservativeTranslationQC(
+    items,
+    translatedResults,
+    keyStates,
+    chunkLabel = ''
+) {
+    const suspects = [];
+
+    for (const item of items) {
+        const translated = translatedResults[item.id];
+        if (translated === undefined || translated === null) continue;
+
+        const reasons = detectObviousQcIssue(item.text, translated);
+        if (reasons.length > 0) {
+            suspects.push({
+                id: String(item.id),
+                original: String(item.text || ''),
+                translated: String(translated || ''),
+                reasons
+            });
+        }
+    }
+
+    if (suspects.length === 0) {
+        return translatedResults;
+    }
+
+    const limitedSuspects = suspects.slice(0, 8);
+    const suspectIds = new Set(limitedSuspects.map(x => x.id));
+    const contextLines = [];
+
+    for (const suspect of limitedSuspects) {
+        const index = items.findIndex(item => String(item.id) === suspect.id);
+        if (index === -1) continue;
+
+        const start = Math.max(0, index - 3);
+        const end = Math.min(items.length, index + 4);
+
+        const context = items.slice(start, end).map(item => ({
+            id: String(item.id),
+            original: String(item.text || ''),
+            current_translation: translatedResults[item.id] !== undefined ? String(translatedResults[item.id]) : ''
+        }));
+
+        contextLines.push({
+            suspect_id: suspect.id,
+            reasons: suspect.reasons,
+            context
+        });
+    }
+
+    const qcPrompt = `
+Ești un editor QC extrem de conservator pentru subtitrări cinematografice traduse din engleză în română.
+Misiunea ta NU este să îmbunătățești stilul. Misiunea ta NU este să rescrii traducerea. Misiunea ta este doar să repari ERORILE CLARE și OBIECTIVE.
+
+Pentru fiecare linie suspectă primești:
+- textul original englezesc;
+- traducerea română existentă;
+- câteva linii din jur pentru context;
+- motivul pentru care linia a fost marcată.
+
+REGULA PRINCIPALĂ:
+Dacă traducerea existentă este corectă sau acceptabilă, RETURNĂ EXACT traducerea existentă.
+Nu schimba formularea doar pentru că ai o variantă mai elegantă, mai literară sau mai naturală.
+
+REPARĂ DOAR dacă există o eroare evidentă, precum:
+- cuvânt tăiat;
+- fragment de un singur caracter;
+- caracter Unicode corupt;
+- cuvânt evident deformat;
+- text rămas accidental în engleză;
+- număr evident pierdut;
+- sens evident deteriorat;
+- negație evident pierdută;
+- cuvânt clar omis;
+- formulare evident generată greșit.
+
+Dacă ai chiar și o mică îndoială, PĂSTREAZĂ traducerea existentă.
+Răspunde DOAR cu JSON valid, fără markdown.
+
+Format obligatoriu:
+{
+  "corrections": [
+    {
+      "id": "ID",
+      "translation": "traducerea finală",
+      "changed": true
+    }
+  ]
+}
+
+Pentru o linie care NU trebuie schimbată:
+{
+  "id": "ID",
+  "translation": "EXACT traducerea existentă",
+  "changed": false
+}
+
+Datele pentru QC:
+${JSON.stringify(contextLines, null, 2)}
+`;
+
+    try {
+        const keyState = await getAvailableKey(keyStates);
+        console.log(`${c.yellow}⚠ [QC] Verific ${limitedSuspects.length} linii suspecte în calupul ${chunkLabel}...${c.reset}`);
+        
+        const response = await callGemini(qcPrompt, keyState);
+
+        if (!response || typeof response !== 'string') return translatedResults;
+
+        let parsed;
+        try {
+            let cleanText = response.trim();
+            const startIdx = cleanText.indexOf('{');
+            const endIdx = cleanText.lastIndexOf('}');
+            if (startIdx >= 0 && endIdx > startIdx) {
+                cleanText = cleanText.slice(startIdx, endIdx + 1);
+            }
+            parsed = JSON.parse(cleanText);
+        } catch (error) {
+            return translatedResults;
+        }
+
+        if (!parsed || !Array.isArray(parsed.corrections)) return translatedResults;
+
+        const corrected = { ...translatedResults };
+        let fixesApplied = 0;
+
+        for (const correction of parsed.corrections) {
+            if (!correction || correction.id === undefined) continue;
+            const id = String(correction.id);
+
+            if (!suspectIds.has(id)) continue;
+            if (typeof correction.translation !== 'string') continue;
+
+            const newText = correction.translation.trim();
+            if (!newText || newText.includes('')) continue;
+
+            const originalEntry = limitedSuspects.find(item => item.id === id);
+            if (!originalEntry) continue;
+
+            if (detectObviousQcIssue(originalEntry.original, newText).includes('fragment de un singur caracter')) continue;
+
+            if (correction.changed && newText !== translatedResults[id]) {
+                fixesApplied++;
+            }
+            
+            corrected[id] = newText;
+        }
+
+        if (fixesApplied > 0) {
+            console.log(`${c.green}✔ [QC] Reparate ${fixesApplied} erori în calupul ${chunkLabel}.${c.reset}`);
+        }
+
+        return corrected;
+
+    } catch (error) {
+        console.log(`${c.red}✖ [QC] Eroare la verificarea calupului ${chunkLabel}, păstrez traducerea inițială.${c.reset}`);
+        return translatedResults;
+    }
+}
+
+// ============================================================
+// TRANSLATION ROUTE
 // ============================================================
 
 app.get('/:configData/translate', async (req, res) => {
@@ -716,13 +929,24 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const parsed = JSON.parse(cleanText);
             const dict = parsed.translations || parsed;
 
-            const results = chunk.map(obj => {
+            const initialResultsDict = {};
+            chunk.forEach(obj => {
                 const val = dict[obj.id] !== undefined ? dict[obj.id] : (dict[String(obj.id)] !== undefined ? dict[String(obj.id)] : obj.text);
-                return {
-                    id: obj.id,
-                    text: formatSubtitleLine(val)
-                };
+                initialResultsDict[obj.id] = formatSubtitleLine(val);
             });
+
+            // === INTEGRARE QC CONSERVATOR ===
+            const finalResultsDict = await runConservativeTranslationQC(
+                chunk, 
+                initialResultsDict, 
+                keyStates, 
+                `${globalChunkIndex + 1}/${totalChunks}`
+            );
+
+            const results = chunk.map(obj => ({
+                id: obj.id,
+                text: finalResultsDict[obj.id] || initialResultsDict[obj.id]
+            }));
 
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
             return results;
@@ -806,7 +1030,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 }
 
 // ============================================================
-// SRT PARSER NATIV (CU INTEGRARE CLEAN TEXT)
+// SRT PARSER NATIV 
 // ============================================================
 
 function parseSrt(srt) {
