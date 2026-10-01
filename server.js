@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.6.0',
+    version: '2.8.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -237,6 +237,18 @@ async function handleSubtitles(req, res) {
 app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
 app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 
+// Funcție pentru a curăța memoria RAM automat
+function cleanMemoryCache() {
+    const keys = Object.keys(memoryCache);
+    if (keys.length > 30) { // Limită: maxim 30 filme traduse în memorie
+        // Ștergem cele mai vechi 5 filme pentru a face loc
+        for(let i = 0; i < 5; i++) {
+            if (keys[i]) delete memoryCache[keys[i]];
+        }
+        console.log(`${c.yellow}⚠ [Sistem] Cache-ul de memorie a fost curățat automat pentru a preveni căderea serverului.${c.reset}`);
+    }
+}
+
 app.get('/:configData/translate', async (req, res) => {
     const imdbId = req.query.id;
     const targetUrl = req.query.targetUrl;
@@ -269,6 +281,11 @@ app.get('/:configData/translate', async (req, res) => {
         res.write(' \n');
     }, 10000);
 
+    // Oprește keep-alive dacă clientul a închis conexiunea
+    req.on('close', () => {
+        clearInterval(keepAlive);
+    });
+
     try {
         let processPromise;
 
@@ -292,9 +309,12 @@ app.get('/:configData/translate', async (req, res) => {
             })();
             
             memoryCache[cacheKey] = processPromise;
+            cleanMemoryCache(); // Curățăm memoria dacă s-a atins limita
             
             processPromise.then(translatedSrtString => {
                 memoryCache[cacheKey] = translatedSrtString;
+                cleanMemoryCache(); // Curățăm memoria și la salvarea finală
+                
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
@@ -437,34 +457,49 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // =========================================================
-    // DICȚIONARUL COMPLET (Restaurat + Corecturile noi blindate)
-    // =========================================================
     const dictionar = [
-        // --- CELE NOI ȘI BLINDATE ---
         [/c[aă]nd\s+aire\b/gi, 'când ai'],
         [/c[aă]nd\s+aimai\b/gi, 'când ai'],
-        [/c[aă]nd\s+(mai\s+)?(ai|aire|aimai)\s+(un|o|pu[țt]in)\s+(secund[aă]?|timp|moment)/gi, 'când ai o secundă'],
+        [/c[aă]nd\s+(mai\s+)?(ai|aire|aimai)\s+(un|o|pu[țt]in)\s+(secund[aă]?|timp|moment)(\s+liber[aă]?)?/gi, 'când ai o secundă'],
         [/un\s+secund\b/gi, 'o secundă'],
-        [/opre[șs]te-te\s+din\s+a-mi.*?(s[âa]ni|decolteu|țâțe)/gi, 'nu te mai holba la sânii mei'],
+        [/opre[șs]te-te\s+din\s+a-mi.*?(s[âa]ni\b|s[âa]nii\b|decolteu\b|țâțe\b|țâțele\b)/gi, 'nu te mai holba la sânii mei'],
         [/[îi]nceteaz[aă]\s+s[ăa]?\s+te\s+ui[țt]i.*?(\bțâțele\b|\bsânii\b)/gi, 'nu te mai holba la sânii mei'],
         [/Am\s+fost\s+pl[ăa]tit\b/gi, 'Am fost plătită'],
-        [/Mi\s+s-a\s+pl[ăa]tit\b/gi, 'Mi-am primit banii'], // Corectura pt Eiza Gonzalez
+        [/Mi\s+s-a\s+pl[ăa]tit\b/gi, 'Mi-am primit banii'],
         [/(Aproape\s+am\s+gata|Suntem\s+aproape\s+acolo)/gi, 'Imediat ajungem'],
         [/[ȚTțt]-a\s+dat-o/g, 'Ți-a dat-o'],
         [/[țt]ie\s+[țt]i-s\s+dragi/gi, 'ție îți plac'],
-        [/debaclul/gi, 'dezastrul'], 
+        [/\bîncetează\s+s\b/gi, 'încetează să'],
+        [/\bașa\s+c\b/gi, 'așa că'],
+        [/\bAdic\b/gi, 'Adică'],
+        [/\bVai,\s+mam\b/gi, 'Vai, mamă'],
+        [/\bhaina\s+aia\s+ridicol\b/gi, 'haina aia ridicolă'],
+        [/\bpe\s+săptămân\b/gi, 'pe săptămână'],
+        [/O\s+să\s+dea\s+la\s+o\s+parte\s+agresiv/gi, 'O să se dea la tine agresiv'],
+        [/fundul\s+tău\s+strâns/gi, 'fundul tău scorțos'],
+        [/sunetul\s+care-ți\s+aduce\s+servire/gi, 'sunetul la care primești servire'],
+        [/\bdebaclul\b/gi, 'dezastrul'], 
+        [/\b(hă)?rțuire\b/gi, 'hărțuire'],
+        [/\b(m)?usile\b/gi, 'ușile'],
+        [/\bute-ai\b/gi, 'te-ai'],
+        [/\buniții\b/gi, 'muniții'],
+        [/\bmisia\b/gi, 'misiunea'],
+        [/\bbutorii\b/gi, 'băutorii'],
+        [/\bholdului\b/gi, 'calei'],
+        [/umele\s+cuantic/gi, 'universul cuantic'],
+        [/\bdobandit\b/gi, 'bandit'],
+        [/\bTicoasă\b/gi, 'Ticăloasă'],
+        [/\bfulul\b/gi, 'pachetul'],
+        [/\biai\s+pragul\b/gi, 'treci pragul'],
 
-        // --- RESTAURAREA DICȚIONARULUI MARE VECHI ---
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
         [/zămislirea asta/gi, 'porcăria asta'], [/onoare apre noastre/gi, 'onoarea noastră'],
         [/zărelul/gi, 'zahărelul'], [/\bacor\b/gi, 'acestor'], [/ketchuipurile/gi, 'ketchupurile'],
-        [/rțuire/gi, 'hărțuire'], [/bacterijle/gi, 'bacteriile'], [/probleme cu rțile/gi, 'probleme cu știrile'],
         [/\brțile\b/gi, 'știrile'], [/\bnhưng\b/gi, 'dar'], [/\bnithe\b/gi, 'niște'], [/Stucați/gi, 'Scuzați'],
         [/putemos/gi, 'putem'], [/Robinei/gi, 'lui Robin'], [/măsurą/gi, 'măsura'], [/să fiică/gi, 'să fie'],
         [/lemnul de divorț/gi, 'divorț'], [/Poftă\?/gi, 'Poftim?'], [/dădadă/gi, 'dădacă'],
-        [/să se fină/gi, 'să se prefacă'], [/bet merici/gi, 'dar meriți'], [/usile/gi, 'ușile'],
+        [/să se fină/gi, 'să se prefacă'], [/bet merici/gi, 'dar meriți'],
         [/în toată regla/gi, 'în toată regula'], [/sunt extinși/gi, 'sunt pe cale de dispariție'],
         [/Nu-mi vine să crezi/gi, 'Nu-mi vine să cred'], [/Bâțâială fină/gi, 'Râgâială fină'],
         [/Aia e [sS]ânul meu/gi, 'Ăla e sânul meu'], [/ție datorităție/gi, 'datorită ție'],
@@ -496,25 +531,25 @@ function formatSubtitleLine(text) {
         [/Bivolă/gi, 'Vacă'], [/Vreo, Vought/gi, 'Frate, Vought'], [/Supei/g, 'Eroii'],
         [/Privire de tigru/gi, 'Ochi de tigru'], [/I tu, neurotico, circ de o single femeie/gi, 'Iar tu, neurotico, ești un circ ambulant'],
         [/Dă cu teancul acela în palmă/gi, 'Lovește teancul de palmă'], [/căci capul lui e/gi, 'pentru că are capul'],
-        [/butorii/gi, 'băutorii'], [/am\s+fost\s+alege[tț]i/gi, 'am fost aleși'], [/tras\s+în\s+piepie/gi, 'tras în piept'],
+        [/am\s+fost\s+alege[tț]i/gi, 'am fost aleși'], [/tras\s+în\s+piepie/gi, 'tras în piept'],
         [/penthaină/gi, 'penthouse'], [/drum runner/gi, 'Road Runner'], [/c[aă]ntat\s+la\s+fund\s+ca\s+la\s+jazz/gi, 'cântat la fund ca la un instrument'],
-        [/nebunizați/gi, 'nebuni'], [/raiuk/gi, 'raiul'], [/Iafu/gi, 'Iau'], [/uniții/gi, 'muniții'],
+        [/nebunizați/gi, 'nebuni'], [/raiuk/gi, 'raiul'], [/Iafu/gi, 'Iau'],
         [/filetat\s+vânat/gi, 'jupuit vânat'], [/U-barce/gi, 'U-boot-uri'], [/U-barc/gi, 'U-boot'],
         [/să\s+fieți\s+educați/gi, 'să fiți educați'], [/Lăsați-mi-vă\s+să\s+vă\s+arăt/gi, 'Lăsați-mă să vă arăt'],
-        [/misia/gi, 'misiunea'], [/Senatule/gi, 'Senatorule'], [/\bRoți\b/g, 'Wheels'],
+        [/Senatule/gi, 'Senatorule'], [/\bRoți\b/g, 'Wheels'],
         [/M,\s*,\s*\./g, ''], [/tristă\s+și\s+supărați/gi, 'triști și supărați'], [/abnormal/gi, 'anormal'],
         [/toate\s+liberul\s+arbitru/gi, 'tot liberul arbitru'], [/ecanarhiști/gi, 'eco-anarhiști'], [/ridică\s+balena\s+albă/gi, 'zărește balena albă'],
         [/să\s+defin\b/gi, 'să definim'], [/(Nu, trebuie să răspunzi, altfel pierzi punctele\.?\s*){2,}/gi, 'Nu, trebuie să răspunzi, altfel pierzi punctele.\n'],
         [/Viridienii/gi, 'Eridanienii'], [/iridienii/gi, 'eridanienii'], [/din\s+Aaron/gi, 'din Erid'],
         [/Tomeva/gi, 'Taumoeba'], [/Astrofafele/gi, 'Astrofagele'], [/Păzește-mă/gi, 'Privește-mă'],
         [/Fii\s+pe\s+stânga/gi, 'Ține stânga'], [/propulsorespin/gi, 'propulsoare spin'], [/Nuștiu/gi, 'Nu știu'],
-        [/impermiabile/gi, 'impermeabile'], [/fulul/gi, 'pachetul'], [/Data\s+anteriori/gi, 'Data trecută'],
+        [/impermiabile/gi, 'impermeabile'], [/Data\s+anteriori/gi, 'Data trecută'],
         [/mai\s+inferior/gi, 'inferior'], [/bloodshed/gi, 'vărsare de sânge'], [/nu\s+parți\s+să/gi, 'nu pari să'],
         [/tatăle\s+tău/gi, 'tatăl tău'], [/vom\s+putea\s+ne\s+Vom\s+apropia/gi, 'ne vom putea apropia'],
         [/necesarias/gi, 'necesare'], [/erau\s+moarte/gi, 'erau morți'], [/Măriți!\s+Din\s+nou!/gi, 'Minți! Din nou!'],
-        [/man\s+raportezi/gi, 'îmi raportezi'], [/holdului/gi, 'calei'], [/caceagmată/gi, 'cacealma'],
+        [/man\s+raportezi/gi, 'îmi raportezi'], [/caceagmată/gi, 'cacealma'],
         [/depărtător\s+de\s+jaw/gi, 'depărtător de maxilar'], [/troopelor/gi, 'trupelor'], [/Vdem/g, 'Vedem'],
-        [/vdem/g, 'vedem'], [/aproxximativ/gi, 'aproximativ'], [/iai\s+pragul/gi, 'treci pragul'],
+        [/vdem/g, 'vedem'], [/aproxximativ/gi, 'aproximativ'],
         [/A\s+trecut\s+brici\s+prin\s+ea/gi, 'S-a descurcat de minune'], [/Ești\s+ieșit\s+din\s+minți\?/gi, 'Ți-ai pierdut mințile?'],
         [/tot\s+ordinea/gi, 'toată ordinea'], [/Să\s+nu\s+ajuți\s+niciodată\s+la\s+telefonul/gi, 'Să nu răspunzi niciodată la telefonul'],
         [/m-a\s+învățat\s+rele\s+despre\s+finanțe/gi, 'm-a învățat despre finanțe'], [/if\s+all\s+the\s+cool\s+cats\s+shooting\s+dope\s+dacă\s+toți\s+băieții\s+cool\s+drogați/gi, 'dacă toți drogații'],
@@ -543,11 +578,11 @@ function formatSubtitleLine(text) {
         [/cinci\s+cvartale/gi, 'cinci străzi'], [/nă\s+câteva/gi, 'na, câteva'],
         [/tată-mi\s+te-ar/gi, 'tată-meu ți-ar'], [/coisecle/gi, 'coaiele'],
         [/asuri\s+în\s+mânecă/gi, 'ași în mânecă'], [/misecundă/gi, 'milisecundă'],
-        [/prin\s+care-un\s+ființă/gi, 'printr-o ființă'], [/Ticoasă/gi, 'Ticăloasă'],
+        [/prin\s+care-un\s+ființă/gi, 'printr-o ființă'],
         [/\bvreoâun\b/gi, 'vreun'], [/O\s+morman/gi, 'Un morman'],
         [/pe\s+federali\s+de/gi, 'pe federalii de'], [/te\s+ajutai\s+cu/gi, 'te-ai înhăitat cu'],
         [/fugi\s+dracului/gi, 'du-te dracului'], [/Fiul\s+tăia/gi, 'Fiul tău'],
-        [/dobandit/gi, 'bandit'], [/Voresc\s+cu/gi, 'Vorbesc cu'],
+        [/Voresc\s+cu/gi, 'Vorbesc cu'],
         [/Ai\s+grijer[ă]?/gi, 'Ai grijă'], [/te\s+foști/gi, 'te foiești'],
         [/Nu\s+te\s+mai\s+foști/gi, 'Nu te mai foi'], [/nepoliTicăloasă/gi, 'nepoliticoasă'],
         [/Dragăo/gi, 'Drago'], [/Data\s+anteriore/gi, 'Data anterioară'],
@@ -592,7 +627,6 @@ function formatSubtitleLine(text) {
         [/S-a născut\?\s*S-a născut\./gi, 'Born? Born.'],
         [/rechizitoriumul/gi, 'rechizitoriul'],
         [/Oricicum/gi, 'Oricum'],
-        [/umele cuantic/gi, 'universul cuantic'],
         [/pe sleiau/gi, 'pe șleau'],
         [/feștiști/gi, 'fasciști'],
         [/amenințătoare mai mare/gi, 'amenințare mai mare'],
@@ -603,6 +637,7 @@ function formatSubtitleLine(text) {
         [/Dumnezeule în trei persoane/gi, 'Dumnezeu în trei ipostaze'],
         [/Comisiunea/g, 'Comisia'],
         [/Comisiunii/g, 'Comisiei'],
+
         [/\bs a\b/gi, 's-a'], [/\bs au\b/gi, 's-au'], [/\bm am\b/gi, 'm-am'],
         [/\bm a\b/gi, 'm-a'], [/\bm ai\b/gi, 'm-ai'], [/\bn am\b/gi, 'n-am'],
         [/\bn a\b/gi, 'n-a'], [/\bn au\b/gi, 'n-au'], [/\bn ai\b/gi, 'n-ai'],
@@ -662,7 +697,8 @@ function formatSubtitleLine(text) {
         }
     }
 
-    return finalLinesText.map(l => l.replace(/^[-—–−\s*]/g, '')).join('\n');
+    // AICI E REPARATĂ EXPRESIA PT LINIUȚE SĂ NU MAI CRAPE!
+    return finalLinesText.map(l => l.replace(/^[-—–−\s]+/g, '')).join('\n');
 }
 
 function fixBrokenJson(text) {
