@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '12.7.0',
+    version: '12.8.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -426,7 +426,7 @@ function formatSubtitleLine(text) {
         return 'Am înțeles. Hei, când ai o secundă...';
     }
     
-    // REPARAT: Am eliminat condiția cu "oprește-te" pentru a prinde și alte variante ("termină cu ochii", etc.)
+    // Regula mai permisivă pentru blocarea aberațiilor vulgare cu "ochi" și "sâni/țâțe"
     if ((lowerText.includes('holba') || lowerText.includes('uita') || lowerText.includes('ochii') || lowerText.includes('holbezi') || lowerText.includes('oprește-te') || lowerText.includes('termină')) && (/\bsân(i|ii)?\b/.test(lowerText) || lowerText.includes('țâțe') || lowerText.includes('decolteu') || lowerText.includes('tăiței') || lowerText.includes('piept'))) {
         return 'Nu te mai holba la sânii mei.';
     }
@@ -447,6 +447,8 @@ function formatSubtitleLine(text) {
 
     const dictionar = [
         [/\bînța\b/gi, 'apuca'],
+        [/cafondist/gi, 'mojic'],
+        [/Pu[țt]in-Kournikova/gi, 'Rusoaica Pectorală'],
         [/ghicercici/gi, 'ghicești'],
         [/dafirma/gi, 'da afară'],
         [/judicativ[aă]/gi, 'plină de prejudecăți'],
