@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.20.0',
+    version: '12.21.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1013,6 +1013,9 @@ function buildQcChunkPayload(originalChunk, translatedChunk) {
 async function callGeminiQc(prompt, qcKeyStates) {
     let lastError = null;
 
+    const QC_MAX_503_RETRIES = 1;
+    let qc503Retries = 0;
+
     for (let attempt = 1; attempt <= QC_MAX_ATTEMPTS; attempt++) {
         const keyState = getImmediateQcKey(qcKeyStates);
 
@@ -1078,30 +1081,44 @@ async function callGeminiQc(prompt, qcKeyStates) {
 
             const status = error?.response?.status;
 
-            if (status === 429) {
+            if (status === 503) {
+                qc503Retries++;
+
                 console.warn(
-                    `⚠ [QC V4 FULL] 429 Rate Limit ` +
-                    `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}). ` +
-                    `Aștept ${Math.round(QC_RATE_LIMIT_PAUSE_MS / 1000)}s...`
+                    `⚠ [QC V4 FULL] Gemini indisponibil temporar (503).`
                 );
 
-                if (attempt < QC_MAX_ATTEMPTS) {
-                    await sleep(QC_RATE_LIMIT_PAUSE_MS);
+                if (qc503Retries <= QC_MAX_503_RETRIES) {
+                    console.warn(
+                        `↻ [QC V4 FULL] Retry QC o singură dată în 1.5s...`
+                    );
+
+                    await new Promise(resolve =>
+                        setTimeout(resolve, 1500)
+                    );
+
                     continue;
                 }
+
+                console.warn(
+                    `⚠ [QC V4 FULL] 503 persistent. ` +
+                    `Sar peste QC pentru acest calup și păstrez traducerea.`
+                );
 
                 break;
             }
 
-            if (status === 503) {
+            if (status === 429) {
                 console.warn(
-                    `⚠ [QC V4 FULL] Gemini indisponibil temporar (503) ` +
+                    `⚠ [QC V4 FULL] 429 Rate Limit ` +
                     `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}).`
                 );
 
                 if (attempt < QC_MAX_ATTEMPTS) {
-                    const retryDelay = 1200 * attempt;
-                    await sleep(retryDelay);
+                    await new Promise(resolve =>
+                        setTimeout(resolve, QC_RATE_LIMIT_PAUSE_MS)
+                    );
+
                     continue;
                 }
 
@@ -1113,15 +1130,35 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 status === 502 ||
                 status === 504
             ) {
+                console.warn(
+                    `⚠ [QC V4 FULL] Eroare server ${status}.`
+                );
+
                 if (attempt < QC_MAX_ATTEMPTS) {
-                    await sleep(1000 * attempt);
+                    await new Promise(resolve =>
+                        setTimeout(resolve, 1000)
+                    );
+
                     continue;
                 }
+
+                console.warn(
+                    `⚠ [QC V4 FULL] Eroare server persistentă. ` +
+                    `Sar peste QC și păstrez traducerea.`
+                );
+
                 break;
             }
 
             if (status === 401 || status === 403) {
-                keyState.disabled = true;
+                keyState.disabledUntil =
+                    Date.now() + 10 * 60 * 1000;
+
+                console.warn(
+                    `⚠ [QC V4 FULL] Cheia ...${keyState.key.slice(-4)} ` +
+                    `a fost respinsă (${status}). Trec la următoarea cheie.`
+                );
+
                 continue;
             }
 
@@ -1132,12 +1169,27 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 error?.code === 'ENOTFOUND' ||
                 error?.code === 'EAI_AGAIN'
             ) {
+                console.warn(
+                    `⚠ [QC V4 FULL] Eroare de rețea ` +
+                    `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}): ` +
+                    `${error.message}`
+                );
+
                 if (attempt < QC_MAX_ATTEMPTS) {
-                    await sleep(1000 * attempt);
+                    await new Promise(resolve =>
+                        setTimeout(resolve, 1000)
+                    );
+
                     continue;
                 }
+
                 break;
             }
+
+            console.warn(
+                `⚠ [QC V4 FULL] Eroare neașteptată: ` +
+                `${error.message || error}`
+            );
 
             break;
             
