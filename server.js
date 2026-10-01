@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '9.1.0',
+    version: '10.0.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -295,7 +295,6 @@ app.get('/:configData/translate', async (req, res) => {
                     headers: { 'User-Agent': BROWSER_USER_AGENT }
                 });
                 
-                // === AICI AM PUS ÎNAPOI LOG-URILE DE START ===
                 const totalLinesCount = (srtRes.data.match(/-->/g) || []).length;
                 console.log(`${c.cyan}\n==================================================${c.reset}`);
                 console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
@@ -312,7 +311,6 @@ app.get('/:configData/translate', async (req, res) => {
                 memoryCache[cacheKey] = translatedSrtString;
                 cleanMemoryCache(); 
                 
-                // === AICI AM PUS ÎNAPOI LOG-URILE DE FINAL (SUCCES) ===
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 let timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
@@ -468,12 +466,14 @@ function formatSubtitleLine(text) {
     text = finalMergedLines.join('\n');
     
     const dictionar = [
+        // CORECTAREA PENTRU CUVINTE TĂIATE („crezi c” -> „crezi că”)
+        [/(crezi|așa|pentru|zic|sper|spun)\s+c(?=\s|[,.!?:;]|$)/gi, '$1 că'],
+
         [/man pasă/gi, 'îmi pasă'],
         [/Mi s-a plătit/gi, 'Mi-am primit banii'],
         [/debaclul/gi, 'dezastrul'],
         
         [/\b[îi]nceteaz[aă]\s+s(?!\w)/gi, 'încetează să'],
-        [/\b([Aa]șa|[Pp]entru|[Cc]rezi|[Zz]ic)\s+c(?!\w)/g, '$1 că'], 
         [/\bAdic(?!\w)/gi, 'Adică'],
         [/\bVai,\s+mam(?!\w)/gi, 'Vai, mamă'],
         [/\bhaina\s+aia\s+ridicol(?!\w)/gi, 'haina aia ridicolă'],
@@ -683,7 +683,52 @@ function formatSubtitleLine(text) {
         text = text.replace(dictionar[i][0], dictionar[i][1]);
     }
 
-    return text;
+    text = text.replace(/[♪♫♬♩#]/gi, '');
+    text = text.replace(/\[[\s\S]*?\]/g, ''); 
+    text = text.replace(/\([\s\S]*?\)/g, '');
+    text = text.replace(/,\s*,/g, ',');
+    text = text.replace(/\s+,/g, ',');
+    text = text.replace(/\s+\?/g, '?');
+    text = text.replace(/\s+\./g, '.');
+    text = text.replace(/ +/g, ' '); 
+    text = text.replace(/[^\u0000-\u024F\u2000-\u206F\u2E00-\u2E7F\n\r]/g, "");
+
+    if (text.trim() === '') return ' '; 
+
+    // =========================================================================
+    // LOGICA DE ECHILIBRARE ȘI TĂIERE A RÂNDURILOR 
+    // =========================================================================
+    let finalLinesText = text.split('\n').map(l => l.trim()).filter(l => l !== '');
+    
+    if (finalLinesText.length > 2) {
+        let joined = finalLinesText.join(' ');
+        let mid = Math.floor(joined.length / 2);
+        let leftSpace = joined.lastIndexOf(' ', mid);
+        let rightSpace = joined.indexOf(' ', mid);
+        let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
+            ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
+            Math.max(leftSpace, rightSpace);
+        
+        if (splitIndex !== -1) {
+            finalLinesText = [joined.substring(0, splitIndex).trim(), joined.substring(splitIndex + 1).trim()];
+        } else {
+            finalLinesText = [joined];
+        }
+    } else if (finalLinesText.length === 1 && finalLinesText[0].length > 60) {
+        let line = finalLinesText[0];
+        let mid = Math.floor(line.length / 2);
+        let leftSpace = line.lastIndexOf(' ', mid);
+        let rightSpace = line.indexOf(' ', mid);
+        let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
+            ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
+            Math.max(leftSpace, rightSpace);
+        
+        if (splitIndex !== -1) {
+            finalLinesText = [line.substring(0, splitIndex).trim(), line.substring(splitIndex + 1).trim()];
+        }
+    }
+
+    return finalLinesText.map(l => l.replace(/^[-—–−\s]+/g, '')).join('\n');
 }
 
 function fixBrokenJson(text) {
