@@ -391,6 +391,13 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
+        [/\btat-tu\b/gi, 'tatăl tău'],
+        [/\btat-meu\b/gi, 'tatăl meu'],
+        [/\bmerici\b/gi, 'meriți'],
+        [/\bcuânt\b/gi, 'cuvânt'],
+        [/\bbrioșelea aia\b/gi, 'brioșele alea'],
+        [/Sânișor Kournikova/gi, 'Rusoaica Pectorală'],
+        [/fundul tău strâns/gi, 'fundul tău scorțos'],
         [/\bînța\b/gi, 'apuca'],
         [/cafondist/gi, 'mojic'],
         [/Pu[țt]in-Kournikova/gi, 'Rusoaica Pectorală'],
