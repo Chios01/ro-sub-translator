@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '12.0.0',
+    version: '12.1.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -156,7 +156,6 @@ async function handleSubtitles(req, res) {
             }
         });
         
-        // Revenim strict la limba Engleză
         let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
         
         const uniqueUrls = new Set();
@@ -769,19 +768,22 @@ async function processChunkWithRetry(chunkObjArray, globalChunkIndex, totalChunk
                 console.log(`${c.magenta}↻ [Gemini] Recuperez ${currentBatchSize} linii omise (Calup ${globalChunkIndex + 1} | Aceeași cheie: ${keyIndex})...${c.reset}`);
             }
             
-            const prompt = `You are a professional Romanian movie translator. Your ONLY purpose is to translate an English subtitle JSON array into natural, conversational Romanian.
+            const prompt = `You are a professional Romanian cinematic translator. Your ONLY purpose is to translate an English subtitle JSON array into natural, conversational Romanian.
 
 CRITICAL SYSTEM REQUIREMENT:
 The input JSON contains EXACTLY ${currentBatchSize} items. You MUST output EXACTLY ${currentBatchSize} items. Every single key from the input must be present in the output JSON.
 
-<rules>
-1. SLANG & PROFANITY (CRITICAL): Translate slang normally. DO NOT translate profanities literally. Rephrase them into natural Romanian conversational equivalents.
-2. CONTEXT & GENDER: Pay extreme attention to context. If it's clear a female is acting/speaking or being referred to, use feminine verb agreements and adjectives (e.g., "Am fost plătită").
-3. NO INVENTED WORDS: Use ONLY standard Romanian words. Never invent conjugations. If an English phrase has no direct translation, adapt its meaning naturally.
-4. SPLIT LINES: Subtitles are often cut mid-sentence. Read the surrounding context and translate so the sentence flows naturally across lines. DO NOT leave words unfinished.
-5. CLEAN UP: Remove all audio tags (e.g., [sighs], [music]). DO NOT translate character names.
-6. JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact input keys. Do not add markdown or extra text.
-</rules>
+<translation_master_rules>
+1. THE GOLDEN RULE: Translate the scene, not just the words. Recreate the dialogue naturally in Romanian. Do not use literal translations, mechanical phrasing, or English word order.
+2. SLANG & PROFANITY: Preserve the original register. Do not censor "fuck", "shit", etc. Adapt them into natural Romanian equivalents (e.g., vulgarity stays vulgar, slang stays slang).
+3. CONTEXT & GENDER: Pay extreme attention to context. If it's clear a female is speaking, use feminine verb agreements ("Am fost plătită"). 
+4. SARCASM & HUMOR: Sarcasm, irony, and jokes must survive the translation. Adapt puns if necessary so the Romanian viewer gets the same emotional effect.
+5. NO INVENTED WORDS: Use ONLY standard Romanian words. Never invent conjugations.
+6. SPLIT LINES & CONTINUITY: Subtitles are often cut mid-sentence. Read the surrounding context and translate so the sentence flows naturally across lines. 
+7. CLEAN UP: Remove all audio tags (e.g., [sighs], [music]). Do not translate character names.
+</translation_master_rules>
+
+JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact input keys. Do not add markdown, explanations, or extra text.
 
 Translate this JSON:
 ${JSON.stringify(batchToProcess)}`;
