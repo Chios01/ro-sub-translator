@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '7.0.2',
+    version: '7.0.3',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -214,10 +214,10 @@ async function handleSubtitles(req, res) {
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
             const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             
-            let labelName = `🇷🇴 RO AI (FIX v7.2) [${index + 1}]`;
+            let labelName = `🇷🇴 RO AI (FIX v7.3) [${index + 1}]`;
             if (tagMatch) {
                 let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI (FIX v7.2) [${index + 1}] • ${cleanTag}`;
+                labelName = `🇷🇴 RO AI (FIX v7.3) [${index + 1}] • ${cleanTag}`;
             }
 
             const cacheBuster = Math.floor(Math.random() * 100000);
@@ -407,13 +407,16 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    if (/când.*secund/i.test(text)) {
-        text = text.replace(/când.*secund.*/gi, 'când ai o secundă...');
-    }
+    // =========================================================================
+    // FORȚARE ABSOLUTĂ DIRECT LA FINALIZARE (GARANTAT)
+    // =========================================================================
+    text = text.replace(/când.*secund\.{0,3}$/gi, 'când ai o secundă...');
+    text = text.replace(/când.*secund$/gi, 'când ai o secundă');
     
     if (/sânii|sâni/i.test(text) && /a-mi/i.test(text)) {
         text = text.replace(/oprește-te.*sânii.*/gi, 'nu te mai holba la sânii mei.');
     }
+    // =========================================================================
 
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
@@ -450,6 +453,9 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
+    // ULTIMUL PAS: FORȚARE DIRECTĂ PE ORICE VARIANTA DE SECUNDĂ FĂRĂ „Ă”
+    text = text.replace(/\bo\s+secund\b/gi, 'o secundă');
+
     const dictionar = [
         [/man pasă/gi, 'îmi pasă'],
         [/Mi s-a plătit/gi, 'Mi-am primit banii'],
