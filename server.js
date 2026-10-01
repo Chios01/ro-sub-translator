@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '4.0.1',
+    version: '4.1.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -421,6 +421,23 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
+    // =========================================================================
+    // ÎNLOCUIRI BRUTE - FĂRĂ REGEX COMPLICAT, FĂRĂ MARJE DE EROARE
+    // =========================================================================
+    text = text.replace(/când aveți o secund/gi, 'când ai o secundă');
+    text = text.replace(/când averți o secund/gi, 'când ai o secundă');
+    text = text.replace(/când aire o secund/gi, 'când ai o secundă');
+    text = text.replace(/când aimai un secund/gi, 'când ai o secundă');
+    text = text.replace(/când ai un secund/gi, 'când ai o secundă');
+    text = text.replace(/când mai ai un secund/gi, 'când ai o secundă');
+    
+    text = text.replace(/fura ochii la sâni/gi, 'holba la sânii mei');
+    text = text.replace(/la rândul tău sânii/gi, 'la sânii mei');
+    text = text.replace(/man pasă/gi, 'îmi pasă');
+    text = text.replace(/Mi s-a plătit/gi, 'Mi-am primit banii');
+    text = text.replace(/debaclul/gi, 'dezastrul');
+    // =========================================================================
+
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
@@ -456,26 +473,10 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
-    // =========================================================
-    // DICȚIONARUL BLINDAT 
-    // =========================================================
     const dictionar = [
-        // --- CORECTURILE SPECIFICE CERUTE ---
-        [/când aire o secund(\.\.\.)?/gi, 'când ai o secundă...'],
-        [/când averți o secund(\.\.\.)?/gi, 'când aveți o secundă...'],
-        [/oprește-te din a-mi fura ochii la sâni\.?/gi, 'nu te mai holba la sânii mei.'],
-        [/oprește-te din a-mi la rândul tău sânii\.?/gi, 'nu te mai holba la sânii mei.'],
-        
-        // --- SOLUȚIA BRUTALĂ PENTRU AIRE/AIMAI/SECUND ---
-        [/\baire\b/gi, 'ai'],
-        [/\baimai\b/gi, 'ai'],
-        [/\b(un|o)\s+secund(?!\w)/gi, 'o secundă'],
-        [/\baver[țt]i\b/gi, 'aveți'],
-        
         [/opre[șs]te-te\s+din\s+a-mi.*?(s[âa]ni\b|s[âa]nii\b|decolteu\b|țâțe\b|țâțele\b)/gi, 'nu te mai holba la sânii mei'],
         [/[îi]nceteaz[aă]\s+s[ăa]?\s+te\s+ui[țt]i.*?(\bțâțele\b|\bsânii\b)/gi, 'nu te mai holba la sânii mei'],
         
-        // REZOLVĂRI PENTRU SRT
         [/\b[îi]nceteaz[aă]\s+s(?!\w)/gi, 'încetează să'],
         [/\b([Aa]șa|[Pp]entru|[Cc]rezi|[Zz]ic)\s+c(?!\w)/g, '$1 că'], 
         [/\bAdic(?!\w)/gi, 'Adică'],
@@ -485,7 +486,6 @@ function formatSubtitleLine(text) {
         [/\bde\s+baz(?!\w)/gi, 'de bază'],
         [/\bdisear(?!\w)/gi, 'diseară'],
         
-        // Erori din SRT si halucinatii
         [/\bcinva\b/gi, 'cineva'],
         [/\bAm\s+fus\b/gi, 'Am fost'],
         [/\bdarme\b/gi, 'doarme'],
@@ -502,14 +502,11 @@ function formatSubtitleLine(text) {
         [/\bbutonizi\b/gi, 'butoni'],
         [/\ble-atrobesc\b/gi, 'le prostesc'],
         [/\bAm\s+fost\s+pl[ăa]tit\b/gi, 'Am fost plătită'],
-        [/\bMi\s+s-a\s+pl[ăa]tit\b/gi, 'Mi-am primit banii'],
         [/(Aproape\s+am\s+gata|Suntem\s+aproape\s+acolo)/gi, 'Imediat ajungem'],
-        [/\bdebaclul\b/gi, 'dezastrul'], 
         [/O\s+să\s+dea\s+la\s+o\s+parte\s+agresiv/gi, 'O să se dea la tine agresiv'],
         [/fundul\s+tău\s+strâns/gi, 'fundul tău scorțos'],
         [/sunetul\s+care-ți\s+aduce\s+servire/gi, 'sunetul la care primești servire'],
 
-        // Repararea literelor mici de la inceput
         [/(^|\n)\s*tu\s+n-ai\s+un\s+loc/gi, '$1Tu n-ai un loc'],
         [/(^|\n)\s*femeie\s+sexy/gi, '$1Femeie sexy'],
         [/(^|\n)\s*ai\s+curte\?/gi, '$1Ai curte?'],
@@ -517,7 +514,6 @@ function formatSubtitleLine(text) {
         [/(^|\n)\s*da\./gi, '$1Da.'],
         [/(^|\n)\s*ai\s+grija\./gi, '$1Ai grijă.'],
 
-        // --- REZOLVĂRI VECHI ---
         [/\b(hă)?rțuire\b/gi, 'hărțuire'],
         [/\b(m)?usile\b/gi, 'ușile'],
         [/\bute-ai\b/gi, 'te-ai'],
