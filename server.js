@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '2.9.0',
+    version: '3.0.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -237,7 +237,6 @@ async function handleSubtitles(req, res) {
 app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
 app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 
-// GARBAGE COLLECTOR: Curata memoria automat daca atinge limita, ca sa nu pice serverul
 function cleanMemoryCache() {
     const keys = Object.keys(memoryCache);
     if (keys.length > 30) { 
@@ -456,36 +455,54 @@ function formatSubtitleLine(text) {
     text = finalMergedLines.join('\n');
     
     // =========================================================
-    // DICȚIONARUL BLINDAT (Curățat de erori și completat)
+    // DICȚIONARUL BLINDAT
     // =========================================================
     const dictionar = [
-        // --- REZOLVĂRI PENTRU ANALIZA FIȘIERULUI TĂU SRT ---
-        // Cuvinte tăiate la final
-        [/\b[îi]nceteaz[aă]\s+s\b/gi, 'încetează să'],
-        [/\b([Aa]șa|[Pp]entru|[Cc]rezi|[Zz]ic)\s+c\b/g, '$1 că'], // Repara "așa c", "Pentru c", "crezi c" etc.
-        [/\bAdic\b/gi, 'Adică'],
-        [/\bVai,\s+mam\b/gi, 'Vai, mamă'],
-        [/\bhaina\s+aia\s+ridicol\b/gi, 'haina aia ridicolă'],
-        [/\bpe\s+s[ăa]pt[ăa]m[âa]n(\.\.\.)?\b/gi, 'pe săptămână$1'],
-        [/\bde\s+baz\b/gi, 'de bază'],
-        [/\bdisear\b/gi, 'diseară'],
+        // --- CORECTURILE CRITICE PENTRU CUVINTE TĂIATE (Atenție la punctele de suspensie!) ---
+        [/c[aă]nd\s+aire\s+(un|o)\s+secund(?!\w)/gi, 'când ai o secundă'],
+        [/c[aă]nd\s+aire/gi, 'când ai'],
+        [/c[aă]nd\s+aimai/gi, 'când ai'],
+        [/(un|o)\s+secund(?!\w)/gi, 'o secundă'],
+        [/aver[țt]i\s+o\s+secund(?!\w)/gi, 'aveți o secundă'],
         
-        // Erori de scriere si traduceri anormale din fisier
+        [/opre[șs]te-te\s+din\s+a-mi.*?(s[âa]ni\b|s[âa]nii\b|decolteu\b|țâțe\b|țâțele\b)/gi, 'nu te mai holba la sânii mei'],
+        [/[îi]nceteaz[aă]\s+s[ăa]?\s+te\s+ui[țt]i.*?(\bțâțele\b|\bsânii\b)/gi, 'nu te mai holba la sânii mei'],
+        
+        // REZOLVĂRI PENTRU SRT (Fără să strice alte cuvinte)
+        [/\b[îi]nceteaz[aă]\s+s(?!\w)/gi, 'încetează să'],
+        [/\b([Aa]șa|[Pp]entru|[Cc]rezi|[Zz]ic)\s+c(?!\w)/g, '$1 că'], 
+        [/\bAdic(?!\w)/gi, 'Adică'],
+        [/\bVai,\s+mam(?!\w)/gi, 'Vai, mamă'],
+        [/\bhaina\s+aia\s+ridicol(?!\w)/gi, 'haina aia ridicolă'],
+        [/\bpe\s+s[ăa]pt[ăa]m[âa]n(?!\w)/gi, 'pe săptămână'],
+        [/\bde\s+baz(?!\w)/gi, 'de bază'],
+        [/\bdisear(?!\w)/gi, 'diseară'],
+        
+        // Erori din SRT si halucinatii
         [/\bcinva\b/gi, 'cineva'],
         [/\bAm\s+fus\b/gi, 'Am fost'],
         [/\bdarme\b/gi, 'doarme'],
-        [/\bai\s+grija\./gi, 'Ai grijă.'],
+        [/\bai\s+grija(?!\w)/gi, 'Ai grijă'],
         [/\btrebui\s+s[ăa]\s+te\s+cred/gi, 'trebuie să te cred'],
         [/Stai,\s*stai\.,\.\.\./gi, 'Stai, stai...'],
         [/[ȚTțt]-a\s+[îi]nchis-o/g, 'Ți-a închis-o'],
+        [/[ȚTțt]-a\s+dat-o/g, 'Ți-a dat-o'],
+        [/[țt]ie\s+[țt]i-s\s+dragi/gi, 'ție îți plac'],
         [/Bun[ăa]\s+ziua,\s+azi\./gi, 'Bună ziua.'],
-        [/Ar[ăa][țt]i\s+at[âa]t\s+de\s+frumos\b/gi, 'Arăți atât de frumoasă'], // Corectura gen
+        [/Ar[ăa][țt]i\s+at[âa]t\s+de\s+frumos\b/gi, 'Arăți atât de frumoasă'], 
         [/[Șs]i\s+to[țt]i-a\s+trebuit\s+s[ăa]\s+pretind[ăa]/gi, 'Și toți au trebuit să se prefacă'],
         [/care\s+e\s+a\s+latului\s+drumurilor/gi, 'care a ajuns pe drumuri'],
         [/\bbutonizi\b/gi, 'butoni'],
         [/\ble-atrobesc\b/gi, 'le prostesc'],
+        [/\bAm\s+fost\s+pl[ăa]tit\b/gi, 'Am fost plătită'],
+        [/\bMi\s+s-a\s+pl[ăa]tit\b/gi, 'Mi-am primit banii'],
+        [/(Aproape\s+am\s+gata|Suntem\s+aproape\s+acolo)/gi, 'Imediat ajungem'],
+        [/\bdebaclul\b/gi, 'dezastrul'], 
+        [/O\s+să\s+dea\s+la\s+o\s+parte\s+agresiv/gi, 'O să se dea la tine agresiv'],
+        [/fundul\s+tău\s+strâns/gi, 'fundul tău scorțos'],
+        [/sunetul\s+care-ți\s+aduce\s+servire/gi, 'sunetul la care primești servire'],
 
-        // Corectarea literelor mici la inceput de linie (cu pastrarea spatiilor eventuale)
+        // Repararea literelor mici de la inceput
         [/(^|\n)\s*tu\s+n-ai\s+un\s+loc/gi, '$1Tu n-ai un loc'],
         [/(^|\n)\s*femeie\s+sexy/gi, '$1Femeie sexy'],
         [/(^|\n)\s*ai\s+curte\?/gi, '$1Ai curte?'],
@@ -493,26 +510,7 @@ function formatSubtitleLine(text) {
         [/(^|\n)\s*da\./gi, '$1Da.'],
         [/(^|\n)\s*ai\s+grija\./gi, '$1Ai grijă.'],
 
-        // --- REGULILE DE BAZĂ BLINDATE (Variații ale AI-ului) ---
-        [/opre[șs]te-te\s+din\s+a-mi.*?(s[âa]ni\b|s[âa]nii\b|decolteu\b|țâțe\b|țâțele\b)/gi, 'nu te mai holba la sânii mei'],
-        [/[îi]nceteaz[aă]\s+s[ăa]?\s+te\s+ui[țt]i.*?(\bțâțele\b|\bsânii\b)/gi, 'nu te mai holba la sânii mei'],
-        
-        [/c[aă]nd\s+(mai\s+)?(ai|aire|aimai|aver[țt]i)\s+(un|o|pu[țt]in)\s+(secund[aă]?|timp|moment)(\s+liber[aă]?)?/gi, 'când ai o secundă'],
-        [/(un|o)\s+secund\b/gi, 'o secundă'],
-        [/[ȚTțt]-a\s+dat-o/g, 'Ți-a dat-o'],
-        [/[țt]ie\s+[țt]i-s\s+dragi/gi, 'ție îți plac'],
-        
-        [/\bAm\s+fost\s+pl[ăa]tit\b/gi, 'Am fost plătită'],
-        [/\bMi\s+s-a\s+pl[ăa]tit\b/gi, 'Mi-am primit banii'],
-        [/(Aproape\s+am\s+gata|Suntem\s+aproape\s+acolo)/gi, 'Imediat ajungem'],
-        [/\bdebaclul\b/gi, 'dezastrul'], 
-        
-        // Traduceri proaste / sensuri gresite
-        [/O\s+să\s+dea\s+la\s+o\s+parte\s+agresiv/gi, 'O să se dea la tine agresiv'],
-        [/fundul\s+tău\s+strâns/gi, 'fundul tău scorțos'],
-        [/sunetul\s+care-ți\s+aduce\s+servire/gi, 'sunetul la care primești servire'],
-
-        // --- REZOLVĂRI VECHI (Curățate cu \b) ---
+        // --- REZOLVĂRI VECHI ---
         [/\b(hă)?rțuire\b/gi, 'hărțuire'],
         [/\b(m)?usile\b/gi, 'ușile'],
         [/\bute-ai\b/gi, 'te-ai'],
@@ -526,7 +524,6 @@ function formatSubtitleLine(text) {
         [/\bfulul\b/gi, 'pachetul'],
         [/\biai\s+pragul\b/gi, 'treci pragul'],
         
-        // --- CORECTURI STATICE SIGURE ---
         [/ăă/gi, ''], [/hă/gi, ''], [/P-Păi/gi, 'Păi'], [/[wW]-Well/g, 'Păi'],
         [/\bfrom\b/gi, 'de la'], [/kensevasem/gi, 'convinsesem'], [/prăjicina/gi, 'prăjiturica'],
         [/zămislirea asta/gi, 'porcăria asta'], [/onoare apre noastre/gi, 'onoarea noastră'],
@@ -732,7 +729,6 @@ function formatSubtitleLine(text) {
         }
     }
 
-    // AICI E REPARATĂ EXPRESIA PT LINIUȚE SĂ NU MAI CRAPE!
     return finalLinesText.map(l => l.replace(/^[-—–−\s]+/g, '')).join('\n');
 }
 
