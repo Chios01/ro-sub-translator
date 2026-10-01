@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.18.0',
+    version: '12.19.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -435,8 +435,6 @@ const QC_MAX_ATTEMPTS = Math.max(
     Math.min(3, Number(process.env.QC_MAX_ATTEMPTS) || 3)
 );
 
-// IMPORTANT:
-// QC nu trebuie să blocheze traducerea 60+ secunde la 429.
 const QC_RATE_LIMIT_PAUSE_MS = Math.max(
     3000,
     Number(process.env.QC_RATE_LIMIT_PAUSE_MS) || 8000
@@ -796,6 +794,10 @@ Rules:
 // QC KEY STATE
 // ============================================================
 
+function createKeyState(keys) {
+    return keys.map(key => ({ key, pausedUntil: 0, disabled: false, failures: 0, lastUsed: 0 }));
+}
+
 function createQcKeyState(keys) {
     return keys.map(key => ({
         key,
@@ -849,8 +851,6 @@ function extractQcJsonObject(raw) {
 
 // ============================================================
 // BUILD QC PAYLOAD
-// IMPORTANT:
-// We preserve BOTH the original English and current Romanian.
 // ============================================================
 
 function buildQcChunkPayload(originalChunk, translatedChunk) {
@@ -946,11 +946,6 @@ async function callGeminiQc(prompt, qcKeyStates) {
 
             const status = error?.response?.status;
 
-            // =========================================================
-            // 429 - RATE LIMIT
-            // Pentru 429 facem retry, dar cu o pauză scurtă.
-            // Nu folosim pauza mare de 61 secunde a traducerii principale.
-            // =========================================================
             if (status === 429) {
                 console.warn(
                     `⚠ [QC V4 FULL] 429 Rate Limit ` +
@@ -966,92 +961,38 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 break;
             }
 
-            // =========================================================
-            // 503 - GEMINI TEMPORAR INDISPONIBIL
-            //
-            // Nu lăsăm QC-ul să țină subtitrarea blocată minute întregi.
-            // Facem cel mult un retry rapid.
-            // Dacă 503 continuă, abandonăm QC pentru acest chunk.
-            // Traducerea deja făcută rămâne intactă.
-            // =========================================================
             if (status === 503) {
                 console.warn(
                     `⚠ [QC V4 FULL] Gemini indisponibil temporar (503) ` +
                     `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}).`
                 );
 
-                // Un singur retry rapid pentru 503.
                 if (attempt < QC_MAX_ATTEMPTS) {
                     const retryDelay = 1200 * attempt;
-
-                    console.warn(
-                        `↻ [QC V4 FULL] Retry QC în ` +
-                        `${(retryDelay / 1000).toFixed(1)}s...`
-                    );
-
                     await sleep(retryDelay);
-
                     continue;
                 }
-
-                console.warn(
-                    `⚠ [QC V4 FULL] 503 persistent. ` +
-                    `Sar peste QC și păstrez traducerea existentă.`
-                );
 
                 break;
             }
 
-            // =========================================================
-            // 500 / 502 / 504 - ERORI TEMPORARE SERVER
-            //
-            // Același principiu: retry scurt, apoi fallback.
-            // =========================================================
             if (
                 status === 500 ||
                 status === 502 ||
                 status === 504
             ) {
-                console.warn(
-                    `⚠ [QC V4 FULL] Eroare server ${status} ` +
-                    `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}).`
-                );
-
                 if (attempt < QC_MAX_ATTEMPTS) {
-                    const retryDelay = 1000 * attempt;
-
-                    await sleep(retryDelay);
-
+                    await sleep(1000 * attempt);
                     continue;
                 }
-
-                console.warn(
-                    `⚠ [QC V4 FULL] Eroare server persistentă. ` +
-                    `Sar peste QC și păstrez traducerea existentă.`
-                );
-
                 break;
             }
 
-            // =========================================================
-            // 401 / 403 - CHEIE INVALIDĂ / FĂRĂ PERMISIUNE
-            //
-            // Dezactivăm cheia și trecem imediat la următoarea.
-            // =========================================================
             if (status === 401 || status === 403) {
                 keyState.disabled = true;
-
-                console.warn(
-                    `⚠ [QC V4 FULL] Cheia ...${keyState.key.slice(-4)} ` +
-                    `a fost respinsă (${status}). Trec la următoarea cheie.`
-                );
-
                 continue;
             }
 
-            // =========================================================
-            // TIMEOUT / NETWORK
-            // =========================================================
             if (
                 error?.code === 'ECONNABORTED' ||
                 error?.code === 'ETIMEDOUT' ||
@@ -1059,28 +1000,12 @@ async function callGeminiQc(prompt, qcKeyStates) {
                 error?.code === 'ENOTFOUND' ||
                 error?.code === 'EAI_AGAIN'
             ) {
-                console.warn(
-                    `⚠ [QC V4 FULL] Eroare de rețea ` +
-                    `(încercarea ${attempt}/${QC_MAX_ATTEMPTS}): ` +
-                    `${error.message}`
-                );
-
                 if (attempt < QC_MAX_ATTEMPTS) {
                     await sleep(1000 * attempt);
                     continue;
                 }
-
                 break;
             }
-
-            // =========================================================
-            // ORICE ALTĂ EROARE
-            // Nu blocăm traducerea pentru o problemă de QC.
-            // =========================================================
-            console.warn(
-                `⚠ [QC V4 FULL] Eroare neașteptată: ` +
-                `${error.message || error}`
-            );
 
             break;
             
@@ -1094,8 +1019,6 @@ async function callGeminiQc(prompt, qcKeyStates) {
 
 // ============================================================
 // SANITIZE QC CORRECTIONS
-// FOARTE IMPORTANT:
-// Gemini nu are voie să modifice arbitrar alte ID-uri.
 // ============================================================
 
 function sanitizeQcCorrections(
@@ -1130,12 +1053,10 @@ function sanitizeQcCorrections(
         const [id, value]
         of Object.entries(corrections)
     ) {
-        // ID trebuie să existe în chunk.
         if (!originalIds.has(String(id))) {
             continue;
         }
 
-        // Corecția trebuie să fie string.
         if (typeof value !== 'string') {
             continue;
         }
@@ -1153,22 +1074,10 @@ function sanitizeQcCorrections(
                 currentMap.get(String(id)) ?? ''
             ).trim();
 
-        // Nu acceptăm gol.
-        if (!corrected) {
+        if (!corrected || !current || corrected === current) {
             continue;
         }
 
-        // Nu acceptăm traducere goală.
-        if (!current) {
-            continue;
-        }
-
-        // Dacă este identic, nu există corecție.
-        if (corrected === current) {
-            continue;
-        }
-
-        // Protecție împotriva unei rescrieri uriașe.
         if (
             corrected.length >
             Math.max(
@@ -1179,7 +1088,6 @@ function sanitizeQcCorrections(
             continue;
         }
 
-        // Replacement character = corupție.
         if (
             corrected.includes('\u0000') ||
             corrected.includes('')
@@ -1252,8 +1160,6 @@ ${JSON.stringify(
                 qcKeyStates
             );
 
-        // Dacă nu avem cheie disponibilă,
-        // păstrăm traducerea existentă.
         if (!result) {
             console.log(
                 `${c.yellow}⚠ [QC V4 FULL] Nicio cheie QC disponibilă. Păstrez traducerea originală.${c.reset}`
@@ -1288,7 +1194,6 @@ ${JSON.stringify(
         const correctionIds =
             Object.keys(corrections);
 
-        // Logăm DOAR corecțiile reale.
         for (
             const id of correctionIds
         ) {
@@ -1310,9 +1215,6 @@ ${JSON.stringify(
         return corrected;
 
     } catch (error) {
-
-        // FOARTE IMPORTANT:
-        // Dacă QC eșuează, NU stricăm traducerea.
         console.log(
             `${c.yellow}⚠ [QC V4 FULL] Verificarea calupului ${chunkIndex + 1} a eșuat: ${error.message}. Păstrez traducerea originală.${c.reset}`
         );
@@ -1455,7 +1357,7 @@ function chunkArray(array, size) {
     return chunks;
 }
 
-async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0) {
+async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, qcKeyStates, globalChunkIndex, totalChunks, depth = 0) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     const maxLocalAttempts = 3;
     let lastError = null;
@@ -1492,7 +1394,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             }));
 
             // === INTEGRARE QC CONSERVATOR V4 FULL ===
-            const finalResults = await qcChunkFull(chunk, translatedChunkForQC, keyStates, globalChunkIndex, totalChunks);
+            const finalResults = await qcChunkFull(chunk, translatedChunkForQC, qcKeyStates, globalChunkIndex, totalChunks);
 
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
             return finalResults;
@@ -1510,9 +1412,9 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
         console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în două părți din cauza erorilor repetate...${c.reset}`);
 
-        const firstResult = await processChunkWithRetry(first, allItems, chunkStart, chunkStart + middle, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth + 1);
+        const firstResult = await processChunkWithRetry(first, allItems, chunkStart, chunkStart + middle, previousTranslatedContext, keyStates, qcKeyStates, globalChunkIndex, totalChunks, depth + 1);
         const secondContext = firstResult.slice(-PREVIOUS_TRANSLATION_CONTEXT);
-        const secondResult = await processChunkWithRetry(second, allItems, chunkStart + middle, chunkEnd, secondContext, keyStates, globalChunkIndex, totalChunks, depth + 1);
+        const secondResult = await processChunkWithRetry(second, allItems, chunkStart + middle, chunkEnd, secondContext, keyStates, qcKeyStates, globalChunkIndex, totalChunks, depth + 1);
 
         return [...firstResult, ...secondResult];
     }
@@ -1549,7 +1451,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 
             if (localIndex > 0) await sleep(800 * localIndex);
 
-            const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, globalIndex, chunks.length);
+            const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, qcKeyStates, globalIndex, chunks.length);
             return { globalIndex, result };
         });
 
