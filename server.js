@@ -66,7 +66,6 @@ const secretArchive = [];
 function cleanMemoryCache() {
     const keys = Object.keys(memoryCache);
     if (keys.length > 30) {
-        // Șterge cele mai vechi elemente rând pe rând până rămân 30
         const excess = keys.length - 30;
         for (let i = 0; i < excess; i++) {
             delete memoryCache[keys[i]];
@@ -80,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.10.0',
+    version: '12.11.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -407,7 +406,7 @@ function formatSubtitleLine(text) {
 }
 
 // ============================================================
-// TRANSLATION ROUTE (CU VERIFICARE CACHE RAM & ARHIVĂ UNICĂ)
+// TRANSLATION ROUTE (CU CACHE RAM, ARHIVĂ UNICĂ ȘI KEEP-ALIVE PENTRU ANDROID)
 // ============================================================
 
 app.get('/:configData/translate', async (req, res) => {
@@ -440,6 +439,21 @@ app.get('/:configData/translate', async (req, res) => {
         res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
         return res.send(memoryCache[cacheKey]);
     }
+
+    // Configurare Keep-Alive pentru a nu lăsa playerul (Android/TV) să dea timeout / restart la film
+    res.writeHead(200, {
+        'Content-Type': 'application/x-subrip; charset=utf-8',
+        'Transfer-Encoding': 'chunked'
+    });
+    res.flushHeaders();
+
+    const keepAlive = setInterval(() => {
+        res.write(' \n');
+    }, 8000);
+
+    req.on('close', () => {
+        clearInterval(keepAlive);
+    });
 
     try {
         let processPromise;
@@ -491,26 +505,28 @@ app.get('/:configData/translate', async (req, res) => {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
             
-            // Verifică dacă acest film/id există deja în arhivă ca să nu-l duplicăm
+            // Asigură unicitatea în arhivă
             const existingIndex = secretArchive.findIndex(item => item.id === imdbId);
             if (existingIndex !== -1) {
-                secretArchive.splice(existingIndex, 1); // Îl scoate din poziția veche
+                secretArchive.splice(existingIndex, 1);
             }
 
             secretArchive.unshift({ id: imdbId, time: timeStr, content: finalSrt });
             if (secretArchive.length > 10) secretArchive.pop();
         }
 
-        res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
-        res.setHeader('Content-Disposition', 'inline; filename="romanian.srt"');
-        return res.send(finalSrt);
+        clearInterval(keepAlive);
+        res.write(finalSrt);
+        res.end();
 
     } catch (error) {
+        clearInterval(keepAlive);
         console.error('Translation error:', error.message);
         if (!res.headersSent) {
-            return res.status(500).send('Translation failed: ' + error.message);
+            res.status(500).send('Translation failed: ' + error.message);
+        } else {
+            res.end();
         }
-        return res.end();
     }
 });
 
