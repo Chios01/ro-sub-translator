@@ -100,7 +100,9 @@ const manifest = {
 app.get('/', (req, res) => {
     const indexPath = path.join(__dirname, 'index.html');
     if (fs.existsSync(indexPath)) {
-        return res.sendFile(indexPath);
+        let html = fs.readFileSync(indexPath, 'utf8');
+        html = html.replace(/\{\{VERSION\}\}/g, manifest.version);
+        return res.send(html);
     }
     res.send('RO Sub Translator is running.');
 });
@@ -170,7 +172,9 @@ app.get('/validate-key', async (req, res) => {
 app.get('/:configData/configure', (req, res) => {
     const indexPath = path.join(__dirname, 'index.html');
     if (fs.existsSync(indexPath)) {
-        return res.sendFile(indexPath);
+        let html = fs.readFileSync(indexPath, 'utf8');
+        html = html.replace(/\{\{VERSION\}\}/g, manifest.version);
+        return res.send(html);
     }
     res.send('Configure page missing.');
 });
@@ -360,7 +364,6 @@ function formatSubtitleLine(text) {
     // Curățarea liniuțelor de dialog enervante de la începutul rândurilor
     let lines = text.split('\n').map(l => {
         let cleanLine = l.trim();
-        // Scoate liniuțele de dialog de la început (ex: "- Salut" devine "Salut")
         cleanLine = cleanLine.replace(/^[-—–−]+\s*/, '');
         return cleanLine;
     }).filter(Boolean);
