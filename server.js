@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '7.0.0',
+    version: '7.0.1',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -214,10 +214,10 @@ async function handleSubtitles(req, res) {
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
             const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             
-            let labelName = `🇷🇴 RO AI (FIX v7) [${index + 1}]`;
+            let labelName = `🇷🇴 RO AI (FIX v7.1) [${index + 1}]`;
             if (tagMatch) {
                 let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI (FIX v7) [${index + 1}] • ${cleanTag}`;
+                labelName = `🇷🇴 RO AI (FIX v7.1) [${index + 1}] • ${cleanTag}`;
             }
 
             const cacheBuster = Math.floor(Math.random() * 100000);
@@ -407,19 +407,13 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // =========================================================================
-    // SUPREMAȚIE TOTALĂ: FORȚĂM TEXTUL CORECT INDIFERENT CE SCOATE AI-UL
-    // =========================================================================
-    // Forțăm propoziția cu secundă indiferent cum o scrie modelul
     if (/când.*secund/i.test(text)) {
         text = text.replace(/când.*secund.*/gi, 'când ai o secundă...');
     }
     
-    // Forțăm propoziția cu sânii indiferent ce verb inventează (udat, fura, oferi etc.)
     if (/sânii|sâni/i.test(text) && /a-mi/i.test(text)) {
         text = text.replace(/oprește-te.*sânii.*/gi, 'nu te mai holba la sânii mei.');
     }
-    // =========================================================================
 
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
@@ -451,7 +445,7 @@ function formatSubtitleLine(text) {
     
     let finalMergedLines = mergedText.split('\n');
     finalMergedLines = finalMergedLines.map(l => {
-        return l.trim().replace(/^[-—–−\s*/g, ''); 
+        return l.trim().replace(/^[-—–−\s*]+/g, ''); 
     });
     
     text = finalMergedLines.join('\n');
@@ -716,7 +710,7 @@ function formatSubtitleLine(text) {
         }
     }
 
-    return finalLinesText.map(l => l.replace(/^[-—–−\s]+/g, '')).join('\n');
+    return finalLinesText.map(l => l.replace(/^[-—–−\s*]+/g, '')).join('\n');
 }
 
 function fixBrokenJson(text) {
@@ -974,7 +968,7 @@ async function translateSrtWithGemini(srtText, userKeys) {
             allTranslatedTexts.push(...translatedTextsArray);
         });
 
-        await new Promise(r => setTimeout(r, 1500));
+        await newResponseWriterTimeout = await new Promise(r => setTimeout(r, 1500));
     }
 
     blocks.forEach((block, index) => {
