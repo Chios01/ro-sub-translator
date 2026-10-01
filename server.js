@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '12.3.0',
+    version: '12.4.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -430,22 +430,28 @@ function formatSubtitleLine(text) {
         return 'Nu te mai holba la sânii mei.';
     }
     
+    // =========================================================================
+    // LOOKBEHIND REGEX UNIVERSAL: REPARĂ ORICE "c" SAU "s" TĂIAT DE TOKENIZER
+    // Funcționează perfect indiferent de cuvântul de dinainte (ex: așa c, vreau s, etc.)
+    // =========================================================================
+    text = text.replace(/(?<=\s|^)c(?=\s|[.,!?:;]|$)/g, 'că');
+    text = text.replace(/(?<=\s|^)C(?=\s|[.,!?:;]|$)/g, 'Că');
+    text = text.replace(/(?<=\s|^)s(?=\s|[.,!?:;]|$)/g, 'să');
+    text = text.replace(/(?<=\s|^)S(?=\s|[.,!?:;]|$)/g, 'Să');
+    
+    // Alte reparații scurte pentru defecte recurente
+    text = text.replace(/(?<=\s|^)s-ți\b/gi, 'să-ți');
+    text = text.replace(/(?<=\s|^)s-l\b/gi, 'să-l');
+    text = text.replace(/\badic(?=\s|[.,!?:;]|$)/g, 'adică');
+    text = text.replace(/\bAdic(?=\s|[.,!?:;]|$)/g, 'Adică');
+    text = text.replace(/\baeași\b/gi, 'aceeași');
+    // =========================================================================
+
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     const dictionar = [
-        // CORECȚII PENTRU LITERE TĂIATE (c, s, etc.) SAU EROARE DE FORMAT
-        [/(crezi|așa|pentru|zic|sper|spun|știu)\s+c\b/gi, '$1 că'],
-        [/(crezi|așa|pentru|zic|sper|spun|știu)\s+c\s*$/gmi, '$1 că'],
-        [/\b(vreau|pot|trebuie|încerc)\s+s\b/gi, '$1 să'],
-        [/\b(vreau|pot|trebuie|încerc)\s+s\s*$/gmi, '$1 să'],
-        [/\bAdic\b/gi, 'Adică'],
-        [/\bAdic\s*$/gmi, 'Adică'],
-        [/\bparticipe\b/gi, 'se prefacă'],
-        [/atrăGGE/g, 'atrage'],
-        [/\banune\b/gi, 'audă'],
-
         [/man pasă/gi, 'îmi pasă'],
         [/Mi s-a plătit/gi, 'Mi-am primit banii'],
         [/debaclul/gi, 'dezastrul'],
