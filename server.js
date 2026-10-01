@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.11.1',
+    version: '12.11.2',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -545,9 +545,12 @@ You are a professional cinematic Romanian translator. Your ONLY purpose is to tr
 2. SLANG & PROFANITY: Preserve the original register. Do not censor "fuck", "shit", etc. Adapt them into natural Romanian equivalents (e.g., vulgarity stays vulgar, slang stays slang).
 3. CONTEXT & GENDER: Pay extreme attention to context. If it's clear a female is speaking, use feminine verb agreements ("Am fost plătită"). 
 4. SARCASM & HUMOR: Sarcasm, irony, and jokes must survive the translation. Adapt puns if necessary so the Romanian viewer gets the same emotional effect.
-5. NO INVENTED WORDS: Use ONLY standard Romanian words. Never invent conjugations.
+5. NO INVENTED WORDS: Use ONLY standard Romanian dictionary words. Never invent conjugations, mashups, or non-existent words.
 6. SPLIT LINES & CONTINUITY: Subtitles are often cut mid-sentence. Read the surrounding context and translate so the sentence flows naturally across lines. 
 7. CLEAN UP: Remove all audio tags (e.g., [sighs], [music]). Do not translate character names.
+8. 100% TRANSLATION: Do NOT leave any English words or phrases untranslated. Everything must be in Romanian.
+9. NO ALTERNATIVES: Never provide multiple options in brackets like (varianta 1 | varianta 2). Make a firm choice and provide only the final Romanian text.
+10. NO FOREIGN SCRIPTS: Use only the Latin alphabet and standard Romanian diacritics (ă, â, î, ș, ț). Never generate Asian, Cyrillic, or other foreign characters.
 </translation_master_rules>
 
 <few_shot_examples>
