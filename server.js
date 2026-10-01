@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '5.1.0',
+    version: '6.0.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -214,10 +214,10 @@ async function handleSubtitles(req, res) {
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
             const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             
-            let labelName = `🇷🇴 RO AI (FIX) [${index + 1}]`;
+            let labelName = `🇷🇴 RO AI (FIX v6) [${index + 1}]`;
             if (tagMatch) {
                 let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI (FIX) [${index + 1}] • ${cleanTag}`;
+                labelName = `🇷🇴 RO AI (FIX v6) [${index + 1}] • ${cleanTag}`;
             }
 
             const cacheBuster = Math.floor(Math.random() * 100000);
@@ -407,24 +407,9 @@ function chunkArray(array, size) {
 function formatSubtitleLine(text) {
     if (!text) return text;
     
-    // =========================================================================
-    // FORȚARE TOTALĂ PE SECUNDĂ (Indiferent ce taie AI-ul la final)
-    // =========================================================================
-    text = text.replace(/când ai o secund$/gi, 'când ai o secundă');
-    text = text.replace(/când aveți o secund$/gi, 'când ai o secundă');
-    text = text.replace(/când aire o secund$/gi, 'când ai o secundă');
-    text = text.replace(/când ai o secund\.\.\.$/gi, 'când ai o secundă...');
-    text = text.replace(/când aveți o secund\.\.\.$/gi, 'când ai o secundă...');
-    text = text.replace(/când aire o secund\.\.\.$/gi, 'când ai o secundă...');
-    
-    text = text.replace(/când ai o secund\./gi, 'când ai o secundă.');
-    text = text.replace(/când aveți o secund\./gi, 'când ai o secundă.');
-    text = text.replace(/când aire o secund\./gi, 'când ai o secundă.');
-    // =========================================================================
-
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/([.?!])\s+[-—–−\s]+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
+    text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     let lines = text.split('\n');
     lines = lines.map(l => {
@@ -457,13 +442,23 @@ function formatSubtitleLine(text) {
     
     text = finalMergedLines.join('\n');
     
+    // =========================================================================
+    // FORȚARE ABSOLUTĂ DIRECT LA FINALIZAREA LINIILOR (GARANTAT)
+    // =========================================================================
+    text = text.replace(/când\s+ai\s+o\s+secund\.{0,3}/gi, 'când ai o secundă...');
+    text = text.replace(/când\s+aveți\s+o\s+secund\.{0,3}/gi, 'când ai o secundă...');
+    text = text.replace(/când\s+aire\s+o\s+secund\.{0,3}/gi, 'când ai o secundă...');
+    text = text.replace(/când\s+aimai\s+un\s+secund\.{0,3}/gi, 'când ai o secundă...');
+    text = text.replace(/când\s+ai\s+un\s+secund\.{0,3}/gi, 'când ai o secundă...');
+    // =========================================================================
+    
     const dictionar = [
-        [/când ai o secund/gi, 'când ai o secundă'],
-        [/când aveți o secund/gi, 'când ai o secundă'],
-        [/când aire o secund/gi, 'când ai o secundă'],
-        [/când aimai un secund/gi, 'când ai o secundă'],
-        [/când ai un secund/gi, 'când ai o secundă'],
-        [/când mai ai un secund/gi, 'când ai o secundă'],
+        [/când\s+ai\s+o\s+secund/gi, 'când ai o secundă'],
+        [/când\s+aveți\s+o\s+secund/gi, 'când ai o secundă'],
+        [/când\s+aire\s+o\s+secund/gi, 'când ai o secundă'],
+        [/când\s+aimai\s+un\s+secund/gi, 'când ai o secundă'],
+        [/când\s+ai\s+un\s+secund/gi, 'când ai o secundă'],
+        [/când\s+mai\s+ai\s+un\s+secund/gi, 'când ai o secundă'],
         
         [/fura ochii la sâni/gi, 'holba la sânii mei'],
         [/la rândul tău sânii/gi, 'la sânii mei'],
