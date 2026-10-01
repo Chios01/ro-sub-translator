@@ -564,6 +564,14 @@ async function callGemini(prompt, keyState) {
 // CHUNK ENGINE CU RETRY SI RE-SPLIT
 // ============================================================
 
+function chunkArray(array, size) {
+    const chunks = [];
+    for (let i = 0; i < array.length; i += size) {
+        chunks.push(array.slice(i, i + size));
+    }
+    return chunks;
+}
+
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, depth = 0) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     const maxLocalAttempts = 3;
