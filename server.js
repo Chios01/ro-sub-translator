@@ -46,7 +46,7 @@ const secretArchive = [];
 
 const manifest = {
     id: 'community.chios.geminitranslator', 
-    version: '12.4.0',
+    version: '12.5.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -426,25 +426,20 @@ function formatSubtitleLine(text) {
         return 'Am înțeles. Hei, când ai o secundă...';
     }
     
-    if (lowerText.includes('oprește-te') && (/\bsân(i|ii)?\b/.test(lowerText) || lowerText.includes('țâțe') || lowerText.includes('decolteu'))) {
+    // Suprascrierea a fost lărgită pentru halucinațiile extreme (tăiței, etc.)
+    if (lowerText.includes('oprește-te') && (/\bsân(i|ii)?\b/.test(lowerText) || lowerText.includes('țâțe') || lowerText.includes('decolteu') || lowerText.includes('tăiței'))) {
         return 'Nu te mai holba la sânii mei.';
     }
     
     // =========================================================================
-    // LOOKBEHIND REGEX UNIVERSAL: REPARĂ ORICE "c" SAU "s" TĂIAT DE TOKENIZER
-    // Funcționează perfect indiferent de cuvântul de dinainte (ex: așa c, vreau s, etc.)
+    // NOUA REGULĂ UNIVERSALĂ PENTRU TĂIEREA LITERELOR DE CĂTRE AI
+    // (Fără lookbehind, funcționează 100% sigur pe orice server Node.js)
     // =========================================================================
-    text = text.replace(/(?<=\s|^)c(?=\s|[.,!?:;]|$)/g, 'că');
-    text = text.replace(/(?<=\s|^)C(?=\s|[.,!?:;]|$)/g, 'Că');
-    text = text.replace(/(?<=\s|^)s(?=\s|[.,!?:;]|$)/g, 'să');
-    text = text.replace(/(?<=\s|^)S(?=\s|[.,!?:;]|$)/g, 'Să');
+    text = text.replace(/(^|[\s])([cCsS])(?=[\s.,!?:;]|$)/g, function(match, spatiu, litera) {
+        return spatiu + litera + 'ă';
+    });
     
-    // Alte reparații scurte pentru defecte recurente
-    text = text.replace(/(?<=\s|^)s-ți\b/gi, 'să-ți');
-    text = text.replace(/(?<=\s|^)s-l\b/gi, 'să-l');
-    text = text.replace(/\badic(?=\s|[.,!?:;]|$)/g, 'adică');
-    text = text.replace(/\bAdic(?=\s|[.,!?:;]|$)/g, 'Adică');
-    text = text.replace(/\baeași\b/gi, 'aceeași');
+    text = text.replace(/(^|[\s])([Aa]dic)(?=[\s.,!?:;]|$)/g, '$1$2ă');
     // =========================================================================
 
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
@@ -452,6 +447,14 @@ function formatSubtitleLine(text) {
     text = text.replace(/([.?!])\s+[-—–−]\s+([A-ZĂÂÎȘȚ])/g, '$1\n- $2');
 
     const dictionar = [
+        // Corecturi specifice pentru ultimele halucinații semnalate
+        [/judicativ[aă]/gi, 'plină de prejudecăți'],
+        [/le-atâmită/gi, 'le tâmpește'],
+        [/n-o\/să nu-i/gi, 'nu-i'],
+        [/\bEu poartă\b/gi, 'Eu port'],
+        [/s-ți/gi, 'să-ți'],
+        [/s-l/gi, 'să-l'],
+
         [/man pasă/gi, 'îmi pasă'],
         [/Mi s-a plătit/gi, 'Mi-am primit banii'],
         [/debaclul/gi, 'dezastrul'],
