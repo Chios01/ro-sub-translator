@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.48.0',
+    version: '12.50.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -350,11 +350,9 @@ function cleanTextForJson(text) {
 function deepCleanSubtitleText(text) {
     if (!text) return text;
     
-    // Elimină interjecțiile singure pe rând (ex: Ah!, Oh!, Uh!, Aâ!)
     let cleaned = text.replace(/^(ah|oh|uh|aâ|aoleu)[!.]*$/gmi, '').trim();
     if (!cleaned) return '';
 
-    // Corectează cliticele corupte generate greșit de AI (ex: man-ar -> mi-ar, sau elimină cratimele duble)
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
 
@@ -631,28 +629,23 @@ Do not add markdown, explanations, comments, or extra keys.
 
 Before returning the translated JSON, perform a final Romanian-language proofreading pass.
 
-KNOWN ERRORS FOUND IN THE CURRENT SUBTITLE — DO NOT REPEAT:
+ADDITIONAL KNOWN ERRORS — NEVER REPEAT:
 
-- "molmoșește" → NEVER invent words; reconstruct the sentence naturally.
-- "n-ar-păsa" → "n-ar păsa"
-- "evacularea" → "evacuarea"
-- "Haideti" → "Haideți"
-- "Ț-am" → "Ți-am"
+- "molmoșește" → NEVER invent Romanian words; reconstruct naturally.
 - "Vor mai fi o problemă" → "Va mai fi o problemă"
-- "izolatǎ" → "izolată" — use Romanian "ă", NEVER malformed "ǎ".
-- "E o chestie în chestie." → reconstruct naturally; NEVER produce meaningless/repetitive Romanian.
-- "<i>and munitions.</i>" → MUST be translated; NEVER leave English dialogue untranslated.
-- "man-ar" → "mi-ar" (Never output malformed pronoun contractions).
+- "n-ar-păsa" → "n-ar păsa"
+- "la anghang luni de zile" → NEVER output invented/corrupted words such as "anghang"; reconstruct the intended meaning naturally.
+- "va trebui să constea într-o echipă întreagă" → "va trebui să conste dintr-o echipă întreagă"
+- "penthouses-ul" → "penthouse-ul" when referring to one penthouse.
+- "și pe ce o mai rămâne" → reconstruct with correct Romanian grammar; NEVER output corrupted syntax.
+- "frântură de gât" → NEVER translate an idiom literally into meaningless Romanian; reconstruct naturally from context.
+- "cearsafuri" → "cearșafuri"
+- "o situație foarte complexă și în dinamică" → NEVER use "în dinamică" as a malformed literal translation; reconstruct naturally.
+- "Are o chestie în chestie" → NEVER produce meaningless repetitive constructions; reconstruct according to context.
+- "man-ar" → "mi-ar"
 
-FINAL CHECK:
-Before returning the JSON, scan every translated subtitle for:
-1. invented or corrupted Romanian words;
-2. missing or malformed diacritics (ă, â, î, ș, ț);
-3. incorrect clitic forms such as "Ț-am", "n-ar-păsa", "man-ar";
-4. duplicated or corrupted words;
-5. English dialogue left untranslated;
-6. unnatural literal translations;
-7. broken Romanian grammar.
+FINAL MANDATORY CHECK:
+Before returning JSON, scan EVERY subtitle for invented words, corrupted words, malformed Romanian, missing diacritics, incorrect clitics, literal idioms, duplicated words, and English text left untranslated.
 
 Do NOT blindly replace these strings. Use them as examples of error patterns and preserve the actual meaning of the English source.
 
