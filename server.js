@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.45.0',
+    version: '12.45.1',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -553,8 +553,22 @@ Proper names, established names, brands, places, titles, character names and oth
 15. AUDIO TAGS
 Remove non-dialogue audio tags such as [music], [sighs], [laughs], etc., unless the supplied subtitle context clearly requires preserving meaningful information.
 
-16. NO ENGLISH LEFT BEHIND
-Translate all actual English dialogue into Romanian.
+16. NO ENGLISH LEFT BEHIND — MANDATORY FINAL CHECK
+Translate EVERY actual English dialogue line into Romanian.
+
+After translating, compare EVERY output value with its corresponding English input value.
+
+NEVER return an English dialogue sentence or clause unchanged.
+NEVER copy an English dialogue block from the input into the output.
+If the output is still substantially English, translate it again before returning the JSON.
+
+English may remain ONLY when it is:
+- a character/proper name
+- a brand or established name
+- a place or official title that should remain unchanged
+- a genuinely unavoidable technical term with no natural Romanian equivalent
+
+A complete English sentence is NEVER acceptable as a translated subtitle.
 
 17. NO ALTERNATIVES
 Never provide multiple translations.
@@ -571,6 +585,13 @@ Pay special attention to short words, contractions, punctuation, and words near 
 
 20. THE ULTIMATE OUTPUT CHECK
 The final JSON must contain clean, natural Romanian with no accidental typos or malformed words.
+
+Before returning the JSON, perform one final line-by-line language check:
+- compare each Romanian value with its English input;
+- if an English sentence or substantial English clause remains, translate it;
+- do not leave an entire subtitle unchanged when it contains English dialogue;
+- check short lines and dialogue fragments especially carefully.
+
 Return ONLY a valid JSON object using exactly the same numeric keys as the input.
 Do not add markdown, explanations, comments, or extra keys.
 
@@ -708,6 +729,32 @@ function chunkArray(array, size) {
     return chunks;
 }
 
+function hasUntranslatedEnglish(original, translated) {
+    if (!original || !translated) return false;
+
+    const normalize = value => String(value)
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const originalNorm = normalize(original);
+    const translatedNorm = normalize(translated);
+
+    // Strongest signal: Gemini returned the English subtitle unchanged.
+    if (originalNorm.length >= 12 && originalNorm === translatedNorm) {
+        const englishWords = translatedNorm.match(/\b(the|and|you|your|we|they|this|that|what|why|how|when|where|is|are|was|were|have|has|had|do|does|did|can|could|would|should|will|not|with|for|from|into|about|good|thank|thanks|yes|no|but|because|there|here|just|don't|can't|won't|it's|I'm|I've|I'll|you're|we're|they're)\b/gi) || [];
+        return englishWords.length >= 2;
+    }
+
+    // Secondary signal: a long output that is still predominantly English.
+    const words = translatedNorm.match(/[a-zăâîșț'-]+/gi) || [];
+    if (words.length < 8) return false;
+
+    const englishMarkers = translatedNorm.match(/\b(the|and|you|your|we|they|this|that|what|why|how|when|where|is|are|was|were|have|has|had|do|does|did|can|could|would|should|will|not|with|for|from|into|about|but|because|there|here|just|good|thank|thanks|yes|no|don't|can't|won't|it's|I'm|I've|I'll|you're|we're|they're)\b/gi) || [];
+
+    return englishMarkers.length >= 5 && (englishMarkers.length / words.length) >= 0.30;
+}
+
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     const maxLocalAttempts = 3;
@@ -740,6 +787,15 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                     text: formatSubtitleLine(val)
                 };
             });
+
+            const untranslated = results.filter(result => {
+                const original = chunk.find(obj => obj.id === result.id)?.text || '';
+                return hasUntranslatedEnglish(original, result.text);
+            });
+
+            if (untranslated.length > 0) {
+                throw new Error(`Detectate ${untranslated.length} linii posibil netraduse în engleză; calupul va fi reîncercat.`);
+            }
 
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
             return results;
