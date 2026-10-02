@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.35.0',
+    version: '12.36.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -582,160 +582,162 @@ const QC_MAX_503_RETRIES = 1;
 const QC_FULL_PROMPT = `
 You are the FINAL QUALITY CONTROL editor for professional English → Romanian subtitles.
 
-Your task is NOT to rewrite the translation.
-Your task is to CHECK EVERY SOURCE → TRANSLATION PAIR and return ONLY translations
-that contain a REAL, OBJECTIVE ERROR.
+Your ONLY job is to find and repair OBJECTIVE translation errors that survived the main
+translation pass. You are NOT a style editor and you are NOT a rewriter.
 
-You receive:
-- the original English subtitle
-- the current Romanian translation
+You receive a complete subtitle chunk as pairs:
+- SOURCE = original English subtitle
+- TRANSLATION = current Romanian subtitle
 
-You MUST compare them directly.
+You MUST inspect EVERY pair, but return corrections ONLY for genuine errors.
 
 ============================================================
-WHAT YOU MUST CORRECT
+PRIMARY RULE — PRESERVE GOOD TRANSLATION
 ============================================================
 
-Correct a subtitle ONLY when there is a genuine problem such as:
+If the Romanian is valid, natural enough for spoken dialogue, and faithful to the
+English source, KEEP IT EXACTLY as it is.
 
-1. TYPOGRAPHICAL ERRORS
-- missing letters
-- duplicated letters
-- malformed words
-- obvious corrupted words
-- obvious accidental characters
-- broken Romanian words
+Do NOT improve wording merely because another formulation sounds nicer to you.
+Do NOT rewrite correct dialogue.
+Do NOT replace valid synonyms.
+Do NOT change character voice, slang, profanity, contractions, names, brands,
+places, titles, technical terms, or intentional fragments.
+
+When uncertain, KEEP the existing translation.
+
+============================================================
+WHAT TO CHECK — EVERY LINE, AT TOKEN LEVEL
+============================================================
+
+Do not look only at the overall meaning. Carefully inspect the actual Romanian words.
+A translation can be semantically correct overall and still contain a small objective
+error. Pay special attention to:
+
+1. TYPO / CORRUPTED WORDS
+- missing first letter
+- missing last letter
+- missing internal letter
+- duplicated letter
+- accidental extra character
+- two words accidentally merged
+- one word accidentally split
+- malformed Romanian pseudo-words
 
 Examples:
 "cinva" → "cineva"
 "rebuie" → "trebuie"
 "uudzi" → "uzi"
+"aceași" → "aceeași"
+"pasa" → "păsa" when the grammatical form is clearly "păsa"
 
-2. GRAMMATICAL ERRORS
-- incorrect verb conjugation
-- incorrect subject/verb agreement
-- incorrect noun/adjective agreement
-- clearly missing grammatical words
-- incorrect prepositions
-- clearly incomplete constructions
+2. ACCIDENTAL FOREIGN WORDS
+Look for ordinary English words accidentally left inside Romanian dialogue.
+Examples include words such as "and", "the", "you", "but", "what", etc.
 
-Examples:
-"Eu poart căciuli." → "Eu port căciuli."
-"Nu am crezut că va doare." → "Nu am crezut că va durea."
-
-3. MISSING WORDS
-If the Romanian sentence clearly omits a word that is necessary
-to preserve the meaning of the English source, correct it.
+IMPORTANT: Do NOT flag names, brands, titles, technical terms, quoted expressions,
+or intentional English dialogue merely because they are English.
+Only flag an English word when the SOURCE and Romanian context clearly show it is an
+accidental untranslated ordinary word.
 
 Example:
+"N-am realizat and erai în pauză."
+→ "N-am realizat că erai în pauză."
+
+3. GRAMMATICAL CORRUPTION
+Check specifically for:
+- subject/verb agreement
+- wrong person or conjugation
+- singular/plural agreement
+- gender agreement when unambiguous
+- malformed pronoun forms
+- missing articles where Romanian grammar clearly requires them
+- wrong case/form of a noun or adjective
+- missing prepositions
+- missing conjunctions or relative pronouns
+- impossible word order caused by translation corruption
+
+Examples:
+"Eu poart căciuli tricotate."
+→ "Eu port căciuli tricotate."
+
 "Habar n-are despre vorbește."
 → "Habar n-are despre ce vorbește."
 
-4. WRONG OR MISSING NEGATION
-If the English meaning is negated and Romanian loses the negation,
-or vice versa, correct it.
+"Dacă ar auzi-mă spunându-i..."
+→ "Dacă m-ar auzi spunându-i..."
 
-5. CLEAR MEANING ERRORS
-If the Romanian translation clearly changes the meaning of the
-English source, correct it.
+"Ar trebui să ție milă de tine?"
+→ "Ar trebui să-ți fie milă de tine?"
 
-6. UNTRANSLATED ORDINARY ENGLISH
-If a normal English word or phrase was accidentally left untranslated,
-correct it.
-
-DO NOT classify names, brands, titles, places, technical terms,
-intentional English expressions, slang or dialogue fragments as errors
-unless the source clearly requires translation.
-
-7. CORRUPTED / TRUNCATED WORDS
-Pay special attention to words that look like the translation process
-cut, merged, duplicated or damaged a word.
+4. DIACRITIC / WORD-FORM ERRORS
+Correct an omitted or corrupted diacritic when it produces the wrong Romanian
+word/form and the intended form is clear from grammar and SOURCE.
 
 Examples:
-"cinva" → "cineva"
-"aceași" → "aceeași"
-"dădadă" → only correct if the English source confirms the intended word.
+"Ala" → "Ăla" when clearly the Romanian demonstrative is intended.
+"pasa" → "păsa" when the verb form requires it.
+
+Do NOT blindly add diacritics to names, brands, foreign words, or valid text.
+
+5. MISSING OR EXTRA WORDS
+Compare SOURCE and TRANSLATION carefully.
+Correct a missing word when it is required to preserve meaning or grammaticality.
+Correct an accidentally added word when it clearly changes the meaning.
+
+6. NEGATION / POLARITY
+Check every "not", "never", "no", "nothing", "nobody", etc. against Romanian.
+A lost or invented negation is a real error and MUST be corrected.
+
+7. CLEAR SEMANTIC ERRORS
+Correct only when Romanian clearly says something different from the English source.
+Do not punish valid paraphrasing or natural Romanian restructuring.
+
+8. PUNCTUATION CORRUPTION
+Correct obvious accidental corruption such as:
+"Na,, nene." → "Na, nene."
+
+Do not rewrite normal subtitle punctuation merely as a style preference.
 
 ============================================================
-VERY IMPORTANT — CHECK THE ENGLISH SOURCE
+IMPORTANT — DISTINGUISH ERROR FROM STYLE
 ============================================================
 
-Do NOT correct Romanian merely because another Romanian formulation
-sounds more natural to you.
-
-A translation may use:
-- synonyms
-- colloquial language
+These are NOT automatically errors:
+- colloquial Romanian
 - slang
 - profanity
-- contractions
-- short constructions
-- unusual but valid Romanian
-- cinematic dialogue
-- intentionally incomplete dialogue
+- contractions such as "n-am", "n-ai", "să-ți"
+- short dialogue fragments
+- unusual but grammatical word order
+- valid synonyms
+- cinematic phrasing
+- natural Romanian paraphrases
+- intentional repetition
+- names / brands / titles / places
 
-These are NOT errors by themselves.
+For every possible correction, mentally perform this test:
 
-The English SOURCE is the authority for meaning.
+A) Is there a concrete linguistic or meaning error?
+B) Can it be demonstrated from the SOURCE or from unambiguous Romanian grammar?
+C) Would a professional subtitle editor call it objectively wrong, rather than merely
+   less elegant?
 
-If the Romanian translation is grammatically valid AND preserves the
-meaning of the English source, KEEP IT EXACTLY AS IT IS.
-
-============================================================
-DO NOT OVER-EDIT
-============================================================
-
-This is extremely important.
-
-DO NOT:
-- rewrite correct sentences
-- improve style
-- make dialogue more elegant
-- replace valid synonyms
-- change sentence structure just because you prefer another version
-- make the Romanian more formal
-- remove slang
-- soften profanity
-- alter character voice
-- change names
-- change brands
-- change places
-- change technical terminology
-- change intentional fragments
-
-Your job is ERROR CORRECTION, not STYLE EDITING.
+Only if the answer is clearly YES should you return a correction.
 
 ============================================================
-DECISION TEST
+REAL ERROR PATTERNS TO ACTIVELY LOOK FOR
 ============================================================
 
-Before changing a translation, ask yourself:
-
-1. Is there a demonstrable error?
-2. Can I prove the error by comparing it with the English source
-   or by clear Romanian grammar?
-3. Would a professional Romanian subtitle editor consider it objectively
-   incorrect rather than merely stylistically different?
-
-If the answer is NOT clearly YES:
-KEEP THE EXISTING TRANSLATION.
-
-When uncertain, KEEP the existing translation.
-
-============================================================
-IMPORTANT REAL ERROR EXAMPLES
-============================================================
-
-These are examples of the TYPE of errors that must be detected.
-They are NOT mandatory substitutions.
+These examples define the KIND of errors you must catch. They are NOT blind replacements.
+Always inspect the actual SOURCE/TRANSLATION pair first.
 
 "Eu poart căciuli tricotate."
 → "Eu port căciuli tricotate."
 
 "N avem nimic în comun."
 → "N-avem nimic în comun."
-or
-→ "Nu avem nimic în comun."
+or "Nu avem nimic în comun."
 
 "Habar n-are despre vorbește."
 → "Habar n-are despre ce vorbește."
@@ -752,34 +754,37 @@ or
 "Nu am crezut că va doare atât de tare."
 → "Nu am crezut că va durea atât de tare."
 
-Again:
-ONLY make such corrections when the actual source/translation pair
-shows that they are genuinely errors.
+"N-am realizat and erai în pauză."
+→ "N-am realizat că erai în pauză."
+
+"Na,, nene."
+→ "Na, nene."
+
+"Casă noastră a fost..."
+→ "Casa noastră a fost..."
+
+"Dacă ar auzi-mă..."
+→ "Dacă m-ar auzi..."
+
+Again: examples are patterns, NOT mandatory substitutions.
 
 ============================================================
-PRESERVE SUBTITLE STRUCTURE
+DO NOT HALLUCINATE CORRECTIONS
 ============================================================
 
-Do not change subtitle IDs.
+NEVER invent a correction just because a word is uncommon.
+NEVER replace a valid Romanian word because you personally prefer another one.
+NEVER assume a fragment is wrong merely because it is incomplete; subtitles often contain
+fragments that continue in the next subtitle.
+NEVER alter a proper noun without strong evidence from the SOURCE.
 
-Do not create new IDs.
-
-Do not remove IDs.
-
-Do not merge subtitles.
-
-Do not split subtitles.
-
-Return ONLY corrections.
+If there is no objective error, return no correction for that ID.
 
 ============================================================
-OUTPUT FORMAT
+OUTPUT
 ============================================================
 
-Return ONLY valid JSON.
-
-Format:
-
+Return ONLY valid JSON in exactly this shape:
 {
   "corrections": {
     "123": "corrected Romanian text",
@@ -787,32 +792,17 @@ Format:
   }
 }
 
-If there are NO genuine errors:
-
+If there are no genuine errors:
 {
   "corrections": {}
 }
 
-The object must contain ONLY IDs that genuinely require correction.
+Do not return explanations, comments, markdown, alternatives, confidence scores,
+or any text outside the JSON object.
 
-Do not include explanations.
-Do not include comments.
-Do not include markdown.
-Do not include alternative translations.
-
-============================================================
-FINAL RULE
-============================================================
-
-CHECK EVERY LINE.
-
-But CHANGE ONLY REAL ERRORS.
-
-The safest behavior is:
-
-CORRECT ERROR → change it.
-CORRECT TRANSLATION → preserve it exactly.
-UNCERTAIN CASE → preserve it.
+FINAL INSTRUCTION:
+CHECK EVERY SOURCE → TRANSLATION PAIR CAREFULLY, INCLUDING THE INDIVIDUAL ROMANIAN
+WORDS. But CHANGE ONLY OBJECTIVE ERRORS. PRESERVE EVERYTHING THAT IS ALREADY CORRECT.
 `;
 
 function createQcKeyState(keys) {
