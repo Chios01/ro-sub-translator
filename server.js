@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.56.0',
+    version: '12.57.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -651,74 +651,60 @@ ADDITIONAL KNOWN ERRORS — NEVER REPEAT:
 - "izolatǎ" → "izolată" — NEVER use Unicode "ǎ"; use Romanian "ă"
 - "foarte complexă în dinamică" → avoid literal/unnatural "în dinamică"; use natural Romanian according to context.
 
-22. NEVER INVENT OR CORRUPT ROMANIAN WORDS.
+25. ABSOLUTELY NO EMPTY DIALOGUE LINES
+
+NEVER output a line containing ONLY:
+-
+–
+—
+
+NEVER output:
+-
+-
+
+NEVER output an empty dialogue marker.
+
+If a dialogue dash has no actual spoken text after it, DELETE THE DASH.
+
+Every subtitle line must contain actual translated text, except intentional formatting tags such as <i>...</i>.
+
+FINAL CHECK:
+Scan every output line before returning JSON.
+If any line consists only of "-", "–", or "—", remove it.
+
+26. ZERO INVENTED ROMANIAN WORDS
+
+NEVER invent Romanian words.
 
 Words such as:
 "molmoșește"
 "anghang"
-and similar malformed words are INVALID.
+"tangou" when used as a corrupted word
+and similar malformed forms are INVALID.
 
-If the exact Romanian word is uncertain, use a simple, valid Romanian expression based on the surrounding context.
+If the exact translation is uncertain, use a simple, valid Romanian expression based on the surrounding context.
 
-NEVER concatenate or corrupt Romanian pronouns:
-"Ț-am" is INVALID.
-Use "Ți-am" when appropriate.
+NEVER invent a word to imitate the sound of the English source.
 
-NEVER produce malformed phrases such as:
-"n-ar pasa-le... adică n-ar ști"
-or
-"o chestie în chestie".
+27. STRICT ROMANIAN GRAMMAR
 
-Prefer a simple, grammatically correct Romanian sentence.
+NEVER output malformed forms such as:
+"Ț-am"
+"Eu acționează"
+"cu a astea"
 
-EMPTY DIALOGUE:
-NEVER output a line containing only "-", "–" or "—".
-NEVER output "-\n-" or "-\n-Ah!".
-If there is no actual dialogue, remove the dash completely.
+Use:
+"Ți-am"
+"Eu acționez"
+and natural Romanian grammar.
 
 FINAL CHECK:
-Read EVERY output line before returning JSON.
-Every Romanian word must be valid.
-Every sentence must be grammatically coherent.
+Read every subtitle as a native Romanian speaker.
 No invented words.
-No empty dialogue dashes.
+No corrupted grammar.
+No empty dashes.
 No untranslated English dialogue.
-
-23. NO INVENTED OR CORRUPTED ROMANIAN WORDS — MANDATORY
-
-NEVER invent a Romanian word when the English meaning is unclear.
-
-Examples of previously generated corrupted words:
-- "molmoșește"
-- "anghang"
-- "tangou" when used as an invented verb/noun
-- "nicun"
-
-If you are uncertain about a word, use a simple, valid Romanian construction based on the surrounding context.
-NEVER create a word that does not exist in standard Romanian merely to imitate the sound or structure of the English source.
-
-24. ABSOLUTELY NO ENGLISH DIALOGUE LEFT
-
-After translation, inspect EVERY individual subtitle line.
-If any line is still an English dialogue sentence or clause, translate it before returning the JSON.
-English may remain ONLY for proper names, character names, brands, official titles/names, or unavoidable established terms.
-
-25. ABSOLUTELY NO EMPTY DIALOGUE LINES — HIGHEST PRIORITY
-
-NEVER output a subtitle line containing only:
--
-–
-—
-NEVER output two empty dialogue lines:
--
--
-NEVER output an empty dash followed by dialogue.
-If the input contains an empty dialogue marker with no actual spoken words, REMOVE THE EMPTY MARKER.
-
-FINAL MANDATORY CHECK:
-Before returning JSON, scan EVERY subtitle for invented words, corrupted words, malformed Romanian, missing diacritics, incorrect clitics, literal idioms, duplicated words, empty dash lines, standalone interjections, and English text left untranslated.
-
-Do NOT blindly replace these strings. Use them as examples of error patterns and preserve the actual meaning of the English source.
+No malformed punctuation such as "--" when normal Romanian punctuation is required.
 
 </translation_master_rules>
 
