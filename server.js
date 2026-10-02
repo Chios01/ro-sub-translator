@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.74.0',
+    version: '12.75.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -356,24 +356,19 @@ function deepCleanSubtitleText(text) {
     let cleaned = text.replace(/\b(ăă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
     cleaned = cleaned.replace(/\s+/g, ' ');
     
-    // Elimină replicile care sunt doar sunete de ezitare
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
     
-    // NOU: Elimină replicile care conțin DOAR semne de punctuație (ex: ".")
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
-    // NOU: Elimină textul rezidual generat de AI între paranteze la finalul rândului
     cleaned = cleaned.replace(/\s*\([^)]+\)$/g, '');
 
     if (!cleaned) return '';
 
-    // Corecții gramaticale și semantice stricte
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
     cleaned = cleaned.replace(/\b[Dd]e ce man pas[aă]\b/gi, 'De ce mi-ar păsa');
     cleaned = cleaned.replace(/\b[Dd]e ce man-ar pasa\b/gi, 'De ce mi-ar păsa');
     
-    // Corectare erori de scriere la clitice (șă-i -> să-i)
     cleaned = cleaned.replace(/\bșă-i\b/g, 'să-i');
     cleaned = cleaned.replace(/\bȘă-i\b/g, 'Să-i');
     cleaned = cleaned.replace(/\bșă-ți\b/g, 'să-ți');
@@ -381,7 +376,6 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\bșă-și\b/g, 'să-și');
     cleaned = cleaned.replace(/\bȘă-și\b/g, 'Să-și');
 
-    // Traduceri forțate
     cleaned = cleaned.replace(/^[aA]?[,\s]*mi s-a plătit\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/^[aA]?[,\s]*am fost plătit[aă]?\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/\bdistraggă\b/gi, 'distragă');
@@ -531,7 +525,6 @@ function formatSubtitleLine(text) {
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
         [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
         [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile'],
-        // CORECȚII NOI PENTRU HALLUCINATION TYPOS
         [/\bialaltăieri\b/gi, 'alaltăieri'],
         [/\bGăură\b/gi, 'Gaură'],
         [/\bOricicum\b/gi, 'Oricum'],
@@ -860,7 +853,6 @@ function hasUntranslatedEnglish(original, translated) {
     const originalNorm = normalize(original);
     const translatedNorm = normalize(translated);
 
-    // Am adăugat cifre și contracții pentru a prinde replicile foarte scurte ratate ("five", "four", "I'm")
     const strongEnglish = new Set([
         'the', 'and', 'but', 'if', 'then', 'than',
         'they', 'them', 'their', 'we', 'us', 'our',
@@ -935,7 +927,6 @@ function hasCorruptedSubtitleText(text) {
     const s = String(text || '').trim();
     if (!s) return true;
 
-    // Extins pentru a prinde replicile care sunt DOAR semne de punctuație
     if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) return true;
 
     return false;
@@ -1026,7 +1017,13 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
         } catch (error) {
             lastError = error;
             console.log(`${c.yellow}⚠ [Gemini] Eroare la calupul ${globalChunkIndex + 1} (Încercarea ${attempt}/${maxLocalAttempts}): ${error.message}${c.reset}`);
-            await sleep(1000 * attempt);
+            
+            if (error.message.includes('429')) {
+                attempt--; 
+                await sleep(1000); 
+            } else {
+                await sleep(1000 * attempt);
+            }
         }
     }
 
@@ -1136,6 +1133,10 @@ Returnează DOAR JSON valid în forma:
                     console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
                 } catch (err) {
                     console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
+                    if (err.message.includes('429')) {
+                        retry--; 
+                        await sleep(1000);
+                    }
                 }
             }
 
