@@ -833,23 +833,95 @@ function hasUntranslatedEnglish(original, translated) {
 
     const normalize = value => String(value)
         .toLowerCase()
+        .replace(/[“”„"’']/g, "'")
+        .replace(/[–—]/g, '-')
         .replace(/\s+/g, ' ')
         .trim();
 
     const originalNorm = normalize(original);
     const translatedNorm = normalize(translated);
 
-    if (originalNorm.length >= 12 && originalNorm === translatedNorm) {
-        const englishWords = translatedNorm.match(/\b(the|and|you|your|we|they|this|that|what|why|how|when|where|is|are|was|were|have|has|had|do|does|did|can|could|would|should|will|not|with|for|from|into|about|good|thank|thanks|yes|no|but|because|there|here|just|don't|can't|won't|it's|i'm|i've|i'll|you're|we're|they're)\b/gi) || [];
-        return englishWords.length >= 2;
+    const strongEnglish = new Set([
+        'the', 'a', 'an', 'and', 'or', 'but', 'if', 'then', 'than',
+        'they', 'them', 'their', 'we', 'us', 'our',
+        'you', 'your', 'he', 'him', 'his', 'she', 'her', 'it', 'its',
+        'this', 'that', 'these', 'those',
+        'what', 'which', 'who', 'where', 'when', 'why', 'how',
+        'with', 'from', 'into', 'onto', 'about', 'after', 'before',
+        'without', 'against', 'between', 'through', 'because', 'while',
+        'would', 'could', 'should', 'will', 'shall', 'can', 'cannot',
+        'do', 'does', 'did', 'have', 'has', 'had',
+        'not', "don't", "isn't", "won't", "can't", "didn't",
+        'please', 'sorry', 'thanks', 'thank', 'yes', 'okay', 'ok'
+    ]);
+
+    const englishMarkers = new Set([
+        ...strongEnglish,
+        'need', 'needs', 'needed', 'want', 'wants', 'wanted',
+        'know', 'knows', 'knew', 'think', 'thought', 'mean', 'means',
+        'look', 'looks', 'looked', 'make', 'makes', 'made',
+        'get', 'gets', 'got', 'go', 'goes', 'went', 'come', 'comes', 'came',
+        'take', 'takes', 'took', 'give', 'gives', 'gave',
+        'see', 'sees', 'saw', 'say', 'says', 'said',
+        'tell', 'tells', 'told', 'find', 'finds', 'found',
+        'leave', 'leaves', 'left', 'keep', 'keeps', 'kept',
+        'disregard', 'forget', 'ignore', 'remember',
+        'good', 'bad', 'right', 'wrong', 'now', 'here', 'there',
+        'very', 'really', 'just', 'only', 'still', 'already',
+        'first', 'last', 'next', 'back', 'again'
+    ]);
+
+    const tokenize = value => value.match(/[a-z]+(?:'[a-z]+)?/g) || [];
+    const tw = tokenize(translatedNorm);
+    const ow = tokenize(originalNorm);
+
+    // Critical fix: identical English input/output is suspicious even
+    // when the line has fewer than 8 words.
+    if (originalNorm === translatedNorm && tw.length > 0) {
+        const strong = tw.filter(w => strongEnglish.has(w)).length;
+        const markers = tw.filter(w => englishMarkers.has(w)).length;
+        if (strong >= 1 || markers >= 2) return true;
     }
 
-    const words = translatedNorm.match(/[a-zăâîșț'-]+/gi) || [];
-    if (words.length < 8) return false;
+    // Short lines need their own detection path.
+    if (tw.length <= 7) {
+        const strong = tw.filter(w => strongEnglish.has(w)).length;
+        const originalStrong = ow.filter(w => strongEnglish.has(w)).length;
+        const originalMarkers = ow.filter(w => englishMarkers.has(w)).length;
 
-    const englishMarkers = translatedNorm.match(/\b(the|and|you|your|we|they|this|that|what|why|how|when|where|is|are|was|were|have|has|had|do|does|did|can|could|would|should|will|not|with|for|from|into|about|but|because|there|here|just|good|thank|thanks|yes|no|don't|can't|won't|it's|i'm|i've|i'll|you're|we're|they're)\b/gi) || [];
+        if (strong >= 2 && (originalStrong >= 1 || originalMarkers >= 2)) return true;
 
-    return englishMarkers.length >= 5 && (englishMarkers.length / words.length) >= 0.30;
+        const obviousPhrases = [
+            /\b(need|want|know|think|look|come|go|get|take|give|tell|find|leave|keep)\s+(me|us|you|him|her|them|it)\b/,
+            /\b(i|you|we|they|he|she)\s+(need|want|know|think|have|can|will|would|could|should)\b/,
+            /\b(and|but|or)\s+(disregard|forget|ignore|remember)\b/
+        ];
+
+        if (obviousPhrases.some(rx => rx.test(translatedNorm))) return true;
+    }
+
+    // Longer lines keep the existing ratio-based safety net.
+    if (tw.length >= 4) {
+        const markerCount = tw.filter(w => englishMarkers.has(w)).length;
+        const strongCount = tw.filter(w => strongEnglish.has(w)).length;
+        const ratio = markerCount / tw.length;
+
+        if (markerCount >= 5 && ratio >= 0.30) return true;
+        if (strongCount >= 3 && ratio >= 0.35) return true;
+    }
+
+    return false;
+}
+
+function hasCorruptedSubtitleText(text) {
+    const s = String(text || '').trim();
+    if (!s) return true;
+
+    // Catches artifacts such as "- ." or an empty dialogue marker.
+    if (/^(?:[-–—]\s*)+[.!?,:;]?\s*$/.test(s)) return true;
+    if (/^[-–—]\s*[.!?,:;]\s*/.test(s)) return true;
+
+    return false;
 }
 
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0) {
@@ -914,7 +986,17 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
                         if (fixedVal) {
                             const targetRes = results.find(r => r.id === originalObj.id);
                             if (targetRes) {
-                                targetRes.text = formatSubtitleLine(fixedVal);
+                                const candidate = formatSubtitleLine(fixedVal);
+                                if (
+                                    candidate &&
+                                    !hasUntranslatedEnglish(originalObj.text, candidate) &&
+                                    !hasCorruptedSubtitleText(candidate)
+                                ) {
+                                    targetRes.text = candidate;
+                                    console.log(`${c.green}  ✔ [Retry] ${originalObj.id} reparată și validată${c.reset}`);
+                                } else {
+                                    console.log(`${c.yellow}  ⚠ [Retry] ${originalObj.id} încă suspectă după retraducere${c.reset}`);
+                                }
                             }
                         }
                     } catch (err) {}
@@ -949,6 +1031,127 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
 }
 
 // ============================================================
+
+// ============================================================
+// GLOBAL POST-CHECK + TARGETED RETRY
+// ============================================================
+
+async function globalPostCheck(items, translatedById, keyStates, maxPasses = 2) {
+    let totalFixed = 0;
+
+    for (let pass = 1; pass <= maxPasses; pass++) {
+        const suspicious = items.filter(item => {
+            const translated = translatedById[String(item.id)];
+            return !translated ||
+                hasUntranslatedEnglish(item.text, translated) ||
+                hasCorruptedSubtitleText(translated);
+        });
+
+        console.log(`\n${c.cyan}🔍 POST-CHECK GLOBAL — pass ${pass}/${maxPasses}${c.reset}`);
+        console.log(`   Verificate: ${items.length} replici`);
+
+        if (suspicious.length === 0) {
+            console.log(`${c.green}✔ 0 replici suspecte${c.reset}`);
+            return { fixed: totalFixed, remaining: [] };
+        }
+
+        console.log(`${c.yellow}⚠ Detectate ${suspicious.length} replici suspecte${c.reset}`);
+
+        for (const item of suspicious) {
+            let fixed = false;
+
+            for (let retry = 1; retry <= 2; retry++) {
+                try {
+                    const keyState = await getAvailableKey(keyStates);
+                    const current = translatedById[String(item.id)] || '';
+
+                    const singlePrompt = `
+${MASTER_TRANSLATION_PROMPT}
+
+ACESTA ESTE UN RETRY FINAL, PUNCTUAL.
+Linia a fost detectată ca netradusă sau coruptă. Ignoră traducerea anterioară dacă este greșită și produce o traducere română completă.
+
+ID:
+"${item.id}"
+
+ORIGINAL:
+${JSON.stringify(item.text)}
+
+TRADUCEREA ACTUALĂ (poate fi greșită):
+${JSON.stringify(current)}
+
+Returnează DOAR JSON valid în forma:
+{
+  "${item.id}": "traducerea română"
+}
+`;
+
+                    const raw = await callGemini(singlePrompt, keyState);
+
+                    let cleanText = raw.trim();
+                    const sIdx = cleanText.indexOf('{');
+                    const eIdx = cleanText.lastIndexOf('}');
+                    if (sIdx < 0 || eIdx <= sIdx) {
+                        throw new Error('Răspuns retry fără JSON valid');
+                    }
+
+                    const parsed = JSON.parse(cleanText.slice(sIdx, eIdx + 1));
+                    const candidateRaw =
+                        parsed[item.id] !== undefined
+                            ? parsed[item.id]
+                            : parsed[String(item.id)];
+
+                    const candidate = formatSubtitleLine(String(candidateRaw || ''));
+
+                    if (
+                        candidate &&
+                        !hasUntranslatedEnglish(item.text, candidate) &&
+                        !hasCorruptedSubtitleText(candidate)
+                    ) {
+                        translatedById[String(item.id)] = candidate;
+                        fixed = true;
+                        totalFixed++;
+
+                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată (${retry}/2)${c.reset}`);
+                        break;
+                    }
+
+                    console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
+                } catch (err) {
+                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
+                }
+            }
+
+            if (!fixed) {
+                console.log(`${c.red}  ❌ Neremediată: ${item.id}${c.reset}`);
+            }
+        }
+
+        const remaining = items.filter(item => {
+            const translated = translatedById[String(item.id)];
+            return !translated ||
+                hasUntranslatedEnglish(item.text, translated) ||
+                hasCorruptedSubtitleText(translated);
+        });
+
+        if (remaining.length === 0) {
+            console.log(`${c.green}✔ Toate replicile suspecte au fost remediate${c.reset}`);
+            return { fixed: totalFixed, remaining: [] };
+        }
+
+        console.log(`${c.yellow}⚠ ${remaining.length} suspecte rămase după pass ${pass}${c.reset}`);
+    }
+
+    const remaining = items.filter(item => {
+        const translated = translatedById[String(item.id)];
+        return !translated ||
+            hasUntranslatedEnglish(item.text, translated) ||
+            hasCorruptedSubtitleText(translated);
+    });
+
+    return { fixed: totalFixed, remaining };
+}
+
 // MOTORUL PRINCIPAL DE TRADUCERE SRT
 // ============================================================
 
@@ -993,6 +1196,36 @@ async function translateSrtWithGemini(srtText, apiKeys) {
             previousTranslatedContext = lastResult.result.slice(-PREVIOUS_TRANSLATION_CONTEXT);
         }
     }
+
+    console.log(`\n${c.green}✔ Toate cele ${chunks.length} de calupuri finalizate!${c.reset}`);
+
+    const globalCheck = await globalPostCheck(
+        items,
+        translatedById,
+        keyStates,
+        2
+    );
+
+    console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
+
+    const finalSuspicious = items.filter(item => {
+        const translated = translatedById[String(item.id)];
+        return !translated ||
+            hasUntranslatedEnglish(item.text, translated) ||
+            hasCorruptedSubtitleText(translated);
+    });
+
+    if (finalSuspicious.length > 0) {
+        console.log(`${c.yellow}⚠ ${finalSuspicious.length} replici suspecte rămân după Global Post-Check${c.reset}`);
+        finalSuspicious.slice(0, 20).forEach(item => {
+            console.log(`  ${c.red}❌ ${item.id}: ${String(translatedById[String(item.id)] || '').slice(0, 120)}${c.reset}`);
+        });
+    } else {
+        console.log(`${c.green}✔ 0 replici suspecte${c.reset}`);
+    }
+
+    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide${c.reset}`);
+    console.log(`${c.green}✔ Total remediate prin targeted retry: ${globalCheck.fixed}${c.reset}`);
 
     const output = items.map(item => {
         const translated = translatedById[String(item.id)] || item.text;
