@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.62.0',
+    version: '12.63.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -393,14 +393,17 @@ function formatSubtitleLine(text) {
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
     
-    // Curățare unificată a liniilor și gestionarea vorbitorilor multipli cu linii noi (vertical, nu orizontal)
     let rawLines = text.split('\n').map(l => l.trim()).filter(Boolean);
     let expandedLines = [];
     
     rawLines.forEach(l => {
-        // Dacă avem o linie cu doi vorbitori pe același rând (ex: "Replica 1 - Replica 2"), îi spargem vertical pe rânduri separate
+        // Dacă există două replici pe același rând legate cu " - ", spargem obligatoriu pe linii verticale separate
         if (l.includes(' - ') && !l.startsWith('- ')) {
             let parts = l.split(' - ');
+            expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
+            expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
+        } else if (l.includes(' – ') && !l.startsWith('- ')) {
+            let parts = l.split(' – ');
             expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
             expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
         } else {
@@ -428,7 +431,6 @@ function formatSubtitleLine(text) {
         }
     }
 
-    // Limităm strict la maximum 2 rânduri pe ecran pentru a respecta standardul video
     if (wrappedLines.length > 2) {
         text = wrappedLines.slice(0, 2).join('\n');
     } else {
@@ -502,10 +504,11 @@ function formatSubtitleLine(text) {
         [/\b(Ah|Oh|Uh|Agh|Aoleu)[!.]+$/gmi, ''],
         [/\bV Dumneata\b/gi, 'Dumneata'],
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
-        [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
+        [/\bca să o demonstram\b/gi, 'ca să o demonstrăm'],
         [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile'],
         [/\b(să îți recuperezi banii)\b/gi, 'să îți recuperezi fondurile'],
-        [/\b(să-și vadă banii înapoi)\b/gi, 'să-și recupereze banii']
+        [/\b(să-și vadă banii înapoi)\b/gi, 'să-și recupereze banii'],
+        [/\bde ce man pasă\b/gi, 'de ce mi-ar păsa']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -1072,7 +1075,7 @@ app.get('/:configData/translate', async (req, res) => {
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
-                console.log(`${c.green}✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
                 console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
                 console.log(`${c.cyan}==================================================\n${c.reset}`);
                 
@@ -1146,10 +1149,6 @@ function parseSrt(srt) {
 // ============================================================
 // UTILS & START
 // ============================================================
-
-text = function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-};
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
