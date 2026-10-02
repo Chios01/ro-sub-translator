@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.41.0',
+    version: '12.42.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -191,6 +191,8 @@ const BROWSER_USER_AGENT_FETCH = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Appl
 
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
+    
+    console.log(`\n${c.magenta}🔍 [Stremio] Caut subtitrări pentru: ${id} (${type})${c.reset}`);
 
     const host = req.headers.host;
     const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
@@ -239,7 +241,10 @@ async function handleSubtitles(req, res) {
             return true;
         }).slice(0, 25); 
 
-        if (engSubs.length === 0) return res.json({ subtitles: [] });
+        if (engSubs.length === 0) {
+            console.log(`${c.yellow}⚠ Nu s-au găsit subtitrări sursă EN pentru: ${id}${c.reset}`);
+            return res.json({ subtitles: [] });
+        }
 
         let diverseSubs = [];
         const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
@@ -281,6 +286,8 @@ async function handleSubtitles(req, res) {
 
         diverseSubs.sort((a, b) => b.score - a.score);
         diverseSubs = diverseSubs.slice(0, 15);
+        
+        console.log(`${c.green}✔ S-au pregătit ${diverseSubs.length} subtitrări de tradus pentru: ${id}${c.reset}`);
 
         const generatedSubs = diverseSubs.map((s, index) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
@@ -843,6 +850,147 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 
     return output.trim() + '\n';
 }
+
+// ============================================================
+// TRANSLATION ROUTE
+// ============================================================
+
+app.get('/:configData/translate', async (req, res) => {
+    const imdbId = req.query.id;
+    const targetUrl = req.query.targetUrl || req.query.url;
+    const configData = req.params.configData;
+
+    console.log(`\n${c.cyan}➤ [Stremio] S-a cerut traducerea pentru ID: ${imdbId}${c.reset}`);
+
+    if (!targetUrl) {
+        console.log(`${c.red}✖ EROARE: Lipsă URL sursă.${c.reset}`);
+        return res.status(400).send('Lipsă URL sursă.');
+    }
+
+    let userKeys = [];
+    try {
+        const decoded = Buffer.from(configData, 'base64').toString('utf8');
+        let parsed;
+        try {
+            parsed = JSON.parse(decoded);
+        } catch(err) {
+            parsed = decoded;
+        }
+
+        if (Array.isArray(parsed)) {
+            userKeys = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+            userKeys = parsed.key ? [parsed.key] : Object.values(parsed);
+        } else if (typeof parsed === 'string') {
+            userKeys = [parsed];
+        }
+    } catch(e) {
+        console.log(`${c.red}✖ EROARE: Configurare invalidă.${c.reset}`);
+        return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
+    }
+
+    userKeys = userKeys.map(k => String(k).trim()).filter(Boolean);
+
+    if (!userKeys.length) {
+        console.log(`${c.red}✖ EROARE: Nu s-au putut extrage chei API valide.${c.reset}`);
+        return res.status(400).send('Nu există chei Gemini configurate.');
+    }
+
+    const cacheKey = targetUrl;
+
+    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
+        console.log(`${c.green}⚡ [Cache RAM] Servit instant pentru: ${imdbId}${c.reset}`);
+        res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
+        return res.send(memoryCache[cacheKey]);
+    }
+
+    res.writeHead(200, {
+        'Content-Type': 'application/x-subrip; charset=utf-8',
+        'Transfer-Encoding': 'chunked'
+    });
+    res.flushHeaders();
+
+    const keepAlive = setInterval(() => {
+        res.write(' \n');
+    }, 8000);
+
+    req.on('close', () => {
+        clearInterval(keepAlive);
+    });
+
+    try {
+        let processPromise;
+
+        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
+            processPromise = memoryCache[cacheKey];
+        } else {
+            const startTime = Date.now();
+            
+            processPromise = (async () => {
+                const srtRes = await axios.get(targetUrl, {
+                    headers: { 'User-Agent': BROWSER_USER_AGENT },
+                    timeout: 30000,
+                    responseType: 'text'
+                });
+                
+                const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
+                console.log(`${c.cyan}\n==================================================${c.reset}`);
+                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                
+                return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
+            })();
+            
+            memoryCache[cacheKey] = processPromise;
+            cleanMemoryCache(); 
+            
+            processPromise.then(translatedSrtString => {
+                memoryCache[cacheKey] = translatedSrtString;
+                cleanMemoryCache(); 
+                
+                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+                const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+                
+                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                
+            }).catch((err) => {
+                console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
+                delete memoryCache[cacheKey];
+            });
+        }
+
+        const finalSrt = await processPromise;
+        
+        if (finalSrt && finalSrt.trim().length > 0) {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
+            
+            const existingIndex = secretArchive.findIndex(item => item.id === imdbId);
+            if (existingIndex !== -1) {
+                secretArchive.splice(existingIndex, 1);
+            }
+
+            secretArchive.unshift({ id: imdbId, time: timeStr, content: finalSrt });
+            if (secretArchive.length > 10) secretArchive.pop();
+        }
+
+        clearInterval(keepAlive);
+        res.write(finalSrt);
+        res.end();
+
+    } catch (error) {
+        clearInterval(keepAlive);
+        console.error('Translation error:', error.message);
+        if (!res.headersSent) {
+            res.status(500).send('Translation failed: ' + error.message);
+        } else {
+            res.end();
+        }
+    }
+});
 
 // ============================================================
 // SRT PARSER NATIV 
