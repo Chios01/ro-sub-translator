@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.59.0',
+    version: '12.60.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -351,13 +351,18 @@ function deepCleanSubtitleText(text) {
     if (!text) return text;
     
     let trimmed = text.trim();
-    if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return ' ';
+    if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    let cleaned = text.replace(/^(ah|oh|uh|aâ|aoleu)[!.]*$/gmi, '').trim();
-    if (!cleaned) return ' ';
+    // Elimină interjecțiile singure de pe rând sau din interiorul liniilor (ex: ăă, ah, oh, uh)
+    let cleaned = text.replace(/\b(ăă|îhî|mhm|ah|oh|uh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
+    cleaned = cleaned.replace(/\s+/g, ' ');
+    
+    if (/^(ah|oh|uh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
+    if (!cleaned) return '';
 
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
+    cleaned = cleaned.replace(/\bde ce man pasă\b/gi, 'de ce mi-ar păsa');
     cleaned = cleaned.replace(/^A,\s*mi s-a plătit/gi, 'Mi s-a plătit');
     cleaned = cleaned.replace(/\bdistraggă\b/gi, 'distragă');
 
@@ -648,6 +653,7 @@ After translation, inspect EVERY individual subtitle line. If any line remains a
 
 25. STRICT GRAMMAR AND CLEAN PUNCTUATION
 NEVER output malformed forms such as "Ț-am", "Eu acționez" (or incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am") and proper grammar.
+NEVER output standalone interjections or hesitation sounds (such as "ăă", "îhî", "mhm", "Ah!", "Oh!", "Uh!"). Delete them completely from the text.
 
 </translation_master_rules>
 
@@ -840,13 +846,11 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 };
             });
 
-            // Găsim exclusiv liniile care au rămas în engleză
             const untranslatedItems = results.filter(result => {
                 const original = chunk.find(obj => obj.id === result.id)?.text || '';
                 return hasUntranslatedEnglish(original, result.text);
             });
 
-            // Dacă avem linii netraduse, facem retrying punctual DOAR pe acele linii, în loc să dăm eroare pe tot calupul
             if (untranslatedItems.length > 0 && depth < 2) {
                 console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii netraduse în calupul ${globalChunkIndex + 1}. Retraducere punctuală...${c.reset}`);
                 
@@ -874,9 +878,7 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
                                 targetRes.text = formatSubtitleLine(fixedVal);
                             }
                         }
-                    } catch (err) {
-                        // Dacă micro-cererea eșuează, lăsăm formatSubtitleLine să curețe ce se poate
-                    }
+                    } catch (err) {}
                 }
             }
 
