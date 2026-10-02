@@ -410,12 +410,6 @@ function formatSubtitleLine(text) {
         [/le-atâmită/gi, 'le tâmpește'],
         [/\bEu poartă\b/gi, 'Eu port'],
         [/\bAleile aia\b/gi, 'Chestia aia'],
-        [/\baceași\b/gi, 'aceeași'],
-        [/\bȘcola\b/gi, 'Școala'],
-        [/\bdădadă\b/gi, 'dădacă'],
-        [/\bva doare\b/gi, 'vă doare'],
-        [/\bcinva\b/gi, 'cineva'],
-        [/\btîmpenie\b/gi, 'tâmpenie'],
         [/s-ți/gi, 'să-ți'],
         [/s-l/gi, 'să-l']
     ];
