@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.72.0',
+    version: '12.73.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -359,11 +359,13 @@ function deepCleanSubtitleText(text) {
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
     if (!cleaned) return '';
 
+    // Corecții gramaticale și semantice stricte
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
     cleaned = cleaned.replace(/\b[Dd]e ce man pas[aă]\b/gi, 'De ce mi-ar păsa');
     cleaned = cleaned.replace(/\b[Dd]e ce man-ar pasa\b/gi, 'De ce mi-ar păsa');
     
+    // Corectare erori de scriere la clitice (șă-i -> să-i)
     cleaned = cleaned.replace(/\bșă-i\b/g, 'să-i');
     cleaned = cleaned.replace(/\bȘă-i\b/g, 'Să-i');
     cleaned = cleaned.replace(/\bșă-ți\b/g, 'să-ți');
@@ -371,6 +373,7 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\bșă-și\b/g, 'să-și');
     cleaned = cleaned.replace(/\bȘă-și\b/g, 'Să-și');
 
+    // Traduceri forțate
     cleaned = cleaned.replace(/^[aA]?[,\s]*mi s-a plătit\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/^[aA]?[,\s]*am fost plătit[aă]?\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/\bdistraggă\b/gi, 'distragă');
@@ -519,9 +522,7 @@ function formatSubtitleLine(text) {
         [/\bV Dumneata\b/gi, 'Dumneata'],
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
         [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
-        [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile'],
-        [/\b(să îți recuperezi banii)\b/gi, 'să îți recuperezi fondurile'],
-        [/\b(să-și vadă banii înapoi)\b/gi, 'să-și recupereze banii']
+        [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -798,7 +799,6 @@ async function callGemini(prompt, keyState) {
                 throw new Error(`Cheie Gemini invalidă (${status}).`);
             }
             if (status === 429) {
-                // Dacă primim limitare (Prea multe cereri), aruncăm cheia imediat
                 keyState.pausedUntil = Date.now() + 65000;
                 throw new Error(`Rate limit 429. Se schimbă cheia...`);
             }
@@ -836,8 +836,9 @@ function hasUntranslatedEnglish(original, translated) {
     const originalNorm = normalize(original);
     const translatedNorm = normalize(translated);
 
+    // Am scos "a", "an", "or" pentru a preveni alarme false in romana
     const strongEnglish = new Set([
-        'the', 'a', 'an', 'and', 'or', 'but', 'if', 'then', 'than',
+        'the', 'and', 'but', 'if', 'then', 'than',
         'they', 'them', 'their', 'we', 'us', 'our',
         'you', 'your', 'he', 'him', 'his', 'she', 'her', 'it', 'its',
         'this', 'that', 'these', 'those',
@@ -866,7 +867,8 @@ function hasUntranslatedEnglish(original, translated) {
         'first', 'last', 'next', 'back', 'again'
     ]);
 
-    const tokenize = value => value.match(/[a-z]+(?:'[a-z]+)?/g) || [];
+    // Regex corectat pentru a INCLUDE diacriticele romanesti
+    const tokenize = value => value.match(/[a-zăâîșț]+(?:'[a-zăâîșț]+)?/g) || [];
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
 
@@ -956,7 +958,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii netraduse în calupul ${globalChunkIndex + 1}. Retraducere punctuală...${c.reset}`);
                 
                 for (const badItem of untranslatedItems) {
-                    await sleep(1500); // Pauză pentru a nu bloca API-ul
+                    await sleep(1500); 
                     const originalObj = chunk.find(obj => obj.id === badItem.id);
                     if (!originalObj) continue;
 
@@ -1025,7 +1027,7 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
 // GLOBAL POST-CHECK + TARGETED RETRY
 // ============================================================
 
-async function globalPostCheck(items, translatedById, keyStates, maxPasses = 2) {
+async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) { // Am scazut la 1 pass pentru eficienta
     let totalFixed = 0;
 
     for (let pass = 1; pass <= maxPasses; pass++) {
@@ -1047,10 +1049,10 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 2) 
         console.log(`${c.yellow}⚠ Detectate ${suspicious.length} replici suspecte${c.reset}`);
 
         for (const item of suspicious) {
-            await sleep(2000); // Pauză crucială de 2 secunde pentru a preveni 429
+            await sleep(2000); 
             let fixed = false;
 
-            for (let retry = 1; retry <= 3; retry++) {
+            for (let retry = 1; retry <= 2; retry++) { // Am scazut la 2 retry-uri
                 try {
                     const keyState = await getAvailableKey(keyStates);
                     const current = translatedById[String(item.id)] || '';
@@ -1102,13 +1104,13 @@ Returnează DOAR JSON valid în forma:
                         fixed = true;
                         totalFixed++;
 
-                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată (${retry}/3)${c.reset}`);
+                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată (${retry}/2)${c.reset}`);
                         break;
                     }
 
-                    console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/3)${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
                 } catch (err) {
-                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/3): ${err.message}${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
                 }
             }
 
@@ -1193,7 +1195,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
         items,
         translatedById,
         keyStates,
-        2
+        1
     );
 
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
