@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.63.0',
+    version: '12.66.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -362,6 +362,8 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
     cleaned = cleaned.replace(/\bde ce man pasă\b/gi, 'de ce mi-ar păsa');
+    cleaned = cleaned.replace(/\bde ce man-ar pasa\b/gi, 'de ce mi-ar păsa');
+    cleaned = cleaned.replace(/\bde ce man pasă\b/gi, 'de ce mi-ar păsa');
     cleaned = cleaned.replace(/^A,\s*mi s-a plătit/gi, 'Mi s-a plătit');
     cleaned = cleaned.replace(/\bdistraggă\b/gi, 'distragă');
 
@@ -397,7 +399,7 @@ function formatSubtitleLine(text) {
     let expandedLines = [];
     
     rawLines.forEach(l => {
-        // Dacă există două replici pe același rând legate cu " - ", spargem obligatoriu pe linii verticale separate
+        // Dacă o linie conține doi vorbitori pe orizontală separați prin cratimă, îi despărțim obligatoriu pe două rânduri verticale (sus-jos)
         if (l.includes(' - ') && !l.startsWith('- ')) {
             let parts = l.split(' - ');
             expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
@@ -406,36 +408,17 @@ function formatSubtitleLine(text) {
             let parts = l.split(' – ');
             expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
             expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
+        } else if (l.includes(' — ') && !l.startsWith('- ')) {
+            let parts = l.split(' — ');
+            expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
+            expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
         } else {
             expandedLines.push(l);
         }
     });
 
-    let wrappedLines = [];
-    for (let line of expandedLines) {
-        if (line.length > 45) {
-            let mid = Math.floor(line.length / 2);
-            let leftSpace = line.lastIndexOf(' ', mid);
-            let rightSpace = line.indexOf(' ', mid);
-            let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
-                ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
-                Math.max(leftSpace, rightSpace);
-            if (splitIndex !== -1) {
-                wrappedLines.push(line.substring(0, splitIndex).trim());
-                wrappedLines.push(line.substring(splitIndex + 1).trim());
-            } else {
-                wrappedLines.push(line);
-            }
-        } else {
-            wrappedLines.push(line);
-        }
-    }
-
-    if (wrappedLines.length > 2) {
-        text = wrappedLines.slice(0, 2).join('\n');
-    } else {
-        text = wrappedLines.join('\n');
-    }
+    // Unim liniile expandate folosind strict \n pentru a asigura două rânduri pe ecran în playerul video
+    text = expandedLines.slice(0, 2).join('\n');
 
     const dictionar = [
         [/\btat-tu\b/gi, 'tatăl tău'],
@@ -504,11 +487,12 @@ function formatSubtitleLine(text) {
         [/\b(Ah|Oh|Uh|Agh|Aoleu)[!.]+$/gmi, ''],
         [/\bV Dumneata\b/gi, 'Dumneata'],
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
-        [/\bca să o demonstram\b/gi, 'ca să o demonstrăm'],
+        [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
         [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile'],
         [/\b(să îți recuperezi banii)\b/gi, 'să îți recuperezi fondurile'],
         [/\b(să-și vadă banii înapoi)\b/gi, 'să-și recupereze banii'],
-        [/\bde ce man pasă\b/gi, 'de ce mi-ar păsa']
+        [/\bde ce man pasă\b/gi, 'de ce mi-ar păsa'],
+        [/\bde ce man-ar pasa\b/gi, 'de ce mi-ar păsa']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -556,7 +540,7 @@ Pay attention to who is speaking, who is being addressed, what happened immediat
 4. SENTENCES SPLIT ACROSS SUBTITLE LINES & VERTICAL WRAPPING
 Subtitle lines may contain only part of a sentence.
 Treat consecutive lines as parts of the same spoken sentence when appropriate.
-CRITICAL FORMATTING: Whenever a subtitle contains two separate speakers or needs to span across lines due to length, ALWAYS split them onto separate vertical lines (one above the other) using line breaks, rather than packing everything onto a single long horizontal line. Use standard dialogue dashes (- ) for multi-speaker lines where appropriate.
+CRITICAL FORMATTING: Whenever a subtitle contains two separate speakers, ALWAYS split them onto separate vertical lines (one above the other) using line breaks, rather than packing everything onto a single long horizontal line. Use standard dialogue dashes (- ) for multi-speaker lines where appropriate.
 
 5. DO NOT TRANSLATE WORD-BY-WORD
 English words frequently have several meanings.
