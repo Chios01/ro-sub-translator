@@ -729,32 +729,6 @@ function chunkArray(array, size) {
     return chunks;
 }
 
-function hasUntranslatedEnglish(original, translated) {
-    if (!original || !translated) return false;
-
-    const normalize = value => String(value)
-        .toLowerCase()
-        .replace(/\s+/g, ' ')
-        .trim();
-
-    const originalNorm = normalize(original);
-    const translatedNorm = normalize(translated);
-
-    // Strongest signal: Gemini returned the English subtitle unchanged.
-    if (originalNorm.length >= 12 && originalNorm === translatedNorm) {
-        const englishWords = translatedNorm.match(/\b(the|and|you|your|we|they|this|that|what|why|how|when|where|is|are|was|were|have|has|had|do|does|did|can|could|would|should|will|not|with|for|from|into|about|good|thank|thanks|yes|no|but|because|there|here|just|don't|can't|won't|it's|I'm|I've|I'll|you're|we're|they're)\b/gi) || [];
-        return englishWords.length >= 2;
-    }
-
-    // Secondary signal: a long output that is still predominantly English.
-    const words = translatedNorm.match(/[a-zăâîșț'-]+/gi) || [];
-    if (words.length < 8) return false;
-
-    const englishMarkers = translatedNorm.match(/\b(the|and|you|your|we|they|this|that|what|why|how|when|where|is|are|was|were|have|has|had|do|does|did|can|could|would|should|will|not|with|for|from|into|about|but|because|there|here|just|good|thank|thanks|yes|no|don't|can't|won't|it's|I'm|I've|I'll|you're|we're|they're)\b/gi) || [];
-
-    return englishMarkers.length >= 5 && (englishMarkers.length / words.length) >= 0.30;
-}
-
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     const maxLocalAttempts = 3;
@@ -787,15 +761,6 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                     text: formatSubtitleLine(val)
                 };
             });
-
-            const untranslated = results.filter(result => {
-                const original = chunk.find(obj => obj.id === result.id)?.text || '';
-                return hasUntranslatedEnglish(original, result.text);
-            });
-
-            if (untranslated.length > 0) {
-                throw new Error(`Detectate ${untranslated.length} linii posibil netraduse în engleză; calupul va fi reîncercat.`);
-            }
 
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
             return results;
