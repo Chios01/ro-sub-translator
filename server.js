@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.0',
+    version: '12.78.1',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -547,9 +547,9 @@ function formatSubtitleLine(text) {
         [/\bparuri\b/gi, 'pariuri'],
         [/\bo raită\b/gi, 'un rateu'],
         [/\bdetonăm o raită\b/gi, 'declanșăm un eșec'],
-        // NOI ADAUGĂRI 
-        [/\bpe opt așt[^\s]*,?\s*pe bănci\b/gi, 'pe banca acuzaților'],
-        [/\bpaharele lui Berzelius și poțiuni\b/gi, 'eprubetele și loțiunile tale'],
+        // CORECCȚII NOI DIN ULTIMUL FIȘIER (V12.78.1):
+        [/\bpe opt\b/gi, 'pe banca acuzaților'],
+        [/\bpaharele lui Berzelius și poțiuni\b/gi, 'eprubetele și poțiunile'],
         [/\bniliște\b/gi, 'niște'],
         [/\bcalmază-te\b/gi, 'calmează-te'],
         [/\bbuclușă\b/gi, 'bucluc'],
@@ -563,7 +563,11 @@ function formatSubtitleLine(text) {
         [/\bceteva\b/gi, 'câteva'],
         [/\bpentru a obține concesii consemnând de la ruși\b/gi, 'pentru a obține garanții de la ruși'],
         [/\bfacem bomba sigură\b/gi, 'securizăm bomba'],
-        [/\binteresată de provocate\b/gi, 'interesată de capcane']
+        [/\binteresată de provocate\b/gi, 'interesată de capcane'],
+        [/\bpe opt așt[^\s]*,?\s*pe bănci\b/gi, 'pe banca acuzaților'],
+        [/\bjiul\b/gi, 'fel'],
+        [/\bdupă o oră și 58 de minute\b/gi, 'în exact o oră și 58 de minute'],
+        [/\bîi voi suna pe Lloyd Garrison\b/gi, îl voi suna pe Lloyd Garrison]
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
