@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.45.1',
+    version: '12.45.2',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -455,7 +455,14 @@ function formatSubtitleLine(text) {
         [/\bMica Nină\b/gi, 'Little Nina'],
         [/\bmass-media principală\b/gi, 'presa mainstream'],
         [/\bun drac de cuvânt\b/gi, 'o vorbă'],
-        [/\bScoală-ți-o zile în șir\b/gi, 'Scoală-n puii mei non-stop']
+        [/\bScoală-ți-o zile în șir\b/gi, 'Scoală-n puii mei non-stop'],
+        [/\b(un)?\s*modist\s*(\d+)?\b/gi, 'un modest'],
+        [/\bprânat\b/gi, 'prins'],
+        [/\b(s|S)troș\b/gi, 'Strauss'],
+        [/\bștiu la mașină\b/gi, 'știu să dactilografiez'],
+        [/\bse bucură de prea multă binefacere\b/gi, 'sunt bineveniți'],
+        [/\bce-ți veni\b/gi, 'ce-ai pățit'],
+        [/\bmarșă de manevră\b/gi, 'marjă de manevră']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -718,7 +725,7 @@ async function callGemini(prompt, keyState) {
 }
 
 // ============================================================
-// CHUNK ENGINE CU RETRY SI RE-SPLIT
+// CHUNK ENGINE CU RETRY, RE-SPLIT SI VERIFICARE ENGLEZA
 // ============================================================
 
 function chunkArray(array, size) {
@@ -727,6 +734,30 @@ function chunkArray(array, size) {
         chunks.push(array.slice(i, i + size));
     }
     return chunks;
+}
+
+function hasUntranslatedEnglish(original, translated) {
+    if (!original || !translated) return false;
+
+    const normalize = value => String(value)
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const originalNorm = normalize(original);
+    const translatedNorm = normalize(translated);
+
+    if (originalNorm.length >= 12 && originalNorm === translatedNorm) {
+        const englishWords = translatedNorm.match(/\b(the|and|you|your|we|they|this|that|what|why|how|when|where|is|are|was|were|have|has|had|do|does|did|can|could|would|should|will|not|with|for|from|into|about|good|thank|thanks|yes|no|but|because|there|here|just|don't|can't|won't|it's|i'm|i've|i'll|you're|we're|they're)\b/gi) || [];
+        return englishWords.length >= 2;
+    }
+
+    const words = translatedNorm.match(/[a-zăâîșț'-]+/gi) || [];
+    if (words.length < 8) return false;
+
+    const englishMarkers = translatedNorm.match(/\b(the|and|you|your|we|they|this|that|what|why|how|when|where|is|are|was|were|have|has|had|do|does|did|can|could|would|should|will|not|with|for|from|into|about|but|because|there|here|just|good|thank|thanks|yes|no|don't|can't|won't|it's|i'm|i've|i'll|you're|we're|they're)\b/gi) || [];
+
+    return englishMarkers.length >= 5 && (englishMarkers.length / words.length) >= 0.30;
 }
 
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0) {
@@ -761,6 +792,15 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                     text: formatSubtitleLine(val)
                 };
             });
+
+            const untranslated = results.filter(result => {
+                const original = chunk.find(obj => obj.id === result.id)?.text || '';
+                return hasUntranslatedEnglish(original, result.text);
+            });
+
+            if (untranslated.length > 0) {
+                throw new Error(`Detectate ${untranslated.length} linii netraduse în engleză; reîncerc calupul.`);
+            }
 
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
             return results;
