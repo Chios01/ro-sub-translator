@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.53.0',
+    version: '12.54.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -350,7 +350,6 @@ function cleanTextForJson(text) {
 function deepCleanSubtitleText(text) {
     if (!text) return text;
     
-    // Elimină liniile formate doar din cratime goale sau interjecții
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
@@ -654,6 +653,71 @@ ADDITIONAL KNOWN ERRORS — NEVER REPEAT:
 - EMPTY DIALOGUE DASHES → NEVER output empty subtitle lines containing only "-" or "–" or "—". Delete empty lines completely.
 - STANDALONE INTERJECTIONS → NEVER output standalone interjections such as "Ah!", "Oh!", "Uh!". Delete them if they appear as standalone lines.
 - "A, mi s-a plătit" → "Mi s-a plătit" (Never leave unneeded conversational fillers or redundant initial letters).
+
+22. NEVER OUTPUT EMPTY DIALOGUE DASHES — MANDATORY
+
+NEVER return a subtitle line containing only:
+-
+–
+—
+
+NEVER return two empty dialogue lines:
+-
+-
+
+NEVER return an empty dash followed by dialogue:
+-
+-Ah!
+
+A dialogue dash is allowed ONLY when it is immediately followed by real dialogue text.
+
+If there is no translated dialogue associated with a dash, REMOVE THE EMPTY DASH COMPLETELY.
+
+Examples of INVALID output:
+-
+-
+
+-
+-Ah!
+
+Valid:
+Ah!
+or, when two actual speakers sunt prezenți:
+- Prima replică.
+- A doua replică.
+
+NEVER generate empty subtitle lines, empty dialogue markers, standalone dashes, or dash-only subtitle blocks.
+
+23. NO INVENTED OR CORRUPTED ROMANIAN WORDS — MANDATORY
+
+NEVER invent a Romanian word when the English meaning is unclear.
+
+Examples of previously generated corrupted words:
+- "molmoșește"
+- "anghang"
+- "tangou" when used as an invented verb/noun
+- "nicun"
+
+If you are uncertain about a word, use a simple, valid Romanian construction based on the surrounding context.
+NEVER create a word that does not exist in standard Romanian merely to imitate the sound or structure of the English source.
+
+24. ABSOLUTELY NO ENGLISH DIALOGUE LEFT
+
+After translation, inspect EVERY individual subtitle line.
+If any line is still an English dialogue sentence or clause, translate it before returning the JSON.
+English may remain ONLY for proper names, character names, brands, official titles/names, or unavoidable established terms.
+
+25. ABSOLUTELY NO EMPTY DIALOGUE LINES — HIGHEST PRIORITY
+
+NEVER output a subtitle line containing only:
+-
+–
+—
+NEVER output two empty dialogue lines:
+-
+-
+NEVER output an empty dash followed by dialogue.
+If the input contains an empty dialogue marker with no actual spoken words, REMOVE THE EMPTY MARKER.
 
 FINAL MANDATORY CHECK:
 Before returning JSON, scan EVERY subtitle for invented words, corrupted words, malformed Romanian, missing diacritics, incorrect clitics, literal idioms, duplicated words, empty dash lines, standalone interjections, and English text left untranslated.
