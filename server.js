@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.77.0',
+    version: '12.78.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -546,7 +546,24 @@ function formatSubtitleLine(text) {
         [/\bunnea\b/gi, 'un'],
         [/\bparuri\b/gi, 'pariuri'],
         [/\bo raită\b/gi, 'un rateu'],
-        [/\bdetonăm o raită\b/gi, 'declanșăm un eșec']
+        [/\bdetonăm o raită\b/gi, 'declanșăm un eșec'],
+        // NOI ADAUGĂRI 
+        [/\bpe opt așt[^\s]*,?\s*pe bănci\b/gi, 'pe banca acuzaților'],
+        [/\bpaharele lui Berzelius și poțiuni\b/gi, 'eprubetele și loțiunile tale'],
+        [/\bniliște\b/gi, 'niște'],
+        [/\bcalmază-te\b/gi, 'calmează-te'],
+        [/\bbuclușă\b/gi, 'bucluc'],
+        [/\bmai justifică scuzle\b/gi, 'scuză mijloacele'],
+        [/\bcEA\b/g, 'cea'],
+        [/\bilealalte\b/gi, 'celelalte'],
+        [/\blu'\s*Oppenheimer\b/gi, 'lui Oppenheimer'],
+        [/\bsommon\b/gi, 'somon'],
+        [/\bmi-amintești bine\b/gi, 'îmi amintesc bine'],
+        [/\bca s-o spunem pe drăcea-n față\b/gi, 'ca s-o spunem pe șleau'],
+        [/\bceteva\b/gi, 'câteva'],
+        [/\bpentru a obține concesii consemnând de la ruși\b/gi, 'pentru a obține garanții de la ruși'],
+        [/\bfacem bomba sigură\b/gi, 'securizăm bomba'],
+        [/\binteresată de provocate\b/gi, 'interesată de capcane']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
