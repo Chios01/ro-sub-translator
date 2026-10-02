@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.40.0',
+    version: '12.41.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -291,7 +291,7 @@ async function handleSubtitles(req, res) {
             let labelName = `🇷🇴 RO AI [${index + 1}]`;
             if (tagMatch) {
                 let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI [${index + 1}] •${cleanTag}`;
+                labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
             }
 
             return {
@@ -326,7 +326,7 @@ function cleanTextForJson(text) {
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
     clean = clean.replace(/\[[^\]]*?\]/g, '');
-    clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughter)[^)]*?\)/gi, '');
+    clean = clean.replace(/\([^)]*?(râsete\vert{}murmur\vert{}muzică\vert{}aplauze\vert{}urale\vert{}fluierături\vert{}music\vert{}sighs\vert{}cheering\vert{}applause\vert{}laughter)[^)]*?\)/gi, '');
     clean = clean.replace(/\([^)]*?\)/g, '');
 
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
@@ -410,7 +410,16 @@ function formatSubtitleLine(text) {
         [/\bEu poartă\b/gi, 'Eu port'],
         [/\bAleile aia\b/gi, 'Chestia aia'],
         [/s-ți/gi, 'să-ți'],
-        [/s-l/gi, 'să-l']
+        [/s-l/gi, 'să-l'],
+        [/\bEu poart\b/gi, 'Eu port'],
+        [/\btîmpenie\b/gi, 'tâmpenie'],
+        [/\bjobul asta\b/gi, 'jobul ăsta'],
+        [/\bNu știe despre vorbește\b/gi, 'Nu știe despre ce vorbește'],
+        [/\bom străzii\b/gi, 'om al străzii'],
+        [/\bcoatul\b/gi, 'cotul'],
+        [/\bketchuipurile\b/gi, 'ketchupurile'],
+        [/\ble-atâmbesc\b/gi, 'le amețesc'],
+        [/\buții\b/gi, 'utili']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -425,34 +434,184 @@ function formatSubtitleLine(text) {
 // ============================================================
 
 const MASTER_TRANSLATION_PROMPT = `
-You are an expert professional English-to-Romanian cinematic subtitle translator. Your ONLY purpose is to translate an English subtitle JSON array into natural, fluent, and grammatically correct Romanian.
+You are an expert professional English-to-Romanian cinematic subtitle translator.
+
+Your ONLY task is to translate the provided English subtitle JSON into natural, fluent, grammatically correct Romanian that sounds like professionally localized movie or TV subtitles.
 
 <translation_master_rules>
-1. THE GOLDEN RULE: Translate the scene and intention, not just the words. Never follow English word order when it creates unnatural Romanian. Recreate the dialogue so it sounds native.
-2. SLANG & PROFANITY: Preserve the original register. Do not censor "fuck", "shit", etc. Adapt them into natural Romanian equivalents (vulgarity stays vulgar, slang stays slang).
-3. CONTEXT & GENDER: Use the surrounding lines to determine meaning. Pay extreme attention to who is speaking. Use correct feminine/masculine agreements without randomly switching.
-4. SARCASM & HUMOR: Sarcasm, irony, and jokes must survive the translation. Adapt puns so the Romanian viewer gets the same emotional effect.
-5. STRICT GRAMMAR & NO INVENTED WORDS: Use ONLY real Romanian dictionary words. Never invent conjugations or non-existent mashups. Output must have perfect verb/noun/adjective agreement.
-6. PRONOUNS & CONTRACTIONS: Pay massive attention to Romanian forms (e.g., să-mi, să-ți, să-l, mi-ai, ți-ai, n-am, n-ai, n-are). Never output broken combinations.
-7. SPLIT LINES & CONTINUITY: Subtitles are often cut mid-sentence. Read context and connect fragments naturally so the sentence flows logically across lines.
-8. CLEAN UP & PRESERVATION: Remove all audio tags (e.g., [sighs], [music]). Do NOT translate proper names, brands, or places.
-9. 100% TRANSLATION: Translate all actual English dialogue. Do not leave English words behind unless they are established names.
-10. NO ALTERNATIVES & NO MARKDOWN: Make a firm choice. Never provide options like (var1 | var2). Use standard Romanian diacritics (ă, â, î, ș, ț).
 
-INTERNAL CHECK: Before answering, silently ensure your Romanian sentences are grammatically complete, use correct word boundaries, and accurately reflect the English meaning.
+1. NATURAL ROMANIAN OVER LITERAL TRANSLATION
+Translate the MEANING and INTENTION of the dialogue, not the individual English words.
+Never follow English word order when doing so creates unnatural Romanian.
+The final Romanian must sound like something a real Romanian speaker would naturally say.
+
+2. ABSOLUTELY NO INVENTED OR BROKEN ROMANIAN
+Never invent words, conjugations, suffixes, word combinations, or grammatical forms.
+If a literal translation produces an unnatural or nonexistent Romanian word, completely reformulate the sentence using correct Romanian.
+Every Romanian word must be a real, correctly formed Romanian word.
+
+3. GRAMMAR CHECK BEFORE OUTPUT
+Before returning the translation, internally verify every sentence for:
+- correct verb conjugation
+- correct person and number
+- correct gender agreement
+- correct noun/adjective agreement
+- correct pronouns
+- correct cases and prepositions
+- correct verb tense
+- correct articles
+- correct Romanian word order
+
+Never output a sentence that is grammatically incomplete or malformed.
+
+4. CONTEXT IS MANDATORY
+Use the surrounding subtitle lines to determine the actual meaning.
+Do not translate an isolated line by guessing its meaning.
+Pay attention to who is speaking, who is being addressed, what happened immediately before, and what happens immediately after.
+
+5. SENTENCES SPLIT ACROSS SUBTITLE LINES
+Subtitle lines may contain only part of a sentence.
+Treat consecutive lines as parts of the same spoken sentence when appropriate.
+Do not independently translate a fragment in a way that creates incorrect Romanian when combined with the following or previous line.
+
+6. DO NOT TRANSLATE WORD-BY-WORD
+English words frequently have several meanings.
+Choose the Romanian meaning that fits the scene and dialogue.
+Never automatically translate a word according to its most common dictionary meaning if the context clearly indicates another meaning.
+
+7. PRESERVE MEANING
+Do not add information that is not present in the original.
+Do not remove meaningful information.
+Do not invent explanations.
+Do not change the speaker's intention.
+Do not make dialogue more polite, more dramatic, or more vulgar than the original.
+
+8. CINEMATIC NATURALNESS
+The result should sound like professional Romanian dubbing/subtitling.
+Prefer concise, natural Romanian expressions over awkward literal constructions.
+If English uses a phrase that would sound unnatural when translated literally, use the natural Romanian equivalent that conveys the same meaning.
+
+9. SLANG, PROFANITY AND REGISTER
+Preserve the original level of vulgarity, slang, informality, hostility, affection, sarcasm, or formality.
+Do not censor profanity.
+Do not make vulgar dialogue artificially polite.
+Do not make normal dialogue unnecessarily vulgar.
+
+10. SARCASM, IRONY AND HUMOR
+Preserve sarcasm, irony, jokes and comedic intent.
+Translate the intended meaning rather than mechanically translating the words.
+When a literal translation destroys the joke or sarcasm, use a natural Romanian equivalent with the same effect.
+
+11. GENDER AND SPEAKER
+Pay close attention to the speaker and grammatical gender.
+Use correct feminine and masculine forms whenever the context establishes the speaker's gender.
+Do not randomly switch gender or grammatical person.
+
+12. PRONOUNS AND VERB FORMS
+Be especially careful with Romanian forms such as:
+să-mi, să-ți, să-l, să-i, să-ne, să-vă,
+mi-ai, ți-ai, i-ai, ne-am, v-ați,
+n-am, n-ai, n-are, n-avem, n-au.
+Use the correct natural Romanian form instead of broken combinations.
+
+13. WORD BOUNDARIES
+Never accidentally cut, merge, corrupt, or partially translate a word.
+Never output malformed words caused by combining English and Romanian.
+Every word must be complete and correctly spelled.
+
+14. ROMANIAN DIACRITICS
+Use standard Romanian diacritics correctly:
+ă, â, î, ș, ț.
+Do not replace them with incorrect characters.
+
+15. DO NOT OVER-TRANSLATE
+Proper names, established names, brands, places, titles, character names and other elements that should remain unchanged must remain unchanged unless there is an established Romanian equivalent clearly required by context.
+
+16. AUDIO TAGS
+Remove non-dialogue audio tags such as [music], [sighs], [laughs], etc., unless the supplied subtitle context clearly requires preserving meaningful information.
+
+17. NO ENGLISH LEFT BEHIND
+Translate all actual English dialogue into Romanian.
+Do not leave ordinary English words or phrases untranslated unless they are proper names, brands, titles, intentional quoted expressions, or other elements that naturally remain in English.
+
+18. NO ALTERNATIVES
+Never provide multiple translations.
+Never write alternatives such as:
+(varianta 1 / varianta 2)
+or
+"X" / "Y".
+Choose the single most natural Romanian translation.
+
+19. DO NOT IMPROVISE
+If a phrase is ambiguous, use the surrounding context to determine the most likely intended meaning.
+Do not invent a meaning simply because the English phrase is difficult.
+
+20. FINAL INTERNAL QUALITY CHECK
+Before returning the JSON, silently review every translated value.
+For each subtitle, ask internally:
+- Does this sound like real Romanian?
+- Is every word a valid Romanian word?
+- Is the grammar correct?
+- Does the sentence make sense in context?
+- Did I preserve the original meaning?
+- Did I accidentally translate an English word using the wrong meaning?
+- Did I accidentally create a malformed Romanian word?
+- Does this line connect naturally with adjacent subtitle lines?
+
+If any answer is no, fix the translation before returning it.
+
 </translation_master_rules>
 
 <few_shot_examples>
-- Idiom: "Give me a break." -> "Hai, lasă-mă."
-- Sarcasm: "Great. Just great." -> "Minunat. Pur și simplu minunat."
-- Conversational: "Are you coming with us?" -> "Vii cu noi?"
-- Slang: "What the hell, man?" -> "Ce naiba, frate?"
-- Contractions/Natural: "We don't have anything in common." -> "N-avem nimic în comun."
-- Context: "You better watch yourself." -> "Ai grijă."
-- Short & Natural: "I'm gonna kill you." -> "Te omor."
+
+- Idiom:
+"Give me a break."
+-> "Hai, lasă-mă."
+
+- Natural conversational Romanian:
+"Are you coming with us?"
+-> "Vii cu noi?"
+
+- Slang:
+"What the hell, man?"
+-> "Ce naiba, frate?"
+
+- Sarcasm:
+"Great. Just great."
+-> "Minunat. Pur și simplu minunat."
+
+- Contextual meaning:
+"You better watch yourself."
+-> "Ai grijă."
+
+- Natural contraction:
+"I don't know."
+-> "Nu știu."
+
+- Natural conversational:
+"We don't have anything in common."
+-> "N-avem nimic în comun."
+
+- Natural conversational:
+"You have to tell me."
+-> "Trebuie să-mi spui."
+
+- Natural conversational:
+"Let me see."
+-> "Lasă-mă să văd."
+
 </few_shot_examples>
 
-JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact numeric input keys. Do not add markdown (\`\`\`json), explanations, comments, or extra text.
+IMPORTANT:
+Quality is more important than literal word correspondence.
+Never sacrifice Romanian grammar or naturalness just to stay close to the English word order.
+However, never sacrifice the original meaning merely to make the Romanian sound nicer.
+
+Return ONLY a valid JSON object using exactly the same numeric keys as the input.
+Do not add markdown.
+Do not add explanations.
+Do not add comments.
+Do not add extra keys.
 `;
 
 // ============================================================
@@ -684,128 +843,6 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 
     return output.trim() + '\n';
 }
-
-// ============================================================
-// TRANSLATION ROUTE
-// ============================================================
-
-app.get('/:configData/translate', async (req, res) => {
-    const imdbId = req.query.id;
-    const targetUrl = req.query.targetUrl || req.query.url;
-    const configData = req.params.configData;
-
-    if (!targetUrl) return res.status(400).send('Lipsă URL sursă.');
-
-    let userKeys = [];
-    try {
-        const decoded = Buffer.from(configData, 'base64').toString('utf8');
-        userKeys = JSON.parse(decoded);
-    } catch(e) {
-        return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
-    }
-
-    if (!Array.isArray(userKeys)) userKeys = [];
-    userKeys = userKeys.map(k => String(k).trim()).filter(Boolean);
-
-    if (!userKeys.length) {
-        return res.status(400).send('Nu există chei Gemini configurate.');
-    }
-
-    const cacheKey = targetUrl;
-
-    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
-        console.log(`${c.green}⚡ [Cache RAM] Servit instant pentru: ${imdbId}${c.reset}`);
-        res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
-        return res.send(memoryCache[cacheKey]);
-    }
-
-    res.writeHead(200, {
-        'Content-Type': 'application/x-subrip; charset=utf-8',
-        'Transfer-Encoding': 'chunked'
-    });
-    res.flushHeaders();
-
-    const keepAlive = setInterval(() => {
-        res.write(' \n');
-    }, 8000);
-
-    req.on('close', () => {
-        clearInterval(keepAlive);
-    });
-
-    try {
-        let processPromise;
-
-        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
-            processPromise = memoryCache[cacheKey];
-        } else {
-            const startTime = Date.now();
-            
-            processPromise = (async () => {
-                const srtRes = await axios.get(targetUrl, {
-                    headers: { 'User-Agent': BROWSER_USER_AGENT },
-                    timeout: 30000,
-                    responseType: 'text'
-                });
-                
-                const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
-                console.log(`${c.cyan}\n==================================================${c.reset}`);
-                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
-                return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
-            })();
-            
-            memoryCache[cacheKey] = processPromise;
-            cleanMemoryCache(); 
-            
-            processPromise.then(translatedSrtString => {
-                memoryCache[cacheKey] = translatedSrtString;
-                cleanMemoryCache(); 
-                
-                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-                const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
-                
-                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
-            }).catch((err) => {
-                console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
-                delete memoryCache[cacheKey];
-            });
-        }
-
-        const finalSrt = await processPromise;
-        
-        if (finalSrt && finalSrt.trim().length > 0) {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
-            
-            const existingIndex = secretArchive.findIndex(item => item.id === imdbId);
-            if (existingIndex !== -1) {
-                secretArchive.splice(existingIndex, 1);
-            }
-
-            secretArchive.unshift({ id: imdbId, time: timeStr, content: finalSrt });
-            if (secretArchive.length > 10) secretArchive.pop();
-        }
-
-        clearInterval(keepAlive);
-        res.write(finalSrt);
-        res.end();
-
-    } catch (error) {
-        clearInterval(keepAlive);
-        console.error('Translation error:', error.message);
-        if (!res.headersSent) {
-            res.status(500).send('Translation failed: ' + error.message);
-        } else {
-            res.end();
-        }
-    }
-});
 
 // ============================================================
 // SRT PARSER NATIV 
