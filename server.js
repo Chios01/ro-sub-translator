@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.36.0',
+    version: '12.33.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -582,231 +582,155 @@ const QC_MAX_503_RETRIES = 1;
 const QC_FULL_PROMPT = `
 You are the FINAL QUALITY CONTROL editor for professional English → Romanian subtitles.
 
-Your ONLY job is to find and repair OBJECTIVE translation errors that survived the main translation pass. You are NOT a style editor and you are NOT a rewriter.
+Your task is NOT to rewrite the translation.
+Your task is to CHECK EVERY SOURCE → TRANSLATION PAIR and return ONLY translations
+that contain a REAL, OBJECTIVE ERROR.
 
-You receive a complete subtitle chunk as pairs:
-- SOURCE = original English subtitle
-- TRANSLATION = current Romanian subtitle
+You receive:
+- the original English subtitle
+- the current Romanian translation
 
-You MUST inspect EVERY pair, but return corrections ONLY for genuine errors.
+You MUST compare them directly.
 
-==================================================
-1. CRITICAL RULE
-==================================================
+============================================================
+WHAT YOU MUST CORRECT
+============================================================
 
-Do NOT rewrite a translation that is already correct.
-Do NOT change a valid synonym.
-Do NOT improve style merely because you would phrase it differently.
-Do NOT make literary or cosmetic rewrites.
+Correct a subtitle ONLY when there is a genuine problem such as:
 
-However, if there is an OBJECTIVE error, you MUST correct it.
+1. TYPOGRAPHICAL ERRORS
+- missing letters
+- duplicated letters
+- malformed words
+- obvious corrupted words
+- obvious accidental characters
+- broken Romanian words
 
-An objective error includes:
-- a malformed or corrupted Romanian word;
-- a missing letter or extra letter;
-- a truncated word;
-- a digit accidentally inserted into a word;
-- a clearly wrong Romanian inflection;
-- subject/verb disagreement;
-- missing mandatory word such as "că", "ce", "care", "să", "nu";
-- a clearly untranslated ordinary English word accidentally left in Romanian;
-- a changed or inverted meaning;
-- a clearly wrong negation;
-- obvious punctuation corruption.
-
-==================================================
-2. ORTHOGRAPHY / CORRUPTED WORDS — HIGH PRIORITY
-==================================================
-
-Pay SPECIAL attention to words that look like generation/OCR/JSON corruption.
-
-Examples of objective errors:
-
+Examples:
 "cinva" → "cineva"
 "rebuie" → "trebuie"
 "uudzi" → "uzi"
-"2uici" → determine the correct Romanian word from SOURCE and context
-"poart" → determine the correct Romanian form from SOURCE and context
-"pasa" → "păsa" when the context requires that word
 
-If a word is clearly malformed, DO NOT leave it unchanged merely because the surrounding sentence is understandable.
-
-But do NOT alter legitimate names, slang, brands, abbreviations, technical terms, or intentionally unusual dialogue.
-
-==================================================
-3. GRAMMAR — HIGH PRIORITY
-==================================================
-
-Check EVERY translation for clear grammatical errors, especially:
-
-- subject/verb agreement;
-- verb conjugation;
-- singular/plural agreement;
-- pronoun/verb agreement;
-- noun/adjective agreement;
-- missing prepositions;
-- missing relative pronouns;
-- missing conjunctions;
-- incorrect word order that produces an objectively invalid Romanian construction.
+2. GRAMMATICAL ERRORS
+- incorrect verb conjugation
+- incorrect subject/verb agreement
+- incorrect noun/adjective agreement
+- clearly missing grammatical words
+- incorrect prepositions
+- clearly incomplete constructions
 
 Examples:
+"Eu poart căciuli." → "Eu port căciuli."
+"Nu am crezut că va doare." → "Nu am crezut că va durea."
 
-"Eu poartă căciulă tricotată."
-→ "Eu port căciulă tricotată."
+3. MISSING WORDS
+If the Romanian sentence clearly omits a word that is necessary
+to preserve the meaning of the English source, correct it.
 
-"Tu merge acasă."
-→ "Tu mergi acasă."
-
-"Ei este aici."
-→ "Ei sunt aici."
-
+Example:
 "Habar n-are despre vorbește."
 → "Habar n-are despre ce vorbește."
 
-"Casă noastră..."
-→ "Casa noastră..."
+4. WRONG OR MISSING NEGATION
+If the English meaning is negated and Romanian loses the negation,
+or vice versa, correct it.
 
-"Dacă ar auzi-mă..."
-→ correct the grammatical construction according to SOURCE and context.
+5. CLEAR MEANING ERRORS
+If the Romanian translation clearly changes the meaning of the
+English source, correct it.
 
-These examples describe ERROR TYPES. They are NOT blind replacements.
+6. UNTRANSLATED ORDINARY ENGLISH
+If a normal English word or phrase was accidentally left untranslated,
+correct it.
 
-==================================================
-4. MISSING WORDS
-==================================================
+DO NOT classify names, brands, titles, places, technical terms,
+intentional English expressions, slang or dialogue fragments as errors
+unless the source clearly requires translation.
 
-Compare SOURCE and TRANSLATION carefully.
-
-Look for words whose absence changes or breaks the Romanian sentence, especially:
-
-- că
-- ce
-- care
-- să
-- nu
-- mă / te / îl / o / ne / vă / îi / le
-- prepositions
-- essential verbs
-
-Example:
-
-"știe despre vorbește."
-→ "știe despre ce vorbește."
-
-Do not invent information. Add a word only when SOURCE + Romanian grammar clearly require it.
-
-==================================================
-5. ACCIDENTAL ENGLISH
-==================================================
-
-Look for ordinary English words accidentally left untranslated.
-
-Example:
-
-"n-am realizat and erai în pauză."
-→ "n-am realizat că erai în pauză."
-
-But DO NOT translate:
-- proper names;
-- people names;
-- place names;
-- brands;
-- titles;
-- band names;
-- acronyms;
-- technical terms;
-- intentional English dialogue;
-- words that are genuinely part of the intended expression.
-
-The English word must clearly be accidental before correcting it.
-
-==================================================
-6. MEANING / NEGATION
-==================================================
-
-Check whether TRANSLATION:
-- changes the meaning of SOURCE;
-- loses an important detail;
-- adds information that is not present;
-- reverses a negation;
-- turns a question into a statement or vice versa;
-- changes who is doing the action.
-
-Only correct when the error is objectively supported by SOURCE and context.
-
-==================================================
-7. DIACRITICS
-==================================================
-
-Correct Romanian diacritics when they are objectively required and the missing/wrong diacritic produces an incorrect word or form.
+7. CORRUPTED / TRUNCATED WORDS
+Pay special attention to words that look like the translation process
+cut, merged, duplicated or damaged a word.
 
 Examples:
+"cinva" → "cineva"
+"aceași" → "aceeași"
+"dădadă" → only correct if the English source confirms the intended word.
 
-"pasa" → "păsa"
-"ala" → "ăla"
-"Casă noastră" → "Casa noastră"
+============================================================
+VERY IMPORTANT — CHECK THE ENGLISH SOURCE
+============================================================
 
-Do not modify names or intentional non-diacritic forms.
+Do NOT correct Romanian merely because another Romanian formulation
+sounds more natural to you.
 
-==================================================
-8. PUNCTUATION CORRUPTION
-==================================================
+A translation may use:
+- synonyms
+- colloquial language
+- slang
+- profanity
+- contractions
+- short constructions
+- unusual but valid Romanian
+- cinematic dialogue
+- intentionally incomplete dialogue
 
-Correct obvious accidental punctuation corruption.
+These are NOT errors by themselves.
 
-Example:
+The English SOURCE is the authority for meaning.
 
-"Na,, nene."
-→ "Na, nene."
+If the Romanian translation is grammatically valid AND preserves the
+meaning of the English source, KEEP IT EXACTLY AS IT IS.
 
-Do NOT normalize the entire subtitle's punctuation style.
-Preserve intentional:
-- ...
-- ?!
-- dramatic pauses;
-- fragments;
-- dialogue interruptions.
+============================================================
+DO NOT OVER-EDIT
+============================================================
 
-==================================================
-9. CONTEXT AND FRAGMENTS
-==================================================
+This is extremely important.
 
-A subtitle may intentionally be only part of a sentence.
-Do NOT flag a fragment merely because it is not a complete sentence by itself.
+DO NOT:
+- rewrite correct sentences
+- improve style
+- make dialogue more elegant
+- replace valid synonyms
+- change sentence structure just because you prefer another version
+- make the Romanian more formal
+- remove slang
+- soften profanity
+- alter character voice
+- change names
+- change brands
+- change places
+- change technical terminology
+- change intentional fragments
 
-Preserve:
-- natural spoken Romanian;
-- slang;
-- profanity;
-- colloquial language;
-- interrupted speech;
-- sentence continuation across subtitle lines.
+Your job is ERROR CORRECTION, not STYLE EDITING.
 
-==================================================
-10. FINAL DECISION TEST
-==================================================
+============================================================
+DECISION TEST
+============================================================
 
-Before returning a correction, ask:
+Before changing a translation, ask yourself:
 
-1. Is this objectively wrong?
-2. Can the error be demonstrated from SOURCE + TRANSLATION + context?
-3. Is it an actual grammar, spelling, corruption, missing-word, meaning, translation, or punctuation error?
-4. Am I correcting an error rather than expressing a stylistic preference?
+1. Is there a demonstrable error?
+2. Can I prove the error by comparing it with the English source
+   or by clear Romanian grammar?
+3. Would a professional Romanian subtitle editor consider it objectively
+   incorrect rather than merely stylistically different?
 
-If the answer is not clearly YES, leave the translation unchanged.
+If the answer is NOT clearly YES:
+KEEP THE EXISTING TRANSLATION.
 
-IMPORTANT:
-Do NOT return zero corrections simply because the translation is generally good.
-If even ONE objective error exists, return that correction.
+When uncertain, KEEP the existing translation.
 
-==================================================
-11. REAL ERROR EXAMPLES
-==================================================
+============================================================
+IMPORTANT REAL ERROR EXAMPLES
+============================================================
 
-These are examples of error TYPES, not blind substitutions:
+These are examples of the TYPE of errors that must be detected.
+They are NOT mandatory substitutions.
 
-"Eu poartă căciulă tricotată."
-→ "Eu port căciulă tricotată."
+"Eu poart căciuli tricotate."
+→ "Eu port căciuli tricotate."
 
 "N avem nimic în comun."
 → "N-avem nimic în comun."
@@ -822,61 +746,73 @@ or
 "Mă uudzi."
 → "Mă uzi."
 
-"cinva"
-→ "cineva"
+"cinva a purtat uniforma asta."
+→ "cineva a purtat uniforma asta."
 
-"Na,, nene."
-→ "Na, nene."
+"Nu am crezut că va doare atât de tare."
+→ "Nu am crezut că va durea atât de tare."
 
-"Casă noastră..."
-→ "Casa noastră..."
+Again:
+ONLY make such corrections when the actual source/translation pair
+shows that they are genuinely errors.
 
-"and erai în pauză"
-→ "că erai în pauză"
+============================================================
+PRESERVE SUBTITLE STRUCTURE
+============================================================
 
-==================================================
-12. ABSOLUTELY DO NOT
-==================================================
+Do not change subtitle IDs.
 
-Do NOT:
-- rewrite correct sentences;
-- replace valid synonyms;
-- change tone;
-- remove profanity;
-- change slang;
-- change names or brands;
-- translate technical terms without evidence;
-- invent information;
-- add explanations;
-- return alternatives;
-- return comments;
-- make cosmetic changes.
+Do not create new IDs.
 
-==================================================
-13. OUTPUT
-==================================================
+Do not remove IDs.
 
-Return ONLY valid JSON:
+Do not merge subtitles.
+
+Do not split subtitles.
+
+Return ONLY corrections.
+
+============================================================
+OUTPUT FORMAT
+============================================================
+
+Return ONLY valid JSON.
+
+Format:
 
 {
   "corrections": {
-    "ID": "corrected Romanian text"
+    "123": "corrected Romanian text",
+    "456": "corrected Romanian text"
   }
 }
 
-If there are no objective errors:
+If there are NO genuine errors:
 
 {
   "corrections": {}
 }
 
-NO markdown.
-NO explanations.
-NO extra fields.
+The object must contain ONLY IDs that genuinely require correction.
 
-Inspect EVERY SOURCE → TRANSLATION pair.
-Correct EVERY objective error you can confidently establish.
-Preserve EVERYTHING that is already correct.
+Do not include explanations.
+Do not include comments.
+Do not include markdown.
+Do not include alternative translations.
+
+============================================================
+FINAL RULE
+============================================================
+
+CHECK EVERY LINE.
+
+But CHANGE ONLY REAL ERRORS.
+
+The safest behavior is:
+
+CORRECT ERROR → change it.
+CORRECT TRANSLATION → preserve it exactly.
+UNCERTAIN CASE → preserve it.
 `;
 
 function createQcKeyState(keys) {
@@ -1184,6 +1120,194 @@ function sanitizeQcCorrections(
     return clean;
 }
 
+
+// ============================================================
+// QC V7 — detector local STRICT + Gemini targeted QC
+// Detectorul NU modifică textul. Doar identifică linii cu
+// semnale obiective de corupție și le trimite separat la Gemini.
+// ============================================================
+
+const QC_V7_MAX_SUSPECTS = 20;
+
+const QC_V7_EXACT_BAD_WORDS = [
+    /\baceași\b/i,
+    /\bcinva\b/i,
+    /\brebuie\b/i,
+    /\buudzi\b/i,
+    /\b2uici\b/i,
+    /\bdafirma\b/i,
+    /\bghicercici\b/i,
+    /\ble-atâmită\b/i,
+    /\bînța\b/i,
+    /\bmerici\b/i
+];
+
+const QC_V7_COMMON_ENGLISH = /\b(?:and|the|you|your|with|this|that|but|because|when|what|where|why|who|how)\b/i;
+
+function detectQcV7Suspects(originalChunk, translatedChunk) {
+    const suspects = [];
+
+    for (let i = 0; i < translatedChunk.length; i++) {
+        const item = translatedChunk[i];
+        const source = String(originalChunk[i]?.text || '');
+        const text = String(item?.text || '');
+        const reasons = [];
+
+        if (!text.trim()) {
+            reasons.push('empty translation');
+        }
+
+        if (text.includes(' ')) {
+            reasons.push('replacement character');
+        }
+
+        if (/\b[A-Za-zĂÂÎȘȚăâîșț]*\d[A-Za-zĂÂÎȘȚăâîșț]+\b/.test(text)) {
+            reasons.push('digit inside word');
+        }
+
+        if (/,,/.test(text)) {
+            reasons.push('duplicated comma');
+        }
+
+        if (QC_V7_EXACT_BAD_WORDS.some(rx => rx.test(text))) {
+            reasons.push('known corrupted word');
+        }
+
+        if (/\bEu\s+(?:poartă|merge|are|face|spune|vine|pleacă|vrea|știe|ține|vede|dă|ia|pune|ține)\b/i.test(text)) {
+            reasons.push('Eu + third-person verb');
+        }
+
+        if (/\bTu\s+(?:merge|are|face|spune|vine|pleacă|vrea|știe|ține|vede|dă|ia|pune)\b/i.test(text)) {
+            reasons.push('Tu + third-person verb');
+        }
+
+        if (/\bdupă\s+(?:că)\b/i.test(text)) {
+            reasons.push('suspicious "după că" construction');
+        }
+
+        if (/\bdespre\s+(?:vorbește|vorbesc|spune|spunea|zice|zicea|face|făcea)\b/i.test(text)) {
+            reasons.push('missing relative word after despre');
+        }
+
+        if (/\bAm\s+șteptarea\b/i.test(text)) {
+            reasons.push('corrupted phrase');
+        }
+
+        // Ordinary English accidentally left inside Romanian.
+        // This is only a suspect signal; Gemini decides whether it is intentional.
+        if (QC_V7_COMMON_ENGLISH.test(text) && !/\b(?:Coldplay|Grandin|Temple|Arcade|Fire)\b/i.test(text)) {
+            reasons.push('possible untranslated English');
+        }
+
+        if (reasons.length > 0) {
+            suspects.push({
+                id: String(item.id),
+                source,
+                translation: text,
+                reasons
+            });
+        }
+
+        if (suspects.length >= QC_V7_MAX_SUSPECTS) {
+            break;
+        }
+    }
+
+    return suspects;
+}
+
+const QC_V7_FOCUSED_PROMPT = `
+Ești un corector STRICT de subtitrări ENGLEZĂ → ROMÂNĂ.
+
+Primești doar liniile care au fost marcate de un detector local ca fiind
+POTENȚIAL problematice. Detectorul NU a modificat nimic. Tu trebuie să
+decizi dacă există într-adevăr o eroare.
+
+CORECTEAZĂ DOAR ERORI OBIECTIVE:
+- cuvânt corupt sau tăiat;
+- literă/cifră introdusă accidental;
+- ortografie greșită evidentă;
+- acord/conjugare evident greșită;
+- cuvânt gramatical lipsă;
+- construcție gramaticală imposibilă;
+- cuvânt englezesc rămas accidental;
+- sens clar schimbat față de SOURCE;
+- negație pierdută sau introdusă greșit.
+
+EXEMPLE REALE:
+"aceași" → "aceeași"
+"cinva" → "cineva"
+"Eu poartă căciulă..." → "Eu port căciulă..."
+"după că am văzut..." → "după ce am văzut..."
+"Am șteptarea..." → corectează forma conform SOURCE și gramaticii române.
+
+IMPORTANT:
+- Nu rescrie stilul.
+- Nu schimba sinonime corecte.
+- Nu modifica slang, vulgarități sau vocea personajului.
+- Nu modifica nume, branduri, titluri sau termeni tehnici.
+- Un cuvânt englezesc poate fi intenționat; verifică SOURCE.
+- Dacă linia este corectă, NU o returna.
+- Detectorul poate da alarme false. Nu presupune că marcajul înseamnă eroare.
+
+Returnează DOAR JSON valid:
+{
+  "corrections": {
+    "ID": "text românesc corectat"
+  }
+}
+
+Dacă nu există erori:
+{
+  "corrections": {}
+}
+`;
+
+function applyQcCorrections(translatedChunk, corrections) {
+    if (!corrections || typeof corrections !== 'object') {
+        return translatedChunk;
+    }
+
+    return translatedChunk.map(item => {
+        const id = String(item.id);
+        if (corrections[id] === undefined) {
+            return item;
+        }
+        return {
+            id: item.id,
+            text: formatSubtitleLine(corrections[id])
+        };
+    });
+}
+
+async function runQcPass(originalChunk, translatedChunk, qcKeyStates, prompt, label) {
+    const payload = buildQcChunkPayload(originalChunk, translatedChunk);
+    const fullPrompt = prompt +
+        '\n\n============================================================\n' +
+        'SUBTITLES TO CHECK\n' +
+        '============================================================\n\n' +
+        JSON.stringify(payload);
+
+    const raw = await callGeminiQc(fullPrompt, qcKeyStates);
+    const parsed = extractQcJsonObject(raw);
+    const corrections = sanitizeQcCorrections(
+        parsed?.corrections,
+        translatedChunk,
+        originalChunk
+    );
+
+    const count = Object.keys(corrections).length;
+
+    if (count > 0) {
+        console.log(`⚠ [QC V7] ${label}: ${count} corecții reale.`);
+    }
+
+    return {
+        result: applyQcCorrections(translatedChunk, corrections),
+        count
+    };
+}
+
 async function qcChunkFull(
     originalChunk,
     translatedChunk,
@@ -1199,210 +1323,78 @@ async function qcChunkFull(
         return translatedChunk;
     }
 
+    const suspects = detectQcV7Suspects(originalChunk, translatedChunk);
+
+    if (suspects.length > 0) {
+        console.log(
+            `⚠ [QC V7] Detector strict: ${suspects.length} ` +
+            `linii suspecte în calupul ${chunkIndex}/${totalChunks}.`
+        );
+
+        // Trimitem numai suspecții la un prim control țintit.
+        const suspectOriginal = suspects.map(s => {
+            const index = originalChunk.findIndex(x => String(x.id) === s.id);
+            return originalChunk[index];
+        }).filter(Boolean);
+
+        const suspectTranslated = suspects.map(s => {
+            const index = translatedChunk.findIndex(x => String(x.id) === s.id);
+            return translatedChunk[index];
+        }).filter(Boolean);
+
+        try {
+            const focused = await runQcPass(
+                suspectOriginal,
+                suspectTranslated,
+                qcKeyStates,
+                QC_V7_FOCUSED_PROMPT,
+                `calup ${chunkIndex}/${totalChunks} — control țintit`
+            );
+
+            translatedChunk = translatedChunk.map(item => {
+                const corrected = focused.result.find(x => String(x.id) === String(item.id));
+                return corrected || item;
+            });
+        } catch (error) {
+            console.log(
+                `⚠ [QC V7] Controlul țintit a eșuat: ${error.message}. ` +
+                `Continui cu verificarea integrală.`
+            );
+        }
+    }
+
     console.log(
         `⚠ [QC V6] Verific integral ` +
         `${translatedChunk.length} linii din calupul ` +
         `${chunkIndex}/${totalChunks}...`
     );
 
-    const payload = buildQcChunkPayload(
-        originalChunk,
-        translatedChunk
-    );
-
-    const prompt =
-        QC_FULL_PROMPT +
-        '\n\n============================================================\n' +
-        'SUBTITLES TO CHECK\n' +
-        '============================================================\n\n' +
-        JSON.stringify(payload);
-
     try {
-        const raw = await callGeminiQc(
-            prompt,
-            qcKeyStates
-        );
-
-        const parsed = extractQcJsonObject(raw);
-
-        const corrections = sanitizeQcCorrections(
-            parsed?.corrections,
+        const full = await runQcPass(
+            originalChunk,
             translatedChunk,
-            originalChunk
+            qcKeyStates,
+            QC_FULL_PROMPT,
+            `calup ${chunkIndex}/${totalChunks} — verificare integrală`
         );
 
-        const correctionCount =
-            Object.keys(corrections).length;
-
-        if (correctionCount === 0) {
-            console.log(
-                `✔ [QC V6] Calupul ${chunkIndex}/${totalChunks}: ` +
-                `0 corecții reale.`
-            );
-
-            return translatedChunk;
-        }
+        translatedChunk = full.result;
 
         console.log(
-            `🔧 [QC V6] Calupul ${chunkIndex}/${totalChunks}: ` +
-            `${correctionCount} corecții reale.`
+            `✔ [QC V6/V7] Calupul ${chunkIndex}/${totalChunks}: ` +
+            `${full.count} corecții reale.`
         );
 
-        const correctedChunk = translatedChunk.map(item => {
-            const id = String(item.id);
-
-            if (!Object.prototype.hasOwnProperty.call(corrections, id)) {
-                return item;
-            }
-
-            console.log(
-                `   ↳ ID ${id}: "${item.text}" → "${corrections[id]}"`
-            );
-
-            return {
-                ...item,
-                text: formatSubtitleLine(corrections[id])
-            };
-        });
-
-        return correctedChunk;
-
+        return translatedChunk;
     } catch (error) {
         console.log(
-            `⚠ [QC V6] QC eșuat pentru calupul ` +
-            `${chunkIndex}/${totalChunks}: ` +
-            `${error?.message || error}`
-        );
-
-        console.log(
-            `↪ [QC V6] Păstrez traducerea originală pentru acest calup.`
+            `⚠ [QC V6/V7] Eroare la calupul ${chunkIndex}/${totalChunks}: ` +
+            `${error.message}. Păstrez traducerea existentă.`
         );
 
         return translatedChunk;
     }
 }
-
-// ============================================================
-// TRANSLATION ROUTE
-// ============================================================
-
-app.get('/:configData/translate', async (req, res) => {
-    const imdbId = req.query.id;
-    const targetUrl = req.query.targetUrl || req.query.url;
-    const configData = req.params.configData;
-
-    if (!targetUrl) return res.status(400).send('Lipsă URL sursă.');
-
-    let userKeys = [];
-    try {
-        const decoded = Buffer.from(configData, 'base64').toString('utf8');
-        userKeys = JSON.parse(decoded);
-    } catch(e) {
-        return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
-    }
-
-    if (!Array.isArray(userKeys)) userKeys = [];
-    userKeys = userKeys.map(k => String(k).trim()).filter(Boolean);
-
-    if (!userKeys.length) {
-        return res.status(400).send('Nu există chei Gemini configurate.');
-    }
-
-    const cacheKey = targetUrl;
-
-    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
-        console.log(`${c.green}⚡ [Cache RAM] Servit instant pentru: ${imdbId}${c.reset}`);
-        res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
-        return res.send(memoryCache[cacheKey]);
-    }
-
-    res.writeHead(200, {
-        'Content-Type': 'application/x-subrip; charset=utf-8',
-        'Transfer-Encoding': 'chunked'
-    });
-    res.flushHeaders();
-
-    const keepAlive = setInterval(() => {
-        res.write(' \n');
-    }, 8000);
-
-    req.on('close', () => {
-        clearInterval(keepAlive);
-    });
-
-    try {
-        let processPromise;
-
-        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
-            processPromise = memoryCache[cacheKey];
-        } else {
-            const startTime = Date.now();
-            
-            processPromise = (async () => {
-                const srtRes = await axios.get(targetUrl, {
-                    headers: { 'User-Agent': BROWSER_USER_AGENT },
-                    timeout: 30000,
-                    responseType: 'text'
-                });
-                
-                const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
-                console.log(`${c.cyan}\n==================================================${c.reset}`);
-                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
-                return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
-            })();
-            
-            memoryCache[cacheKey] = processPromise;
-            cleanMemoryCache(); 
-            
-            processPromise.then(translatedSrtString => {
-                memoryCache[cacheKey] = translatedSrtString;
-                cleanMemoryCache(); 
-                
-                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-                const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
-                
-                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
-            }).catch((err) => {
-                console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
-                delete memoryCache[cacheKey];
-            });
-        }
-
-        const finalSrt = await processPromise;
-        
-        if (finalSrt && finalSrt.trim().length > 0) {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
-            
-            const existingIndex = secretArchive.findIndex(item => item.id === imdbId);
-            if (existingIndex !== -1) {
-                secretArchive.splice(existingIndex, 1);
-            }
-
-            secretArchive.unshift({ id: imdbId, time: timeStr, content: finalSrt });
-            if (secretArchive.length > 10) secretArchive.pop();
-        }
-
-        clearInterval(keepAlive);
-        res.write(finalSrt);
-        res.end();
-
-    } catch (error) {
-        clearInterval(keepAlive);
-        console.error('Translation error:', error.message);
-        if (!res.headersSent) {
-            res.status(500).send('Translation failed: ' + error.message);
-        } else {
-            res.end();
-        }
-    }
-});
 
 // ============================================================
 // CHUNK ENGINE CU RETRY SI RE-SPLIT
