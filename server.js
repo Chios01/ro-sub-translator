@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.70.0',
+    version: '12.68.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -649,45 +649,50 @@ Choose the single most natural Romanian translation.
 18. DO NOT IMPROVISE
 If a phrase is ambiguous, use the surrounding context to determine the most likely intended meaning.
 
-19. FINAL ROMANIAN PROOFREAD
-After translating the entire chunk, silently proofread EVERY translated subtitle line.
-Do not only check the meaning. Check the actual Romanian spelling and grammar word by word.
-Pay special attention to short words, contractions, punctuation, and words near line breaks.
-
-20. THE ULTIMATE OUTPUT CHECK
-The final JSON must contain clean, natural Romanian with no accidental typos or malformed words.
-
-Before returning the JSON, perform one final line-by-line language check:
-- compare each Romanian value with its English input;
-- if an English sentence or substantial English clause remains, translate it;
-- do not leave an entire subtitle unchanged when it contains English dialogue;
-- check short lines and dialogue fragments especially carefully.
-
-Return ONLY a valid JSON object using exactly the same numeric keys as the input.
-Do not add markdown, explanations, comments, or extra keys.
-
-21. TARGETED GRANULAR RETRY ON UNTRANSLATED ENGLISH LINES
+19. TARGETED GRANULAR RETRY ON UNTRANSLATED ENGLISH LINES
 CRITICAL: If the English detection filter discovers that specific lines within a chunk have remained untranslated in English, DO NOT fail or re-translate the entire chunk of 165 lines. Instead, isolate ONLY the specific failing line indices, re-translate solely those specific lines in a targeted micro-request to Gemini, and merge them back seamlessly.
 
-22. NEVER OUTPUT EMPTY DIALOGUE DASHES OR STANDALONE INTERJECTIONS
+20. MULTI-SPEAKER DIALOGUE FORMATTING - CRITICAL
+When a subtitle contains two different speakers, you MUST output them on TWO SEPARATE LINES using a line break (\\n). 
+Do NOT output them on a single horizontal line.
+CORRECT:
+- Baker, ia coridorul.
+- Am înțeles!
+
+21. NEVER OUTPUT EMPTY DIALOGUE DASHES OR STANDALONE INTERJECTIONS
 NEVER output a subtitle line containing ONLY hyphens, dashes, or empty markers such as "-", "–", or "—".
 NEVER output standalone hesitation sounds or interjections such as "ăă", "îhî", "mhm", "Ah!", "Oh!", "Uh!", "Agh!", "Aâ!".
 If a subtitle contains an empty dialogue dash or a standalone interjection with no actual spoken text after it, DELETE IT completely.
-Every subtitle line must contain actual translated text.
 
-23. NO INVENTED OR CORRUPTED ROMANIAN WORDS
+22. NO INVENTED OR CORRUPTED ROMANIAN WORDS
 NEVER invent Romanian words. Words such as "molmoșește", "anghang", "tangou" (when misused as a corrupted word) and similar malformed forms sunt strict interzise.
 
-24. ABSOLUTELY NO ENGLISH DIALOGUE LEFT
+23. ABSOLUTELY NO ENGLISH DIALOGUE LEFT
 After translation, inspect EVERY individual subtitle line. If any line remains an English dialogue sentence or clause, translate it into natural Romanian.
 
-25. STRICT GRAMMAR AND CLEAN PUNCTUATION
+24. STRICT GRAMMAR AND CLEAN PUNCTUATION
 NEVER output malformed forms such as "Ț-am", "Eu acționez" (or incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am", "să-i", "să-ți", "să-și") and proper grammar. 
 
 CRITICAL ERRORS TO AVOID:
 - "De ce man pasă?" → "De ce mi-ar păsa?"
 - "Mi s-a plătit" / "Am fost plătit" → "Mi-am primit banii."
 - "șă-i", "șă-ți", "șă-și" → NEVER output "șă"; use "să-i", "să-ți", "să-și".
+
+FINAL MANDATORY PROOFREAD — DO NOT SKIP
+
+Before returning the JSON, perform one final line-by-line proofreading pass.
+
+For EVERY translated subtitle:
+- verify that every word is a valid Romanian word;
+- verify grammar, agreement and diacritics;
+- verify that no English dialogue remains;
+- verify that no corrupted or invented Romanian word remains;
+- verify that no word is accidentally distorted or misspelled;
+- verify that the Romanian sentence sounds natural when read aloud.
+
+If you find even ONE suspicious word or malformed phrase, rewrite that subtitle before returning the JSON.
+
+Do NOT return the JSON until this final proofreading pass is complete.
 
 </translation_master_rules>
 
