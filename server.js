@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.2',
+    version: '12.78.3',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -566,7 +566,20 @@ function formatSubtitleLine(text) {
         [/\bpe opt așt[^\s]*,?\s*pe bănci\b/gi, 'pe banca acuzaților'],
         [/\bjiul\b/gi, 'fel'],
         [/\bdupă o oră și 58 de minute\b/gi, 'în exact o oră și 58 de minute'],
-        [/\bil voi suna pe Lloyd Garrison\b/gi, 'îl voi suna pe Lloyd Garrison']
+        [/\bil voi suna pe Lloyd Garrison\b/gi, 'îl voi suna pe Lloyd Garrison'],
+        // CORECCȚII NOI PENTRU ULTIMELE RĂMĂȘIȚE ÎN ENGLEZĂ ȘI TYPO-URI (V12.78.3):
+        [/\bLeft-wing political activities\b/gi, 'activități politice de stânga'],
+        [/\bHitler's dead, it's true\b/gi, 'Hitler e mort, e adevărat'],
+        [/\bProgress\b/gi, 'Progres'],
+        [/\bBut Mr\. Borden was\b/gi, 'Dar domnul Borden a fost?'],
+        [/\bThat's a very serious accusation, Senator\b/gi, 'Aceasta este o acuzație foarte gravă, senatore'],
+        [/\bHitler's dead, it's true\b/gi, 'Hitler e mort, e adevărat'],
+        [/\bRural free deliveries\b/gi, 'Livrări poștale rurale'],
+        [/\bÎ j sun\b/gi, 'Îl sun'],
+        [/\bfești\b/gi, 'fasciști'],
+        [/\b2dansezi\b/gi, 'dansezi'],
+        [/\bdespăre\b/gi, 'despre'],
+        [/\bhabar navea\b/gi, 'habar n-avea']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -1477,7 +1490,7 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-app.get('/health', (res) => {
+app.get('/health', (req, res) => {
     res.json({ ok: true, service: 'RO Sub Translator', model: MODEL_NAME, version: manifest.version });
 });
 
