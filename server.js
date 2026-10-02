@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.54.0',
+    version: '12.55.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -650,9 +650,6 @@ ADDITIONAL KNOWN ERRORS — NEVER REPEAT:
 - "Ț-am cerut" → "Ți-am cerut"
 - "izolatǎ" → "izolată" — NEVER use Unicode "ǎ"; use Romanian "ă"
 - "foarte complexă în dinamică" → avoid literal/unnatural "în dinamică"; use natural Romanian according to context.
-- EMPTY DIALOGUE DASHES → NEVER output empty subtitle lines containing only "-" or "–" or "—". Delete empty lines completely.
-- STANDALONE INTERJECTIONS → NEVER output standalone interjections such as "Ah!", "Oh!", "Uh!". Delete them if they appear as standalone lines.
-- "A, mi s-a plătit" → "Mi s-a plătit" (Never leave unneeded conversational fillers or redundant initial letters).
 
 22. NEVER OUTPUT EMPTY DIALOGUE DASHES — MANDATORY
 
