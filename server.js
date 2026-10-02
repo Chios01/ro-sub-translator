@@ -892,7 +892,7 @@ async function callGeminiQc(prompt, qcKeyStates) {
     let lastError = null;
     let retries503 = 0;
 
-    const endpoint = `[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){QC_MODEL_NAME}:generateContent`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${QC_MODEL_NAME}:generateContent`;
 
     for (let attempt = 1; attempt <= QC_MAX_ATTEMPTS; attempt++) {
         const state = getImmediateQcKey(qcKeyStates);
@@ -1092,7 +1092,7 @@ function sanitizeQcCorrections(
             continue;
         }
 
-        if (corrected.includes('')) {
+        if (corrected.includes(' ')) {
             continue;
         }
 
