@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.52.0',
+    version: '12.53.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -350,6 +350,10 @@ function cleanTextForJson(text) {
 function deepCleanSubtitleText(text) {
     if (!text) return text;
     
+    // Elimină liniile formate doar din cratime goale sau interjecții
+    let trimmed = text.trim();
+    if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
+
     let cleaned = text.replace(/^(ah|oh|uh|aâ|aoleu)[!.]*$/gmi, '').trim();
     if (!cleaned) return '';
 
@@ -647,9 +651,12 @@ ADDITIONAL KNOWN ERRORS — NEVER REPEAT:
 - "Ț-am cerut" → "Ți-am cerut"
 - "izolatǎ" → "izolată" — NEVER use Unicode "ǎ"; use Romanian "ă"
 - "foarte complexă în dinamică" → avoid literal/unnatural "în dinamică"; use natural Romanian according to context.
+- EMPTY DIALOGUE DASHES → NEVER output empty subtitle lines containing only "-" or "–" or "—". Delete empty lines completely.
+- STANDALONE INTERJECTIONS → NEVER output standalone interjections such as "Ah!", "Oh!", "Uh!". Delete them if they appear as standalone lines.
+- "A, mi s-a plătit" → "Mi s-a plătit" (Never leave unneeded conversational fillers or redundant initial letters).
 
 FINAL MANDATORY CHECK:
-Before returning JSON, scan EVERY subtitle for invented words, corrupted words, malformed Romanian, missing diacritics, incorrect clitics, literal idioms, duplicated words, and English text left untranslated.
+Before returning JSON, scan EVERY subtitle for invented words, corrupted words, malformed Romanian, missing diacritics, incorrect clitics, literal idioms, duplicated words, empty dash lines, standalone interjections, and English text left untranslated.
 
 Do NOT blindly replace these strings. Use them as examples of error patterns and preserve the actual meaning of the English source.
 
