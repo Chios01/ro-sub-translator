@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.46.0',
+    version: '12.47.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -613,80 +613,29 @@ Do not add markdown, explanations, comments, or extra keys.
 
 Before returning the translated JSON, perform a final Romanian-language proofreading pass.
 
-The following are KNOWN ERROR PATTERNS found in previous subtitle translations. NEVER reproduce these errors or similar corrupted forms.
+KNOWN ERRORS FOUND IN THE CURRENT SUBTITLE — DO NOT REPEAT:
 
-KNOWN ERRORS TO AVOID:
-
-- "Dacă primul șoarece se molmoșește" → NEVER invent/corrupt words such as "molmoșește"; use a valid Romanian expression appropriate to context.
-- "Cetocmai am zis" → "Ce tocmai am zis"
-- "să-l colțișorezi pe Salazar" → use a valid Romanian expression such as "să-l încolțești pe Salazar" when context requires it.
-- "un capital ddestul de substanțial" → "un capital destul de substanțial"
-- "veuni de-a rândul" → NEVER use corrupted words such as "veuni"; reconstruct the Romanian sentence naturally.
-- "NARUREAZĂ" → "NARREAZĂ" / appropriate Romanian form according to context.
-- "penthau-ul" → "penthouse-ul"
-- "Șasezeci" → "Șaizeci"
-- "ademendim" → "ademenim"
-- "distraggă" → "distragă"
-- "ții inul apăsat" → NEVER invent "inul" when the context requires another noun; translate the actual object correctly.
-- "sosesști" → "sosești"
-- "trecat pe roșu" → use correct Romanian construction, e.g. "trecut pe roșu" or "să treci pe roșu", conform contextului.
-- "Nici nu ați idei" → "Nici nu aveți idee"
-- "piepie" → "piept"
-- "Eu man-am ținut" → "Eu m-am ținut"
+- "molmoșește" → NEVER invent words; reconstruct the sentence naturally.
 - "n-ar-păsa" → "n-ar păsa"
 - "evacularea" → "evacuarea"
 - "Haideti" → "Haideți"
-- "man-ar pasa" → NEVER concatenate or corrupt pronouns; use correct Romanian grammar.
 - "Ț-am" → "Ți-am"
 - "Vor mai fi o problemă" → "Va mai fi o problemă"
-- "va trebui să constea" → "va trebui să conste"
-- "24 de berbi" → NEVER invent/corrupt nouns; translate the actual noun correctly.
-- "moderatie" → "moderație"
-- "izolatǎ" → "izolată" — ALWAYS use Romanian "ă", not malformed Unicode variants such as "ǎ".
-- "să nu le cheltuie pe toate" → "să nu le cheltuiască pe toate", when standard Romanian grammar requires it.
-- "în pui mea" → use the correct Romanian expression according to context; do not output corrupted expressions.
-- "evacuarea prin nord e eșuată" → "evacuarea prin nord a eșuat"
-- "și pe cine o mai rămâne" → use grammatically correct Romanian.
-- "suntem outnumbered zece la unu" → translate "outnumbered"; NEVER leave an English sentence/clause when a natural Romanian equivalent exists.
-- "Apoi ea îi va oferi drăguț cheia generală" → NEVER use semantically inappropriate filler words such as "drăguț"; reconstruct naturally according to context.
-- "E o chestie în chestie" → NEVER produce meaningless repetitive constructions; reconstruct the intended Romanian meaning.
-- "Și am câștigat-o asta acum o sută de misiuni" → remove duplicated/corrupted grammatical elements and reconstruct naturally.
-- "cearsafuri" → "cearșafuri"
-- "Trecem de la coadă la câine" → NEVER translate idioms literally if the result is meaningless; translate the intended meaning naturally.
-- "La mai cineva i se strâng pantalonii?" → reconstruct using correct Romanian grammar.
-- "Ar putea suna" → lowercase "ar" when it occurs mid-sentence.
-- "Mazel-tov,ule" → correct spacing and punctuation: "Mazel tov, ule." or the natural Romanian equivalent according to context.
-- "Vă rog, băieții ei, înțeleg." → reconstruct the sentence; NEVER output grammatically corrupted Romanian.
-- "o situație extrem de complexă și în dinamică" → use natural Romanian; NEVER use "în dinamică" as a literal malformed construction.
-- "Da, Să." → NEVER output corrupted forms of forms of address; reconstruct according to context.
-- "Câțiva tangou leneșesc." → NEVER invent grammatical forms such as "tangou leneșesc"; reconstruct the intended meaning.
-- "in someone's pocket?" → MUST be translated into Romanian unless it is genuinely a proper name, brand, title, or unavoidable technical term.
-- "Nu trebuie să sun la etajele superioare" → be careful with literal translations such as "etajele superioare"; use the correct Romanian meaning from context.
-- "al dracului dețin totul" → NEVER produce grammatically broken combinations; reconstruct naturally.
-- "Eu fac un punct de onoare în a-mi plăti datoriile" → prefer natural Romanian syntax over literal English structure.
-- "Oamenii nu sunt suspicioși cu cei care dăruiesc" → use natural Romanian according to context.
-- "pentru o frângere de gât" → NEVER translate idioms literally when the Romanian result is unnatural or meaningless.
-- "va face denunț împotriva lui..." → use natural Romanian legal phrasing according to context.
-
-IMPORTANT:
-These examples are NOT phrases to blindly replace. They are examples of corruption patterns.
-
-If the English source has a different meaning, DO NOT force the example correction.
-Instead, reconstruct the subtitle naturally in Romanian while preserving the original meaning.
+- "izolatǎ" → "izolată" — use Romanian "ă", NEVER malformed "ǎ".
+- "E o chestie în chestie." → reconstruct naturally; NEVER produce meaningless/repetitive Romanian.
+- "<i>and munitions.</i>" → MUST be translated; NEVER leave English dialogue untranslated.
 
 FINAL CHECK:
-1. Search mentally for invented or malformed Romanian words.
-2. Check every noun/adjective/verb agreement.
-3. Check every pronoun and clitic: "m-am", "mi-am", "ți-am", "să-ți", "n-am", "n-ar", etc.
-4. Check diacritics: ă, â, î, ș, ț. NEVER use malformed variants such as "ǎ".
-5. Check punctuation and spacing.
-6. Check that no English dialogue remains untranslated.
-7. Check that no English idiom was translated literally into meaningless Romanian.
-8. Check that every output value is a complete, natural Romanian subtitle.
-9. NEVER invent a Romanian word just because the English source is difficult.
-10. If a sentence is unclear, reconstruct it from the surrounding subtitle context instead of guessing or inventing words.
+Before returning the JSON, scan every translated subtitle for:
+1. invented or corrupted Romanian words;
+2. missing or malformed diacritics (ă, â, î, ș, ț);
+3. incorrect clitic forms such as "Ț-am", "n-ar-păsa";
+4. duplicated or corrupted words;
+5. English dialogue left untranslated;
+6. unnatural literal translations;
+7. broken Romanian grammar.
 
-Return ONLY the required JSON structure. Do not explain the corrections.
+Do NOT blindly replace these strings. Use them as examples of error patterns and preserve the actual meaning of the English source.
 
 </translation_master_rules>
 
