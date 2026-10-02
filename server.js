@@ -26,6 +26,7 @@ const BROWSER_USER_AGENT =
 
 const CHUNK_SIZE = 165;
 
+// Rămâne 3, conform preferințelor tale
 const CONCURRENCY_LIMIT = Math.max(
     1,
     Math.min(
@@ -79,7 +80,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.75.0',
+    version: '12.76.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -539,7 +540,15 @@ function formatSubtitleLine(text) {
         [/\baliții\b/gi, 'aliații'],
         [/\bnimiște\b/gi, 'niște'],
         [/\bclasifiat\b/gi, 'clasificat'],
-        [/\bsomong\b/gi, 'somon']
+        [/\bsomong\b/gi, 'somon'],
+        // NOI ADAUGARI (HALLUCINATION TYPOS):
+        [/\bopt bancă\b/gi, 'banca'],
+        [/\bpa,\s*o să-ți\b/gi, 'păi, o să-ți'],
+        [/\bSunt tot un an de uium\.?\b/gi, 'Eram un dezastru'],
+        [/\bunnea\b/gi, 'un'],
+        [/\bparuri\b/gi, 'pariuri'],
+        [/\bo raită\b/gi, 'un rateu'],
+        [/\bdetonăm o raită\b/gi, 'declanșăm un eșec']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -701,7 +710,9 @@ For EVERY translated subtitle:
 - verify that no English dialogue remains;
 - verify that no corrupted or invented Romanian word remains;
 - verify that no word is accidentally distorted or misspelled;
-- verify that the Romanian sentence sounds natural when read aloud.
+- verify that the Romanian sentence sounds natural when read aloud;
+- verify that NO subtitle is left blank or empty;
+- verify that no Cyrillic, Asian, or other non-Latin characters are used.
 
 If you find even ONE suspicious word or malformed phrase, rewrite that subtitle before returning the JSON.
 
@@ -853,6 +864,7 @@ function hasUntranslatedEnglish(original, translated) {
     const originalNorm = normalize(original);
     const translatedNorm = normalize(translated);
 
+    // Am adăugat mai multe cuvinte cheie mici (for, in, on, to) și numere pentru a curăța definitiv reziduurile englezești
     const strongEnglish = new Set([
         'the', 'and', 'but', 'if', 'then', 'than',
         'they', 'them', 'their', 'we', 'us', 'our',
@@ -866,7 +878,7 @@ function hasUntranslatedEnglish(original, translated) {
         'not', "don't", "isn't", "won't", "can't", "didn't",
         'please', 'sorry', 'thanks', 'thank', 'yes', 'okay', 'ok',
         'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
-        "i'm", "i'll", "you're", "we're", "they're"
+        "i'm", "i'll", "you're", "we're", "they're", "for", "of", "in", "on", "at", "to", "by", "as"
     ]);
 
     const englishMarkers = new Set([
@@ -882,7 +894,8 @@ function hasUntranslatedEnglish(original, translated) {
         'disregard', 'forget', 'ignore', 'remember',
         'good', 'bad', 'right', 'wrong', 'now', 'here', 'there',
         'very', 'really', 'just', 'only', 'still', 'already',
-        'first', 'last', 'next', 'back', 'again', 'colonel', 'minutes', 'ready'
+        'first', 'last', 'next', 'back', 'again', 'colonel', 'minutes', 'ready',
+        'ideology', 'killed', 'interestingly', 'enough', 'nothing'
     ]);
 
     const tokenize = value => value.match(/[a-zăâîșț]+(?:'[a-zăâîșț]+)?/g) || [];
@@ -928,6 +941,9 @@ function hasCorruptedSubtitleText(text) {
     if (!s) return true;
 
     if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) return true;
+    
+    // Filtrăm forțat absolut orice caracter din limbile asiatice și chirilice pe care AI-ul le poate „halucina”
+    if (/[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF]/.test(s)) return true;
 
     return false;
 }
