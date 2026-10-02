@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.50.0',
+    version: '12.51.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -350,11 +350,14 @@ function cleanTextForJson(text) {
 function deepCleanSubtitleText(text) {
     if (!text) return text;
     
+    // Elimină complet interjecțiile singure (ex: Ah!, Oh!, Uh!, Aâ!, Aoleu!)
     let cleaned = text.replace(/^(ah|oh|uh|aâ|aoleu)[!.]*$/gmi, '').trim();
     if (!cleaned) return '';
 
+    // Corectează cliticele corupte și zgomotele de scriere
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
+    cleaned = cleaned.replace(/^A,\s*mi s-a plătit/gi, 'Mi s-a plătit');
 
     return cleaned;
 }
@@ -643,6 +646,7 @@ ADDITIONAL KNOWN ERRORS — NEVER REPEAT:
 - "o situație foarte complexă și în dinamică" → NEVER use "în dinamică" as a malformed literal translation; reconstruct naturally.
 - "Are o chestie în chestie" → NEVER produce meaningless repetitive constructions; reconstruct according to context.
 - "man-ar" → "mi-ar"
+- "A, mi s-a plătit" → "Mi s-a plătit" (Never leave unneeded conversational fillers at the start).
 
 FINAL MANDATORY CHECK:
 Before returning JSON, scan EVERY subtitle for invented words, corrupted words, malformed Romanian, missing diacritics, incorrect clitics, literal idioms, duplicated words, and English text left untranslated.
