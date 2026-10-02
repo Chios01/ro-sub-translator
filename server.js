@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.61.0',
+    version: '12.62.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -333,7 +333,7 @@ function cleanTextForJson(text) {
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
     clean = clean.replace(/\[[^\]]*?\]/g, '');
-    clean = clean.replace(/\([^)]*?(râsete\vert{}murmur\vert{}muzică\vert{}aplauze\vert{}urale\vert{}fluierături\vert{}music\vert{}sighs\vert{}cheering\vert{}applause\vert{}laughter)[^)]*?\)/gi, '');
+    clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughter)[^)]*?\)/gi, '');
     clean = clean.replace(/\([^)]*?\)/g, '');
 
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
@@ -353,11 +353,10 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    // Elimină complet interjecțiile scurte și bâlbâielile din interiorul sau exteriorul replicilor
-    let cleaned = text.replace(/\b(ăă|îhî|mhm|ah|oh|uh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
+    let cleaned = text.replace(/\b(ăă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
     cleaned = cleaned.replace(/\s+/g, ' ');
     
-    if (/^(ah|oh|uh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
+    if (/^(ah|oh|uh|agh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
     if (!cleaned) return '';
 
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
@@ -394,15 +393,24 @@ function formatSubtitleLine(text) {
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
     
-    let lines = text.split('\n').map(l => {
-        let cleanLine = l.trim();
-        cleanLine = cleanLine.replace(/^[-—–−]+\s*/, '');
-        return cleanLine;
-    }).filter(Boolean);
+    // Curățare unificată a liniilor și gestionarea vorbitorilor multipli cu linii noi (vertical, nu orizontal)
+    let rawLines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    let expandedLines = [];
+    
+    rawLines.forEach(l => {
+        // Dacă avem o linie cu doi vorbitori pe același rând (ex: "Replica 1 - Replica 2"), îi spargem vertical pe rânduri separate
+        if (l.includes(' - ') && !l.startsWith('- ')) {
+            let parts = l.split(' - ');
+            expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
+            expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
+        } else {
+            expandedLines.push(l);
+        }
+    });
 
     let wrappedLines = [];
-    for (let line of lines) {
-        if (line.length > 50) {
+    for (let line of expandedLines) {
+        if (line.length > 45) {
             let mid = Math.floor(line.length / 2);
             let leftSpace = line.lastIndexOf(' ', mid);
             let rightSpace = line.indexOf(' ', mid);
@@ -419,6 +427,8 @@ function formatSubtitleLine(text) {
             wrappedLines.push(line);
         }
     }
+
+    // Limităm strict la maximum 2 rânduri pe ecran pentru a respecta standardul video
     if (wrappedLines.length > 2) {
         text = wrappedLines.slice(0, 2).join('\n');
     } else {
@@ -489,10 +499,10 @@ function formatSubtitleLine(text) {
         [/\bse bucură de prea multă binefacere\b/gi, 'sunt bineveniți'],
         [/\bce-ți veni\b/gi, 'ce-ai pățit'],
         [/\bmarșă de manevră\b/gi, 'marjă de manevră'],
-        [/\b(Ah|Oh|Uh|Aoleu)[!.]+$/gmi, ''],
+        [/\b(Ah|Oh|Uh|Agh|Aoleu)[!.]+$/gmi, ''],
         [/\bV Dumneata\b/gi, 'Dumneata'],
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
-        [/\bca să o demonstram\b/gi, 'ca să o demonstrăm'],
+        [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
         [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile'],
         [/\b(să îți recuperezi banii)\b/gi, 'să îți recuperezi fondurile'],
         [/\b(să-și vadă banii înapoi)\b/gi, 'să-și recupereze banii']
@@ -540,10 +550,10 @@ Use the surrounding subtitle lines to determine the actual meaning.
 Do not translate an isolated line by guessing its meaning.
 Pay attention to who is speaking, who is being addressed, what happened immediately before, and what happens immediately after.
 
-4. SENTENCES SPLIT ACROSS SUBTITLE LINES
+4. SENTENCES SPLIT ACROSS SUBTITLE LINES & VERTICAL WRAPPING
 Subtitle lines may contain only part of a sentence.
 Treat consecutive lines as parts of the same spoken sentence when appropriate.
-Do not independently translate a fragment in a way that creates incorrect Romanian when combined with the following or previous line.
+CRITICAL FORMATTING: Whenever a subtitle contains two separate speakers or needs to span across lines due to length, ALWAYS split them onto separate vertical lines (one above the other) using line breaks, rather than packing everything onto a single long horizontal line. Use standard dialogue dashes (- ) for multi-speaker lines where appropriate.
 
 5. DO NOT TRANSLATE WORD-BY-WORD
 English words frequently have several meanings.
@@ -590,8 +600,8 @@ Use standard Romanian diacritics correctly: ă, â, î, ș, ț.
 14. DO NOT OVER-TRANSLATE
 Proper names, established names, brands, places, titles, character names and other elements that should remain unchanged must remain unchanged unless there is an established Romanian equivalent clearly required by context.
 
-15. AUDIO TAGS
-Remove non-dialogue audio tags such as [music], [sighs], [laughs], etc., unless the supplied subtitle context clearly requires preserving meaningful information.
+15. AUDIO TAGS & INTERJECTIONS REMOVAL
+Remove non-dialogue audio tags, standalone hesitation sounds, and meaningless interjections (such as "Ah!", "Oh!", "Uh!", "Agh!", "ăă", "mhm") entirely. Do not translate standalone grunts or cries.
 
 16. NO ENGLISH LEFT BEHIND — MANDATORY FINAL CHECK
 Translate EVERY actual English dialogue line into Romanian.
@@ -640,7 +650,7 @@ CRITICAL: If the English detection filter discovers that specific lines within a
 
 22. NEVER OUTPUT EMPTY DIALOGUE DASHES OR STANDALONE INTERJECTIONS
 NEVER output a subtitle line containing ONLY hyphens, dashes, or empty markers such as "-", "–", or "—".
-NEVER output standalone hesitation sounds or interjections such as "ăă", "îhî", "mhm", "Ah!", "Oh!", "Uh!", "Aâ!".
+NEVER output standalone hesitation sounds or interjections such as "ăă", "îhî", "mhm", "Ah!", "Oh!", "Uh!", "Agh!", "Aâ!".
 If a subtitle contains an empty dialogue dash or a standalone interjection with no actual spoken text after it, DELETE IT completely.
 Every subtitle line must contain actual translated text.
 
@@ -1062,7 +1072,7 @@ app.get('/:configData/translate', async (req, res) => {
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
-                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.green}✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
                 console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
                 console.log(`${c.cyan}==================================================\n${c.reset}`);
                 
@@ -1136,6 +1146,10 @@ function parseSrt(srt) {
 // ============================================================
 // UTILS & START
 // ============================================================
+
+text = function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+};
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
