@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.73.0',
+    version: '12.74.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -356,7 +356,15 @@ function deepCleanSubtitleText(text) {
     let cleaned = text.replace(/\b(ăă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
     cleaned = cleaned.replace(/\s+/g, ' ');
     
+    // Elimină replicile care sunt doar sunete de ezitare
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
+    
+    // NOU: Elimină replicile care conțin DOAR semne de punctuație (ex: ".")
+    if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
+
+    // NOU: Elimină textul rezidual generat de AI între paranteze la finalul rândului
+    cleaned = cleaned.replace(/\s*\([^)]+\)$/g, '');
+
     if (!cleaned) return '';
 
     // Corecții gramaticale și semantice stricte
@@ -522,7 +530,23 @@ function formatSubtitleLine(text) {
         [/\bV Dumneata\b/gi, 'Dumneata'],
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
         [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
-        [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile']
+        [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile'],
+        // CORECȚII NOI PENTRU HALLUCINATION TYPOS
+        [/\bialaltăieri\b/gi, 'alaltăieri'],
+        [/\bGăură\b/gi, 'Gaură'],
+        [/\bOricicum\b/gi, 'Oricum'],
+        [/\beceam\b/gi, 'eram'],
+        [/\bcei-o fi\b/gi, 'ce i-o fi'],
+        [/\btoți leau\b/gi, 'șleau'],
+        [/\bfeșciști\b/gi, 'fasciști'],
+        [/\bÎ j cunosc\b/gi, 'Îi cunosc'],
+        [/\bororbit\b/gi, 'orbit'],
+        [/\bi-ale refuze\b/gi, 'să le refuze'],
+        [/\bsecreției\b/gi, 'secretomaniei'],
+        [/\baliții\b/gi, 'aliații'],
+        [/\bnimiște\b/gi, 'niște'],
+        [/\bclasifiat\b/gi, 'clasificat'],
+        [/\bsomong\b/gi, 'somon']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -836,7 +860,7 @@ function hasUntranslatedEnglish(original, translated) {
     const originalNorm = normalize(original);
     const translatedNorm = normalize(translated);
 
-    // Am scos "a", "an", "or" pentru a preveni alarme false in romana
+    // Am adăugat cifre și contracții pentru a prinde replicile foarte scurte ratate ("five", "four", "I'm")
     const strongEnglish = new Set([
         'the', 'and', 'but', 'if', 'then', 'than',
         'they', 'them', 'their', 'we', 'us', 'our',
@@ -848,7 +872,9 @@ function hasUntranslatedEnglish(original, translated) {
         'would', 'could', 'should', 'will', 'shall', 'can', 'cannot',
         'do', 'does', 'did', 'have', 'has', 'had',
         'not', "don't", "isn't", "won't", "can't", "didn't",
-        'please', 'sorry', 'thanks', 'thank', 'yes', 'okay', 'ok'
+        'please', 'sorry', 'thanks', 'thank', 'yes', 'okay', 'ok',
+        'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+        "i'm", "i'll", "you're", "we're", "they're"
     ]);
 
     const englishMarkers = new Set([
@@ -864,10 +890,9 @@ function hasUntranslatedEnglish(original, translated) {
         'disregard', 'forget', 'ignore', 'remember',
         'good', 'bad', 'right', 'wrong', 'now', 'here', 'there',
         'very', 'really', 'just', 'only', 'still', 'already',
-        'first', 'last', 'next', 'back', 'again'
+        'first', 'last', 'next', 'back', 'again', 'colonel', 'minutes', 'ready'
     ]);
 
-    // Regex corectat pentru a INCLUDE diacriticele romanesti
     const tokenize = value => value.match(/[a-zăâîșț]+(?:'[a-zăâîșț]+)?/g) || [];
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
@@ -910,8 +935,8 @@ function hasCorruptedSubtitleText(text) {
     const s = String(text || '').trim();
     if (!s) return true;
 
-    if (/^(?:[-–—]\s*)+[.!?,:;]?\s*$/.test(s)) return true;
-    if (/^[-–—]\s*[.!?,:;]\s*/.test(s)) return true;
+    // Extins pentru a prinde replicile care sunt DOAR semne de punctuație
+    if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) return true;
 
     return false;
 }
@@ -1027,7 +1052,7 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
 // GLOBAL POST-CHECK + TARGETED RETRY
 // ============================================================
 
-async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) { // Am scazut la 1 pass pentru eficienta
+async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) { 
     let totalFixed = 0;
 
     for (let pass = 1; pass <= maxPasses; pass++) {
@@ -1052,7 +1077,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
             await sleep(2000); 
             let fixed = false;
 
-            for (let retry = 1; retry <= 2; retry++) { // Am scazut la 2 retry-uri
+            for (let retry = 1; retry <= 2; retry++) { 
                 try {
                     const keyState = await getAvailableKey(keyStates);
                     const current = translatedById[String(item.id)] || '';
