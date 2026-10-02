@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.47.0',
+    version: '12.48.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -347,8 +347,26 @@ function cleanTextForJson(text) {
 // FORMAT LINE & DICTIONARY
 // ============================================================
 
+function deepCleanSubtitleText(text) {
+    if (!text) return text;
+    
+    // Elimină interjecțiile singure pe rând (ex: Ah!, Oh!, Uh!, Aâ!)
+    let cleaned = text.replace(/^(ah|oh|uh|aâ|aoleu)[!.]*$/gmi, '').trim();
+    if (!cleaned) return '';
+
+    // Corectează cliticele corupte generate greșit de AI (ex: man-ar -> mi-ar, sau elimină cratimele duble)
+    cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
+    cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
+
+    return cleaned;
+}
+
 function formatSubtitleLine(text) {
     if (!text) return text;
+    
+    text = deepCleanSubtitleText(text);
+    if (!text) return ' ';
+
     let lowerText = text.toLowerCase();
     
     if (lowerText.includes('înțeles') && lowerText.includes('hei') && lowerText.includes('când')) {
@@ -624,12 +642,13 @@ KNOWN ERRORS FOUND IN THE CURRENT SUBTITLE — DO NOT REPEAT:
 - "izolatǎ" → "izolată" — use Romanian "ă", NEVER malformed "ǎ".
 - "E o chestie în chestie." → reconstruct naturally; NEVER produce meaningless/repetitive Romanian.
 - "<i>and munitions.</i>" → MUST be translated; NEVER leave English dialogue untranslated.
+- "man-ar" → "mi-ar" (Never output malformed pronoun contractions).
 
 FINAL CHECK:
 Before returning the JSON, scan every translated subtitle for:
 1. invented or corrupted Romanian words;
 2. missing or malformed diacritics (ă, â, î, ș, ț);
-3. incorrect clitic forms such as "Ț-am", "n-ar-păsa";
+3. incorrect clitic forms such as "Ț-am", "n-ar-păsa", "man-ar";
 4. duplicated or corrupted words;
 5. English dialogue left untranslated;
 6. unnatural literal translations;
