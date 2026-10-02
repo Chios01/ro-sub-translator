@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.1',
+    version: '12.78.2',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -547,7 +547,6 @@ function formatSubtitleLine(text) {
         [/\bparuri\b/gi, 'pariuri'],
         [/\bo raită\b/gi, 'un rateu'],
         [/\bdetonăm o raită\b/gi, 'declanșăm un eșec'],
-        // CORECCȚII NOI DIN ULTIMUL FIȘIER (V12.78.1):
         [/\bpe opt\b/gi, 'pe banca acuzaților'],
         [/\bpaharele lui Berzelius și poțiuni\b/gi, 'eprubetele și poțiunile'],
         [/\bniliște\b/gi, 'niște'],
@@ -567,7 +566,7 @@ function formatSubtitleLine(text) {
         [/\bpe opt așt[^\s]*,?\s*pe bănci\b/gi, 'pe banca acuzaților'],
         [/\bjiul\b/gi, 'fel'],
         [/\bdupă o oră și 58 de minute\b/gi, 'în exact o oră și 58 de minute'],
-        [/\bîi voi suna pe Lloyd Garrison\b/gi, îl voi suna pe Lloyd Garrison]
+        [/\bil voi suna pe Lloyd Garrison\b/gi, 'îl voi suna pe Lloyd Garrison']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -1478,7 +1477,7 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-app.get('/health', (req, res) => {
+app.get('/health', (res) => {
     res.json({ ok: true, service: 'RO Sub Translator', model: MODEL_NAME, version: manifest.version });
 });
 
