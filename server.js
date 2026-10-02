@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.71.0',
+    version: '12.72.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -359,13 +359,11 @@ function deepCleanSubtitleText(text) {
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
     if (!cleaned) return '';
 
-    // Corecții gramaticale și semantice stricte
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
     cleaned = cleaned.replace(/\b[Dd]e ce man pas[aă]\b/gi, 'De ce mi-ar păsa');
     cleaned = cleaned.replace(/\b[Dd]e ce man-ar pasa\b/gi, 'De ce mi-ar păsa');
     
-    // Corectare erori de scriere la clitice (șă-i -> să-i)
     cleaned = cleaned.replace(/\bșă-i\b/g, 'să-i');
     cleaned = cleaned.replace(/\bȘă-i\b/g, 'Să-i');
     cleaned = cleaned.replace(/\bșă-ți\b/g, 'să-ți');
@@ -373,7 +371,6 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\bșă-și\b/g, 'să-și');
     cleaned = cleaned.replace(/\bȘă-și\b/g, 'Să-și');
 
-    // Traduceri forțate
     cleaned = cleaned.replace(/^[aA]?[,\s]*mi s-a plătit\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/^[aA]?[,\s]*am fost plătit[aă]?\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/\bdistraggă\b/gi, 'distragă');
@@ -410,7 +407,6 @@ function formatSubtitleLine(text) {
     let expandedLines = [];
     
     rawLines.forEach(l => {
-        // Detectează forțat dialog dublu: ex "-Text. -Text" sau "Text. -Text" lipite
         let doubleDialogMatch = l.match(/^[-–—]?\s*(.+?[.!?])\s*[-–—]\s*(.+)$/);
         
         if (doubleDialogMatch) {
@@ -421,7 +417,6 @@ function formatSubtitleLine(text) {
             expandedLines.push('- ' + parts[0].trim());
             expandedLines.push('- ' + parts[1].trim());
         } else {
-            // Adaugă spațiu după cratima inițială dacă lipsește (ex: "-Baker" -> "- Baker")
             if (/^[-–—][^\s]/.test(l)) {
                 l = l.replace(/^[-–—]/, '- ');
             }
@@ -803,9 +798,9 @@ async function callGemini(prompt, keyState) {
                 throw new Error(`Cheie Gemini invalidă (${status}).`);
             }
             if (status === 429) {
-                keyState.pausedUntil = Date.now() + 61000;
-                await sleep(2000);
-                continue;
+                // Dacă primim limitare (Prea multe cereri), aruncăm cheia imediat
+                keyState.pausedUntil = Date.now() + 65000;
+                throw new Error(`Rate limit 429. Se schimbă cheia...`);
             }
             if (attempt < maxAttempts) {
                 await sleep(2000 * attempt);
@@ -875,15 +870,12 @@ function hasUntranslatedEnglish(original, translated) {
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
 
-    // Critical fix: identical English input/output is suspicious even
-    // when the line has fewer than 8 words.
     if (originalNorm === translatedNorm && tw.length > 0) {
         const strong = tw.filter(w => strongEnglish.has(w)).length;
         const markers = tw.filter(w => englishMarkers.has(w)).length;
         if (strong >= 1 || markers >= 2) return true;
     }
 
-    // Short lines need their own detection path.
     if (tw.length <= 7) {
         const strong = tw.filter(w => strongEnglish.has(w)).length;
         const originalStrong = ow.filter(w => strongEnglish.has(w)).length;
@@ -900,7 +892,6 @@ function hasUntranslatedEnglish(original, translated) {
         if (obviousPhrases.some(rx => rx.test(translatedNorm))) return true;
     }
 
-    // Longer lines keep the existing ratio-based safety net.
     if (tw.length >= 4) {
         const markerCount = tw.filter(w => englishMarkers.has(w)).length;
         const strongCount = tw.filter(w => strongEnglish.has(w)).length;
@@ -917,7 +908,6 @@ function hasCorruptedSubtitleText(text) {
     const s = String(text || '').trim();
     if (!s) return true;
 
-    // Catches artifacts such as "- ." or an empty dialogue marker.
     if (/^(?:[-–—]\s*)+[.!?,:;]?\s*$/.test(s)) return true;
     if (/^[-–—]\s*[.!?,:;]\s*/.test(s)) return true;
 
@@ -966,6 +956,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii netraduse în calupul ${globalChunkIndex + 1}. Retraducere punctuală...${c.reset}`);
                 
                 for (const badItem of untranslatedItems) {
+                    await sleep(1500); // Pauză pentru a nu bloca API-ul
                     const originalObj = chunk.find(obj => obj.id === badItem.id);
                     if (!originalObj) continue;
 
@@ -1031,8 +1022,6 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
 }
 
 // ============================================================
-
-// ============================================================
 // GLOBAL POST-CHECK + TARGETED RETRY
 // ============================================================
 
@@ -1058,9 +1047,10 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 2) 
         console.log(`${c.yellow}⚠ Detectate ${suspicious.length} replici suspecte${c.reset}`);
 
         for (const item of suspicious) {
+            await sleep(2000); // Pauză crucială de 2 secunde pentru a preveni 429
             let fixed = false;
 
-            for (let retry = 1; retry <= 2; retry++) {
+            for (let retry = 1; retry <= 3; retry++) {
                 try {
                     const keyState = await getAvailableKey(keyStates);
                     const current = translatedById[String(item.id)] || '';
@@ -1112,13 +1102,13 @@ Returnează DOAR JSON valid în forma:
                         fixed = true;
                         totalFixed++;
 
-                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată (${retry}/2)${c.reset}`);
+                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată (${retry}/3)${c.reset}`);
                         break;
                     }
 
-                    console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/3)${c.reset}`);
                 } catch (err) {
-                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/3): ${err.message}${c.reset}`);
                 }
             }
 
