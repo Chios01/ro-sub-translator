@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.57.0',
+    version: '12.59.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -333,7 +333,7 @@ function cleanTextForJson(text) {
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
     clean = clean.replace(/\[[^\]]*?\]/g, '');
-    clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughter)[^)]*?\)/gi, '');
+    clean = clean.replace(/\([^)]*?(râsete\vert{}murmur\vert{}muzică\vert{}aplauze\vert{}urale\vert{}fluierături\vert{}music\vert{}sighs\vert{}cheering\vert{}applause\vert{}laughter)[^)]*?\)/gi, '');
     clean = clean.replace(/\([^)]*?\)/g, '');
 
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
@@ -351,23 +351,24 @@ function deepCleanSubtitleText(text) {
     if (!text) return text;
     
     let trimmed = text.trim();
-    if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
+    if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return ' ';
 
     let cleaned = text.replace(/^(ah|oh|uh|aâ|aoleu)[!.]*$/gmi, '').trim();
-    if (!cleaned) return '';
+    if (!cleaned) return ' ';
 
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
     cleaned = cleaned.replace(/^A,\s*mi s-a plătit/gi, 'Mi s-a plătit');
+    cleaned = cleaned.replace(/\bdistraggă\b/gi, 'distragă');
 
     return cleaned;
 }
 
 function formatSubtitleLine(text) {
-    if (!text) return text;
+    if (!text) return ' ';
     
     text = deepCleanSubtitleText(text);
-    if (!text) return ' ';
+    if (!text.trim()) return ' ';
 
     let lowerText = text.toLowerCase();
     
@@ -629,82 +630,24 @@ Before returning the JSON, perform one final line-by-line language check:
 Return ONLY a valid JSON object using exactly the same numeric keys as the input.
 Do not add markdown, explanations, comments, or extra keys.
 
-21. ZERO TYPO / CORRUPTED ROMANIAN — MANDATORY FINAL CHECK
+21. TARGETED GRANULAR RETRY ON UNTRANSLATED ENGLISH LINES
+CRITICAL: If the English detection filter discovers that specific lines within a chunk have remained untranslated in English, DO NOT fail or re-translate the entire chunk of 165 lines. Instead, isolate ONLY the specific failing line indices, re-translate solely those specific lines in a targeted micro-request to Gemini, and merge them back seamlessly.
 
-Before returning the translated JSON, perform a final Romanian-language proofreading pass.
+22. NEVER OUTPUT EMPTY DIALOGUE DASHES
+NEVER output a subtitle line containing ONLY hyphens, dashes, or empty markers such as "-", "–", or "—".
+NEVER output multiple empty dialogue lines.
+If a subtitle contains an empty dialogue dash with no actual spoken text after it, DELETE THE DASH completely.
+Every subtitle line must contain actual translated text. If a line consists only of a dash or whitespace, remove it.
 
-ADDITIONAL KNOWN ERRORS — NEVER REPEAT:
+23. NO INVENTED OR CORRUPTED ROMANIAN WORDS
+NEVER invent Romanian words. Words such as "molmoșește", "anghang", "tangou" (when misused as a corrupted word) and similar malformed forms are strictly INVALID.
+If the exact Romanian expression is uncertain, use a simple, valid Romanian phrase based on surrounding context. Never invent words to imitate English sounds.
 
-- "molmoșește" → NEVER invent Romanian words; reconstruct naturally.
-- "Vor mai fi o problemă" → "Va mai fi o problemă"
-- "n-ar-păsa" → "n-ar păsa"
-- "la anghang luni de zile" → NEVER output invented/corrupted words such as "anghang"; reconstruct the intended meaning naturally.
-- "va trebui să constea într-o echipă întreagă" → "va trebui să conste dintr-o echipă întreagă"
-- "penthouses-ul" → "penthouse-ul" when referring to one penthouse.
-- "și pe ce o mai rămâne" → reconstruct with correct Romanian grammar; NEVER output corrupted syntax.
-- "frântură de gât" → NEVER translate an idiom literally into meaningless Romanian; reconstruct naturally from context.
-- "cearsafuri" → "cearșafuri"
-- "o situație foarte complexă și în dinamică" → NEVER use "în dinamică" as a malformed literal translation; reconstruct naturally.
-- "Are o chestie în chestie" → NEVER produce meaningless repetitive constructions; reconstruct according to context.
-- "man-ar" → "mi-ar"
-- "Ț-am cerut" → "Ți-am cerut"
-- "izolatǎ" → "izolată" — NEVER use Unicode "ǎ"; use Romanian "ă"
-- "foarte complexă în dinamică" → avoid literal/unnatural "în dinamică"; use natural Romanian according to context.
+24. ABSOLUTELY NO ENGLISH DIALOGUE LEFT
+After translation, inspect EVERY individual subtitle line. If any line remains an English dialogue sentence or clause, translate it into natural Romanian.
 
-25. ABSOLUTELY NO EMPTY DIALOGUE LINES
-
-NEVER output a line containing ONLY:
--
-–
-—
-
-NEVER output:
--
--
-
-NEVER output an empty dialogue marker.
-
-If a dialogue dash has no actual spoken text after it, DELETE THE DASH.
-
-Every subtitle line must contain actual translated text, except intentional formatting tags such as <i>...</i>.
-
-FINAL CHECK:
-Scan every output line before returning JSON.
-If any line consists only of "-", "–", or "—", remove it.
-
-26. ZERO INVENTED ROMANIAN WORDS
-
-NEVER invent Romanian words.
-
-Words such as:
-"molmoșește"
-"anghang"
-"tangou" when used as a corrupted word
-and similar malformed forms are INVALID.
-
-If the exact translation is uncertain, use a simple, valid Romanian expression based on the surrounding context.
-
-NEVER invent a word to imitate the sound of the English source.
-
-27. STRICT ROMANIAN GRAMMAR
-
-NEVER output malformed forms such as:
-"Ț-am"
-"Eu acționează"
-"cu a astea"
-
-Use:
-"Ți-am"
-"Eu acționez"
-and natural Romanian grammar.
-
-FINAL CHECK:
-Read every subtitle as a native Romanian speaker.
-No invented words.
-No corrupted grammar.
-No empty dashes.
-No untranslated English dialogue.
-No malformed punctuation such as "--" when normal Romanian punctuation is required.
+25. STRICT GRAMMAR AND CLEAN PUNCTUATION
+NEVER output malformed forms such as "Ț-am", "Eu acționez" (or incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am") and proper grammar.
 
 </translation_master_rules>
 
@@ -897,13 +840,44 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 };
             });
 
-            const untranslated = results.filter(result => {
+            // Găsim exclusiv liniile care au rămas în engleză
+            const untranslatedItems = results.filter(result => {
                 const original = chunk.find(obj => obj.id === result.id)?.text || '';
                 return hasUntranslatedEnglish(original, result.text);
             });
 
-            if (untranslated.length > 0) {
-                throw new Error(`Detectate ${untranslated.length} linii netraduse în engleză; reîncerc calupul.`);
+            // Dacă avem linii netraduse, facem retrying punctual DOAR pe acele linii, în loc să dăm eroare pe tot calupul
+            if (untranslatedItems.length > 0 && depth < 2) {
+                console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii netraduse în calupul ${globalChunkIndex + 1}. Retraducere punctuală...${c.reset}`);
+                
+                for (const badItem of untranslatedItems) {
+                    const originalObj = chunk.find(obj => obj.id === badItem.id);
+                    if (!originalObj) continue;
+
+                    const singlePrompt = `
+${MASTER_TRANSLATION_PROMPT}
+
+Tradu strict această singură linie de subtitrare în limba română naturală, păstrând exact cheia "${originalObj.id}":
+{
+  "${originalObj.id}": "${originalObj.text}"
+}
+`;
+                    try {
+                        const singleRaw = await callGemini(singlePrompt, keyState);
+                        const sIdx = singleRaw.indexOf('{');
+                        const eIdx = singleRaw.lastIndexOf('}');
+                        const singleJson = JSON.parse(singleRaw.slice(sIdx, eIdx + 1));
+                        const fixedVal = singleJson[originalObj.id] || singleJson[String(originalObj.id)];
+                        if (fixedVal) {
+                            const targetRes = results.find(r => r.id === originalObj.id);
+                            if (targetRes) {
+                                targetRes.text = formatSubtitleLine(fixedVal);
+                            }
+                        }
+                    } catch (err) {
+                        // Dacă micro-cererea eșuează, lăsăm formatSubtitleLine să curețe ce se poate
+                    }
+                }
             }
 
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
