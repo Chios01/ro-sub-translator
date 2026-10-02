@@ -907,6 +907,7 @@ async function callGeminiQc(prompt, qcKeyStates) {
             const body = {
                 contents: [
                     {
+                        role: 'user',
                         parts: [
                             {
                                 text: prompt
