@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.67.0',
+    version: '12.69.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -353,21 +353,29 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    // Ștergem interjecțiile și ticulurile verbale absolut de oriunde ar fi pe rând
     let cleaned = text.replace(/\b(ăă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
     cleaned = cleaned.replace(/\s+/g, ' ');
     
-    // Eliminăm rândul dacă la final a rămas doar o interjecție (sau cu cratimă)
-    if (/^[-—–\s]*(ah|oh|uh|agh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
+    if (/^(ah|oh|uh|agh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
     if (!cleaned) return '';
 
-    // Corecții punctuale
+    // Corecții clitice și gramaticale stricte
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
-    cleaned = cleaned.replace(/\b[Dd]e ce man pasă\b/gi, 'De ce mi-ar păsa');
+    cleaned = cleaned.replace(/\b[Dd]e ce man pas[aă]\b/gi, 'De ce mi-ar păsa');
     cleaned = cleaned.replace(/\b[Dd]e ce man-ar pasa\b/gi, 'De ce mi-ar păsa');
-    cleaned = cleaned.replace(/^[aA][,\s]+mi s-a plătit/gi, 'Mi s-a plătit');
-    cleaned = cleaned.replace(/^[aA]m fost plătit\.?/gi, 'Mi s-a plătit.');
+    
+    // Corectare erori de scriere șă-i / șă-ți / șă-și
+    cleaned = cleaned.replace(/\bșă-i\b/g, 'să-i');
+    cleaned = cleaned.replace(/\bȘă-i\b/g, 'Să-i');
+    cleaned = cleaned.replace(/\bșă-ți\b/g, 'să-ți');
+    cleaned = cleaned.replace(/\bȘă-ți\b/g, 'Să-ți');
+    cleaned = cleaned.replace(/\bșă-și\b/g, 'să-și');
+    cleaned = cleaned.replace(/\bȘă-și\b/g, 'Să-și');
+
+    // Traduceri forțate 
+    cleaned = cleaned.replace(/^[aA]?[,\s]*mi s-a plătit\.?/gi, 'Mi-am primit banii.');
+    cleaned = cleaned.replace(/^[aA]?[,\s]*am fost plătit[aă]?\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/\bdistraggă\b/gi, 'distragă');
 
     return cleaned;
@@ -398,32 +406,35 @@ function formatSubtitleLine(text) {
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
     
-    // Spargem pe verticală dialogurile lipite de Gemini
     let rawLines = text.split('\n').map(l => l.trim()).filter(Boolean);
     let expandedLines = [];
     
     rawLines.forEach(l => {
-        // Dacă rândul conține un punct/semn de exclamare urmat de " - Text", îl spargem obligatoriu
-        let match1 = l.match(/^-\s*(.*?[.!?])\s*-\s*([A-ZĂÂÎȘȚa-zăâîșț].*)$/);
-        if (match1) {
-            expandedLines.push('- ' + match1[1].trim());
-            expandedLines.push('- ' + match1[2].trim());
-            return;
-        }
+        let matchDialogLipit = l.match(/^(.*?[.!?])\s*[-–—]\s*([A-ZĂÂÎȘȚa-zăâîșț].*)$/);
         
-        let match2 = l.match(/^(.*?[.!?])\s+-\s+([A-ZĂÂÎȘȚa-zăâîșț].*)$/);
-        if (!l.startsWith('-') && match2) {
-            expandedLines.push('- ' + match2[1].trim());
-            expandedLines.push('- ' + match2[2].trim());
-            return;
+        if (matchDialogLipit && !l.startsWith('-')) {
+            expandedLines.push('- ' + matchDialogLipit[1].trim());
+            expandedLines.push('- ' + matchDialogLipit[2].trim());
+        } else if (l.includes(' - ') && !l.startsWith('- ')) {
+            let parts = l.split(' - ');
+            expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
+            expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
+        } else if (l.includes(' – ') && !l.startsWith('- ')) {
+            let parts = l.split(' – ');
+            expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
+            expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
+        } else if (l.includes(' — ') && !l.startsWith('- ')) {
+            let parts = l.split(' — ');
+            expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
+            expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
+        } else {
+            expandedLines.push(l);
         }
-
-        expandedLines.push(l);
     });
 
     let wrappedLines = [];
     for (let line of expandedLines) {
-        if (line.length > 55) {
+        if (line.length > 42) {
             let mid = Math.floor(line.length / 2);
             let leftSpace = line.lastIndexOf(' ', mid);
             let rightSpace = line.indexOf(' ', mid);
@@ -441,7 +452,6 @@ function formatSubtitleLine(text) {
         }
     }
 
-    // Împachetăm rândurile (sus-jos)
     if (wrappedLines.length > 2) {
         text = wrappedLines.slice(0, 2).join('\n');
     } else {
@@ -516,9 +526,7 @@ function formatSubtitleLine(text) {
         [/\bV Dumneata\b/gi, 'Dumneata'],
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
         [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
-        [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile'],
-        [/\b(să îți recuperezi banii)\b/gi, 'să îți recuperezi fondurile'],
-        [/\b(să-și vadă banii înapoi)\b/gi, 'să-și recupereze banii']
+        [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -661,31 +669,25 @@ Do not add markdown, explanations, comments, or extra keys.
 21. TARGETED GRANULAR RETRY ON UNTRANSLATED ENGLISH LINES
 CRITICAL: If the English detection filter discovers that specific lines within a chunk have remained untranslated in English, DO NOT fail or re-translate the entire chunk of 165 lines. Instead, isolate ONLY the specific failing line indices, re-translate solely those specific lines in a targeted micro-request to Gemini, and merge them back seamlessly.
 
-22. MULTI-SPEAKER DIALOGUE FORMATTING - CRITICAL
-When a subtitle contains two different speakers, you MUST output them on TWO SEPARATE LINES using a line break (\\n). 
-Do NOT output them on a single horizontal line.
-
-CORRECT:
-- Baker, ia coridorul.
-- Am înțeles!
-
-INVALID (DO NOT DO THIS):
-- Baker, ia coridorul. - Am înțeles!
-
-23. NEVER OUTPUT EMPTY DIALOGUE DASHES OR STANDALONE INTERJECTIONS
+22. NEVER OUTPUT EMPTY DIALOGUE DASHES OR STANDALONE INTERJECTIONS
 NEVER output a subtitle line containing ONLY hyphens, dashes, or empty markers such as "-", "–", or "—".
 NEVER output standalone hesitation sounds or interjections such as "ăă", "îhî", "mhm", "Ah!", "Oh!", "Uh!", "Agh!", "Aâ!".
 If a subtitle contains an empty dialogue dash or a standalone interjection with no actual spoken text after it, DELETE IT completely.
 Every subtitle line must contain actual translated text.
 
-24. NO INVENTED OR CORRUPTED ROMANIAN WORDS
+23. NO INVENTED OR CORRUPTED ROMANIAN WORDS
 NEVER invent Romanian words. Words such as "molmoșește", "anghang", "tangou" (when misused as a corrupted word) and similar malformed forms sunt strict interzise.
 
-25. ABSOLUTELY NO ENGLISH DIALOGUE LEFT
+24. ABSOLUTELY NO ENGLISH DIALOGUE LEFT
 After translation, inspect EVERY individual subtitle line. If any line remains an English dialogue sentence or clause, translate it into natural Romanian.
 
-26. STRICT GRAMMAR AND CLEAN PUNCTUATION
-NEVER output malformed forms such as "Ț-am", "Eu acționez" (or incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am") and proper grammar.
+25. STRICT GRAMMAR AND CLEAN PUNCTUATION
+NEVER output malformed forms such as "Ț-am", "Eu acționez" (or incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am", "să-i", "să-ți", "să-și") and proper grammar. 
+
+CRITICAL ERRORS TO AVOID:
+- "De ce man pasă?" → "De ce mi-ar păsa?"
+- "Mi s-a plătit" / "Am fost plătit" → "Mi-am primit banii."
+- "șă-i", "șă-ți", "șă-și" → NEVER output "șă"; use "să-i", "să-ți", "să-și".
 
 </translation_master_rules>
 
