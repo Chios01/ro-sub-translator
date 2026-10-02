@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.43.0',
+    version: '12.44.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -438,7 +438,24 @@ function formatSubtitleLine(text) {
         [/\blaptepentru\b/gi, 'lapte pentru'],
         [/\bc-total\b/gi, 'total'],
         [/\bÎntreabă--i\b/gi, 'Întreabă-i'],
-        [/「/g, '']
+        [/「/g, ''],
+        [/\bdirectorenul\b/gi, 'directorul'],
+        [/\bstorcești\b/gi, 'strivești'],
+        [/\bcea mai albitură\b/gi, 'cea mai albă'],
+        [/\bcroșetă-n branhii\b/gi, 'croșeu în branhii'],
+        [/\bfătat de prostie\b/gi, 'futut de prostie'],
+        [/\bpsihoopat\b/gi, 'psihopat'],
+        [/\bregrei\b/gi, 'regreți'],
+        [/\bo 26\b/gi, 'asta'],
+        [/\bputiul\b/gi, 'puțoiul'],
+        [/\bPlătitorul de pește\b/gi, 'Strivitorul de calcan'],
+        [/\bCentura de Rugină\b/gi, 'Rust Belt'],
+        [/\bm-ar ține de șase De șase\b/gi, 'mi-aș păzi spatele'],
+        [/\batacat cuvântat\b/gi, 'atacat dur'],
+        [/\bMica Nină\b/gi, 'Little Nina'],
+        [/\bmass-media principală\b/gi, 'presa mainstream'],
+        [/\bun drac de cuvânt\b/gi, 'o vorbă'],
+        [/\bScoală-ți-o zile în șir\b/gi, 'Scoală-n puii mei non-stop']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
