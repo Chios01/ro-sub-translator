@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.69.0',
+    version: '12.70.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -359,13 +359,13 @@ function deepCleanSubtitleText(text) {
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
     if (!cleaned) return '';
 
-    // Corecții clitice și gramaticale stricte
+    // Corecții gramaticale și semantice stricte
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
     cleaned = cleaned.replace(/\b[Dd]e ce man pas[aă]\b/gi, 'De ce mi-ar păsa');
     cleaned = cleaned.replace(/\b[Dd]e ce man-ar pasa\b/gi, 'De ce mi-ar păsa');
     
-    // Corectare erori de scriere șă-i / șă-ți / șă-și
+    // Corectare erori de scriere la clitice (șă-i -> să-i)
     cleaned = cleaned.replace(/\bșă-i\b/g, 'să-i');
     cleaned = cleaned.replace(/\bȘă-i\b/g, 'Să-i');
     cleaned = cleaned.replace(/\bșă-ți\b/g, 'să-ți');
@@ -373,7 +373,7 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\bșă-și\b/g, 'să-și');
     cleaned = cleaned.replace(/\bȘă-și\b/g, 'Să-și');
 
-    // Traduceri forțate 
+    // Traduceri forțate
     cleaned = cleaned.replace(/^[aA]?[,\s]*mi s-a plătit\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/^[aA]?[,\s]*am fost plătit[aă]?\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/\bdistraggă\b/gi, 'distragă');
@@ -410,37 +410,35 @@ function formatSubtitleLine(text) {
     let expandedLines = [];
     
     rawLines.forEach(l => {
-        let matchDialogLipit = l.match(/^(.*?[.!?])\s*[-–—]\s*([A-ZĂÂÎȘȚa-zăâîșț].*)$/);
+        // Detectează forțat dialog dublu: ex "-Text. -Text" sau "Text. -Text" lipite
+        let doubleDialogMatch = l.match(/^[-–—]?\s*(.+?[.!?])\s*[-–—]\s*(.+)$/);
         
-        if (matchDialogLipit && !l.startsWith('-')) {
-            expandedLines.push('- ' + matchDialogLipit[1].trim());
-            expandedLines.push('- ' + matchDialogLipit[2].trim());
-        } else if (l.includes(' - ') && !l.startsWith('- ')) {
+        if (doubleDialogMatch) {
+            expandedLines.push('- ' + doubleDialogMatch[1].trim());
+            expandedLines.push('- ' + doubleDialogMatch[2].trim());
+        } else if (l.includes(' - ') && !l.startsWith('-')) {
             let parts = l.split(' - ');
-            expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
-            expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
-        } else if (l.includes(' – ') && !l.startsWith('- ')) {
-            let parts = l.split(' – ');
-            expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
-            expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
-        } else if (l.includes(' — ') && !l.startsWith('- ')) {
-            let parts = l.split(' — ');
-            expandedLines.push('- ' + parts[0].replace(/^-\s*/, '').trim());
-            expandedLines.push('- ' + parts[1].replace(/^-\s*/, '').trim());
+            expandedLines.push('- ' + parts[0].trim());
+            expandedLines.push('- ' + parts[1].trim());
         } else {
+            // Adaugă spațiu după cratima inițială dacă lipsește (ex: "-Baker" -> "- Baker")
+            if (/^[-–—][^\s]/.test(l)) {
+                l = l.replace(/^[-–—]/, '- ');
+            }
             expandedLines.push(l);
         }
     });
 
     let wrappedLines = [];
     for (let line of expandedLines) {
-        if (line.length > 42) {
+        if (line.length > 50) {
             let mid = Math.floor(line.length / 2);
             let leftSpace = line.lastIndexOf(' ', mid);
             let rightSpace = line.indexOf(' ', mid);
             let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
                 ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
                 Math.max(leftSpace, rightSpace);
+            
             if (splitIndex !== -1) {
                 wrappedLines.push(line.substring(0, splitIndex).trim());
                 wrappedLines.push(line.substring(splitIndex + 1).trim());
@@ -526,7 +524,9 @@ function formatSubtitleLine(text) {
         [/\bV Dumneata\b/gi, 'Dumneata'],
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
         [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
-        [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile']
+        [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile'],
+        [/\b(să îți recuperezi banii)\b/gi, 'să îți recuperezi fondurile'],
+        [/\b(să-și vadă banii înapoi)\b/gi, 'să-și recupereze banii']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
