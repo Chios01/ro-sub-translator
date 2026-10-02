@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.11.2',
+    version: '12.40.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -291,7 +291,7 @@ async function handleSubtitles(req, res) {
             let labelName = `🇷🇴 RO AI [${index + 1}]`;
             if (tagMatch) {
                 let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
+                labelName = `🇷🇴 RO AI [${index + 1}] •${cleanTag}`;
             }
 
             return {
@@ -312,7 +312,7 @@ app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
 app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 
 // ============================================================
-// CLEAN TEXT FOR JSON (ELIMINARE SUNETE ENervante ȘI NOTE MUZICALE)
+// CLEAN TEXT FOR JSON 
 // ============================================================
 
 function cleanTextForJson(text) {
@@ -326,7 +326,7 @@ function cleanTextForJson(text) {
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
     clean = clean.replace(/\[[^\]]*?\]/g, '');
-    clean = clean.replace(/\([^)]*?(râsete\vert{}murmur\vert{}muzică\vert{}aplauze\vert{}urale\vert{}fluierături\vert{}music\vert{}sighs\vert{}cheering\vert{}applause\vert{}laughter)[^)]*?\)/gi, '');
+    clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughter)[^)]*?\)/gi, '');
     clean = clean.replace(/\([^)]*?\)/g, '');
 
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
@@ -337,7 +337,7 @@ function cleanTextForJson(text) {
 }
 
 // ============================================================
-// FORMAT LINE & DICTIONARY (POST-PROCESARE, DIALOGURI FĂRĂ LINIUȚE)
+// FORMAT LINE & DICTIONARY
 // ============================================================
 
 function formatSubtitleLine(text) {
@@ -361,7 +361,6 @@ function formatSubtitleLine(text) {
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
     
-    // Curățarea liniuțelor de dialog enervante de la începutul rândurilor
     let lines = text.split('\n').map(l => {
         let cleanLine = l.trim();
         cleanLine = cleanLine.replace(/^[-—–−]+\s*/, '');
@@ -422,157 +421,38 @@ function formatSubtitleLine(text) {
 }
 
 // ============================================================
-// TRANSLATION ROUTE (CU CACHE RAM, ARHIVĂ UNICĂ ȘI KEEP-ALIVE)
-// ============================================================
-
-app.get('/:configData/translate', async (req, res) => {
-    const imdbId = req.query.id;
-    const targetUrl = req.query.targetUrl || req.query.url;
-    const configData = req.params.configData;
-
-    if (!targetUrl) return res.status(400).send('Lipsă URL sursă.');
-
-    let userKeys = [];
-    try {
-        const decoded = Buffer.from(configData, 'base64').toString('utf8');
-        userKeys = JSON.parse(decoded);
-    } catch(e) {
-        return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
-    }
-
-    if (!Array.isArray(userKeys)) userKeys = [];
-    userKeys = userKeys.map(k => String(k).trim()).filter(Boolean);
-
-    if (!userKeys.length) {
-        return res.status(400).send('Nu există chei Gemini configurate.');
-    }
-
-    const cacheKey = targetUrl;
-
-    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
-        console.log(`${c.green}⚡ [Cache RAM] Servit instant pentru: ${imdbId}${c.reset}`);
-        res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
-        return res.send(memoryCache[cacheKey]);
-    }
-
-    res.writeHead(200, {
-        'Content-Type': 'application/x-subrip; charset=utf-8',
-        'Transfer-Encoding': 'chunked'
-    });
-    res.flushHeaders();
-
-    const keepAlive = setInterval(() => {
-        res.write(' \n');
-    }, 8000);
-
-    req.on('close', () => {
-        clearInterval(keepAlive);
-    });
-
-    try {
-        let processPromise;
-
-        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
-            processPromise = memoryCache[cacheKey];
-        } else {
-            const startTime = Date.now();
-            
-            processPromise = (async () => {
-                const srtRes = await axios.get(targetUrl, {
-                    headers: { 'User-Agent': BROWSER_USER_AGENT },
-                    timeout: 30000,
-                    responseType: 'text'
-                });
-                
-                const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
-                console.log(`${c.cyan}\n==================================================${c.reset}`);
-                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
-                return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
-            })();
-            
-            memoryCache[cacheKey] = processPromise;
-            cleanMemoryCache(); 
-            
-            processPromise.then(translatedSrtString => {
-                memoryCache[cacheKey] = translatedSrtString;
-                cleanMemoryCache(); 
-                
-                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-                const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
-                
-                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
-                
-            }).catch((err) => {
-                console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
-                delete memoryCache[cacheKey];
-            });
-        }
-
-        const finalSrt = await processPromise;
-        
-        if (finalSrt && finalSrt.trim().length > 0) {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
-            
-            const existingIndex = secretArchive.findIndex(item => item.id === imdbId);
-            if (existingIndex !== -1) {
-                secretArchive.splice(existingIndex, 1);
-            }
-
-            secretArchive.unshift({ id: imdbId, time: timeStr, content: finalSrt });
-            if (secretArchive.length > 10) secretArchive.pop();
-        }
-
-        clearInterval(keepAlive);
-        res.write(finalSrt);
-        res.end();
-
-    } catch (error) {
-        clearInterval(keepAlive);
-        console.error('Translation error:', error.message);
-        if (!res.headersSent) {
-            res.status(500).send('Translation failed: ' + error.message);
-        } else {
-            res.end();
-        }
-    }
-});
-
-// ============================================================
 // MASTER CINEMATIC TRANSLATION PROMPT
 // ============================================================
 
 const MASTER_TRANSLATION_PROMPT = `
-You are a professional cinematic Romanian translator. Your ONLY purpose is to translate an English subtitle JSON array into natural, conversational Romanian.
+You are an expert professional English-to-Romanian cinematic subtitle translator. Your ONLY purpose is to translate an English subtitle JSON array into natural, fluent, and grammatically correct Romanian.
 
 <translation_master_rules>
-1. THE GOLDEN RULE: Translate the scene, not just the words. Recreate the dialogue naturally in Romanian. Do not use literal translations, mechanical phrasing, or English word order.
-2. SLANG & PROFANITY: Preserve the original register. Do not censor "fuck", "shit", etc. Adapt them into natural Romanian equivalents (e.g., vulgarity stays vulgar, slang stays slang).
-3. CONTEXT & GENDER: Pay extreme attention to context. If it's clear a female is speaking, use feminine verb agreements ("Am fost plătită"). 
-4. SARCASM & HUMOR: Sarcasm, irony, and jokes must survive the translation. Adapt puns if necessary so the Romanian viewer gets the same emotional effect.
-5. NO INVENTED WORDS: Use ONLY standard Romanian dictionary words. Never invent conjugations, mashups, or non-existent words.
-6. SPLIT LINES & CONTINUITY: Subtitles are often cut mid-sentence. Read the surrounding context and translate so the sentence flows naturally across lines. 
-7. CLEAN UP: Remove all audio tags (e.g., [sighs], [music]). Do not translate character names.
-8. 100% TRANSLATION: Do NOT leave any English words or phrases untranslated. Everything must be in Romanian.
-9. NO ALTERNATIVES: Never provide multiple options in brackets like (varianta 1 | varianta 2). Make a firm choice and provide only the final Romanian text.
-10. NO FOREIGN SCRIPTS: Use only the Latin alphabet and standard Romanian diacritics (ă, â, î, ș, ț). Never generate Asian, Cyrillic, or other foreign characters.
+1. THE GOLDEN RULE: Translate the scene and intention, not just the words. Never follow English word order when it creates unnatural Romanian. Recreate the dialogue so it sounds native.
+2. SLANG & PROFANITY: Preserve the original register. Do not censor "fuck", "shit", etc. Adapt them into natural Romanian equivalents (vulgarity stays vulgar, slang stays slang).
+3. CONTEXT & GENDER: Use the surrounding lines to determine meaning. Pay extreme attention to who is speaking. Use correct feminine/masculine agreements without randomly switching.
+4. SARCASM & HUMOR: Sarcasm, irony, and jokes must survive the translation. Adapt puns so the Romanian viewer gets the same emotional effect.
+5. STRICT GRAMMAR & NO INVENTED WORDS: Use ONLY real Romanian dictionary words. Never invent conjugations or non-existent mashups. Output must have perfect verb/noun/adjective agreement.
+6. PRONOUNS & CONTRACTIONS: Pay massive attention to Romanian forms (e.g., să-mi, să-ți, să-l, mi-ai, ți-ai, n-am, n-ai, n-are). Never output broken combinations.
+7. SPLIT LINES & CONTINUITY: Subtitles are often cut mid-sentence. Read context and connect fragments naturally so the sentence flows logically across lines.
+8. CLEAN UP & PRESERVATION: Remove all audio tags (e.g., [sighs], [music]). Do NOT translate proper names, brands, or places.
+9. 100% TRANSLATION: Translate all actual English dialogue. Do not leave English words behind unless they are established names.
+10. NO ALTERNATIVES & NO MARKDOWN: Make a firm choice. Never provide options like (var1 | var2). Use standard Romanian diacritics (ă, â, î, ș, ț).
+
+INTERNAL CHECK: Before answering, silently ensure your Romanian sentences are grammatically complete, use correct word boundaries, and accurately reflect the English meaning.
 </translation_master_rules>
 
 <few_shot_examples>
 - Idiom: "Give me a break." -> "Hai, lasă-mă."
 - Sarcasm: "Great. Just great." -> "Minunat. Pur și simplu minunat."
-- Natural phrasing: "Are you coming with us?" -> "Vii cu noi?"
-- Slang/Casual: "What the hell, man?" -> "Ce naiba, frate?"
-- Contextual meaning: "You better watch yourself." -> "Ai grijă."
+- Conversational: "Are you coming with us?" -> "Vii cu noi?"
+- Slang: "What the hell, man?" -> "Ce naiba, frate?"
+- Contractions/Natural: "We don't have anything in common." -> "N-avem nimic în comun."
+- Context: "You better watch yourself." -> "Ai grijă."
 - Short & Natural: "I'm gonna kill you." -> "Te omor."
 </few_shot_examples>
 
-JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact input keys. Do not add markdown, explanations, or extra text.
+JSON ONLY: Reply STRICTLY with a valid JSON object matching the exact numeric input keys. Do not add markdown (\`\`\`json), explanations, comments, or extra text.
 `;
 
 // ============================================================
@@ -806,7 +686,129 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 }
 
 // ============================================================
-// SRT PARSER NATIV (CU INTEGRARE CLEAN TEXT)
+// TRANSLATION ROUTE
+// ============================================================
+
+app.get('/:configData/translate', async (req, res) => {
+    const imdbId = req.query.id;
+    const targetUrl = req.query.targetUrl || req.query.url;
+    const configData = req.params.configData;
+
+    if (!targetUrl) return res.status(400).send('Lipsă URL sursă.');
+
+    let userKeys = [];
+    try {
+        const decoded = Buffer.from(configData, 'base64').toString('utf8');
+        userKeys = JSON.parse(decoded);
+    } catch(e) {
+        return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
+    }
+
+    if (!Array.isArray(userKeys)) userKeys = [];
+    userKeys = userKeys.map(k => String(k).trim()).filter(Boolean);
+
+    if (!userKeys.length) {
+        return res.status(400).send('Nu există chei Gemini configurate.');
+    }
+
+    const cacheKey = targetUrl;
+
+    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
+        console.log(`${c.green}⚡ [Cache RAM] Servit instant pentru: ${imdbId}${c.reset}`);
+        res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
+        return res.send(memoryCache[cacheKey]);
+    }
+
+    res.writeHead(200, {
+        'Content-Type': 'application/x-subrip; charset=utf-8',
+        'Transfer-Encoding': 'chunked'
+    });
+    res.flushHeaders();
+
+    const keepAlive = setInterval(() => {
+        res.write(' \n');
+    }, 8000);
+
+    req.on('close', () => {
+        clearInterval(keepAlive);
+    });
+
+    try {
+        let processPromise;
+
+        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
+            processPromise = memoryCache[cacheKey];
+        } else {
+            const startTime = Date.now();
+            
+            processPromise = (async () => {
+                const srtRes = await axios.get(targetUrl, {
+                    headers: { 'User-Agent': BROWSER_USER_AGENT },
+                    timeout: 30000,
+                    responseType: 'text'
+                });
+                
+                const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
+                console.log(`${c.cyan}\n==================================================${c.reset}`);
+                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                
+                return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
+            })();
+            
+            memoryCache[cacheKey] = processPromise;
+            cleanMemoryCache(); 
+            
+            processPromise.then(translatedSrtString => {
+                memoryCache[cacheKey] = translatedSrtString;
+                cleanMemoryCache(); 
+                
+                const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+                const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
+                
+                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                
+            }).catch((err) => {
+                console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
+                delete memoryCache[cacheKey];
+            });
+        }
+
+        const finalSrt = await processPromise;
+        
+        if (finalSrt && finalSrt.trim().length > 0) {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
+            
+            const existingIndex = secretArchive.findIndex(item => item.id === imdbId);
+            if (existingIndex !== -1) {
+                secretArchive.splice(existingIndex, 1);
+            }
+
+            secretArchive.unshift({ id: imdbId, time: timeStr, content: finalSrt });
+            if (secretArchive.length > 10) secretArchive.pop();
+        }
+
+        clearInterval(keepAlive);
+        res.write(finalSrt);
+        res.end();
+
+    } catch (error) {
+        clearInterval(keepAlive);
+        console.error('Translation error:', error.message);
+        if (!res.headersSent) {
+            res.status(500).send('Translation failed: ' + error.message);
+        } else {
+            res.end();
+        }
+    }
+});
+
+// ============================================================
+// SRT PARSER NATIV 
 // ============================================================
 
 function parseSrt(srt) {
