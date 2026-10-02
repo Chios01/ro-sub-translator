@@ -26,7 +26,6 @@ const BROWSER_USER_AGENT =
 
 const CHUNK_SIZE = 165;
 
-// Rămâne 3, conform preferințelor tale
 const CONCURRENCY_LIMIT = Math.max(
     1,
     Math.min(
@@ -80,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.76.0',
+    version: '12.77.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -541,7 +540,6 @@ function formatSubtitleLine(text) {
         [/\bnimiște\b/gi, 'niște'],
         [/\bclasifiat\b/gi, 'clasificat'],
         [/\bsomong\b/gi, 'somon'],
-        // NOI ADAUGARI (HALLUCINATION TYPOS):
         [/\bopt bancă\b/gi, 'banca'],
         [/\bpa,\s*o să-ți\b/gi, 'păi, o să-ți'],
         [/\bSunt tot un an de uium\.?\b/gi, 'Eram un dezastru'],
@@ -864,7 +862,6 @@ function hasUntranslatedEnglish(original, translated) {
     const originalNorm = normalize(original);
     const translatedNorm = normalize(translated);
 
-    // Am adăugat mai multe cuvinte cheie mici (for, in, on, to) și numere pentru a curăța definitiv reziduurile englezești
     const strongEnglish = new Set([
         'the', 'and', 'but', 'if', 'then', 'than',
         'they', 'them', 'their', 'we', 'us', 'our',
@@ -936,13 +933,24 @@ function hasUntranslatedEnglish(original, translated) {
     return false;
 }
 
-function hasCorruptedSubtitleText(text) {
+function hasCorruptedSubtitleText(text, originalText) {
     const s = String(text || '').trim();
-    if (!s) return true;
+    const orig = String(originalText || '').trim();
 
-    if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) return true;
-    
-    // Filtrăm forțat absolut orice caracter din limbile asiatice și chirilice pe care AI-ul le poate „halucina”
+    const isOriginalEmptyOrJunk = !orig || 
+        /^(?:[-–—\s.?!,;:'"♪♫♬♩#]+)$/.test(orig) || 
+        /^(ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî)[!.,?]*$/i.test(orig);
+
+    if (!s) {
+        if (isOriginalEmptyOrJunk) return false;
+        return true;
+    }
+
+    if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) {
+        if (isOriginalEmptyOrJunk) return false;
+        return true;
+    }
+
     if (/[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF]/.test(s)) return true;
 
     return false;
@@ -983,7 +991,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
             const untranslatedItems = results.filter(result => {
                 const original = chunk.find(obj => obj.id === result.id)?.text || '';
-                return hasUntranslatedEnglish(original, result.text);
+                return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
             });
 
             if (untranslatedItems.length > 0 && depth < 2) {
@@ -1015,7 +1023,7 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
                                 if (
                                     candidate &&
                                     !hasUntranslatedEnglish(originalObj.text, candidate) &&
-                                    !hasCorruptedSubtitleText(candidate)
+                                    !hasCorruptedSubtitleText(candidate, originalObj.text)
                                 ) {
                                     targetRes.text = candidate;
                                     console.log(`${c.green}  ✔ [Retry] ${originalObj.id} reparată și validată${c.reset}`);
@@ -1073,7 +1081,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
             const translated = translatedById[String(item.id)];
             return !translated ||
                 hasUntranslatedEnglish(item.text, translated) ||
-                hasCorruptedSubtitleText(translated);
+                hasCorruptedSubtitleText(translated, item.text);
         });
 
         console.log(`\n${c.cyan}🔍 POST-CHECK GLOBAL — pass ${pass}/${maxPasses}${c.reset}`);
@@ -1136,7 +1144,7 @@ Returnează DOAR JSON valid în forma:
                     if (
                         candidate &&
                         !hasUntranslatedEnglish(item.text, candidate) &&
-                        !hasCorruptedSubtitleText(candidate)
+                        !hasCorruptedSubtitleText(candidate, item.text)
                     ) {
                         translatedById[String(item.id)] = candidate;
                         fixed = true;
@@ -1165,7 +1173,7 @@ Returnează DOAR JSON valid în forma:
             const translated = translatedById[String(item.id)];
             return !translated ||
                 hasUntranslatedEnglish(item.text, translated) ||
-                hasCorruptedSubtitleText(translated);
+                hasCorruptedSubtitleText(translated, item.text);
         });
 
         if (remaining.length === 0) {
@@ -1180,7 +1188,7 @@ Returnează DOAR JSON valid în forma:
         const translated = translatedById[String(item.id)];
         return !translated ||
             hasUntranslatedEnglish(item.text, translated) ||
-            hasCorruptedSubtitleText(translated);
+            hasCorruptedSubtitleText(translated, item.text);
     });
 
     return { fixed: totalFixed, remaining };
@@ -1246,7 +1254,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
         const translated = translatedById[String(item.id)];
         return !translated ||
             hasUntranslatedEnglish(item.text, translated) ||
-            hasCorruptedSubtitleText(translated);
+            hasCorruptedSubtitleText(translated, item.text);
     });
 
     if (finalSuspicious.length > 0) {
