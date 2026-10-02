@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.60.0',
+    version: '12.61.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -353,7 +353,7 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    // Elimină interjecțiile singure de pe rând sau din interiorul liniilor (ex: ăă, ah, oh, uh)
+    // Elimină complet interjecțiile scurte și bâlbâielile din interiorul sau exteriorul replicilor
     let cleaned = text.replace(/\b(ăă|îhî|mhm|ah|oh|uh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
     cleaned = cleaned.replace(/\s+/g, ' ');
     
@@ -402,7 +402,7 @@ function formatSubtitleLine(text) {
 
     let wrappedLines = [];
     for (let line of lines) {
-        if (line.length > 55) {
+        if (line.length > 50) {
             let mid = Math.floor(line.length / 2);
             let leftSpace = line.lastIndexOf(' ', mid);
             let rightSpace = line.indexOf(' ', mid);
@@ -638,22 +638,20 @@ Do not add markdown, explanations, comments, or extra keys.
 21. TARGETED GRANULAR RETRY ON UNTRANSLATED ENGLISH LINES
 CRITICAL: If the English detection filter discovers that specific lines within a chunk have remained untranslated in English, DO NOT fail or re-translate the entire chunk of 165 lines. Instead, isolate ONLY the specific failing line indices, re-translate solely those specific lines in a targeted micro-request to Gemini, and merge them back seamlessly.
 
-22. NEVER OUTPUT EMPTY DIALOGUE DASHES
+22. NEVER OUTPUT EMPTY DIALOGUE DASHES OR STANDALONE INTERJECTIONS
 NEVER output a subtitle line containing ONLY hyphens, dashes, or empty markers such as "-", "–", or "—".
-NEVER output multiple empty dialogue lines.
-If a subtitle contains an empty dialogue dash with no actual spoken text after it, DELETE THE DASH completely.
-Every subtitle line must contain actual translated text. If a line consists only of a dash or whitespace, remove it.
+NEVER output standalone hesitation sounds or interjections such as "ăă", "îhî", "mhm", "Ah!", "Oh!", "Uh!", "Aâ!".
+If a subtitle contains an empty dialogue dash or a standalone interjection with no actual spoken text after it, DELETE IT completely.
+Every subtitle line must contain actual translated text.
 
 23. NO INVENTED OR CORRUPTED ROMANIAN WORDS
-NEVER invent Romanian words. Words such as "molmoșește", "anghang", "tangou" (when misused as a corrupted word) and similar malformed forms are strictly INVALID.
-If the exact Romanian expression is uncertain, use a simple, valid Romanian phrase based on surrounding context. Never invent words to imitate English sounds.
+NEVER invent Romanian words. Words such as "molmoșește", "anghang", "tangou" (when misused as a corrupted word) and similar malformed forms sunt strict interzise.
 
 24. ABSOLUTELY NO ENGLISH DIALOGUE LEFT
 After translation, inspect EVERY individual subtitle line. If any line remains an English dialogue sentence or clause, translate it into natural Romanian.
 
 25. STRICT GRAMMAR AND CLEAN PUNCTUATION
 NEVER output malformed forms such as "Ț-am", "Eu acționez" (or incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am") and proper grammar.
-NEVER output standalone interjections or hesitation sounds (such as "ăă", "îhî", "mhm", "Ah!", "Oh!", "Uh!"). Delete them completely from the text.
 
 </translation_master_rules>
 
