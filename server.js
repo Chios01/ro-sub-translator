@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.55.0',
+    version: '12.56.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -651,39 +651,38 @@ ADDITIONAL KNOWN ERRORS — NEVER REPEAT:
 - "izolatǎ" → "izolată" — NEVER use Unicode "ǎ"; use Romanian "ă"
 - "foarte complexă în dinamică" → avoid literal/unnatural "în dinamică"; use natural Romanian according to context.
 
-22. NEVER OUTPUT EMPTY DIALOGUE DASHES — MANDATORY
+22. NEVER INVENT OR CORRUPT ROMANIAN WORDS.
 
-NEVER return a subtitle line containing only:
--
-–
-—
+Words such as:
+"molmoșește"
+"anghang"
+and similar malformed words are INVALID.
 
-NEVER return two empty dialogue lines:
--
--
+If the exact Romanian word is uncertain, use a simple, valid Romanian expression based on the surrounding context.
 
-NEVER return an empty dash followed by dialogue:
--
--Ah!
+NEVER concatenate or corrupt Romanian pronouns:
+"Ț-am" is INVALID.
+Use "Ți-am" when appropriate.
 
-A dialogue dash is allowed ONLY when it is immediately followed by real dialogue text.
+NEVER produce malformed phrases such as:
+"n-ar pasa-le... adică n-ar ști"
+or
+"o chestie în chestie".
 
-If there is no translated dialogue associated with a dash, REMOVE THE EMPTY DASH COMPLETELY.
+Prefer a simple, grammatically correct Romanian sentence.
 
-Examples of INVALID output:
--
--
+EMPTY DIALOGUE:
+NEVER output a line containing only "-", "–" or "—".
+NEVER output "-\n-" or "-\n-Ah!".
+If there is no actual dialogue, remove the dash completely.
 
--
--Ah!
-
-Valid:
-Ah!
-or, when two actual speakers sunt prezenți:
-- Prima replică.
-- A doua replică.
-
-NEVER generate empty subtitle lines, empty dialogue markers, standalone dashes, or dash-only subtitle blocks.
+FINAL CHECK:
+Read EVERY output line before returning JSON.
+Every Romanian word must be valid.
+Every sentence must be grammatically coherent.
+No invented words.
+No empty dialogue dashes.
+No untranslated English dialogue.
 
 23. NO INVENTED OR CORRUPTED ROMANIAN WORDS — MANDATORY
 
