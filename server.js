@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.42.0',
+    version: '12.43.0',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -426,7 +426,19 @@ function formatSubtitleLine(text) {
         [/\bcoatul\b/gi, 'cotul'],
         [/\bketchuipurile\b/gi, 'ketchupurile'],
         [/\ble-atâmbesc\b/gi, 'le amețesc'],
-        [/\buții\b/gi, 'utili']
+        [/\buții\b/gi, 'utili'],
+        [/\bfute-n cur de prostie\b/gi, 'al dracului de prost'],
+        [/\bsevraică\b/gi, 'mahmură'],
+        [/\bhoțul afla-nărav o fi spart\b/gi, 'vreun hoț o fi spart'],
+        [/\breînălța ea a trebuit\b/gi, 'ea a trebuit'],
+        [/\ba fute-o pe o pește-clovn\b/gi, 'a futut un pește-clovn'],
+        [/\bțeață\b/gi, 'țeavă'],
+        [/\bnite amenzi\b/gi, 'niște amenzi'],
+        [/\bFlore la ureche\b/gi, 'Floare la ureche'],
+        [/\blaptepentru\b/gi, 'lapte pentru'],
+        [/\bc-total\b/gi, 'total'],
+        [/\bÎntreabă--i\b/gi, 'Întreabă-i'],
+        [/「/g, '']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
