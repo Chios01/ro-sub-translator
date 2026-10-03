@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.34',
+    version: '12.78.35',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1401,6 +1401,8 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
 
     for (let pass = 1; pass <= maxPasses; pass++) {
         const suspicious = items.filter(item => {
+            const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+            if (!originalClean) return false;
             if (isJunkOrInterjection(item.text)) return false;
 
             const translated = translatedById[String(item.id)];
