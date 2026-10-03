@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.31',
+    version: '12.78.32',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1270,25 +1270,17 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             // Dacă lipsesc foarte puține ID-uri, le recuperăm punctual.
             // Dacă lipsesc multe, răspunsul Gemini este probabil trunchiat: împărțim
             // chunk-ul, NU trimitem zeci de linii într-o cerere secundară care poate bloca slotul.
-            // Un ID este considerat lipsă atât dacă Gemini nu l-a returnat deloc,
-            // cât și dacă l-a returnat cu o traducere goală sau doar cu spații/markup gol.
-            // Astfel evităm cazul în care un ID precum 699 ajunge în rezultatul final
-            // fără text și este raportat abia la verificarea finală.
-            const isEmptyTranslation = value => {
-                const clean = String(value === undefined || value === null ? '' : value)
-                    .replace(/<[^>]+>/g, '')
-                    .trim();
-                return !clean;
-            };
             const missingItems = chunk.filter(obj => {
                 const value = dict[String(obj.id)];
-                return value === undefined || isEmptyTranslation(value);
+                return value === undefined ||
+                    value === null ||
+                    String(value).trim() === '';
             });
             if (missingItems.length > 12) {
-                throw new Error(`Răspuns Gemini sever incomplet: lipsesc ${missingItems.length} ID-uri sau traduceri.`);
+                throw new Error(`Răspuns Gemini sever incomplet: lipsesc ${missingItems.length} ID-uri.`);
             }
             if (missingItems.length) {
-                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: lipsesc ${missingItems.length} ID-uri/traduceri. Cerere punctuală...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: lipsesc ${missingItems.length} ID-uri. Cerere punctuală...${c.reset}`);
                 const missingPrompt = `
 ${MASTER_TRANSLATION_PROMPT}
 
@@ -1306,21 +1298,16 @@ ${JSON.stringify(missingItems, null, 2)}
                     const missingDict = normalizeTranslationPayload(missingJson);
                     for (const obj of missingItems) {
                         const value = missingDict[String(obj.id)];
-                        if (value !== undefined && !isEmptyTranslation(value)) {
-                            dict[String(obj.id)] = value;
-                        }
+                        if (value !== undefined) dict[String(obj.id)] = value;
                     }
                 } catch (missingError) {
                     console.log(`${c.yellow}  ⚠ [Gemini] Cererea punctuală a eșuat: ${missingError.message}${c.reset}`);
                 }
             }
 
-            const stillMissing = chunk.filter(obj => {
-                const value = dict[String(obj.id)];
-                return value === undefined || isEmptyTranslation(value);
-            });
+            const stillMissing = chunk.filter(obj => dict[String(obj.id)] === undefined);
             if (stillMissing.length) {
-                throw new Error(`JSON incomplet: lipsesc ${stillMissing.length} ID-uri/traduceri după completarea punctuală.`);
+                throw new Error(`JSON incomplet: lipsesc ${stillMissing.length} ID-uri după completarea punctuală.`);
             }
 
             const results = chunk.map(obj => ({
