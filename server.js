@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.36',
+    version: '12.78.37',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1108,6 +1108,14 @@ function hasUntranslatedEnglish(original, translated) {
         .toLowerCase().replace(/[“”„"’']/g, "'").replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
     const originalNorm = normalize(origClean);
     const translatedNorm = normalize(transClean);
+
+    // Interjecțiile „Ok/Okay” nu sunt traduceri englezești ratate.
+    // Ignorăm și formele cu punctuație / dialog pe mai multe linii.
+    const withoutOk = translatedNorm
+        .replace(/\bok(?:ay)?\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!withoutOk) return false;
 
     const strongEnglish = new Set([
         'the','and','but','if','then','than','they','them','their','we','us','our','you','your','he','him','his','she','her','it','its',
