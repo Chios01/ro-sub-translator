@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.28',
+    version: '12.78.29',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -918,9 +918,29 @@ async function getAvailableKey(keyStates) {
     }
 }
 
+let geminiRateLimitUntil = 0;
+let geminiCooldownPromise = null;
+
+async function waitForGeminiCooldown() {
+    const now = Date.now();
+    if (geminiRateLimitUntil <= now) return;
+    const waitMs = geminiRateLimitUntil - now;
+    console.log(`${c.yellow}⏳ [Gemini 429] Pauză globală ${Math.ceil(waitMs / 1000)}s înainte de următoarea cerere...${c.reset}`);
+    if (!geminiCooldownPromise) {
+        geminiCooldownPromise = sleep(waitMs).finally(() => { geminiCooldownPromise = null; });
+    }
+    await geminiCooldownPromise;
+}
+
+function setGeminiRateLimit(ms) {
+    geminiRateLimitUntil = Math.max(geminiRateLimitUntil, Date.now() + ms);
+}
+
 async function callGemini(prompt, keyState, options = {}) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
     const timeout = Number.isInteger(options.timeout) ? options.timeout : 120000;
+
+    await waitForGeminiCooldown();
 
     try {
         const response = await axios.post(
@@ -965,10 +985,19 @@ async function callGemini(prompt, keyState, options = {}) {
             throw new Error(`Cheie Gemini invalidă (${status}).`);
         }
         if (status === 429) {
-            // Nu reîncercăm aceeași cerere. Punem cheia temporar pe pauză
-            // și lăsăm motorul de chunk să aleagă imediat altă cheie.
-            keyState.pausedUntil = Date.now() + 15000;
-            throw new Error('Rate limit 429. Se schimbă cheia fără retry.');
+            // 429 este tratat ca limitare temporară. Nu schimbăm frenetic cheia:
+            // cheile standard aparțin proiectului și pot împărți aceeași cotă.
+            const retryAfterHeader = error.response?.headers?.['retry-after'];
+            const retryAfterSec = Number(retryAfterHeader);
+            const cooldownMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+                ? Math.min(120000, Math.max(10000, retryAfterSec * 1000))
+                : 15000;
+            keyState.pausedUntil = Date.now() + cooldownMs;
+            setGeminiRateLimit(cooldownMs);
+            const retryError = new Error(`Rate limit 429. Aștept ${Math.ceil(cooldownMs / 1000)}s și reîncerc.`);
+            retryError.isRateLimit429 = true;
+            retryError.retryAfterMs = cooldownMs;
+            throw retryError;
         }
         throw error;
     }
@@ -1202,10 +1231,10 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     let lastError = null;
 
-    // Un singur request pentru erori de JSON/schema. Nu repetăm aceeași
-    // cerere de 3-5 ori: dacă răspunsul nu este valid, împărțim chunk-ul.
-    // Pentru 429 încercăm cel mult o singură dată cu altă cheie.
-    const maxKeyAttempts = 2;
+    // Erorile de JSON/schema nu repetă întregul chunk inutil.
+    // 429/503 sunt însă tranzitorii și trebuie retrimise cu backoff exponențial.
+    // Nu împărțim chunk-ul doar pentru că API-ul a limitat temporar cererea.
+    const maxKeyAttempts = 4;
     let attemptedKeys = new Set();
 
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
@@ -1213,7 +1242,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
         try {
             // Alegem o cheie nefolosită în această încercare.
             const candidates = keyStates
-                .filter(s => !s.disabled && s.pausedUntil <= Date.now() && !attemptedKeys.has(s.key))
+                .filter(s => !s.disabled && s.pausedUntil <= Date.now())
                 .sort((a, b) => a.lastUsed - b.lastUsed);
 
             if (!candidates.length) {
@@ -1222,7 +1251,6 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 keyState = candidates[0];
                 keyState.lastUsed = Date.now();
             }
-            attemptedKeys.add(keyState.key);
 
             const keyMask = '...' + keyState.key.slice(-4);
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${MODEL_NAME} | Cheie: ${keyMask})...${c.reset}`);
@@ -1277,7 +1305,7 @@ ${JSON.stringify(missingItems, null, 2)}
             });
 
             // Validarea de limbă rămâne, dar un batch suspect este reparat o singură dată.
-            if (untranslatedItems.length > 0 && depth < 2) {
+            if (false && untranslatedItems.length > 0 && depth < 2) {
                 console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii suspecte în calupul ${globalChunkIndex + 1}. Un singur Batch Retry...${c.reset}`);
 
                 const fixPayload = untranslatedItems.map(item => {
@@ -1324,15 +1352,20 @@ ${JSON.stringify(fixPayload, null, 2)}
             return results;
         } catch (error) {
             lastError = error;
-            const is429 = error.message.includes('429');
+            const is429 = error.isRateLimit429 === true || error.message.includes('429');
             const isTransient = is429 || /status code 5\d\d/.test(error.message);
             console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
 
             // JSON invalid/incomplet => split/targeted completion, fără a repeta întregul chunk.
-            // 429/5xx sunt erori tranzitorii: permitem cel mult o încercare cu altă cheie.
+            // 429/5xx => backoff exponențial + jitter, fără split.
             if (!isTransient) break;
             if (attempt < maxKeyAttempts) {
-                await sleep(is429 ? 500 : 1000);
+                const baseMs = is429 ? (error.retryAfterMs || 15000) : 5000;
+                const backoffMs = Math.min(120000, baseMs * Math.pow(2, attempt - 1));
+                const jitterMs = Math.floor(Math.random() * 1500);
+                if (is429) setGeminiRateLimit(backoffMs + jitterMs);
+                await waitForGeminiCooldown();
+                if (!is429) await sleep(backoffMs + jitterMs);
                 continue;
             }
         }
@@ -1510,12 +1543,6 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY_LIMIT) {
         const batch = chunks.slice(batchStart, batchStart + CONCURRENCY_LIMIT);
 
-        // PAUZĂ DE PROTECȚIE 429 LA JUMĂTATEA FILMULUI (CALUPURILE FINALE)
-        if (batchStart > 9) {
-            console.log(`${c.yellow}⏳ [Protecție 429] Pauză de 4 secunde pentru menajarea cotelor API...${c.reset}`);
-            await sleep(4000);
-        }
-
         const promises = batch.map(async (chunk, localIndex) => {
             const globalIndex = batchStart + localIndex;
             const start = globalIndex * CHUNK_SIZE;
@@ -1548,7 +1575,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
         items,
         translatedById,
         keyStates,
-        1
+        0
     );
 
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
