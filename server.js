@@ -913,9 +913,11 @@ async function getAvailableKey(keyStates) {
     }
 }
 
-async function callGemini(prompt, keyState) {
+async function callGemini(prompt, keyState, options = {}) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
-    const maxAttempts = 5;
+    const maxAttempts = Number.isInteger(options.maxAttempts) ? options.maxAttempts : 5;
+    const retry429 = options.retry429 !== false;
+    const timeout = options.timeout || 120000;
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -932,7 +934,7 @@ async function callGemini(prompt, keyState) {
                         { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
                     ]
                 },
-                { params: { key: keyState.key }, timeout: 120000, headers: { 'Content-Type': 'application/json' } }
+                { params: { key: keyState.key }, timeout, headers: { 'Content-Type': 'application/json' } }
             );
 
             const raw = response.data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
@@ -948,7 +950,9 @@ async function callGemini(prompt, keyState) {
             }
             if (status === 429) {
                 keyState.pausedUntil = Date.now() + 45000 + Math.random() * 5000;
-                throw new Error(`Rate limit 429. Se schimbă cheia...`);
+                if (!retry429) throw error;
+                await sleep(1500);
+                continue;
             }
             if (attempt < maxAttempts) {
                 await sleep(2000 * attempt);
@@ -971,17 +975,67 @@ function safeJsonParse(rawText) {
         clean = clean.slice(startIdx, endIdx + 1);
     }
 
-    // 1. Ghilimele duble la chei numerice/text
+    function sanitizeJsonString(input) {
+        let out = '';
+        let inString = false;
+
+        for (let i = 0; i < input.length; i++) {
+            const ch = input[i];
+
+            if (!inString) {
+                out += ch;
+                if (ch === '"') inString = true;
+                continue;
+            }
+
+            if (ch === '"') {
+                out += ch;
+                inString = false;
+                continue;
+            }
+
+            if (ch === '\\') {
+                const next = input[i + 1];
+                const validSimple = '"\\/bfnrt'.includes(next || '');
+
+                if (validSimple) {
+                    out += ch + next;
+                    i++;
+                    continue;
+                }
+
+                if (next === 'u') {
+                    const hex = input.slice(i + 2, i + 6);
+                    if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+                        out += '\\u' + hex;
+                        i += 5;
+                        continue;
+                    }
+                }
+
+                out += '\\\\';
+                continue;
+            }
+
+            if (ch === '\n') { out += '\\n'; continue; }
+            if (ch === '\r') { out += '\\r'; continue; }
+            if (ch === '\t') { out += '\\t'; continue; }
+            if (ch.charCodeAt(0) < 0x20) { out += ' '; continue; }
+
+            out += ch;
+        }
+        return out;
+    }
+
+    clean = sanitizeJsonString(clean);
     clean = clean.replace(/([{,]\s*)([0-9a-zA-Z_-]+)(\s*:\s*)/g, '$1"$2"$3');
-    // 2. Elimină virgule trailing
     clean = clean.replace(/,\s*([}\]])/g, '$1');
 
     try {
         return JSON.parse(clean);
     } catch (err1) {
         try {
-            // 3. Fallback: curăță caracterele de control problematice
-            let relaxed = clean.replace(/[\u0000-\u001F]+/g, ' ');
+            const relaxed = clean.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
             return JSON.parse(relaxed);
         } catch (err2) {
             throw new Error(`JSON Parse failed: ${err1.message}`);
@@ -1041,7 +1095,7 @@ function hasUntranslatedEnglish(original, translated) {
         'not', "don't", "isn't", "won't", "can't", "didn't",
         'please', 'sorry', 'thanks', 'thank', 'yes', 'okay', 'ok',
         'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
-        "i'm", "i'll", "you're", "we're", "they're", "for", "of", "in", "on", "at", "to", "by", "as"
+        "i'm", "i'll", "you're", "we're", "they're", 'for', 'of', 'in', 'on', 'at', 'to', 'by', 'as'
     ]);
 
     const englishMarkers = new Set([
@@ -1069,14 +1123,26 @@ function hasUntranslatedEnglish(original, translated) {
 
     if (originalNorm === translatedNorm) {
         const hasEnglishWords = ow.some(w => strongEnglish.has(w) || englishMarkers.has(w));
-        if (hasEnglishWords) {
-            return true;
-        }
+        if (hasEnglishWords) return true;
 
         const hasCapitals = /[A-Z]/.test(origClean);
-        if (hasCapitals && ow.length <= 4) {
-            return false;
-        }
+        if (hasCapitals && ow.length <= 4) return false;
+    }
+
+    const distinctiveLeftovers = new Set([
+        'the', 'from', 'however', 'although', 'because', 'without', 'between',
+        'maybe', 'please', 'sorry', 'thanks', 'thank', 'your', "you're",
+        "i'm", "i'll", "we're", "they're", 'would', 'could', 'should', 'cannot',
+        'itself', 'himself', 'herself', 'themselves', 'such', 'indictment', 'embedding', 'mudbank'
+    ]);
+
+    const leftoverCount = tw.filter(w => distinctiveLeftovers.has(w)).length;
+    if (leftoverCount > 0) {
+        const hasRomanianSignal = /[ăâîșțĂÂÎȘȚ]/.test(transClean) ||
+            /\b(?:și|să|că|nu|în|din|de|la|pe|cu|un|o|este|sunt|am|ai|are|au|îmi|îți|îl|o|ne|vă|le|mi|ți)\b/i.test(transClean);
+        const originalIsSame = originalNorm === translatedNorm;
+        if (hasRomanianSignal && !originalIsSame) return true;
+        if (leftoverCount >= 2) return true;
     }
 
     if (tw.some(w => ['embedding', 'mudbank', 'itself', 'from', 'such', 'indictment', 'however'].includes(w))) {
@@ -1277,11 +1343,15 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
 
         console.log(`${c.yellow}⚠ Detectate ${suspicious.length} replici suspecte${c.reset}`);
 
-        for (const item of suspicious) {
-            await sleep(1500); 
-            let fixed = false;
+        let retryCursor = 0;
+        const RETRY_CONCURRENCY = Math.max(1, CONCURRENCY_LIMIT);
 
-            for (let retry = 1; retry <= 2; retry++) { 
+        async function retryWorker() {
+            while (true) {
+                const index = retryCursor++;
+                if (index >= suspicious.length) return;
+                const item = suspicious[index];
+                let fixed = false;
                 try {
                     const keyState = await getAvailableKey(keyStates);
                     const current = translatedById[String(item.id)] || '';
@@ -1307,7 +1377,7 @@ Returnează DOAR JSON valid în forma:
 }
 `;
 
-                    const raw = await callGemini(singlePrompt, keyState);
+                    const raw = await callGemini(singlePrompt, keyState, { maxAttempts: 1, retry429: false, timeout: 30000 });
                     const parsed = safeJsonParse(raw);
                     const candidateRaw =
                         parsed[item.id] !== undefined
@@ -1325,21 +1395,26 @@ Returnează DOAR JSON valid în forma:
                         fixed = true;
                         totalFixed++;
 
-                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată (${retry}/2)${c.reset}`);
-                        break;
+                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată${c.reset}`);
+                    } else {
+                        console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă${c.reset}`);
                     }
-
-                    console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
                 } catch (err) {
-                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
-                    await sleep(2500);
+                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id}: ${err.message}${c.reset}`);
+                }
+
+                if (!fixed) {
+                    console.log(`${c.red}  ❌ Neremediată: ${item.id}${c.reset}`);
                 }
             }
-
-            if (!fixed) {
-                console.log(`${c.red}  ❌ Neremediată: ${item.id}${c.reset}`);
-            }
         }
+
+        await Promise.all(
+            Array.from(
+                { length: Math.min(RETRY_CONCURRENCY, suspicious.length) },
+                () => retryWorker()
+            )
+        );
 
         const remaining = items.filter(item => {
             if (isJunkOrInterjection(item.text)) return false;
@@ -1637,7 +1712,7 @@ function parseSrt(srt) {
 
         if (!text || text === ' ') continue;
 
-        result.push({ id, start: match[1], end: match[2], text });
+        result.path({ id, start: match[1], end: match[2], text });
     }
 
     return result;
