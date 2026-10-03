@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.4',
+    version: '12.78.6',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -567,14 +567,23 @@ function formatSubtitleLine(text) {
         [/\bjiul\b/gi, 'fel'],
         [/\bdupă o oră și 58 de minute\b/gi, 'în exact o oră și 58 de minute'],
         [/\bil voi suna pe Lloyd Garrison\b/gi, 'îl voi suna pe Lloyd Garrison'],
-        // CORECCȚII FINALE PENTRU ULTIMELE Mici IMPERFECTIUNI (V12.78.4):
         [/\bpe banca acuzaților bancă\b/gi, 'pe banca acuzaților'],
         [/\bAlgebră e ca partitura\b/gi, 'Algebra este ca o partitură'],
         [/\bpropriz\b/gi, 'proprie'],
         [/\bÎ j sun\b/gi, 'Îl sun'],
         [/\bsticlă de sudor\b/gi, 'sticlă de sudură'],
         [/\bsomomon\b/gi, 'somon'],
-        [/\bAcestcomitet\b/gi, 'Acest comitet']
+        [/\bAcestcomitet\b/gi, 'Acest comitet'],
+        [/\bLeft-wing political activities\b/gi, 'activități politice de stânga'],
+        [/\bHitler's dead, it's true\b/gi, 'Hitler e mort, e adevărat'],
+        [/\bProgress\b/gi, 'Progres'],
+        [/\bBut Mr\. Borden was\b/gi, 'Dar domnul Borden a fost?'],
+        [/\bThat's a very serious accusation, Senator\b/gi, 'Aceasta este o acuzație foarte gravă, senatore'],
+        [/\bRural free deliveries\b/gi, 'Livrări poștale rurale'],
+        [/\bfești\b/gi, 'fasciști'],
+        [/\b2dansezi\b/gi, 'dansezi'],
+        [/\bdespăre\b/gi, 'despre'],
+        [/\bhabar navea\b/gi, 'habar n-avea']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -853,7 +862,8 @@ async function callGemini(prompt, keyState) {
                 throw new Error(`Cheie Gemini invalidă (${status}).`);
             }
             if (status === 429) {
-                keyState.pausedUntil = Date.now() + 65000;
+                // Exponential backoff cu jitter pentru a evita suprasolicitarea
+                keyState.pausedUntil = Date.now() + Math.min(120000, 30000 * Math.pow(2, attempt - 1)) + Math.random() * 5000;
                 throw new Error(`Rate limit 429. Se schimbă cheia...`);
             }
             if (attempt < maxAttempts) {
@@ -880,6 +890,14 @@ function chunkArray(array, size) {
 function hasUntranslatedEnglish(original, translated) {
     if (!original || !translated) return false;
 
+    const origClean = String(original).trim();
+    const transClean = String(translated).trim();
+
+    // Ignoră liniile foarte scurte sau cele doar din punctuație/cifre
+    if (!transClean || transClean.length <= 2 || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) {
+        return false;
+    }
+
     const normalize = value => String(value)
         .toLowerCase()
         .replace(/[“”„"’']/g, "'")
@@ -887,8 +905,8 @@ function hasUntranslatedEnglish(original, translated) {
         .replace(/\s+/g, ' ')
         .trim();
 
-    const originalNorm = normalize(original);
-    const translatedNorm = normalize(translated);
+    const originalNorm = normalize(origClean);
+    const translatedNorm = normalize(transClean);
 
     const strongEnglish = new Set([
         'the', 'and', 'but', 'if', 'then', 'than',
@@ -1072,7 +1090,7 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
             
             if (error.message.includes('429')) {
                 attempt--; 
-                await sleep(1000); 
+                await sleep(2000); 
             } else {
                 await sleep(1000 * attempt);
             }
@@ -1187,7 +1205,7 @@ Returnează DOAR JSON valid în forma:
                     console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
                     if (err.message.includes('429')) {
                         retry--; 
-                        await sleep(1000);
+                        await sleep(2000);
                     }
                 }
             }
@@ -1246,7 +1264,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
             const start = globalIndex * CHUNK_SIZE;
             const end = start + chunk.length;
 
-            if (localIndex > 0) await sleep(800 * localIndex);
+            if (localIndex > 0) await sleep(1000 * localIndex);
 
             const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, globalIndex, chunks.length);
             return { globalIndex, result };
