@@ -865,7 +865,7 @@ async function getAvailableKey(keyStates) {
 
 async function callGemini(prompt, keyState) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
-    const maxAttempts = 6;
+    const maxAttempts = 5;
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -897,11 +897,11 @@ async function callGemini(prompt, keyState) {
                 throw new Error(`Cheie Gemini invalidă (${status}).`);
             }
             if (status === 429) {
-                keyState.pausedUntil = Date.now() + Math.min(120000, 30000 * Math.pow(2, attempt - 1)) + Math.random() * 5000;
+                keyState.pausedUntil = Date.now() + 35000 + Math.random() * 5000;
                 throw new Error(`Rate limit 429. Se schimbă cheia...`);
             }
             if (attempt < maxAttempts) {
-                await sleep(2000 * attempt);
+                await sleep(1500 * attempt);
                 continue;
             }
         }
@@ -921,20 +921,23 @@ function chunkArray(array, size) {
     return chunks;
 }
 
+// Verifică dacă un text original este doar zgomot, oftat, interjecție sau semne de punctuație
+function isJunkOrInterjection(text) {
+    const clean = String(text || '').replace(/<[^>]+>/g, '').trim();
+    if (!clean) return true;
+    if (/^[0-9\s\-–—.,?!:;\'"♪♫♬♩#]+$/.test(clean)) return true;
+    if (/^(?:[-–—\s]*)(ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*$/i.test(clean)) return true;
+    return false;
+}
+
 function hasUntranslatedEnglish(original, translated) {
     if (!original || !translated) return false;
 
     const origClean = String(original).replace(/<[^>]+>/g, '').trim();
     const transClean = String(translated).replace(/<[^>]+>/g, '').trim();
 
-    // Dacă originalul e gol sau are doar semne, nu îl considerăm engleză netradusă
-    if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) {
-        return false;
-    }
-
-    if (!transClean || transClean.length <= 2) {
-        return false;
-    }
+    if (isJunkOrInterjection(origClean)) return false;
+    if (!transClean || transClean.length <= 2) return false;
 
     const normalize = value => String(value)
         .toLowerCase()
@@ -1018,12 +1021,7 @@ function hasUntranslatedEnglish(original, translated) {
 }
 
 function hasCorruptedSubtitleText(text, originalText) {
-    const orig = String(originalText || '').replace(/<[^>]+>/g, '').trim();
-    const isOriginalEmptyOrJunk = !orig || 
-        /^(?:[-–—\s.?!,;:'"♪♫♬♩#]+)$/.test(orig) || 
-        /^(ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî)[!.,?]*$/i.test(orig);
-
-    if (isOriginalEmptyOrJunk) return false;
+    if (isJunkOrInterjection(originalText)) return false;
 
     const s = String(text || '').replace(/<[^>]+>/g, '').trim();
     if (!s) return true;
@@ -1068,8 +1066,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
             const untranslatedItems = results.filter(result => {
                 const original = chunk.find(obj => obj.id === result.id)?.text || '';
-                const origClean = String(original).replace(/<[^>]+>/g, '').trim();
-                if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) return false;
+                if (isJunkOrInterjection(original)) return false;
 
                 return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
             });
@@ -1121,13 +1118,7 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
         } catch (error) {
             lastError = error;
             console.log(`${c.yellow}⚠ [Gemini] Eroare la calupul ${globalChunkIndex + 1} (Încercarea ${attempt}/${maxLocalAttempts}): ${error.message}${c.reset}`);
-            
-            if (error.message.includes('429')) {
-                attempt--; 
-                await sleep(2000); 
-            } else {
-                await sleep(1000 * attempt);
-            }
+            await sleep(1500 * attempt);
         }
     }
 
@@ -1158,11 +1149,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
 
     for (let pass = 1; pass <= maxPasses; pass++) {
         const suspicious = items.filter(item => {
-            const origClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
-            // Dacă replica originală nu are conținut util, nu are ce căuta la retraducere
-            if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) {
-                return false;
-            }
+            if (isJunkOrInterjection(item.text)) return false;
 
             const translated = translatedById[String(item.id)];
             const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
@@ -1184,9 +1171,10 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
         console.log(`${c.yellow}⚠ Detectate ${suspicious.length} replici suspecte${c.reset}`);
 
         for (const item of suspicious) {
-            await sleep(2000); 
+            await sleep(1500); 
             let fixed = false;
 
+            // Încercăm de maximum 2 ori, pe chei diferite. FĂRĂ bucle infinite pe 429!
             for (let retry = 1; retry <= 2; retry++) { 
                 try {
                     const keyState = await getAvailableKey(keyStates);
@@ -1246,10 +1234,7 @@ Returnează DOAR JSON valid în forma:
                     console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
                 } catch (err) {
                     console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
-                    if (err.message.includes('429')) {
-                        retry--; 
-                        await sleep(2000);
-                    }
+                    await sleep(1500);
                 }
             }
 
@@ -1259,8 +1244,7 @@ Returnează DOAR JSON valid în forma:
         }
 
         const remaining = items.filter(item => {
-            const origClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
-            if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) return false;
+            if (isJunkOrInterjection(item.text)) return false;
 
             const translated = translatedById[String(item.id)];
             const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
@@ -1280,8 +1264,7 @@ Returnează DOAR JSON valid în forma:
     }
 
     const remaining = items.filter(item => {
-        const origClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
-        if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) return false;
+        if (isJunkOrInterjection(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
@@ -1352,8 +1335,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
-        const origClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
-        if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) return false;
+        if (isJunkOrInterjection(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
