@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.36',
+    version: '12.78.38',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1526,6 +1526,70 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     }
 
     console.log(`\n${c.green}✔ Toate cele ${chunks.length} de calupuri finalizate!${c.reset}`);
+
+    // ========================================================
+    // RECOVERY DOAR PENTRU TRADUCERI GOALE
+    // ========================================================
+    // Dacă Gemini a returnat o valoare goală pentru o replică ce
+    // are text original, o cerem din nou punctual. Nu retraducem
+    // chunk-ul și nu pornim recovery pentru alte tipuri de suspiciuni.
+    const emptyTranslations = items.filter(item => {
+        const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        if (!originalClean) return false;
+        if (isJunkOrInterjection(item.text)) return false;
+
+        const translated = translatedById[String(item.id)];
+        const translatedClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
+        return !translatedClean;
+    });
+
+    if (emptyTranslations.length > 0) {
+        console.log(`${c.yellow}⚠ [Empty Recovery] ${emptyTranslations.length} traduceri goale detectate. Le retraduc punctual...${c.reset}`);
+
+        const recoveryPrompt = `
+${MASTER_TRANSLATION_PROMPT}
+
+RECOVERY PENTRU TRADUCERI GOALE.
+Următoarele replici au text original, dar traducerea anterioară a fost goală.
+Tradu TOATE liniile de mai jos în română naturală. Nu omite niciun ID.
+
+${JSON.stringify(emptyTranslations.map(item => ({ id: item.id, text: item.text })), null, 2)}
+
+Returnează DOAR un ARRAY JSON valid în forma:
+[
+  {"id": 123, "text": "traducerea română"}
+]
+`;
+
+        try {
+            const recoveryKey = await getAvailableKey(keyStates);
+            const recoveryRaw = await callGemini(recoveryPrompt, recoveryKey);
+            const recoveryJson = safeJsonParse(recoveryRaw);
+            const recoveryDict = normalizeTranslationPayload(recoveryJson);
+            let recoveredCount = 0;
+
+            for (const item of emptyTranslations) {
+                const candidateRaw = recoveryDict[String(item.id)];
+                const candidate = formatSubtitleLine(String(candidateRaw || ''));
+
+                if (
+                    candidate &&
+                    !hasUntranslatedEnglish(item.text, candidate) &&
+                    !hasCorruptedSubtitleText(candidate, item.text)
+                ) {
+                    translatedById[String(item.id)] = candidate;
+                    recoveredCount++;
+                    console.log(`${c.green}  ✔ [Empty Recovery] ${item.id} reparată${c.reset}`);
+                } else {
+                    console.log(`${c.red}  ❌ [Empty Recovery] ${item.id} nu a primit o traducere validă${c.reset}`);
+                }
+            }
+
+            console.log(`${c.green}✔ [Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${c.reset}`);
+        } catch (error) {
+            console.log(`${c.yellow}⚠ [Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
+        }
+    }
 
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
