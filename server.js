@@ -1280,7 +1280,12 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             // chunk-ul, NU trimitem zeci de linii într-o cerere secundară care poate bloca slotul.
             const missingItems = chunk.filter(obj => {
                 const original = String(obj.text || '').replace(/<[^>]+>/g, '').trim();
-                return original && dict[String(obj.id)] === undefined;
+                if (!original) return false;
+
+                const value = dict[String(obj.id)];
+                return value === undefined ||
+                       value === null ||
+                       String(value).trim() === '';
             });
             if (missingItems.length > 12) {
                 throw new Error(`Răspuns Gemini sever incomplet: lipsesc ${missingItems.length} ID-uri.`);
