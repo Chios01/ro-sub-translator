@@ -26,13 +26,8 @@ const BROWSER_USER_AGENT =
 
 const CHUNK_SIZE = 165;
 
-const CONCURRENCY_LIMIT = Math.max(
-    1,
-    Math.min(
-        3,
-        Number(process.env.TRANSLATION_CONCURRENCY) || 3
-    )
-);
+// CONCURRENCY Neschimbat la 3, exact cum ai cerut
+const CONCURRENCY_LIMIT = 3;
 
 const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
@@ -79,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.12',
+    version: '12.78.13',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -464,7 +459,7 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
-        // Corectări punctuale pentru Oppenheimer / ultima rulare
+        // Corectări punctuale pentru Oppenheimer
         [/\bthese men\b/gi, 'acești oameni'],
         [/\beverybody take a welder's glass\b/gi, 'toată lumea să ia o mască de sudură'],
         [/Everybody take a welder's glass\./gi, 'Toată lumea să ia o mască de sudură.'],
@@ -1327,7 +1322,8 @@ async function translateSrtWithGemini(srtText, apiKeys) {
             const start = globalIndex * CHUNK_SIZE;
             const end = start + chunk.length;
 
-            if (localIndex > 0) await sleep(1000 * localIndex);
+            // Pauza între calupuri actualizată la 1.5 secunde (1500ms)
+            if (localIndex > 0) await sleep(1500 * localIndex);
 
             const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, globalIndex, chunks.length);
             return { globalIndex, result };
@@ -1538,7 +1534,6 @@ app.get('/:configData/translate', async (req, res) => {
 
 function parseSrt(srt) {
     const normalized = String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, '');
- codings = normalized.split(/\n{2,}/);
     const blocks = normalized.split(/\n{2,}/);
     const result = [];
 
