@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.17',
+    version: '12.78.18',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -356,6 +356,12 @@ function deepCleanSubtitleText(text) {
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă|ugh|argh|aah|oof|uf)[!.]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
+    // Elimină backslash-uri parazite
+    cleaned = cleaned.replace(/\\+/g, ' ');
+
+    // Corectează cifre parazite lipite de cuvinte scurte
+    cleaned = cleaned.replace(/\b(nu|de|ce|pe|la)1\b/gi, '$1');
+
     cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/]/g, '');
     cleaned = cleaned.replace(/\s*\([^)]+\)$/g, '');
 
@@ -456,12 +462,23 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
-        // Corectări prioritare punctuale
+        // Corectări punctuale de prioritate maximă
+        [/\bde la embedding itself in a mudbank\.?/gi, 'de la a se înfige într-un mal de noroi.'],
+        [/\bembedding itself in a mudbank\.?/gi, 'a se înfige într-un mal de noroi.'],
+        [/\bN-a fost nic67\b/gi, 'Nu era niciun loc aici?'],
         [/\bfrom project\b/gi, 'din proiect'],
         [/\bfrom altcineva\b/gi, 'de la altcineva'],
         [/\bfrom\b/gi, 'de la'],
         [/\babroach\b/gi, 'abordare'],
         [/\bbackground juridic\b/gi, 'trecut juridic'],
+        [/\bCă\.E\.A\./gi, 'A.E.C.'],
+        [/\bpro Jean Tatlock\b/gi, 'despre Jean Tatlock'],
+        [/\bîn ș\s*\./gi, 'în șah.'],
+        [/\bîn ș\b(?!\w)/gi, 'în șah'],
+        [/\bpunerile\b/gi, 'vederile'],
+        [/\bsomom\b/gi, 'somon'],
+        [/\bdilettant\b/gi, 'diletant'],
+        [/\bcowboys\b/gi, 'cowboy'],
         [/\bThey need us\.?\b/gi, 'Au nevoie de noi.'],
         [/\bMaybe a little too well,?\s*Robert\.?\b/gi, 'Poate puțin prea bine, Robert.'],
         [/\bInterestingly enough,?\b/gi, 'Destul de interesant,'],
@@ -769,6 +786,7 @@ Remove non-dialogue audio tags, standalone hesitation sounds, and meaningless in
 
 16. NO ENGLISH LEFT BEHIND & TRANSLATE ALL SPEAKER LABELS
 Translate EVERY actual English dialogue line into Romanian.
+NEVER leave untranslated English sentence fragments (such as "from project", "embedding itself", "cowboys").
 If a line starts with an English speaker label (such as 'DRIVER:', 'GUARD:', 'COP:', 'NARRATOR:'), ALWAYS translate it into natural Romanian ('ȘOFER:', 'GARDĂ:', 'POLIȚIST:', 'NARAȚIUNE:') or keep the character's proper name cleanly.
 NEVER return an English dialogue sentence or clause unchanged.
 
@@ -1005,26 +1023,31 @@ function hasUntranslatedEnglish(original, translated) {
         'good', 'bad', 'right', 'wrong', 'now', 'here', 'there',
         'very', 'really', 'just', 'only', 'still', 'already',
         'first', 'last', 'next', 'back', 'again', 'colonel', 'minutes', 'ready',
-        'ideology', 'killed', 'interestingly', 'enough', 'nothing', 'maybe', 'little', 'well', 'sure'
+        'ideology', 'killed', 'interestingly', 'enough', 'nothing', 'maybe', 'little', 'well', 'sure',
+        'itself', 'himself', 'herself', 'themselves', 'myself', 'yourself',
+        'embedding', 'mudbank', 'cowboys', 'dilettante'
     ]);
 
     const tokenize = value => value.match(/[a-zăâîșț]+(?:'[a-zăâîșț]+)?/g) || [];
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
 
-    // REGULĂ OPTIMIZATĂ PENTRU LINII IDENTICE:
+    // REGULĂ OPTIMIZATĂ PENTRU LINII IDENTICE
     if (originalNorm === translatedNorm) {
-        // Dacă conține cuvinte uzuale în engleză, ESTE CLAR NETRADUSĂ
         const hasEnglishWords = ow.some(w => strongEnglish.has(w) || englishMarkers.has(w));
         if (hasEnglishWords) {
             return true;
         }
 
-        // Dacă nu conține cuvinte comune și este un nume/termen propriu scurt cu majuscule, e valid
         const hasCapitals = /[A-Z]/.test(origClean);
         if (hasCapitals && ow.length <= 4) {
             return false;
         }
+    }
+
+    // Verifică dacă există secvențe evidente de engleză chiar și în propoziții combinate
+    if (tw.some(w => ['embedding', 'mudbank', 'itself', 'from'].includes(w))) {
+        return true;
     }
 
     if (originalNorm === translatedNorm && tw.length > 0) {
@@ -1094,7 +1117,6 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 cleanText = cleanText.slice(startIdx, endIdx + 1);
             }
 
-            // AUTO-REPARARE CARACTERE BAD ESCAPE ȘI VIRGULE
             cleanText = cleanText.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
             cleanText = cleanText.replace(/,\s*([}\]])/g, '$1');
 
