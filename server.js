@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.20',
+    version: '12.78.21',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -920,7 +920,11 @@ async function callGemini(prompt, keyState) {
                 endpoint,
                 {
                     contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.0, responseMimeType: 'application/json' },
+                    generationConfig: { 
+                        temperature: 0.0, 
+                        responseMimeType: 'application/json',
+                        maxOutputTokens: 8192 // 👈 Adăugat pentru a preveni trunchierea calupurilor
+                    },
                     safetySettings: [
                         { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
                         { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -1634,10 +1638,6 @@ function parseSrt(srt) {
 // ============================================================
 // UTILS & START
 // ============================================================
-
-__utils_sleep = function(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-};
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
