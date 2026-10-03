@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.35',
+    version: '12.78.36',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -918,29 +918,9 @@ async function getAvailableKey(keyStates) {
     }
 }
 
-let geminiRateLimitUntil = 0;
-let geminiCooldownPromise = null;
-
-async function waitForGeminiCooldown() {
-    const now = Date.now();
-    if (geminiRateLimitUntil <= now) return;
-    const waitMs = geminiRateLimitUntil - now;
-    console.log(`${c.yellow}⏳ [Gemini 429] Pauză globală ${Math.ceil(waitMs / 1000)}s înainte de următoarea cerere...${c.reset}`);
-    if (!geminiCooldownPromise) {
-        geminiCooldownPromise = sleep(waitMs).finally(() => { geminiCooldownPromise = null; });
-    }
-    await geminiCooldownPromise;
-}
-
-function setGeminiRateLimit(ms) {
-    geminiRateLimitUntil = Math.max(geminiRateLimitUntil, Date.now() + ms);
-}
-
 async function callGemini(prompt, keyState, options = {}) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
     const timeout = Number.isInteger(options.timeout) ? options.timeout : 120000;
-
-    await waitForGeminiCooldown();
 
     try {
         const response = await axios.post(
@@ -993,7 +973,6 @@ async function callGemini(prompt, keyState, options = {}) {
                 ? Math.min(120000, Math.max(10000, retryAfterSec * 1000))
                 : 15000;
             keyState.pausedUntil = Date.now() + cooldownMs;
-            setGeminiRateLimit(cooldownMs);
             const retryError = new Error(`Rate limit 429. Aștept ${Math.ceil(cooldownMs / 1000)}s și reîncerc.`);
             retryError.isRateLimit429 = true;
             retryError.retryAfterMs = cooldownMs;
@@ -1125,26 +1104,10 @@ function hasUntranslatedEnglish(original, translated) {
     const transClean = String(translated).replace(/<[^>]+>/g, '').trim();
     if (isJunkOrInterjection(origClean) || !transClean || transClean.length <= 2) return false;
 
-    // "Ok" / "Okay" sunt perfect valide ca replici în subtitrări.
-    // Nu le tratăm ca engleză netradusă atunci când replica conține doar
-    // aceste forme (inclusiv variante repetate: "Ok, ok...", "Okay?").
-    const okOnly = transClean
-        .replace(/[\s.,!?…\"'“”‘’():;–—-]+/g, '')
-        .toLowerCase();
-    if (/^(?:ok|okay)+$/.test(okOnly)) return false;
-
-    // Elimină doar interjecțiile "ok/okay" din analiza markerilor. Astfel
-    // o replică românească precum "Târfă... - Ok, ok... Căcat!" nu este
-    // marcată fals pozitiv, dar "Ok, this is..." rămâne detectabilă.
-    const detectionText = transClean
-        .replace(/\b(?:ok|okay)(?=\b|\s*[,.!?…])/gi, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
     const normalize = value => String(value)
         .toLowerCase().replace(/[“”„"’']/g, "'").replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
     const originalNorm = normalize(origClean);
-    const translatedNorm = normalize(detectionText);
+    const translatedNorm = normalize(transClean);
 
     const strongEnglish = new Set([
         'the','and','but','if','then','than','they','them','their','we','us','our','you','your','he','him','his','she','her','it','its',
@@ -1278,15 +1241,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             // Dacă lipsesc foarte puține ID-uri, le recuperăm punctual.
             // Dacă lipsesc multe, răspunsul Gemini este probabil trunchiat: împărțim
             // chunk-ul, NU trimitem zeci de linii într-o cerere secundară care poate bloca slotul.
-            const missingItems = chunk.filter(obj => {
-                const original = String(obj.text || '').replace(/<[^>]+>/g, '').trim();
-                if (!original) return false;
-
-                const value = dict[String(obj.id)];
-                return value === undefined ||
-                       value === null ||
-                       String(value).trim() === '';
-            });
+            const missingItems = chunk.filter(obj => dict[String(obj.id)] === undefined);
             if (missingItems.length > 12) {
                 throw new Error(`Răspuns Gemini sever incomplet: lipsesc ${missingItems.length} ID-uri.`);
             }
@@ -1316,17 +1271,7 @@ ${JSON.stringify(missingItems, null, 2)}
                 }
             }
 
-            const stillMissing = chunk.filter(obj => {
-                const original = String(obj.text || '').replace(/<[^>]+>/g, '').trim();
-                return original && dict[String(obj.id)] === undefined;
-            });
-
-            // Intrările goale din sursă nu au ce traduce; le păstrăm goale
-            // fără a consuma cereri Gemini de recuperare.
-            for (const obj of chunk) {
-                const original = String(obj.text || '').replace(/<[^>]+>/g, '').trim();
-                if (!original && dict[String(obj.id)] === undefined) dict[String(obj.id)] = '';
-            }
+            const stillMissing = chunk.filter(obj => dict[String(obj.id)] === undefined);
             if (stillMissing.length) {
                 throw new Error(`JSON incomplet: lipsesc ${stillMissing.length} ID-uri după completarea punctuală.`);
             }
@@ -1338,6 +1283,8 @@ ${JSON.stringify(missingItems, null, 2)}
 
             const untranslatedItems = results.filter(result => {
                 const original = chunk.find(obj => obj.id === result.id)?.text || '';
+                const originalClean = String(original).replace(/<[^>]+>/g, '').trim();
+                if (!originalClean) return false;
                 if (isJunkOrInterjection(original)) return false;
                 return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
             });
@@ -1363,12 +1310,16 @@ ${JSON.stringify(missingItems, null, 2)}
             // 429/5xx => backoff exponențial + jitter, fără split.
             if (!isTransient) break;
             if (attempt < maxKeyAttempts) {
-                const baseMs = is429 ? (error.retryAfterMs || 15000) : 5000;
+                // 429: cheia care a primit limita este deja în cooldown.
+                // Nu mai blocăm global celelalte 2 fluxuri paralele.
+                if (is429) {
+                    continue;
+                }
+
+                const baseMs = 5000;
                 const backoffMs = Math.min(120000, baseMs * Math.pow(2, attempt - 1));
                 const jitterMs = Math.floor(Math.random() * 1500);
-                if (is429) setGeminiRateLimit(backoffMs + jitterMs);
-                await waitForGeminiCooldown();
-                if (!is429) await sleep(backoffMs + jitterMs);
+                await sleep(backoffMs + jitterMs);
                 continue;
             }
         }
