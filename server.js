@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.6',
+    version: '12.78.7',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -583,7 +583,20 @@ function formatSubtitleLine(text) {
         [/\bfești\b/gi, 'fasciști'],
         [/\b2dansezi\b/gi, 'dansezi'],
         [/\bdespăre\b/gi, 'despre'],
-        [/\bhabar navea\b/gi, 'habar n-avea']
+        [/\bhabar navea\b/gi, 'habar n-avea'],
+        [/\bEu acționează\b/gi, 'Eu acționez'],
+        [/\bSă te fwt\b/gi, 'Să te fut'],
+        [/\bcolțișorezi\b/gi, 'încolțești'],
+        [/\bcolțișorești\b/gi, 'încolțești'],
+        [/\btreabei\b/gi, 'trebii'],
+        [/\bnimer\b/gi, 'vreo'],
+        [/\bvalorizez\b/gi, 'valorez'],
+        [/\bn o să te\b/gi, 'n-o să te'],
+        [/\bnaiba să the ia\b/gi, 'naiba să te ia'],
+        [/\bCoche\b/gi, 'Mașină'],
+        [/\bcervezas\b/gi, 'beri'],
+        [/\bn-auzeam\b/gi, 'n-am auzit'],
+        [/\bpropriutei\b/gi, 'propriei']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -729,6 +742,9 @@ After translation, inspect EVERY individual subtitle line. If any line remains a
 
 24. STRICT GRAMMAR AND CLEAN PUNCTUATION
 NEVER output malformed forms such as "Ț-am", "Eu acționez" (or incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am", "să-i", "să-ți", "să-și") and proper grammar. 
+
+25. TARGET LINE FOCUS & FOREIGN WORDS
+Verifică DOAR replica din mijloc. Dacă există un cuvânt străin intenționat, păstrează-l. Dacă este o scăpare din limba sursă, traduce-l. Nu modifica replicile vecine.
 
 CRITICAL ERRORS TO AVOID:
 - "De ce man pasă?" → "De ce mi-ar păsa?"
