@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.10',
+    version: '12.78.11',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -331,7 +331,7 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
 
-    // Curăță tag-urile HTML care conțin doar interjecții izolate de tip <i>Ah!</i>
+    // Curăță tag-urile care conțin doar interjecții izolate de tip <i>Ah!</i>
     clean = clean.replace(/<[iIbBuU]>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
 
@@ -357,7 +357,7 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    // Curăță tag-urile și interjecțiile de tip "<i>Ah!</i>", "Ah!", "Oh!", "Uf!" singure pe rând
+    // Elimină complet interjecțiile de tip "<i>Ah!</i>", "Ah!", "Oh!", "Uf!" singure pe rând
     let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
     cleaned = cleaned.replace(/\b(ăă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
     cleaned = cleaned.replace(/\s+/g, ' ');
@@ -377,6 +377,7 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\b[Dd]e ce man pas[aă]\b/gi, 'De ce mi-ar păsa');
     cleaned = cleaned.replace(/\b[Dd]e ce man-ar pasa\b/gi, 'De ce mi-ar păsa');
     cleaned = cleaned.replace(/\bDe ce man spui\b/gi, 'De ce îmi spui');
+    cleaned = cleaned.replace(/\bLasă-man\b/gi, 'Lasă-mă');
     
     cleaned = cleaned.replace(/\bșă-i\b/g, 'să-i');
     cleaned = cleaned.replace(/\bȘă-i\b/g, 'Să-i');
@@ -466,6 +467,52 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
+        // Etichete de personaje uitate în engleză
+        [/^DRIVER:\s*/gmi, 'ȘOFER: '],
+        [/\bDRIVER:\s*/gi, 'ȘOFER: '],
+        [/^GUARD:\s*/gmi, 'GARDĂ: '],
+        [/\bGUARD:\s*/gi, 'GARDĂ: '],
+        [/^OFFICER:\s*/gmi, 'OFITER: '],
+        [/\bOFFICER:\s*/gi, 'OFITER: '],
+        [/^COP:\s*/gmi, 'POLIȚIST: '],
+        [/\bCOP:\s*/gi, 'POLIȚIST: '],
+
+        // Scăpări și anomalii identificate
+        [/\bCcat\b/gi, 'Căcat'],
+        [/\bbănuiuiesc\b/gi, 'bănuiesc'],
+        [/\bîmpotriva asta\b/gi, 'împotriva acestui lucru'],
+        [/\bI tăiați capul\b/gi, 'Îi tăiați capul'],
+        [/\bnam niciun fel\b/gi, 'n-am niciun fel'],
+        [/\bnarțiune\b/gi, 'narațiune'],
+        [/\binteriorul acestei cupe\b/gi, 'interiorul acestei cuști'],
+        [/\bspuneți-i saluta\b/gi, 'spuneți-i salut'],
+        [/\bcea mai izolatã\b/gi, 'cea mai izolată'],
+        [/\brebuie să știm\b/gi, 'trebuie să știm'],
+        [/\buficient de mult\b/gi, 'suficient de mult'],
+        [/\bîi cureț\b/gi, 'îi curăț'],
+        [/\bArată foarte atleți\b/gi, 'Arată foarte atletici'],
+        [/\bîn toată regla\b/gi, 'în toată regula'],
+        [/\bI se strânge noțul\b/gi, 'I se strânge lațul'],
+        [/\bdeatât un câine\b/gi, 'decât un câine'],
+        [/\bBandurile cu spini\b/gi, 'Benzile cu țepi'],
+        [/\bacești tipii\b/gi, 'acești tipi'],
+        [/\bla aeriport\b/gi, 'la aeroport'],
+        [/\bVine un camioane\b/gi, 'Vine un camion'],
+        [/\bDos beri\b/gi, 'Două beri'],
+        [/\bbervezas\b/gi, 'beri'],
+        [/\bTrapiste pline de praf\b/gi, 'Uși-capcană pline de praf'],
+        [/\bl-ai tras în piepie\b/gi, 'l-ai tras în piept'],
+        [/\bCâți-va insule\b/gi, 'Câțiva inși'],
+        [/\bDRS inamic\b/gi, 'Dronă inamică'],
+        [/\bce ai\?y\b/gi, 'ce ai?'],
+        [/\bse molmoșește\b/gi, 'dă greș'],
+        [/\bnu-mi mai aparține!\b/gi, 'că nu-mi mai aparține!'],
+        [/\bscoateți-o pe mama pe insulă\b/gi, 'scoateți-o pe mama de pe insulă'],
+        [/\bva face denunț\b/gi, 'îi va denunța'],
+        [/\bȚ-am cerut\b/gi, 'Ți-am cerut'],
+        [/\bcearsăfuri\b/gi, 'cearșafuri'],
+        [/\bșă ne ținem\b/gi, 'să ne ținem'],
+        [/\boevacuare\b/gi, 'o evacuare'],
         [/\btat-tu\b/gi, 'tatăl tău'],
         [/\btat-meu\b/gi, 'tatăl meu'],
         [/\bmerici\b/gi, 'meriți'],
@@ -620,18 +667,7 @@ function formatSubtitleLine(text) {
         [/\bTrapuri\b/gi, 'Capcane'],
         [/\bîn a naibii\b/gi, 'întreagă, la naiba'],
         [/\bAltor orte\b/gi, 'Alcuiva'],
-        [/\.icon\b/gi, ''],
-        [/\bce ai\?y\b/gi, 'ce ai?'],
-        [/\bse molmoșește\b/gi, 'dă greș'],
-        [/\bnu-mi mai aparține!\b/gi, 'că nu-mi mai aparține!'],
-        [/\bscoateți-o pe mama pe insulă\b/gi, 'scoateți-o pe mama de pe insulă'],
-        [/\bva face denunț\b/gi, 'îi va denunța'],
-        [/\bȚ-am cerut\b/gi, 'Ți-am cerut'],
-        [/\bcearsăfuri\b/gi, 'cearșafuri'],
-        [/\buficient\b/gi, 'suficient'],
-        [/\bșă ne ținem\b/gi, 'să ne ținem'],
-        [/\boevacuare\b/gi, 'o evacuare'],
-        [/\bun camioane\b/gi, 'un camion']
+        [/\.icon\b/gi, '']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -729,33 +765,21 @@ Proper names, established names, brands, places, titles, character names and oth
 15. AUDIO TAGS & INTERJECTIONS REMOVAL
 Remove non-dialogue audio tags, standalone hesitation sounds, and meaningless interjections (such as "Ah!", "Oh!", "Uh!", "Agh!", "ăă", "mhm") entirely. Do not translate standalone grunts or cries.
 
-16. NO ENGLISH LEFT BEHIND — MANDATORY FINAL CHECK
+16. NO ENGLISH LEFT BEHIND & TRANSLATE ALL SPEAKER LABELS
 Translate EVERY actual English dialogue line into Romanian.
-
-After translating, compare EVERY output value with its corresponding English input value.
-
+If a line starts with an English speaker label (such as 'DRIVER:', 'GUARD:', 'COP:', 'NARRATOR:'), ALWAYS translate it into natural Romanian ('ȘOFER:', 'GARDĂ:', 'POLIȚIST:', 'NARAȚIUNE:') or keep the character's proper name cleanly.
 NEVER return an English dialogue sentence or clause unchanged.
-NEVER copy an English dialogue block from the input into the output.
-If the output is still substantially English, translate it again before returning the JSON.
 
-English may remain ONLY when it is:
-- a character/proper name
-- a brand or established name
-- a place or official title that should remain unchanged
-- a genuinely unavoidable technical term with no natural Romanian equivalent
+17. STRICTLY LATIN ALPHABET ONLY
+NEVER output Devanagari, Hindi, Burmese, Asian, Cyrillic, or any other non-Latin characters under any circumstance. Output strictly standard Romanian Latin characters with proper diacritics.
 
-A complete English sentence is NEVER acceptable as a translated subtitle.
-
-17. NO ALTERNATIVES
+18. NO ALTERNATIVES
 Never provide multiple translations.
 Never write alternatives such as: (varianta 1 / varianta 2) or "X" / "Y".
 Choose the single most natural Romanian translation.
 
-18. DO NOT IMPROVISE
-If a phrase is ambiguous, use the surrounding context to determine the most likely intended meaning.
-
-19. TARGETED GRANULAR RETRY ON UNTRANSLATED ENGLISH LINES
-CRITICAL: If the English detection filter discovers that specific lines within a chunk have remained untranslated in English, DO NOT fail or re-translate the entire chunk of 165 lines. Instead, isolate ONLY the specific failing line indices, re-translate solely those specific lines in a targeted micro-request to Gemini, and merge them back seamlessly.
+19. TARGET LINE FOCUS & FOREIGN WORDS
+Verifică DOAR replica din mijloc. Dacă există un cuvânt străin intenționat, păstrează-l. Dacă este o scăpare din limba sursă, traduce-l. Nu modifica replicile vecine.
 
 20. MULTI-SPEAKER DIALOGUE FORMATTING - CRITICAL
 When a subtitle contains two different speakers, you MUST output them on TWO SEPARATE LINES using a line break (\\n). 
@@ -767,19 +791,12 @@ CORRECT:
 21. NEVER OUTPUT EMPTY DIALOGUE DASHES OR STANDALONE INTERJECTIONS
 NEVER output a subtitle line containing ONLY hyphens, dashes, or empty markers such as "-", "–", or "—".
 NEVER output standalone hesitation sounds or interjections such as "ăă", "îhî", "mhm", "Ah!", "Oh!", "Uh!", "Agh!", "Aâ!".
-If a subtitle contains an empty dialogue dash or a standalone interjection with no actual spoken text after it, DELETE IT completely.
 
 22. NO INVENTED OR CORRUPTED ROMANIAN WORDS
-NEVER invent Romanian words. Words such as "molmoșește", "anghang", "tangou" (when misused as a corrupted word) and similar malformed forms sunt strict interzise.
+NEVER invent Romanian words. Words such as "molmoșește", "anghang", "tangou" (when misused) and similar malformed forms sunt strict interzise.
 
-23. ABSOLUTELY NO ENGLISH DIALOGUE LEFT
-After translation, inspect EVERY individual subtitle line. If any line remains an English dialogue sentence or clause, translate it into natural Romanian.
-
-24. STRICT GRAMMAR AND CLEAN PUNCTUATION
+23. STRICT GRAMMAR AND CLEAN PUNCTUATION
 NEVER output malformed forms such as "Ț-am", "Eu acționez" (or incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am", "să-i", "să-ți", "să-și") and proper grammar. 
-
-25. TARGET LINE FOCUS & FOREIGN WORDS
-Verifică DOAR replica din mijloc. Dacă există un cuvânt străin intenționat, păstrează-l. Dacă este o scăpare din limba sursă, traduce-l. Nu modifica replicile vecine.
 
 CRITICAL ERRORS TO AVOID:
 - "De ce man pasă?" → "De ce mi-ar păsa?"
@@ -789,21 +806,13 @@ CRITICAL ERRORS TO AVOID:
 FINAL MANDATORY PROOFREAD — DO NOT SKIP
 
 Before returning the JSON, perform one final line-by-line proofreading pass.
-
 For EVERY translated subtitle:
 - verify that every word is a valid Romanian word;
 - verify grammar, agreement and diacritics;
 - verify that no English dialogue remains;
-- verify that no corrupted or invented Romanian word remains;
-- verify that no word is accidentally distorted or misspelled;
-- verify that the Romanian sentence sounds natural when read aloud;
-- verify that NO subtitle is left blank or empty;
-- verify that no Cyrillic, Asian, or other non-Latin characters are used.
-
-If you find even ONE suspicious word or malformed phrase, rewrite that subtitle before returning the JSON.
+- verify that no Cyrillic, Asian, Hindi or other non-Latin characters are used.
 
 Do NOT return the JSON until this final proofreading pass is complete.
-
 </translation_master_rules>
 
 <few_shot_examples>
@@ -937,7 +946,6 @@ function chunkArray(array, size) {
     return chunks;
 }
 
-// Verifică dacă textul este doar zgomot, oftat, interjecție sau semne de punctuație
 function isJunkOrInterjection(text) {
     const clean = String(text || '').replace(/<[^>]+>/g, '').trim();
     if (!clean) return true;
@@ -1190,7 +1198,6 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
             await sleep(1500); 
             let fixed = false;
 
-            // Fără bucle infinite retry-- pe 429
             for (let retry = 1; retry <= 2; retry++) { 
                 try {
                     const keyState = await getAvailableKey(keyStates);
