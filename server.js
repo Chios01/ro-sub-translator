@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.26',
+    version: '12.78.27',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -864,8 +864,7 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
     const contextBefore = allItems.slice(Math.max(0, chunkStart - CONTEXT_LINES_BEFORE), chunkStart);
     const contextAfter = allItems.slice(chunkEnd, Math.min(allItems.length, chunkEnd + CONTEXT_LINES_AFTER));
 
-    const keysToTranslate = {};
-    chunk.forEach(obj => { keysToTranslate[obj.id] = obj.text; });
+    const keysToTranslate = chunk.map(obj => ({ id: obj.id, text: obj.text }));
 
     return `
 ${MASTER_TRANSLATION_PROMPT}
@@ -921,70 +920,58 @@ async function getAvailableKey(keyStates) {
 
 async function callGemini(prompt, keyState, options = {}) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
-    const maxAttempts = Number.isInteger(options.maxAttempts) ? Math.max(1, options.maxAttempts) : 5;
-    const retry429 = options.retry429 !== false;
     const timeout = Number.isInteger(options.timeout) ? options.timeout : 120000;
-    let lastError = null;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-            const response = await axios.post(
-                endpoint,
-                {
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: {
-                        temperature: 0.0,
-                        responseMimeType: 'application/json',
-                        responseSchema: {
-                            type: 'ARRAY',
-                            minItems: 1,
-                            items: {
-                                type: 'OBJECT',
-                                properties: {
-                                    id: { type: 'INTEGER' },
-                                    text: { type: 'STRING' }
-                                },
-                                required: ['id', 'text'],
-                                propertyOrdering: ['id', 'text']
-                            }
+    try {
+        const response = await axios.post(
+            endpoint,
+            {
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: {
+                    temperature: 0.0,
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                        type: 'ARRAY',
+                        minItems: 1,
+                        items: {
+                            type: 'OBJECT',
+                            properties: {
+                                id: { type: 'INTEGER' },
+                                text: { type: 'STRING' }
+                            },
+                            required: ['id', 'text'],
+                            propertyOrdering: ['id', 'text']
                         }
-                    },
-                    safetySettings: [
-                        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
-                    ]
+                    }
                 },
-                { params: { key: keyState.key }, timeout, headers: { 'Content-Type': 'application/json' } }
-            );
+                safetySettings: [
+                    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+                ]
+            },
+            { params: { key: keyState.key }, timeout, headers: { 'Content-Type': 'application/json' } }
+        );
 
-            const raw = response.data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-            if (!raw.trim()) throw new Error('Gemini a returnat conținut gol.');
-            keyState.failures = 0;
-            return raw;
-        } catch (error) {
-            lastError = error;
-            const status = error.response?.status;
-            if (status === 401 || status === 403) {
-                keyState.disabled = true;
-                throw new Error(`Cheie Gemini invalidă (${status}).`);
-            }
-            if (status === 429) {
-                keyState.pausedUntil = Date.now() + 45000 + Math.random() * 5000;
-                if (!retry429) throw new Error('Rate limit 429.');
-                if (attempt < maxAttempts) {
-                    await sleep(1500);
-                    continue;
-                }
-            }
-            if (attempt < maxAttempts) {
-                await sleep(2000 * attempt);
-                continue;
-            }
+        const raw = response.data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+        if (!raw.trim()) throw new Error('Gemini a returnat conținut gol.');
+        keyState.failures = 0;
+        return raw;
+    } catch (error) {
+        const status = error.response?.status;
+        if (status === 401 || status === 403) {
+            keyState.disabled = true;
+            throw new Error(`Cheie Gemini invalidă (${status}).`);
         }
+        if (status === 429) {
+            // Nu reîncercăm aceeași cerere. Punem cheia temporar pe pauză
+            // și lăsăm motorul de chunk să aleagă imediat altă cheie.
+            keyState.pausedUntil = Date.now() + 15000;
+            throw new Error('Rate limit 429. Se schimbă cheia fără retry.');
+        }
+        throw error;
     }
-    throw lastError || new Error('Gemini request failed.');
 }
 
 // ============================================================
@@ -1213,82 +1200,87 @@ function normalizeTranslationPayload(parsed) {
 
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
-    const maxLocalAttempts = 3;
     let lastError = null;
 
-    let assignedKeyState = null;
+    // Un singur request pentru erori de JSON/schema. Nu repetăm aceeași
+    // cerere de 3-5 ori: dacă răspunsul nu este valid, împărțim chunk-ul.
+    // Pentru 429 încercăm cel mult o singură dată cu altă cheie.
+    const maxKeyAttempts = 2;
+    let attemptedKeys = new Set();
 
-    for (let attempt = 1; attempt <= maxLocalAttempts; attempt++) {
+    for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
         let keyState = null;
         try {
-            if (assignedKeyState && !assignedKeyState.disabled && assignedKeyState.pausedUntil <= Date.now()) {
-                keyState = assignedKeyState;
-                keyState.lastUsed = Date.now();
-            } else {
+            // Alegem o cheie nefolosită în această încercare.
+            const candidates = keyStates
+                .filter(s => !s.disabled && s.pausedUntil <= Date.now() && !attemptedKeys.has(s.key))
+                .sort((a, b) => a.lastUsed - b.lastUsed);
+
+            if (!candidates.length) {
                 keyState = await getAvailableKey(keyStates);
-                assignedKeyState = keyState;
+            } else {
+                keyState = candidates[0];
+                keyState.lastUsed = Date.now();
             }
-            
+            attemptedKeys.add(keyState.key);
+
             const keyMask = '...' + keyState.key.slice(-4);
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${MODEL_NAME} | Cheie: ${keyMask})...${c.reset}`);
 
             const raw = await callGemini(prompt, keyState);
-            const parsed = safeJsonParse(raw);
+            const parsed = JSON.parse(String(raw).trim());
             const dict = normalizeTranslationPayload(parsed);
 
-            const results = chunk.map(obj => {
-                const val = dict[obj.id] !== undefined ? dict[obj.id] : (dict[String(obj.id)] !== undefined ? dict[String(obj.id)] : obj.text);
-                return {
-                    id: obj.id,
-                    text: formatSubtitleLine(val)
-                };
-            });
+            // Răspunsul trebuie să conțină exact toate ID-urile cerute.
+            const missingIds = chunk.filter(obj => dict[String(obj.id)] === undefined).map(obj => obj.id);
+            if (missingIds.length) {
+                throw new Error(`JSON incomplet: lipsesc ${missingIds.length} ID-uri.`);
+            }
+
+            const results = chunk.map(obj => ({
+                id: obj.id,
+                text: formatSubtitleLine(dict[String(obj.id)])
+            }));
 
             const untranslatedItems = results.filter(result => {
                 const original = chunk.find(obj => obj.id === result.id)?.text || '';
                 if (isJunkOrInterjection(original)) return false;
-
                 return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
             });
 
+            // Validarea de limbă rămâne, dar un batch suspect este reparat o singură dată.
             if (untranslatedItems.length > 0 && depth < 2) {
-                console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii netraduse în calupul ${globalChunkIndex + 1}. Retraducere cu aceeași cheie (${keyMask})...${c.reset}`);
-                
-                await sleep(1000);
-                const fixPayload = {};
-                untranslatedItems.forEach(item => {
+                console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii suspecte în calupul ${globalChunkIndex + 1}. Un singur Batch Retry...${c.reset}`);
+
+                const fixPayload = untranslatedItems.map(item => {
                     const originalObj = chunk.find(obj => obj.id === item.id);
-                    if (originalObj) fixPayload[originalObj.id] = originalObj.text;
-                });
+                    return originalObj ? { id: originalObj.id, text: originalObj.text } : null;
+                }).filter(Boolean);
 
                 const batchFixPrompt = `
 ${MASTER_TRANSLATION_PROMPT}
 
-Tradu strict următoarele linii de subtitrare în limba română naturală și returnează un ARRAY JSON:
+Corectează STRICT următoarele linii și returnează un ARRAY JSON valid:
 [
   {"id": 123, "text": "traducerea română"}
 ]
-Păstrează exact ID-urile și returnează câte un obiect pentru fiecare linie:
+Returnează exact câte un obiect pentru fiecare ID. Nu omite și nu modifica ID-urile.
 ${JSON.stringify(fixPayload, null, 2)}
 `;
                 try {
                     const fixRaw = await callGemini(batchFixPrompt, keyState);
-                    const fixJson = safeJsonParse(fixRaw);
+                    const fixJson = JSON.parse(String(fixRaw).trim());
                     const fixDict = normalizeTranslationPayload(fixJson);
 
                     untranslatedItems.forEach(item => {
                         const originalObj = chunk.find(obj => obj.id === item.id);
                         if (!originalObj) return;
-                        const fixedVal = fixDict[originalObj.id] || fixDict[String(originalObj.id)];
-                        if (fixedVal) {
+                        const fixedVal = fixDict[String(originalObj.id)];
+                        if (fixedVal !== undefined) {
                             const targetRes = results.find(r => r.id === originalObj.id);
                             if (targetRes) {
                                 const candidate = formatSubtitleLine(fixedVal);
-                                if (
-                                    candidate &&
-                                    !hasUntranslatedEnglish(originalObj.text, candidate) &&
-                                    !hasCorruptedSubtitleText(candidate, originalObj.text)
-                                ) {
+                                if (candidate && !hasUntranslatedEnglish(originalObj.text, candidate) && !hasCorruptedSubtitleText(candidate, originalObj.text)) {
                                     targetRes.text = candidate;
                                     console.log(`${c.green}  ✔ [Batch Retry] ${originalObj.id} reparată și validată${c.reset}`);
                                 }
@@ -1296,7 +1288,7 @@ ${JSON.stringify(fixPayload, null, 2)}
                         }
                     });
                 } catch (err) {
-                    console.log(`${c.yellow}  ⚠ [Batch Retry] Eroare la corecție calup: ${err.message}${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ [Batch Retry] Eșuat fără retry suplimentar: ${err.message}${c.reset}`);
                 }
             }
 
@@ -1304,20 +1296,17 @@ ${JSON.stringify(fixPayload, null, 2)}
             return results;
         } catch (error) {
             lastError = error;
-            console.log(`${c.yellow}⚠ [Gemini] Eroare la calupul ${globalChunkIndex + 1} (Încercarea ${attempt}/${maxLocalAttempts}): ${error.message}${c.reset}`);
-            
-            if (error.message.includes('429')) {
-                assignedKeyState = null;
-            }
+            const is429 = error.message.includes('429');
+            console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
 
-            const backoff = error.message.includes('429') ? 8000 * attempt : 2000 * attempt;
-            await sleep(backoff);
+            // Doar 429 justifică schimbarea cheii. JSON invalid/incomplet => split imediat.
+            if (!is429) break;
+            if (attempt < maxKeyAttempts) continue;
         }
     }
 
     if (chunk.length > 20 && depth < 2) {
-        console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în două părți din cauza erorilor repetate...${c.reset}`);
-        await sleep(5000);
+        console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în două părți imediat după eșec...${c.reset}`);
 
         const middle = Math.floor(chunk.length / 2);
         const first = chunk.slice(0, middle);
@@ -1372,7 +1361,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
                 if (!item) return;
                 let fixed = false;
 
-                for (let retry = 1; retry <= 2; retry++) { 
+                for (let retry = 1; retry <= 1; retry++) {
                 try {
                     const keyState = await getAvailableKey(keyStates);
                     const current = translatedById[String(item.id)] || '';
@@ -1421,7 +1410,7 @@ Returnează DOAR JSON valid în forma:
                     console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
                 } catch (err) {
                     console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
-                    await sleep(2500);
+                    // Fără retry suplimentar: validatorul global este ultimul filtru.
                 }
             }
 
