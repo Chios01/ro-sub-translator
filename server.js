@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.38',
+    version: '12.78.39',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1445,6 +1445,8 @@ Returnează DOAR JSON valid în forma:
         await Promise.all(Array.from({ length: retryConcurrency }, () => retryWorker()));
 
         const remaining = items.filter(item => {
+            const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+            if (!originalClean) return false;
             if (isJunkOrInterjection(item.text)) return false;
 
             const translated = translatedById[String(item.id)];
@@ -1465,6 +1467,8 @@ Returnează DOAR JSON valid în forma:
     }
 
     const remaining = items.filter(item => {
+        const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        if (!originalClean) return false;
         if (isJunkOrInterjection(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
@@ -1594,6 +1598,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
+        const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        if (!originalClean) return false;
         if (isJunkOrInterjection(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
