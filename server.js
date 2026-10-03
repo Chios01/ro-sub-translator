@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.9',
+    version: '12.78.10',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -331,6 +331,10 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
 
+    // Curăță tag-urile HTML care conțin doar interjecții izolate de tip <i>Ah!</i>
+    clean = clean.replace(/<[iIbBuU]>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
+    clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
+
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
     clean = clean.replace(/\[[^\]]*?\]/g, '');
     clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughter)[^)]*?\)/gi, '');
@@ -353,15 +357,20 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    let cleaned = text.replace(/\b(ăă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
+    // Curăță tag-urile și interjecțiile de tip "<i>Ah!</i>", "Ah!", "Oh!", "Uf!" singure pe rând
+    let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
+    cleaned = cleaned.replace(/\b(ăă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
     cleaned = cleaned.replace(/\s+/g, ' ');
     
-    if (/^(ah|oh|uh|agh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
+    if (/^(ah|oh|uh|agh|aâ|aoleu|ăă|ugh|argh|aah|oof|uf)[!.]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
+
+    // Elimină automat caracterele non-latine (asiatice, birmaneze, devanagari/hindi, chirilice)
+    cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/]/g, '');
 
     cleaned = cleaned.replace(/\s*\([^)]+\)$/g, '');
 
-    if (!cleaned) return '';
+    if (!cleaned.trim()) return '';
 
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
@@ -605,17 +614,24 @@ function formatSubtitleLine(text) {
         [/\bUrco\b/gi, 'Urc-o'],
         [/\bn o să\b/gi, 'n-o să'],
         [/\bpenthouses-ul\b/gi, 'penthouse-ul'],
+        [/\bpenthousul\b/gi, 'penthouse-ul'],
         [/\bîn a mea mea\b/gi, 'în puii mei'],
         [/\bTrapdoor-uri\b/gi, 'Uși-capcană'],
+        [/\bTrapuri\b/gi, 'Capcane'],
         [/\bîn a naibii\b/gi, 'întreagă, la naiba'],
         [/\bAltor orte\b/gi, 'Alcuiva'],
         [/\.icon\b/gi, ''],
-        [/ကျွန်တော်/g, ''],
         [/\bce ai\?y\b/gi, 'ce ai?'],
         [/\bse molmoșește\b/gi, 'dă greș'],
         [/\bnu-mi mai aparține!\b/gi, 'că nu-mi mai aparține!'],
         [/\bscoateți-o pe mama pe insulă\b/gi, 'scoateți-o pe mama de pe insulă'],
-        [/\bva face denunț\b/gi, 'îi va denunța']
+        [/\bva face denunț\b/gi, 'îi va denunța'],
+        [/\bȚ-am cerut\b/gi, 'Ți-am cerut'],
+        [/\bcearsăfuri\b/gi, 'cearșafuri'],
+        [/\buficient\b/gi, 'suficient'],
+        [/\bșă ne ținem\b/gi, 'să ne ținem'],
+        [/\boevacuare\b/gi, 'o evacuare'],
+        [/\bun camioane\b/gi, 'un camion']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -921,7 +937,7 @@ function chunkArray(array, size) {
     return chunks;
 }
 
-// Verifică dacă un text original este doar zgomot, oftat, interjecție sau semne de punctuație
+// Verifică dacă textul este doar zgomot, oftat, interjecție sau semne de punctuație
 function isJunkOrInterjection(text) {
     const clean = String(text || '').replace(/<[^>]+>/g, '').trim();
     if (!clean) return true;
@@ -1174,7 +1190,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
             await sleep(1500); 
             let fixed = false;
 
-            // Încercăm de maximum 2 ori, pe chei diferite. FĂRĂ bucle infinite pe 429!
+            // Fără bucle infinite retry-- pe 429
             for (let retry = 1; retry <= 2; retry++) { 
                 try {
                     const keyState = await getAvailableKey(keyStates);
