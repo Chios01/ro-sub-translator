@@ -33,7 +33,7 @@ const PREVIOUS_TRANSLATION_CONTEXT = 8;
 
 const MODEL_NAME =
     process.env.GEMINI_MODEL ||
-    'gemini-3.5-flash';
+    'gemini-3.5-flash-lite';
 
 // ============================================================
 // CONSOLE COLORS
@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.39',
+    version: '12.78.40',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1347,6 +1347,13 @@ ${JSON.stringify(missingItems, null, 2)}
 // GLOBAL POST-CHECK + TARGETED RETRY
 // ============================================================
 
+// Nu retrimitem replici formate doar din OK/Okay; utilizatorul dorește
+// ca aceste răspunsuri scurte să rămână exact așa cum au fost produse.
+function isOkOnlySubtitle(text) {
+    const clean = String(text || '').replace(/<[^>]+>/g, '').trim();
+    return /^(?:[-–—\s]*(?:ok|okay)(?:[.!?…]+)?[-–—\s]*)$/i.test(clean);
+}
+
 async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) { 
     let totalFixed = 0;
 
@@ -1357,6 +1364,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
             if (isJunkOrInterjection(item.text)) return false;
 
             const translated = translatedById[String(item.id)];
+            if (isOkOnlySubtitle(translated)) return false;
             const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
 
             if (!transClean) return true;
@@ -1450,6 +1458,7 @@ Returnează DOAR JSON valid în forma:
             if (isJunkOrInterjection(item.text)) return false;
 
             const translated = translatedById[String(item.id)];
+            if (isOkOnlySubtitle(translated)) return false;
             const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
 
             if (!transClean) return true;
@@ -1595,6 +1604,11 @@ Returnează DOAR un ARRAY JSON valid în forma:
         }
     }
 
+    // Retry punctual doar pentru liniile rămase suspecte după traducerea normală.
+    // Nu retraducem calupuri întregi și nu schimbăm paralelismul de 3.
+    const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 1);
+    console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
+
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
@@ -1621,7 +1635,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
     }
 
     console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide${c.reset}`);
-    console.log(`${c.green}✔ Verificarea finală a fost executată local, fără apeluri Gemini suplimentare.${c.reset}`);
+    console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
 
     const output = items.map(item => {
         const translated = translatedById[String(item.id)] || item.text;
