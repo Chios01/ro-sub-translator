@@ -975,6 +975,8 @@ function safeJsonParse(rawText) {
         clean = clean.slice(startIdx, endIdx + 1);
     }
 
+    // Repară JSON-ul fără a modifica textul valid din interiorul stringurilor.
+    // Gemini poate returna uneori backslash-uri invalide în replici (ex. \q).
     function sanitizeJsonString(input) {
         let out = '';
         let inString = false;
@@ -1013,10 +1015,12 @@ function safeJsonParse(rawText) {
                     }
                 }
 
+                // Backslash invalid: îl transformăm într-un backslash literal.
                 out += '\\\\';
                 continue;
             }
 
+            // Caracterele de control nepermise în JSON string.
             if (ch === '\n') { out += '\\n'; continue; }
             if (ch === '\r') { out += '\\r'; continue; }
             if (ch === '\t') { out += '\\t'; continue; }
@@ -1028,12 +1032,15 @@ function safeJsonParse(rawText) {
     }
 
     clean = sanitizeJsonString(clean);
+
+    // Chei neghilimate și virgule trailing — doar ca fallback suplimentar.
     clean = clean.replace(/([{,]\s*)([0-9a-zA-Z_-]+)(\s*:\s*)/g, '$1"$2"$3');
     clean = clean.replace(/,\s*([}\]])/g, '$1');
 
     try {
         return JSON.parse(clean);
     } catch (err1) {
+        // Ultimul fallback: elimină doar caracterele de control rămase în afara stringurilor.
         try {
             const relaxed = clean.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
             return JSON.parse(relaxed);
@@ -1082,6 +1089,8 @@ function hasUntranslatedEnglish(original, translated) {
     const originalNorm = normalize(origClean);
     const translatedNorm = normalize(transClean);
 
+    // Cuvinte englezești foarte distinctive. Lista este intenționat conservatoare:
+    // nu vrem ca numele proprii sau dialogul în alte limbi să devină false-positive.
     const strongEnglish = new Set([
         'the', 'and', 'but', 'if', 'then', 'than',
         'they', 'them', 'their', 'we', 'us', 'our',
@@ -1121,14 +1130,18 @@ function hasUntranslatedEnglish(original, translated) {
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
 
+    // Dacă traducerea este identică cu originalul și conține engleză clară, este suspectă.
     if (originalNorm === translatedNorm) {
         const hasEnglishWords = ow.some(w => strongEnglish.has(w) || englishMarkers.has(w));
         if (hasEnglishWords) return true;
 
+        // Nume proprii/titluri foarte scurte pot rămâne identice.
         const hasCapitals = /[A-Z]/.test(origClean);
         if (hasCapitals && ow.length <= 4) return false;
     }
 
+    // Fragmente englezești foarte distinctive care trebuie prinse chiar dacă sunt
+    // amestecate într-o propoziție românească: "naiba să the ia", "... from ..." etc.
     const distinctiveLeftovers = new Set([
         'the', 'from', 'however', 'although', 'because', 'without', 'between',
         'maybe', 'please', 'sorry', 'thanks', 'thank', 'your', "you're",
@@ -1679,6 +1692,7 @@ app.get('/:configData/translate', async (req, res) => {
     } catch (error) {
         clearInterval(keepAlive);
         console.error('Translation error:', error.message);
+    console.error(error.stack);
         if (!res.headersSent) {
             res.status(500).send('Translation failed: ' + error.message);
         } else {
@@ -1712,7 +1726,7 @@ function parseSrt(srt) {
 
         if (!text || text === ' ') continue;
 
-        result.path({ id, start: match[1], end: match[2], text });
+        result.push({ id, start: match[1], end: match[2], text });
     }
 
     return result;
