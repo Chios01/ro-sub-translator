@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.18',
+    version: '12.78.19',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -356,10 +356,7 @@ function deepCleanSubtitleText(text) {
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă|ugh|argh|aah|oof|uf)[!.]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
-    // Elimină backslash-uri parazite
     cleaned = cleaned.replace(/\\+/g, ' ');
-
-    // Corectează cifre parazite lipite de cuvinte scurte
     cleaned = cleaned.replace(/\b(nu|de|ce|pe|la)1\b/gi, '$1');
 
     cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/]/g, '');
@@ -462,14 +459,21 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
+        // Adăugiri noi pentru netraduse detectate în testele recente
+        [/\bsuch a detailed indictment\b/gi, 'un rechizitoriu atât de detaliat'],
+        [/\bHowever,\b/gi, 'Cu toate acestea,'],
+        [/\bdilettante\b/gi, 'diletant'],
+        [/\babroach\b/gi, 'abordare'],
+        [/\bfrom project\b/gi, 'din proiect'],
+        [/\bfrom\b/gi, 'de la'],
+        [/\bbackground\b/gi, 'trecut'],
+        [/\bbanca acuzaților bancul acuzaților\b/gi, 'pe banca acuzaților'],
+        [/\bîn joi\b/gi, 'joi'],
+
         // Corectări punctuale de prioritate maximă
         [/\bde la embedding itself in a mudbank\.?/gi, 'de la a se înfige într-un mal de noroi.'],
         [/\bembedding itself in a mudbank\.?/gi, 'a se înfige într-un mal de noroi.'],
         [/\bN-a fost nic67\b/gi, 'Nu era niciun loc aici?'],
-        [/\bfrom project\b/gi, 'din proiect'],
-        [/\bfrom altcineva\b/gi, 'de la altcineva'],
-        [/\bfrom\b/gi, 'de la'],
-        [/\babroach\b/gi, 'abordare'],
         [/\bbackground juridic\b/gi, 'trecut juridic'],
         [/\bCă\.E\.A\./gi, 'A.E.C.'],
         [/\bpro Jean Tatlock\b/gi, 'despre Jean Tatlock'],
@@ -602,7 +606,7 @@ function formatSubtitleLine(text) {
         [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile'],
         [/\bialaltăieri\b/gi, 'alaltăieri'],
         [/\bGăură\b/gi, 'Gaură'],
-        [/\bOricicum\b/gi, 'Oricum'],
+        [/\bOricum\b/gi, 'Oricum'],
         [/\beceam\b/gi, 'eram'],
         [/\bcei-o fi\b/gi, 'ce i-o fi'],
         [/\btoți leau\b/gi, 'șleau'],
@@ -1025,14 +1029,13 @@ function hasUntranslatedEnglish(original, translated) {
         'first', 'last', 'next', 'back', 'again', 'colonel', 'minutes', 'ready',
         'ideology', 'killed', 'interestingly', 'enough', 'nothing', 'maybe', 'little', 'well', 'sure',
         'itself', 'himself', 'herself', 'themselves', 'myself', 'yourself',
-        'embedding', 'mudbank', 'cowboys', 'dilettante'
+        'embedding', 'mudbank', 'cowboys', 'dilettante', 'such', 'indictment', 'however'
     ]);
 
     const tokenize = value => value.match(/[a-zăâîșț]+(?:'[a-zăâîșț]+)?/g) || [];
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
 
-    // REGULĂ OPTIMIZATĂ PENTRU LINII IDENTICE
     if (originalNorm === translatedNorm) {
         const hasEnglishWords = ow.some(w => strongEnglish.has(w) || englishMarkers.has(w));
         if (hasEnglishWords) {
@@ -1045,8 +1048,7 @@ function hasUntranslatedEnglish(original, translated) {
         }
     }
 
-    // Verifică dacă există secvențe evidente de engleză chiar și în propoziții combinate
-    if (tw.some(w => ['embedding', 'mudbank', 'itself', 'from'].includes(w))) {
+    if (tw.some(w => ['embedding', 'mudbank', 'itself', 'from', 'such', 'indictment', 'however'].includes(w))) {
         return true;
     }
 
@@ -1138,7 +1140,6 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
             });
 
-            // RETRADUCERE ÎN CALUP (BATCH RETRY) - EVITĂ AVALANȘA DE 429
             if (untranslatedItems.length > 0 && depth < 2) {
                 console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii netraduse în calupul ${globalChunkIndex + 1}. Retraducere calup de corecție (1 singur request)...${c.reset}`);
                 
