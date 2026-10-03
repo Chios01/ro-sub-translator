@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.15',
+    version: '12.78.16',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -357,7 +357,6 @@ function deepCleanSubtitleText(text) {
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
     cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/]/g, '');
-
     cleaned = cleaned.replace(/\s*\([^)]+\)$/g, '');
 
     if (!cleaned.trim()) return '';
@@ -457,7 +456,10 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
-        // Corectări punctuale pentru Oppenheimer
+        // Corectări punctuale de siguranță
+        [/\bThey need us\.?\b/gi, 'Au nevoie de noi.'],
+        [/\bMaybe a little too well,?\s*Robert\.?\b/gi, 'Poate puțin prea bine, Robert.'],
+        [/\bInterestingly enough,?\b/gi, 'Destul de interesant,'],
         [/\bthese men\b/gi, 'acești oameni'],
         [/\beverybody take a welder's glass\b/gi, 'toată lumea să ia o mască de sudură'],
         [/Everybody take a welder's glass\./gi, 'Toată lumea să ia o mască de sudură.'],
@@ -968,15 +970,6 @@ function hasUntranslatedEnglish(original, translated) {
     const originalNorm = normalize(origClean);
     const translatedNorm = normalize(transClean);
 
-    // Protecție pentru nume proprii și termeni tehnici identici
-    if (originalNorm === translatedNorm) {
-        const hasCapitals = /[A-Z]/.test(origClean);
-        const wordCount = origClean.split(/\s+/).length;
-        if (hasCapitals && wordCount <= 4) {
-            return false;
-        }
-    }
-
     const strongEnglish = new Set([
         'the', 'and', 'but', 'if', 'then', 'than',
         'they', 'them', 'their', 'we', 'us', 'our',
@@ -1007,12 +1000,26 @@ function hasUntranslatedEnglish(original, translated) {
         'good', 'bad', 'right', 'wrong', 'now', 'here', 'there',
         'very', 'really', 'just', 'only', 'still', 'already',
         'first', 'last', 'next', 'back', 'again', 'colonel', 'minutes', 'ready',
-        'ideology', 'killed', 'interestingly', 'enough', 'nothing'
+        'ideology', 'killed', 'interestingly', 'enough', 'nothing', 'maybe', 'little', 'well', 'sure'
     ]);
 
     const tokenize = value => value.match(/[a-zăâîșț]+(?:'[a-zăâîșț]+)?/g) || [];
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
+
+    // FIX INTELIGENT v12.78.16: Verificăm dacă linia identică conține cuvinte reale de engleză
+    if (originalNorm === translatedNorm) {
+        const hasEnglishWords = ow.some(w => strongEnglish.has(w) || englishMarkers.has(w));
+        if (hasEnglishWords) {
+            return true; // Dacă conține cuvinte comune din engleză, ESTE NETRADUSĂ!
+        }
+
+        // Dacă nu conține cuvinte comune și e scurtă cu majuscule (nume proprii gen "Los Alamos", "Niels Bohr"), e validă
+        const hasCapitals = /[A-Z]/.test(origClean);
+        if (hasCapitals && ow.length <= 4) {
+            return false;
+        }
+    }
 
     if (originalNorm === translatedNorm && tw.length > 0) {
         const strong = tw.filter(w => strongEnglish.has(w)).length;
@@ -1081,7 +1088,6 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 cleanText = cleanText.slice(startIdx, endIdx + 1);
             }
 
-            // AUTO-REPARARE PENTRU CARACTERE BAD ESCAPE ȘI VIRGULE
             cleanText = cleanText.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
             cleanText = cleanText.replace(/,\s*([}\]])/g, '$1');
 
@@ -1103,33 +1109,41 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
             });
 
+            // RETRADUCERE ÎN CALUP (BATCH RETRY) - EVITĂ AVALANȘA DE 429
             if (untranslatedItems.length > 0 && depth < 2) {
-                console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii netraduse în calupul ${globalChunkIndex + 1}. Retraducere punctuală...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii netraduse în calupul ${globalChunkIndex + 1}. Retraducere calup de corecție (1 singur request)...${c.reset}`);
                 
-                for (const badItem of untranslatedItems) {
-                    await sleep(1500); 
-                    const originalObj = chunk.find(obj => obj.id === badItem.id);
-                    if (!originalObj) continue;
+                await sleep(1000);
+                const fixPayload = {};
+                untranslatedItems.forEach(item => {
+                    const originalObj = chunk.find(obj => obj.id === item.id);
+                    if (originalObj) fixPayload[originalObj.id] = originalObj.text;
+                });
 
-                    const singlePrompt = `
+                const batchFixPrompt = `
 ${MASTER_TRANSLATION_PROMPT}
 
-Tradu strict această singură linie de subtitrare în limba română naturală, păstrând exact cheia "${originalObj.id}":
-{
-  "${originalObj.id}": "${originalObj.text}"
-}
+Tradu strict următoarele linii de subtitrare în limba română naturală, păstrând exact cheile numerice:
+${JSON.stringify(fixPayload, null, 2)}
 `;
-                    try {
-                        const singleRaw = await callGemini(singlePrompt, keyState);
-                        let sClean = singleRaw.trim();
-                        const sIdx = sClean.indexOf('{');
-                        const eIdx = sClean.lastIndexOf('}');
-                        if (sIdx >= 0 && eIdx > sIdx) {
-                            sClean = sClean.slice(sIdx, eIdx + 1);
-                        }
-                        sClean = sClean.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
-                        const singleJson = JSON.parse(sClean);
-                        const fixedVal = singleJson[originalObj.id] || singleJson[String(originalObj.id)];
+                try {
+                    const fixRaw = await callGemini(batchFixPrompt, keyState);
+                    let sClean = fixRaw.trim();
+                    const sIdx = sClean.indexOf('{');
+                    const eIdx = sClean.lastIndexOf('}');
+                    if (sIdx >= 0 && eIdx > sIdx) {
+                        sClean = sClean.slice(sIdx, eIdx + 1);
+                    }
+                    sClean = sClean.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+                    sClean = sClean.replace(/,\s*([}\]])/g, '$1');
+
+                    const fixJson = JSON.parse(sClean);
+                    const fixDict = fixJson.translations || fixJson;
+
+                    untranslatedItems.forEach(item => {
+                        const originalObj = chunk.find(obj => obj.id === item.id);
+                        if (!originalObj) return;
+                        const fixedVal = fixDict[originalObj.id] || fixDict[String(originalObj.id)];
                         if (fixedVal) {
                             const targetRes = results.find(r => r.id === originalObj.id);
                             if (targetRes) {
@@ -1140,13 +1154,15 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
                                     !hasCorruptedSubtitleText(candidate, originalObj.text)
                                 ) {
                                     targetRes.text = candidate;
-                                    console.log(`${c.green}  ✔ [Retry] ${originalObj.id} reparată și validată${c.reset}`);
+                                    console.log(`${c.green}  ✔ [Batch Retry] ${originalObj.id} reparată și validată${c.reset}`);
                                 } else {
-                                    console.log(`${c.yellow}  ⚠ [Retry] ${originalObj.id} încă suspectă după retraducere${c.reset}`);
+                                    console.log(`${c.yellow}  ⚠ [Batch Retry] ${originalObj.id} încă suspectă după retraducere${c.reset}`);
                                 }
                             }
                         }
-                    } catch (err) {}
+                    });
+                } catch (err) {
+                    console.log(`${c.yellow}  ⚠ [Batch Retry] Eroare la corecție calup: ${err.message}${c.reset}`);
                 }
             }
 
@@ -1156,7 +1172,6 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
             lastError = error;
             console.log(`${c.yellow}⚠ [Gemini] Eroare la calupul ${globalChunkIndex + 1} (Încercarea ${attempt}/${maxLocalAttempts}): ${error.message}${c.reset}`);
             
-            // Backoff extins dacă e 429 pentru a permite resetarea cotei
             const backoff = error.message.includes('429') ? 8000 * attempt : 2000 * attempt;
             await sleep(backoff);
         }
@@ -1164,7 +1179,7 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
 
     if (chunk.length > 20 && depth < 2) {
         console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în două părți din cauza erorilor repetate...${c.reset}`);
-        await sleep(5000); // Pauză de siguranță înainte de re-split
+        await sleep(5000);
 
         const middle = Math.floor(chunk.length / 2);
         const first = chunk.slice(0, middle);
