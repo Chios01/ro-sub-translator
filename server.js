@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.23',
+    version: '12.78.24',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -960,6 +960,36 @@ async function callGemini(prompt, keyState) {
 }
 
 // ============================================================
+// SAFE JSON PARSER (SANITIZER)
+// ============================================================
+
+function safeJsonParse(rawText) {
+    let clean = String(rawText || '').trim();
+    const startIdx = clean.indexOf('{');
+    const endIdx = clean.lastIndexOf('}');
+    if (startIdx >= 0 && endIdx > startIdx) {
+        clean = clean.slice(startIdx, endIdx + 1);
+    }
+
+    // 1. Ghilimele duble la chei numerice/text
+    clean = clean.replace(/([{,]\s*)([0-9a-zA-Z_-]+)(\s*:\s*)/g, '$1"$2"$3');
+    // 2. Elimină virgule trailing
+    clean = clean.replace(/,\s*([}\]])/g, '$1');
+
+    try {
+        return JSON.parse(clean);
+    } catch (err1) {
+        try {
+            // 3. Fallback: curăță caracterele de control problematice
+            let relaxed = clean.replace(/[\u0000-\u001F]+/g, ' ');
+            return JSON.parse(relaxed);
+        } catch (err2) {
+            throw new Error(`JSON Parse failed: ${err1.message}`);
+        }
+    }
+}
+
+// ============================================================
 // CHUNK ENGINE CU RETRY, RE-SPLIT SI VERIFICARE ENGLEZA
 // ============================================================
 
@@ -1120,19 +1150,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${MODEL_NAME} | Cheie: ${keyMask})...${c.reset}`);
 
             const raw = await callGemini(prompt, keyState);
-            
-            let cleanText = raw.trim();
-            const startIdx = cleanText.indexOf('{');
-            const endIdx = cleanText.lastIndexOf('}');
-            if (startIdx >= 0 && endIdx > startIdx) {
-                cleanText = cleanText.slice(startIdx, endIdx + 1);
-            }
-
-            cleanText = cleanText.replace(/([{,]\s*)([0-9a-zA-Z_-]+)(\s*:\s*)/g, '$1"$2"$3');
-            cleanText = cleanText.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
-            cleanText = cleanText.replace(/,\s*([}\]])/g, '$1');
-
-            const parsed = JSON.parse(cleanText);
+            const parsed = safeJsonParse(raw);
             const dict = parsed.translations || parsed;
 
             const results = chunk.map(obj => {
@@ -1168,17 +1186,7 @@ ${JSON.stringify(fixPayload, null, 2)}
 `;
                 try {
                     const fixRaw = await callGemini(batchFixPrompt, keyState);
-                    let sClean = fixRaw.trim();
-                    const sIdx = sClean.indexOf('{');
-                    const eIdx = sClean.lastIndexOf('}');
-                    if (sIdx >= 0 && eIdx > sIdx) {
-                        sClean = sClean.slice(sIdx, eIdx + 1);
-                    }
-                    sClean = sClean.replace(/([{,]\s*)([0-9a-zA-Z_-]+)(\s*:\s*)/g, '$1"$2"$3');
-                    sClean = sClean.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
-                    sClean = sClean.replace(/,\s*([}\]])/g, '$1');
-
-                    const fixJson = JSON.parse(sClean);
+                    const fixJson = safeJsonParse(fixRaw);
                     const fixDict = fixJson.translations || fixJson;
 
                     untranslatedItems.forEach(item => {
@@ -1300,20 +1308,7 @@ Returnează DOAR JSON valid în forma:
 `;
 
                     const raw = await callGemini(singlePrompt, keyState);
-
-                    let cleanText = raw.trim();
-                    const sIdx = cleanText.indexOf('{');
-                    const eIdx = cleanText.lastIndexOf('}');
-                    if (sIdx < 0 || eIdx <= sIdx) {
-                        throw new Error('Răspuns retry fără JSON valid');
-                    }
-
-                    cleanText = cleanText.slice(sIdx, eIdx + 1);
-                    cleanText = cleanText.replace(/([{,]\s*)([0-9a-zA-Z_-]+)(\s*:\s*)/g, '$1"$2"$3');
-                    cleanText = cleanText.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
-                    cleanText = cleanText.replace(/,\s*([}\]])/g, '$1');
-
-                    const parsed = JSON.parse(cleanText);
+                    const parsed = safeJsonParse(raw);
                     const candidateRaw =
                         parsed[item.id] !== undefined
                             ? parsed[item.id]
