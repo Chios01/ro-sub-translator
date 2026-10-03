@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.11',
+    version: '12.78.12',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -331,7 +331,6 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
 
-    // Curăță tag-urile care conțin doar interjecții izolate de tip <i>Ah!</i>
     clean = clean.replace(/<[iIbBuU]>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
 
@@ -357,7 +356,6 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    // Elimină complet interjecțiile de tip "<i>Ah!</i>", "Ah!", "Oh!", "Uf!" singure pe rând
     let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
     cleaned = cleaned.replace(/\b(ăă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
     cleaned = cleaned.replace(/\s+/g, ' ');
@@ -365,7 +363,6 @@ function deepCleanSubtitleText(text) {
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă|ugh|argh|aah|oof|uf)[!.]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
-    // Elimină automat caracterele non-latine (asiatice, birmaneze, devanagari/hindi, chirilice)
     cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/]/g, '');
 
     cleaned = cleaned.replace(/\s*\([^)]+\)$/g, '');
@@ -467,17 +464,22 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
+        // Corectări punctuale pentru Oppenheimer / ultima rulare
+        [/\bthese men\b/gi, 'acești oameni'],
+        [/\beverybody take a welder's glass\b/gi, 'toată lumea să ia o mască de sudură'],
+        [/Everybody take a welder's glass\./gi, 'Toată lumea să ia o mască de sudură.'],
+
         // Etichete de personaje uitate în engleză
         [/^DRIVER:\s*/gmi, 'ȘOFER: '],
         [/\bDRIVER:\s*/gi, 'ȘOFER: '],
         [/^GUARD:\s*/gmi, 'GARDĂ: '],
         [/\bGUARD:\s*/gi, 'GARDĂ: '],
-        [/^OFFICER:\s*/gmi, 'OFITER: '],
-        [/\bOFFICER:\s*/gi, 'OFITER: '],
+        [/^OFFICER:\s*/gmi, 'OFIȚER: '],
+        [/\bOFFICER:\s*/gi, 'OFIȚER: '],
         [/^COP:\s*/gmi, 'POLIȚIST: '],
         [/\bCOP:\s*/gi, 'POLIȚIST: '],
 
-        // Scăpări și anomalii identificate
+        // Scăpări și anomalii identificate anterior
         [/\bCcat\b/gi, 'Căcat'],
         [/\bbănuiuiesc\b/gi, 'bănuiesc'],
         [/\bîmpotriva asta\b/gi, 'împotriva acestui lucru'],
@@ -1536,6 +1538,7 @@ app.get('/:configData/translate', async (req, res) => {
 
 function parseSrt(srt) {
     const normalized = String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, '');
+ codings = normalized.split(/\n{2,}/);
     const blocks = normalized.split(/\n{2,}/);
     const result = [];
 
