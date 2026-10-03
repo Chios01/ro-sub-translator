@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.20',
+    version: '12.78.22',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -459,6 +459,7 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
+        [/\bjhonson\b/gi, 'Johnson'],
         [/\bsuch a detailed indictment\b/gi, 'un rechizitoriu atât de detaliat'],
         [/\bHowever,\b/gi, 'Cu toate acestea,'],
         [/\bdilettante\b/gi, 'diletant'],
@@ -1099,10 +1100,18 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     const maxLocalAttempts = 3;
     let lastError = null;
 
+    let assignedKeyState = null;
+
     for (let attempt = 1; attempt <= maxLocalAttempts; attempt++) {
         let keyState = null;
         try {
-            keyState = await getAvailableKey(keyStates);
+            if (assignedKeyState && !assignedKeyState.disabled && assignedKeyState.pausedUntil <= Date.now()) {
+                keyState = assignedKeyState;
+                keyState.lastUsed = Date.now();
+            } else {
+                keyState = await getAvailableKey(keyStates);
+                assignedKeyState = keyState;
+            }
             
             const keyMask = '...' + keyState.key.slice(-4);
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${MODEL_NAME} | Cheie: ${keyMask})...${c.reset}`);
@@ -1116,6 +1125,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 cleanText = cleanText.slice(startIdx, endIdx + 1);
             }
 
+            cleanText = cleanText.replace(/([{,]\s*)([0-9a-zA-Z_-]+)(\s*:\s*)/g, '$1"$2"$3');
             cleanText = cleanText.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
             cleanText = cleanText.replace(/,\s*([}\]])/g, '$1');
 
@@ -1138,7 +1148,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             });
 
             if (untranslatedItems.length > 0 && depth < 2) {
-                console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii netraduse în calupul ${globalChunkIndex + 1}. Retraducere calup de corecție (1 singur request)...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii netraduse în calupul ${globalChunkIndex + 1}. Retraducere cu aceeași cheie (${keyMask})...${c.reset}`);
                 
                 await sleep(1000);
                 const fixPayload = {};
@@ -1161,6 +1171,7 @@ ${JSON.stringify(fixPayload, null, 2)}
                     if (sIdx >= 0 && eIdx > sIdx) {
                         sClean = sClean.slice(sIdx, eIdx + 1);
                     }
+                    sClean = sClean.replace(/([{,]\s*)([0-9a-zA-Z_-]+)(\s*:\s*)/g, '$1"$2"$3');
                     sClean = sClean.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
                     sClean = sClean.replace(/,\s*([}\]])/g, '$1');
 
@@ -1182,8 +1193,6 @@ ${JSON.stringify(fixPayload, null, 2)}
                                 ) {
                                     targetRes.text = candidate;
                                     console.log(`${c.green}  ✔ [Batch Retry] ${originalObj.id} reparată și validată${c.reset}`);
-                                } else {
-                                    console.log(`${c.yellow}  ⚠ [Batch Retry] ${originalObj.id} încă suspectă după retraducere${c.reset}`);
                                 }
                             }
                         }
@@ -1199,6 +1208,10 @@ ${JSON.stringify(fixPayload, null, 2)}
             lastError = error;
             console.log(`${c.yellow}⚠ [Gemini] Eroare la calupul ${globalChunkIndex + 1} (Încercarea ${attempt}/${maxLocalAttempts}): ${error.message}${c.reset}`);
             
+            if (error.message.includes('429')) {
+                assignedKeyState = null;
+            }
+
             const backoff = error.message.includes('429') ? 8000 * attempt : 2000 * attempt;
             await sleep(backoff);
         }
@@ -1293,6 +1306,7 @@ Returnează DOAR JSON valid în forma:
                     }
 
                     cleanText = cleanText.slice(sIdx, eIdx + 1);
+                    cleanText = cleanText.replace(/([{,]\s*)([0-9a-zA-Z_-]+)(\s*:\s*)/g, '$1"$2"$3');
                     cleanText = cleanText.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
                     cleanText = cleanText.replace(/,\s*([}\]])/g, '$1');
 
