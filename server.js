@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.27',
+    version: '12.78.28',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1231,10 +1231,38 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const parsed = JSON.parse(String(raw).trim());
             const dict = normalizeTranslationPayload(parsed);
 
-            // Răspunsul trebuie să conțină exact toate ID-urile cerute.
-            const missingIds = chunk.filter(obj => dict[String(obj.id)] === undefined).map(obj => obj.id);
-            if (missingIds.length) {
-                throw new Error(`JSON incomplet: lipsesc ${missingIds.length} ID-uri.`);
+            // Dacă Gemini omite câteva ID-uri, NU retraducem întregul chunk.
+            // Păstrăm răspunsul bun și cerem o singură dată doar liniile lipsă.
+            const missingItems = chunk.filter(obj => dict[String(obj.id)] === undefined);
+            if (missingItems.length) {
+                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: lipsesc ${missingItems.length} ID-uri. Cerere punctuală doar pentru ID-urile lipsă...${c.reset}`);
+                const missingPrompt = `
+${MASTER_TRANSLATION_PROMPT}
+
+Returnează STRICT un ARRAY JSON valid pentru TOATE liniile de mai jos. Nu omite niciun ID și nu modifica ID-urile:
+[
+  {"id": 123, "text": "traducerea română"}
+]
+
+LINIILE LIPSĂ:
+${JSON.stringify(missingItems, null, 2)}
+`;
+                try {
+                    const missingRaw = await callGemini(missingPrompt, keyState, { timeout: 60000 });
+                    const missingJson = JSON.parse(String(missingRaw).trim());
+                    const missingDict = normalizeTranslationPayload(missingJson);
+                    for (const obj of missingItems) {
+                        const value = missingDict[String(obj.id)];
+                        if (value !== undefined) dict[String(obj.id)] = value;
+                    }
+                } catch (missingError) {
+                    console.log(`${c.yellow}  ⚠ [Gemini] Cererea punctuală pentru ID-urile lipsă a eșuat: ${missingError.message}${c.reset}`);
+                }
+            }
+
+            const stillMissing = chunk.filter(obj => dict[String(obj.id)] === undefined);
+            if (stillMissing.length) {
+                throw new Error(`JSON incomplet: lipsesc ${stillMissing.length} ID-uri după completarea punctuală.`);
             }
 
             const results = chunk.map(obj => ({
@@ -1297,11 +1325,16 @@ ${JSON.stringify(fixPayload, null, 2)}
         } catch (error) {
             lastError = error;
             const is429 = error.message.includes('429');
+            const isTransient = is429 || /status code 5\d\d/.test(error.message);
             console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
 
-            // Doar 429 justifică schimbarea cheii. JSON invalid/incomplet => split imediat.
-            if (!is429) break;
-            if (attempt < maxKeyAttempts) continue;
+            // JSON invalid/incomplet => split/targeted completion, fără a repeta întregul chunk.
+            // 429/5xx sunt erori tranzitorii: permitem cel mult o încercare cu altă cheie.
+            if (!isTransient) break;
+            if (attempt < maxKeyAttempts) {
+                await sleep(is429 ? 500 : 1000);
+                continue;
+            }
         }
     }
 
