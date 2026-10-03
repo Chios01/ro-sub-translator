@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.16',
+    version: '12.78.17',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -456,7 +456,12 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
-        // Corectări punctuale de siguranță
+        // Corectări prioritare punctuale
+        [/\bfrom project\b/gi, 'din proiect'],
+        [/\bfrom altcineva\b/gi, 'de la altcineva'],
+        [/\bfrom\b/gi, 'de la'],
+        [/\babroach\b/gi, 'abordare'],
+        [/\bbackground juridic\b/gi, 'trecut juridic'],
         [/\bThey need us\.?\b/gi, 'Au nevoie de noi.'],
         [/\bMaybe a little too well,?\s*Robert\.?\b/gi, 'Poate puțin prea bine, Robert.'],
         [/\bInterestingly enough,?\b/gi, 'Destul de interesant,'],
@@ -1007,14 +1012,15 @@ function hasUntranslatedEnglish(original, translated) {
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
 
-    // FIX INTELIGENT v12.78.16: Verificăm dacă linia identică conține cuvinte reale de engleză
+    // REGULĂ OPTIMIZATĂ PENTRU LINII IDENTICE:
     if (originalNorm === translatedNorm) {
+        // Dacă conține cuvinte uzuale în engleză, ESTE CLAR NETRADUSĂ
         const hasEnglishWords = ow.some(w => strongEnglish.has(w) || englishMarkers.has(w));
         if (hasEnglishWords) {
-            return true; // Dacă conține cuvinte comune din engleză, ESTE NETRADUSĂ!
+            return true;
         }
 
-        // Dacă nu conține cuvinte comune și e scurtă cu majuscule (nume proprii gen "Los Alamos", "Niels Bohr"), e validă
+        // Dacă nu conține cuvinte comune și este un nume/termen propriu scurt cu majuscule, e valid
         const hasCapitals = /[A-Z]/.test(origClean);
         if (hasCapitals && ow.length <= 4) {
             return false;
@@ -1088,6 +1094,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 cleanText = cleanText.slice(startIdx, endIdx + 1);
             }
 
+            // AUTO-REPARARE CARACTERE BAD ESCAPE ȘI VIRGULE
             cleanText = cleanText.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
             cleanText = cleanText.replace(/,\s*([}\]])/g, '$1');
 
@@ -1267,6 +1274,7 @@ Returnează DOAR JSON valid în forma:
 
                     cleanText = cleanText.slice(sIdx, eIdx + 1);
                     cleanText = cleanText.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+                    cleanText = cleanText.replace(/,\s*([}\]])/g, '$1');
 
                     const parsed = JSON.parse(cleanText);
                     const candidateRaw =
@@ -1336,6 +1344,7 @@ Returnează DOAR JSON valid în forma:
     return { fixed: totalFixed, remaining };
 }
 
+// ============================================================
 // MOTORUL PRINCIPAL DE TRADUCERE SRT
 // ============================================================
 
