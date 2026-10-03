@@ -25,8 +25,6 @@ const BROWSER_USER_AGENT =
     '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 const CHUNK_SIZE = 165;
-
-// CONCURRENCY Neschimbat la 3, exact cum ai cerut
 const CONCURRENCY_LIMIT = 3;
 
 const CONTEXT_LINES_BEFORE = 12;
@@ -74,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.14',
+    version: '12.78.15',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -459,6 +457,11 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
+        // Corectări punctuale pentru Oppenheimer
+        [/\bthese men\b/gi, 'acești oameni'],
+        [/\beverybody take a welder's glass\b/gi, 'toată lumea să ia o mască de sudură'],
+        [/Everybody take a welder's glass\./gi, 'Toată lumea să ia o mască de sudură.'],
+
         // Etichete de personaje uitate în engleză
         [/^DRIVER:\s*/gmi, 'ȘOFER: '],
         [/\bDRIVER:\s*/gi, 'ȘOFER: '],
@@ -914,11 +917,11 @@ async function callGemini(prompt, keyState) {
                 throw new Error(`Cheie Gemini invalidă (${status}).`);
             }
             if (status === 429) {
-                keyState.pausedUntil = Date.now() + 35000 + Math.random() * 5000;
+                keyState.pausedUntil = Date.now() + 45000 + Math.random() * 5000;
                 throw new Error(`Rate limit 429. Se schimbă cheia...`);
             }
             if (attempt < maxAttempts) {
-                await sleep(1500 * attempt);
+                await sleep(2000 * attempt);
                 continue;
             }
         }
@@ -965,8 +968,7 @@ function hasUntranslatedEnglish(original, translated) {
     const originalNorm = normalize(origClean);
     const translatedNorm = normalize(transClean);
 
-    // FIX NOU (v12.78.14): Dacă textul original și cel tradus sunt identice și reprezintă un nume propriu
-    // sau un termen scurt cu majuscule (nume de persoane, locuri, instituții), NU îl considerăm netradus (evităm alarmele false).
+    // Protecție pentru nume proprii și termeni tehnici identici
     if (originalNorm === translatedNorm) {
         const hasCapitals = /[A-Z]/.test(origClean);
         const wordCount = origClean.split(/\s+/).length;
@@ -1079,6 +1081,10 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 cleanText = cleanText.slice(startIdx, endIdx + 1);
             }
 
+            // AUTO-REPARARE PENTRU CARACTERE BAD ESCAPE ȘI VIRGULE
+            cleanText = cleanText.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+            cleanText = cleanText.replace(/,\s*([}\]])/g, '$1');
+
             const parsed = JSON.parse(cleanText);
             const dict = parsed.translations || parsed;
 
@@ -1115,9 +1121,14 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
 `;
                     try {
                         const singleRaw = await callGemini(singlePrompt, keyState);
-                        const sIdx = singleRaw.indexOf('{');
-                        const eIdx = singleRaw.lastIndexOf('}');
-                        const singleJson = JSON.parse(singleRaw.slice(sIdx, eIdx + 1));
+                        let sClean = singleRaw.trim();
+                        const sIdx = sClean.indexOf('{');
+                        const eIdx = sClean.lastIndexOf('}');
+                        if (sIdx >= 0 && eIdx > sIdx) {
+                            sClean = sClean.slice(sIdx, eIdx + 1);
+                        }
+                        sClean = sClean.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+                        const singleJson = JSON.parse(sClean);
                         const fixedVal = singleJson[originalObj.id] || singleJson[String(originalObj.id)];
                         if (fixedVal) {
                             const targetRes = results.find(r => r.id === originalObj.id);
@@ -1144,16 +1155,20 @@ Tradu strict această singură linie de subtitrare în limba română naturală,
         } catch (error) {
             lastError = error;
             console.log(`${c.yellow}⚠ [Gemini] Eroare la calupul ${globalChunkIndex + 1} (Încercarea ${attempt}/${maxLocalAttempts}): ${error.message}${c.reset}`);
-            await sleep(1500 * attempt);
+            
+            // Backoff extins dacă e 429 pentru a permite resetarea cotei
+            const backoff = error.message.includes('429') ? 8000 * attempt : 2000 * attempt;
+            await sleep(backoff);
         }
     }
 
     if (chunk.length > 20 && depth < 2) {
+        console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în două părți din cauza erorilor repetate...${c.reset}`);
+        await sleep(5000); // Pauză de siguranță înainte de re-split
+
         const middle = Math.floor(chunk.length / 2);
         const first = chunk.slice(0, middle);
         const second = chunk.slice(middle);
-
-        console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în două părți din cauza erorilor repetate...${c.reset}`);
 
         const firstResult = await processChunkWithRetry(first, allItems, chunkStart, chunkStart + middle, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth + 1);
         const secondContext = firstResult.slice(-PREVIOUS_TRANSLATION_CONTEXT);
@@ -1235,7 +1250,10 @@ Returnează DOAR JSON valid în forma:
                         throw new Error('Răspuns retry fără JSON valid');
                     }
 
-                    const parsed = JSON.parse(cleanText.slice(sIdx, eIdx + 1));
+                    cleanText = cleanText.slice(sIdx, eIdx + 1);
+                    cleanText = cleanText.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+
+                    const parsed = JSON.parse(cleanText);
                     const candidateRaw =
                         parsed[item.id] !== undefined
                             ? parsed[item.id]
@@ -1259,7 +1277,7 @@ Returnează DOAR JSON valid în forma:
                     console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
                 } catch (err) {
                     console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
-                    await sleep(1500);
+                    await sleep(2500);
                 }
             }
 
@@ -1566,10 +1584,6 @@ function parseSrt(srt) {
 // ============================================================
 // UTILS & START
 // ============================================================
-
-Info: function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
