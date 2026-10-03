@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.25',
+    version: '12.78.26',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -876,7 +876,13 @@ ${contextBefore.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
 Context anterior tradus in Romana (pentru continuitate):
 ${previousTranslatedContext.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
 
-Tradu STRICT urmatorul obiect JSON, păstrând exact aceleași chei numerice:
+Tradu STRICT următoarele replici și returnează un ARRAY JSON cu exact câte un obiect pentru fiecare ID:
+[
+  {"id": 123, "text": "traducerea în română"}
+]
+Nu modifica ID-urile și nu omite nicio replică.
+
+REPLICILE DE TRADUS:
 ${JSON.stringify(keysToTranslate, null, 2)}
 `;
 }
@@ -926,7 +932,23 @@ async function callGemini(prompt, keyState, options = {}) {
                 endpoint,
                 {
                     contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.0, responseMimeType: 'application/json' },
+                    generationConfig: {
+                        temperature: 0.0,
+                        responseMimeType: 'application/json',
+                        responseSchema: {
+                            type: 'ARRAY',
+                            minItems: 1,
+                            items: {
+                                type: 'OBJECT',
+                                properties: {
+                                    id: { type: 'INTEGER' },
+                                    text: { type: 'STRING' }
+                                },
+                                required: ['id', 'text'],
+                                propertyOrdering: ['id', 'text']
+                            }
+                        }
+                    },
                     safetySettings: [
                         { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
                         { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -975,8 +997,19 @@ function safeJsonParse(rawText) {
     // Elimină eventualele code fences Markdown fără a atinge textul traducerii.
     clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
-    const startIdx = clean.indexOf('{');
-    const endIdx = clean.lastIndexOf('}');
+    const firstObject = clean.indexOf('{');
+    const firstArray = clean.indexOf('[');
+    let startIdx = -1;
+    let opener = '';
+    if (firstObject >= 0 && (firstArray < 0 || firstObject < firstArray)) {
+        startIdx = firstObject;
+        opener = '{';
+    } else if (firstArray >= 0) {
+        startIdx = firstArray;
+        opener = '[';
+    }
+    const closer = opener === '[' ? ']' : '}';
+    const endIdx = startIdx >= 0 ? clean.lastIndexOf(closer) : -1;
     if (startIdx >= 0 && endIdx > startIdx) clean = clean.slice(startIdx, endIdx + 1);
 
     function sanitize(input) {
@@ -1160,6 +1193,24 @@ function hasCorruptedSubtitleText(text, originalText) {
     return false;
 }
 
+function normalizeTranslationPayload(parsed) {
+    if (Array.isArray(parsed)) {
+        const dict = Object.create(null);
+        for (const item of parsed) {
+            if (!item || item.id === undefined) continue;
+            dict[String(item.id)] = item.text === undefined ? '' : String(item.text);
+        }
+        return dict;
+    }
+    if (parsed && typeof parsed === 'object') {
+        const source = parsed.translations && typeof parsed.translations === 'object'
+            ? parsed.translations
+            : parsed;
+        return source;
+    }
+    return Object.create(null);
+}
+
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     const maxLocalAttempts = 3;
@@ -1183,7 +1234,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
             const raw = await callGemini(prompt, keyState);
             const parsed = safeJsonParse(raw);
-            const dict = parsed.translations || parsed;
+            const dict = normalizeTranslationPayload(parsed);
 
             const results = chunk.map(obj => {
                 const val = dict[obj.id] !== undefined ? dict[obj.id] : (dict[String(obj.id)] !== undefined ? dict[String(obj.id)] : obj.text);
@@ -1213,13 +1264,17 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 const batchFixPrompt = `
 ${MASTER_TRANSLATION_PROMPT}
 
-Tradu strict următoarele linii de subtitrare în limba română naturală, păstrând exact cheile numerice:
+Tradu strict următoarele linii de subtitrare în limba română naturală și returnează un ARRAY JSON:
+[
+  {"id": 123, "text": "traducerea română"}
+]
+Păstrează exact ID-urile și returnează câte un obiect pentru fiecare linie:
 ${JSON.stringify(fixPayload, null, 2)}
 `;
                 try {
                     const fixRaw = await callGemini(batchFixPrompt, keyState);
                     const fixJson = safeJsonParse(fixRaw);
-                    const fixDict = fixJson.translations || fixJson;
+                    const fixDict = normalizeTranslationPayload(fixJson);
 
                     untranslatedItems.forEach(item => {
                         const originalObj = chunk.find(obj => obj.id === item.id);
@@ -1338,17 +1393,15 @@ TRADUCEREA ACTUALĂ (poate fi greșită):
 ${JSON.stringify(current)}
 
 Returnează DOAR JSON valid în forma:
-{
-  "${item.id}": "traducerea română"
-}
+[
+  {"id": ${item.id}, "text": "traducerea română"}
+]
 `;
 
                     const raw = await callGemini(singlePrompt, keyState, { maxAttempts: 1, retry429: false, timeout: 30000 });
                     const parsed = safeJsonParse(raw);
-                    const candidateRaw =
-                        parsed[item.id] !== undefined
-                            ? parsed[item.id]
-                            : parsed[String(item.id)];
+                    const parsedDict = normalizeTranslationPayload(parsed);
+                    const candidateRaw = parsedDict[String(item.id)];
 
                     const candidate = formatSubtitleLine(String(candidateRaw || ''));
 
