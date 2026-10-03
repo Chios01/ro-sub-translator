@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.32',
+    version: '12.78.30',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1133,10 +1133,18 @@ function hasUntranslatedEnglish(original, translated) {
         .toLowerCase();
     if (/^(?:ok|okay)+$/.test(okOnly)) return false;
 
+    // Elimină doar interjecțiile "ok/okay" din analiza markerilor. Astfel
+    // o replică românească precum "Târfă... - Ok, ok... Căcat!" nu este
+    // marcată fals pozitiv, dar "Ok, this is..." rămâne detectabilă.
+    const detectionText = transClean
+        .replace(/\b(?:ok|okay)(?=\b|\s*[,.!?…])/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
     const normalize = value => String(value)
         .toLowerCase().replace(/[“”„"’']/g, "'").replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
     const originalNorm = normalize(origClean);
-    const translatedNorm = normalize(transClean);
+    const translatedNorm = normalize(detectionText);
 
     const strongEnglish = new Set([
         'the','and','but','if','then','than','they','them','their','we','us','our','you','your','he','him','his','she','her','it','its',
@@ -1271,10 +1279,8 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             // Dacă lipsesc multe, răspunsul Gemini este probabil trunchiat: împărțim
             // chunk-ul, NU trimitem zeci de linii într-o cerere secundară care poate bloca slotul.
             const missingItems = chunk.filter(obj => {
-                const value = dict[String(obj.id)];
-                return value === undefined ||
-                    value === null ||
-                    String(value).trim() === '';
+                const original = String(obj.text || '').replace(/<[^>]+>/g, '').trim();
+                return original && dict[String(obj.id)] === undefined;
             });
             if (missingItems.length > 12) {
                 throw new Error(`Răspuns Gemini sever incomplet: lipsesc ${missingItems.length} ID-uri.`);
@@ -1305,7 +1311,17 @@ ${JSON.stringify(missingItems, null, 2)}
                 }
             }
 
-            const stillMissing = chunk.filter(obj => dict[String(obj.id)] === undefined);
+            const stillMissing = chunk.filter(obj => {
+                const original = String(obj.text || '').replace(/<[^>]+>/g, '').trim();
+                return original && dict[String(obj.id)] === undefined;
+            });
+
+            // Intrările goale din sursă nu au ce traduce; le păstrăm goale
+            // fără a consuma cereri Gemini de recuperare.
+            for (const obj of chunk) {
+                const original = String(obj.text || '').replace(/<[^>]+>/g, '').trim();
+                if (!original && dict[String(obj.id)] === undefined) dict[String(obj.id)] = '';
+            }
             if (stillMissing.length) {
                 throw new Error(`JSON incomplet: lipsesc ${stillMissing.length} ID-uri după completarea punctuală.`);
             }
