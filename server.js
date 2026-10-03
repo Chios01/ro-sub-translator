@@ -1259,11 +1259,15 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const parsed = JSON.parse(String(raw).trim());
             const dict = normalizeTranslationPayload(parsed);
 
-            // Dacă Gemini omite câteva ID-uri, NU retraducem întregul chunk.
-            // Păstrăm răspunsul bun și cerem o singură dată doar liniile lipsă.
+            // Dacă lipsesc foarte puține ID-uri, le recuperăm punctual.
+            // Dacă lipsesc multe, răspunsul Gemini este probabil trunchiat: împărțim
+            // chunk-ul, NU trimitem zeci de linii într-o cerere secundară care poate bloca slotul.
             const missingItems = chunk.filter(obj => dict[String(obj.id)] === undefined);
+            if (missingItems.length > 12) {
+                throw new Error(`Răspuns Gemini sever incomplet: lipsesc ${missingItems.length} ID-uri.`);
+            }
             if (missingItems.length) {
-                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: lipsesc ${missingItems.length} ID-uri. Cerere punctuală doar pentru ID-urile lipsă...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: lipsesc ${missingItems.length} ID-uri. Cerere punctuală...${c.reset}`);
                 const missingPrompt = `
 ${MASTER_TRANSLATION_PROMPT}
 
@@ -1276,7 +1280,7 @@ LINIILE LIPSĂ:
 ${JSON.stringify(missingItems, null, 2)}
 `;
                 try {
-                    const missingRaw = await callGemini(missingPrompt, keyState, { timeout: 60000 });
+                    const missingRaw = await callGemini(missingPrompt, keyState, { timeout: 20000, maxAttempts: 1, retry429: false });
                     const missingJson = JSON.parse(String(missingRaw).trim());
                     const missingDict = normalizeTranslationPayload(missingJson);
                     for (const obj of missingItems) {
@@ -1284,7 +1288,7 @@ ${JSON.stringify(missingItems, null, 2)}
                         if (value !== undefined) dict[String(obj.id)] = value;
                     }
                 } catch (missingError) {
-                    console.log(`${c.yellow}  ⚠ [Gemini] Cererea punctuală pentru ID-urile lipsă a eșuat: ${missingError.message}${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ [Gemini] Cererea punctuală a eșuat: ${missingError.message}${c.reset}`);
                 }
             }
 
@@ -1304,48 +1308,13 @@ ${JSON.stringify(missingItems, null, 2)}
                 return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
             });
 
-            // Validarea de limbă rămâne, dar un batch suspect este reparat o singură dată.
-            if (false && untranslatedItems.length > 0 && depth < 2) {
-                console.log(`${c.yellow}⚠ [Gemini] Detectate ${untranslatedItems.length} linii suspecte în calupul ${globalChunkIndex + 1}. Un singur Batch Retry...${c.reset}`);
-
-                const fixPayload = untranslatedItems.map(item => {
-                    const originalObj = chunk.find(obj => obj.id === item.id);
-                    return originalObj ? { id: originalObj.id, text: originalObj.text } : null;
-                }).filter(Boolean);
-
-                const batchFixPrompt = `
-${MASTER_TRANSLATION_PROMPT}
-
-Corectează STRICT următoarele linii și returnează un ARRAY JSON valid:
-[
-  {"id": 123, "text": "traducerea română"}
-]
-Returnează exact câte un obiect pentru fiecare ID. Nu omite și nu modifica ID-urile.
-${JSON.stringify(fixPayload, null, 2)}
-`;
-                try {
-                    const fixRaw = await callGemini(batchFixPrompt, keyState);
-                    const fixJson = JSON.parse(String(fixRaw).trim());
-                    const fixDict = normalizeTranslationPayload(fixJson);
-
-                    untranslatedItems.forEach(item => {
-                        const originalObj = chunk.find(obj => obj.id === item.id);
-                        if (!originalObj) return;
-                        const fixedVal = fixDict[String(originalObj.id)];
-                        if (fixedVal !== undefined) {
-                            const targetRes = results.find(r => r.id === originalObj.id);
-                            if (targetRes) {
-                                const candidate = formatSubtitleLine(fixedVal);
-                                if (candidate && !hasUntranslatedEnglish(originalObj.text, candidate) && !hasCorruptedSubtitleText(candidate, originalObj.text)) {
-                                    targetRes.text = candidate;
-                                    console.log(`${c.green}  ✔ [Batch Retry] ${originalObj.id} reparată și validată${c.reset}`);
-                                }
-                            }
-                        }
-                    });
-                } catch (err) {
-                    console.log(`${c.yellow}  ⚠ [Batch Retry] Eșuat fără retry suplimentar: ${err.message}${c.reset}`);
-                }
+            // Verificare LOCALĂ: nu mai facem apel Gemini suplimentar pentru fiecare
+            // linie suspectă. Astfel păstrăm paralelismul 3 și timpul de ~2 minute.
+            if (untranslatedItems.length > 0) {
+                console.log(`${c.yellow}⚠ [Local Check] Calupul ${globalChunkIndex + 1}: ${untranslatedItems.length} replici suspecte de engleză/corupere.${c.reset}`);
+                untranslatedItems.slice(0, 10).forEach(item => {
+                    console.log(`  ${c.yellow}⚠ ${item.id}: ${String(item.text || '').slice(0, 120)}${c.reset}`);
+                });
             }
 
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
@@ -1571,13 +1540,6 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 
     console.log(`\n${c.green}✔ Toate cele ${chunks.length} de calupuri finalizate!${c.reset}`);
 
-    const globalCheck = await globalPostCheck(
-        items,
-        translatedById,
-        keyStates,
-        0
-    );
-
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
@@ -1602,7 +1564,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     }
 
     console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide${c.reset}`);
-    console.log(`${c.green}✔ Total remediate prin targeted retry: ${globalCheck.fixed}${c.reset}`);
+    console.log(`${c.green}✔ Verificarea finală a fost executată local, fără apeluri Gemini suplimentare.${c.reset}`);
 
     const output = items.map(item => {
         const translated = translatedById[String(item.id)] || item.text;
