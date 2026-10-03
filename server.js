@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.19',
+    version: '12.78.20',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -459,7 +459,6 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
-        // Adăugiri noi pentru netraduse detectate în testele recente
         [/\bsuch a detailed indictment\b/gi, 'un rechizitoriu atât de detaliat'],
         [/\bHowever,\b/gi, 'Cu toate acestea,'],
         [/\bdilettante\b/gi, 'diletant'],
@@ -469,8 +468,6 @@ function formatSubtitleLine(text) {
         [/\bbackground\b/gi, 'trecut'],
         [/\bbanca acuzaților bancul acuzaților\b/gi, 'pe banca acuzaților'],
         [/\bîn joi\b/gi, 'joi'],
-
-        // Corectări punctuale de prioritate maximă
         [/\bde la embedding itself in a mudbank\.?/gi, 'de la a se înfige într-un mal de noroi.'],
         [/\bembedding itself in a mudbank\.?/gi, 'a se înfige într-un mal de noroi.'],
         [/\bN-a fost nic67\b/gi, 'Nu era niciun loc aici?'],
@@ -1387,6 +1384,12 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY_LIMIT) {
         const batch = chunks.slice(batchStart, batchStart + CONCURRENCY_LIMIT);
 
+        // PAUZĂ DE PROTECȚIE 429 LA JUMĂTATEA FILMULUI (CALUPURILE FINALE)
+        if (batchStart > 9) {
+            console.log(`${c.yellow}⏳ [Protecție 429] Pauză de 4 secunde pentru menajarea cotelor API...${c.reset}`);
+            await sleep(4000);
+        }
+
         const promises = batch.map(async (chunk, localIndex) => {
             const globalIndex = batchStart + localIndex;
             const start = globalIndex * CHUNK_SIZE;
@@ -1631,6 +1634,10 @@ function parseSrt(srt) {
 // ============================================================
 // UTILS & START
 // ============================================================
+
+__utils_sleep = function(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+};
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
