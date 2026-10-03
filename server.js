@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.22',
+    version: '12.78.23',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -789,7 +789,7 @@ Remove non-dialogue audio tags, standalone hesitation sounds, and meaningless in
 16. NO ENGLISH LEFT BEHIND & TRANSLATE ALL SPEAKER LABELS
 Translate EVERY actual English dialogue line into Romanian.
 NEVER leave untranslated English sentence fragments (such as "from project", "embedding itself", "cowboys").
-If a line starts with an English speaker label (such as 'DRIVER:', 'GUARD:', 'COP:', 'NARRATOR:'), ALWAYS translate it into natural Romanian ('ȘOFER:', 'GARDĂ:', 'POLIȚIST:', 'NARAȚIUNE:') or keep the character's proper name cleanly.
+If a line starts with an English speaker label (such as 'DRIVER:', 'GUARD:', 'COP:', 'NARAȚIUNE:'), ALWAYS translate it into natural Romanian ('ȘOFER:', 'GARDĂ:', 'POLIȚIST:', 'NARAȚIUNE:') or keep the character's proper name cleanly.
 NEVER return an English dialogue sentence or clause unchanged.
 
 17. STRICTLY LATIN ALPHABET ONLY
@@ -819,6 +819,9 @@ NEVER invent Romanian words. Words such as "molmoșește", "anghang", "tangou" (
 
 23. STRICT GRAMMAR AND CLEAN PUNCTUATION
 NEVER output malformed forms such as "Ț-am", "Eu acționez" (or incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am", "să-i", "să-ți", "să-și") and proper grammar. 
+
+24. NO UNESCAPED DOUBLE QUOTES INSIDE TEXT
+NEVER use unescaped double quotes (") inside the translated text values. If dialogue requires quotation marks or direct quotes, always use single quotes (') instead to ensure valid JSON formatting.
 
 CRITICAL ERRORS TO AVOID:
 - "De ce man pasă?" → "De ce mi-ar păsa?"
