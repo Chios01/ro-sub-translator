@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.8',
+    version: '12.78.9',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -357,7 +357,6 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\s+/g, ' ');
     
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă)[!.]*$/gmi.test(cleaned)) return '';
-    
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
     cleaned = cleaned.replace(/\s*\([^)]+\)$/g, '');
@@ -368,6 +367,7 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
     cleaned = cleaned.replace(/\b[Dd]e ce man pas[aă]\b/gi, 'De ce mi-ar păsa');
     cleaned = cleaned.replace(/\b[Dd]e ce man-ar pasa\b/gi, 'De ce mi-ar păsa');
+    cleaned = cleaned.replace(/\bDe ce man spui\b/gi, 'De ce îmi spui');
     
     cleaned = cleaned.replace(/\bșă-i\b/g, 'să-i');
     cleaned = cleaned.replace(/\bȘă-i\b/g, 'Să-i');
@@ -610,7 +610,12 @@ function formatSubtitleLine(text) {
         [/\bîn a naibii\b/gi, 'întreagă, la naiba'],
         [/\bAltor orte\b/gi, 'Alcuiva'],
         [/\.icon\b/gi, ''],
-        [/ကျွန်တော်/g, '']
+        [/ကျွန်တော်/g, ''],
+        [/\bce ai\?y\b/gi, 'ce ai?'],
+        [/\bse molmoșește\b/gi, 'dă greș'],
+        [/\bnu-mi mai aparține!\b/gi, 'că nu-mi mai aparține!'],
+        [/\bscoateți-o pe mama pe insulă\b/gi, 'scoateți-o pe mama de pe insulă'],
+        [/\bva face denunț\b/gi, 'îi va denunța']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -919,12 +924,15 @@ function chunkArray(array, size) {
 function hasUntranslatedEnglish(original, translated) {
     if (!original || !translated) return false;
 
-    // Aici se scot tag-urile HTML in mod invizibil doar pentru verificare, 
-    // ca filtrul sa nu vada "<i></i>" drept corupt si sa dea eroare 429 la nesfarsit
     const origClean = String(original).replace(/<[^>]+>/g, '').trim();
     const transClean = String(translated).replace(/<[^>]+>/g, '').trim();
 
-    if (!transClean || transClean.length <= 2 || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) {
+    // Dacă originalul e gol sau are doar semne, nu îl considerăm engleză netradusă
+    if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) {
+        return false;
+    }
+
+    if (!transClean || transClean.length <= 2) {
         return false;
     }
 
@@ -1010,23 +1018,16 @@ function hasUntranslatedEnglish(original, translated) {
 }
 
 function hasCorruptedSubtitleText(text, originalText) {
-    const s = String(text || '').replace(/<[^>]+>/g, '').trim();
     const orig = String(originalText || '').replace(/<[^>]+>/g, '').trim();
-
     const isOriginalEmptyOrJunk = !orig || 
         /^(?:[-–—\s.?!,;:'"♪♫♬♩#]+)$/.test(orig) || 
         /^(ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî)[!.,?]*$/i.test(orig);
 
-    if (!s) {
-        if (isOriginalEmptyOrJunk) return false;
-        return true;
-    }
+    if (isOriginalEmptyOrJunk) return false;
 
-    if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) {
-        if (isOriginalEmptyOrJunk) return false;
-        return true;
-    }
-
+    const s = String(text || '').replace(/<[^>]+>/g, '').trim();
+    if (!s) return true;
+    if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) return true;
     if (/[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF]/.test(s)) return true;
 
     return false;
@@ -1067,6 +1068,9 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
             const untranslatedItems = results.filter(result => {
                 const original = chunk.find(obj => obj.id === result.id)?.text || '';
+                const origClean = String(original).replace(/<[^>]+>/g, '').trim();
+                if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) return false;
+
                 return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
             });
 
@@ -1154,9 +1158,18 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
 
     for (let pass = 1; pass <= maxPasses; pass++) {
         const suspicious = items.filter(item => {
+            const origClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+            // Dacă replica originală nu are conținut util, nu are ce căuta la retraducere
+            if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) {
+                return false;
+            }
+
             const translated = translatedById[String(item.id)];
-            return !translated ||
-                hasUntranslatedEnglish(item.text, translated) ||
+            const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
+
+            if (!transClean) return true;
+
+            return hasUntranslatedEnglish(item.text, translated) ||
                 hasCorruptedSubtitleText(translated, item.text);
         });
 
@@ -1246,9 +1259,15 @@ Returnează DOAR JSON valid în forma:
         }
 
         const remaining = items.filter(item => {
+            const origClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+            if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) return false;
+
             const translated = translatedById[String(item.id)];
-            return !translated ||
-                hasUntranslatedEnglish(item.text, translated) ||
+            const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
+
+            if (!transClean) return true;
+
+            return hasUntranslatedEnglish(item.text, translated) ||
                 hasCorruptedSubtitleText(translated, item.text);
         });
 
@@ -1261,9 +1280,15 @@ Returnează DOAR JSON valid în forma:
     }
 
     const remaining = items.filter(item => {
+        const origClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) return false;
+
         const translated = translatedById[String(item.id)];
-        return !translated ||
-            hasUntranslatedEnglish(item.text, translated) ||
+        const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
+
+        if (!transClean) return true;
+
+        return hasUntranslatedEnglish(item.text, translated) ||
             hasCorruptedSubtitleText(translated, item.text);
     });
 
@@ -1327,9 +1352,15 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
+        const origClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        if (!origClean || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) return false;
+
         const translated = translatedById[String(item.id)];
-        return !translated ||
-            hasUntranslatedEnglish(item.text, translated) ||
+        const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
+
+        if (!transClean) return true;
+
+        return hasUntranslatedEnglish(item.text, translated) ||
             hasCorruptedSubtitleText(translated, item.text);
     });
 
