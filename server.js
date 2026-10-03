@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.24',
+    version: '12.78.25',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -915,9 +915,9 @@ async function getAvailableKey(keyStates) {
 
 async function callGemini(prompt, keyState, options = {}) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
-    const maxAttempts = Number.isInteger(options.maxAttempts) ? options.maxAttempts : 5;
+    const maxAttempts = Number.isInteger(options.maxAttempts) ? Math.max(1, options.maxAttempts) : 5;
     const retry429 = options.retry429 !== false;
-    const timeout = options.timeout || 120000;
+    const timeout = Number.isInteger(options.timeout) ? options.timeout : 120000;
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -950,9 +950,11 @@ async function callGemini(prompt, keyState, options = {}) {
             }
             if (status === 429) {
                 keyState.pausedUntil = Date.now() + 45000 + Math.random() * 5000;
-                if (!retry429) throw error;
-                await sleep(1500);
-                continue;
+                if (!retry429) throw new Error('Rate limit 429.');
+                if (attempt < maxAttempts) {
+                    await sleep(1500);
+                    continue;
+                }
             }
             if (attempt < maxAttempts) {
                 await sleep(2000 * attempt);
@@ -968,85 +970,82 @@ async function callGemini(prompt, keyState, options = {}) {
 // ============================================================
 
 function safeJsonParse(rawText) {
-    let clean = String(rawText || '').trim();
+    let clean = String(rawText || '').replace(/^\uFEFF/, '').trim();
+
+    // Elimină eventualele code fences Markdown fără a atinge textul traducerii.
+    clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
     const startIdx = clean.indexOf('{');
     const endIdx = clean.lastIndexOf('}');
-    if (startIdx >= 0 && endIdx > startIdx) {
-        clean = clean.slice(startIdx, endIdx + 1);
-    }
+    if (startIdx >= 0 && endIdx > startIdx) clean = clean.slice(startIdx, endIdx + 1);
 
-    // Repară JSON-ul fără a modifica textul valid din interiorul stringurilor.
-    // Gemini poate returna uneori backslash-uri invalide în replici (ex. \q).
-    function sanitizeJsonString(input) {
+    function sanitize(input) {
         let out = '';
         let inString = false;
+        let escaped = false;
 
         for (let i = 0; i < input.length; i++) {
             const ch = input[i];
 
             if (!inString) {
+                if (ch === '“' || ch === '”') { out += '"'; inString = true; escaped = false; continue; }
                 out += ch;
-                if (ch === '"') inString = true;
+                if (ch === '"') { inString = true; escaped = false; }
                 continue;
             }
 
-            if (ch === '"') {
-                out += ch;
-                inString = false;
-                continue;
-            }
-
-            if (ch === '\\') {
-                const next = input[i + 1];
-                const validSimple = '"\\/bfnrt'.includes(next || '');
-
-                if (validSimple) {
-                    out += ch + next;
-                    i++;
-                    continue;
+            if (escaped) {
+                // Păstrează escape-urile JSON valide; pentru cele invalide păstrează
+                // caracterul literal, astfel încât JSON-ul să poată fi reparat.
+                if ('"\\/bfnrt'.includes(ch)) out += '\\' + ch;
+                else if (ch === 'u' && /^[0-9a-fA-F]{4}$/.test(input.slice(i + 1, i + 5))) {
+                    out += '\\u' + input.slice(i + 1, i + 5); i += 4;
+                } else {
+                    out += '\\\\' + ch;
                 }
-
-                if (next === 'u') {
-                    const hex = input.slice(i + 2, i + 6);
-                    if (/^[0-9a-fA-F]{4}$/.test(hex)) {
-                        out += '\\u' + hex;
-                        i += 5;
-                        continue;
-                    }
-                }
-
-                // Backslash invalid: îl transformăm într-un backslash literal.
-                out += '\\\\';
+                escaped = false;
                 continue;
             }
 
-            // Caracterele de control nepermise în JSON string.
+            if (ch === '\\') { escaped = true; continue; }
+            if (ch === '"' || ch === '”') { out += '"'; inString = false; continue; }
             if (ch === '\n') { out += '\\n'; continue; }
             if (ch === '\r') { out += '\\r'; continue; }
             if (ch === '\t') { out += '\\t'; continue; }
             if (ch.charCodeAt(0) < 0x20) { out += ' '; continue; }
-
             out += ch;
         }
+        if (escaped) out += '\\\\';
         return out;
     }
 
-    clean = sanitizeJsonString(clean);
+    function repairStructure(input) {
+        let x = input;
+        // Chei simple fără ghilimele.
+        x = x.replace(/([{,]\s*)([A-Za-z0-9_-]+)(\s*:)/g, '$1"$2"$3');
+        // Virgule trailing.
+        x = x.replace(/,\s*([}\]])/g, '$1');
+        // Virgula lipsă între proprietăți: "..."\n"123": / }\n"123":
+        x = x.replace(/([}\]"\d])\s*\n\s*("[^"\n]+"\s*:)/g, '$1,\n$2');
+        // Două proprietăți lipite după un string.
+        x = x.replace(/("(?:\\.|[^"\\])*")\s+("[^"\n]+"\s*:)/g, '$1, $2');
+        return x;
+    }
 
-    // Chei neghilimate și virgule trailing — doar ca fallback suplimentar.
-    clean = clean.replace(/([{,]\s*)([0-9a-zA-Z_-]+)(\s*:\s*)/g, '$1"$2"$3');
-    clean = clean.replace(/,\s*([}\]])/g, '$1');
+    const candidates = [];
+    const base = sanitize(clean);
+    candidates.push(base);
+    candidates.push(repairStructure(base));
+    candidates.push(repairStructure(base.replace(/[“”„]/g, '"')));
 
-    try {
-        return JSON.parse(clean);
-    } catch (err1) {
-        // Ultimul fallback: elimină doar caracterele de control rămase în afara stringurilor.
-        try {
-            const relaxed = clean.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
-            return JSON.parse(relaxed);
-        } catch (err2) {
-            throw new Error(`JSON Parse failed: ${err1.message}`);
-        }
+    for (const candidate of candidates) {
+        try { return JSON.parse(candidate); } catch (_) {}
+    }
+
+    // Ultimul fallback: caractere de control rămase în afara stringurilor.
+    const relaxed = candidates[candidates.length - 1].replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
+    try { return JSON.parse(relaxed); } catch (err) {
+        throw new Error(`JSON Parse failed: ${err.message}`);
     }
 }
 
@@ -1075,104 +1074,61 @@ function hasUntranslatedEnglish(original, translated) {
 
     const origClean = String(original).replace(/<[^>]+>/g, '').trim();
     const transClean = String(translated).replace(/<[^>]+>/g, '').trim();
-
-    if (isJunkOrInterjection(origClean)) return false;
-    if (!transClean || transClean.length <= 2) return false;
+    if (isJunkOrInterjection(origClean) || !transClean || transClean.length <= 2) return false;
 
     const normalize = value => String(value)
-        .toLowerCase()
-        .replace(/[“”„"’']/g, "'")
-        .replace(/[–—]/g, '-')
-        .replace(/\s+/g, ' ')
-        .trim();
-
+        .toLowerCase().replace(/[“”„"’']/g, "'").replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
     const originalNorm = normalize(origClean);
     const translatedNorm = normalize(transClean);
 
-    // Cuvinte englezești foarte distinctive. Lista este intenționat conservatoare:
-    // nu vrem ca numele proprii sau dialogul în alte limbi să devină false-positive.
     const strongEnglish = new Set([
-        'the', 'and', 'but', 'if', 'then', 'than',
-        'they', 'them', 'their', 'we', 'us', 'our',
-        'you', 'your', 'he', 'him', 'his', 'she', 'her', 'it', 'its',
-        'this', 'that', 'these', 'those',
-        'what', 'which', 'who', 'where', 'when', 'why', 'how',
-        'with', 'from', 'into', 'onto', 'about', 'after', 'before',
-        'without', 'against', 'between', 'through', 'because', 'while',
-        'would', 'could', 'should', 'will', 'shall', 'can', 'cannot',
-        'do', 'does', 'did', 'have', 'has', 'had',
-        'not', "don't", "isn't", "won't", "can't", "didn't",
-        'please', 'sorry', 'thanks', 'thank', 'yes', 'okay', 'ok',
-        'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
-        "i'm", "i'll", "you're", "we're", "they're", 'for', 'of', 'in', 'on', 'at', 'to', 'by', 'as'
+        'the','and','but','if','then','than','they','them','their','we','us','our','you','your','he','him','his','she','her','it','its',
+        'this','that','these','those','what','which','who','where','when','why','how','with','from','into','onto','about','after','before',
+        'without','against','between','through','because','while','would','could','should','will','shall','can','cannot','do','does','did',
+        'have','has','had','not',"don't","isn't","won't","can't","didn't",'please','sorry','thanks','thank','yes','okay','ok',
+        'for','of','in','on','at','to','by','as'
     ]);
-
-    const englishMarkers = new Set([
-        ...strongEnglish,
-        'need', 'needs', 'needed', 'want', 'wants', 'wanted',
-        'know', 'knows', 'knew', 'think', 'thought', 'mean', 'means',
-        'look', 'looks', 'looked', 'make', 'makes', 'made',
-        'get', 'gets', 'got', 'go', 'goes', 'went', 'come', 'comes', 'came',
-        'take', 'takes', 'took', 'give', 'gives', 'gave',
-        'see', 'sees', 'saw', 'say', 'says', 'said',
-        'tell', 'tells', 'told', 'find', 'finds', 'found',
-        'leave', 'leaves', 'left', 'keep', 'keeps', 'kept',
-        'disregard', 'forget', 'ignore', 'remember',
-        'good', 'bad', 'right', 'wrong', 'now', 'here', 'there',
-        'very', 'really', 'just', 'only', 'still', 'already',
-        'first', 'last', 'next', 'back', 'again', 'colonel', 'minutes', 'ready',
-        'ideology', 'killed', 'interestingly', 'enough', 'nothing', 'maybe', 'little', 'well', 'sure',
-        'itself', 'himself', 'herself', 'themselves', 'myself', 'yourself',
-        'embedding', 'mudbank', 'cowboys', 'dilettante', 'such', 'indictment', 'however'
+    const englishMarkers = new Set([...strongEnglish,
+        'need','needs','needed','want','wants','wanted','know','knows','knew','think','thought','mean','means','look','looks','looked',
+        'make','makes','made','get','gets','got','go','goes','went','come','comes','came','take','takes','took','give','gives','gave',
+        'see','sees','saw','say','says','said','tell','tells','told','find','finds','found','leave','leaves','left','keep','keeps','kept',
+        'disregard','forget','ignore','remember','good','bad','right','wrong','now','here','there','very','really','just','only','still',
+        'already','first','last','next','back','again','colonel','minutes','ready','killed','enough','nothing','maybe','little','well','sure',
+        'itself','himself','herself','themselves','myself','yourself','such','indictment','however','although','though','perhaps','rather','still'
     ]);
 
     const tokenize = value => value.match(/[a-zăâîșț]+(?:'[a-zăâîșț]+)?/g) || [];
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
 
-    // Dacă traducerea este identică cu originalul și conține engleză clară, este suspectă.
+    // Numele proprii/titlurile pot rămâne intenționat în engleză.
+    // Dacă textul este în mare parte identic, nu marcăm o expresie capitalizată scurtă.
+    const namedTitle = /\b(?:The\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,5}|Nobody\s+Beats\s+the\s+Wiz)\b/.test(transClean);
+    const romanianSignals = /\b(?:și|să|se|este|sunt|era|erau|nu|da|că|ca|cu|de|din|în|pe|la|un|o|eu|tu|el|ea|noi|voi|ei|ele|mai|foarte|pentru|dar|sau|care|ce|cine|cum|unde|când|aici|acolo|trebuie|poate|fost|avea|am|ai|are|au|mă|te|îl|îi|mi|ți|lor|lui|mea|ta|tău|meu)\b/i;
+
     if (originalNorm === translatedNorm) {
-        const hasEnglishWords = ow.some(w => strongEnglish.has(w) || englishMarkers.has(w));
-        if (hasEnglishWords) return true;
-
-        // Nume proprii/titluri foarte scurte pot rămâne identice.
-        const hasCapitals = /[A-Z]/.test(origClean);
-        if (hasCapitals && ow.length <= 4) return false;
-    }
-
-    // Fragmente englezești foarte distinctive care trebuie prinse chiar dacă sunt
-    // amestecate într-o propoziție românească: "naiba să the ia", "... from ..." etc.
-    const distinctiveLeftovers = new Set([
-        'the', 'from', 'however', 'although', 'because', 'without', 'between',
-        'maybe', 'please', 'sorry', 'thanks', 'thank', 'your', "you're",
-        "i'm", "i'll", "we're", "they're", 'would', 'could', 'should', 'cannot',
-        'itself', 'himself', 'herself', 'themselves', 'such', 'indictment', 'embedding', 'mudbank'
-    ]);
-
-    const leftoverCount = tw.filter(w => distinctiveLeftovers.has(w)).length;
-    if (leftoverCount > 0) {
-        const hasRomanianSignal = /[ăâîșțĂÂÎȘȚ]/.test(transClean) ||
-            /\b(?:și|să|că|nu|în|din|de|la|pe|cu|un|o|este|sunt|am|ai|are|au|îmi|îți|îl|o|ne|vă|le|mi|ți)\b/i.test(transClean);
-        const originalIsSame = originalNorm === translatedNorm;
-        if (hasRomanianSignal && !originalIsSame) return true;
-        if (leftoverCount >= 2) return true;
-    }
-
-    if (tw.some(w => ['embedding', 'mudbank', 'itself', 'from', 'such', 'indictment', 'however'].includes(w))) {
-        return true;
-    }
-
-    if (originalNorm === translatedNorm && tw.length > 0) {
+        // Titlu/nume propriu scurt sau replică formată din nume propriu: acceptă.
+        if (namedTitle && !romanianSignals.test(transClean) && tw.length <= 8) return false;
         const strong = tw.filter(w => strongEnglish.has(w)).length;
         const markers = tw.filter(w => englishMarkers.has(w)).length;
         if (strong >= 1 || markers >= 2) return true;
+        if (tw.length >= 5 && markers >= 2) return true;
+        return false;
     }
 
-    if (tw.length <= 7) {
+    // Fragmente englezești distinctive rămase într-o propoziție românească.
+    const distinctive = new Set(['the','from','however','although','because','without','between','maybe','please','sorry','thanks','thank','your','would','could','should','cannot','itself','such','indictment']);
+    const distinctiveHits = tw.filter(w => distinctive.has(w));
+    if (distinctiveHits.length) {
+        // "The Wall Street Journal", "The Lollipop Club", etc. pot fi nume/titluri.
+        if (namedTitle && distinctiveHits.every(w => w === 'the' || w === 'a' || w === 'an')) return false;
+        return true;
+    }
+
+    if (tw.length <= 8) {
         const strong = tw.filter(w => strongEnglish.has(w)).length;
         const originalStrong = ow.filter(w => strongEnglish.has(w)).length;
         const originalMarkers = ow.filter(w => englishMarkers.has(w)).length;
-
         if (strong >= 2 && (originalStrong >= 1 || originalMarkers >= 2)) return true;
 
         const obviousPhrases = [
@@ -1180,7 +1136,6 @@ function hasUntranslatedEnglish(original, translated) {
             /\b(i|you|we|they|he|she)\s+(need|want|know|think|have|can|will|would|could|should)\b/,
             /\b(and|but|or)\s+(disregard|forget|ignore|remember)\b/
         ];
-
         if (obviousPhrases.some(rx => rx.test(translatedNorm))) return true;
     }
 
@@ -1188,11 +1143,9 @@ function hasUntranslatedEnglish(original, translated) {
         const markerCount = tw.filter(w => englishMarkers.has(w)).length;
         const strongCount = tw.filter(w => strongEnglish.has(w)).length;
         const ratio = markerCount / tw.length;
-
         if (markerCount >= 5 && ratio >= 0.30) return true;
         if (strongCount >= 3 && ratio >= 0.35) return true;
     }
-
     return false;
 }
 
@@ -1356,15 +1309,15 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
 
         console.log(`${c.yellow}⚠ Detectate ${suspicious.length} replici suspecte${c.reset}`);
 
-        let retryCursor = 0;
-        const RETRY_CONCURRENCY = Math.max(1, CONCURRENCY_LIMIT);
-
-        async function retryWorker() {
+        const retryConcurrency = Math.max(1, Math.min(CONCURRENCY_LIMIT, suspicious.length));
+        let retryIndex = 0;
+        const retryWorker = async () => {
             while (true) {
-                const index = retryCursor++;
-                if (index >= suspicious.length) return;
-                const item = suspicious[index];
+                const item = suspicious[retryIndex++];
+                if (!item) return;
                 let fixed = false;
+
+                for (let retry = 1; retry <= 2; retry++) { 
                 try {
                     const keyState = await getAvailableKey(keyStates);
                     const current = translatedById[String(item.id)] || '';
@@ -1408,26 +1361,24 @@ Returnează DOAR JSON valid în forma:
                         fixed = true;
                         totalFixed++;
 
-                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată${c.reset}`);
-                    } else {
-                        console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă${c.reset}`);
+                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată (${retry}/2)${c.reset}`);
+                        break;
                     }
+
+                    console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
                 } catch (err) {
-                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id}: ${err.message}${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
+                    await sleep(2500);
                 }
+            }
 
                 if (!fixed) {
                     console.log(`${c.red}  ❌ Neremediată: ${item.id}${c.reset}`);
                 }
             }
-        }
+        };
 
-        await Promise.all(
-            Array.from(
-                { length: Math.min(RETRY_CONCURRENCY, suspicious.length) },
-                () => retryWorker()
-            )
-        );
+        await Promise.all(Array.from({ length: retryConcurrency }, () => retryWorker()));
 
         const remaining = items.filter(item => {
             if (isJunkOrInterjection(item.text)) return false;
@@ -1692,7 +1643,6 @@ app.get('/:configData/translate', async (req, res) => {
     } catch (error) {
         clearInterval(keepAlive);
         console.error('Translation error:', error.message);
-    console.error(error.stack);
         if (!res.headersSent) {
             res.status(500).send('Translation failed: ' + error.message);
         } else {
