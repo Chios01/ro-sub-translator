@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.29',
+    version: '12.78.30',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1124,6 +1124,14 @@ function hasUntranslatedEnglish(original, translated) {
     const origClean = String(original).replace(/<[^>]+>/g, '').trim();
     const transClean = String(translated).replace(/<[^>]+>/g, '').trim();
     if (isJunkOrInterjection(origClean) || !transClean || transClean.length <= 2) return false;
+
+    // "Ok" / "Okay" sunt perfect valide ca replici în subtitrări.
+    // Nu le tratăm ca engleză netradusă atunci când replica conține doar
+    // aceste forme (inclusiv variante repetate: "Ok, ok...", "Okay?").
+    const okOnly = transClean
+        .replace(/[\s.,!?…\"'“”‘’():;–—-]+/g, '')
+        .toLowerCase();
+    if (/^(?:ok|okay)+$/.test(okOnly)) return false;
 
     const normalize = value => String(value)
         .toLowerCase().replace(/[“”„"’']/g, "'").replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
