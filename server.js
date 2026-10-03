@@ -79,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.7',
+    version: '12.78.8',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -596,7 +596,21 @@ function formatSubtitleLine(text) {
         [/\bCoche\b/gi, 'Mașină'],
         [/\bcervezas\b/gi, 'beri'],
         [/\bn-auzeam\b/gi, 'n-am auzit'],
-        [/\bpropriutei\b/gi, 'propriei']
+        [/\bpropriutei\b/gi, 'propriei'],
+        [/\bmi-a învățat\b/gi, 'm-a învățat'],
+        [/\bcred că își vor recupera\b/gi, 'crede că își va recupera'],
+        [/\bprima șoarece\b/gi, 'primul șoarece'],
+        [/\bPrefeți\b/gi, 'Preferi'],
+        [/\bniciunfel\b/gi, 'niciun fel'],
+        [/\bUrco\b/gi, 'Urc-o'],
+        [/\bn o să\b/gi, 'n-o să'],
+        [/\bpenthouses-ul\b/gi, 'penthouse-ul'],
+        [/\bîn a mea mea\b/gi, 'în puii mei'],
+        [/\bTrapdoor-uri\b/gi, 'Uși-capcană'],
+        [/\bîn a naibii\b/gi, 'întreagă, la naiba'],
+        [/\bAltor orte\b/gi, 'Alcuiva'],
+        [/\.icon\b/gi, ''],
+        [/ကျွန်တော်/g, '']
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -878,7 +892,6 @@ async function callGemini(prompt, keyState) {
                 throw new Error(`Cheie Gemini invalidă (${status}).`);
             }
             if (status === 429) {
-                // Exponential backoff cu jitter pentru a evita suprasolicitarea
                 keyState.pausedUntil = Date.now() + Math.min(120000, 30000 * Math.pow(2, attempt - 1)) + Math.random() * 5000;
                 throw new Error(`Rate limit 429. Se schimbă cheia...`);
             }
@@ -906,10 +919,11 @@ function chunkArray(array, size) {
 function hasUntranslatedEnglish(original, translated) {
     if (!original || !translated) return false;
 
-    const origClean = String(original).trim();
-    const transClean = String(translated).trim();
+    // Aici se scot tag-urile HTML in mod invizibil doar pentru verificare, 
+    // ca filtrul sa nu vada "<i></i>" drept corupt si sa dea eroare 429 la nesfarsit
+    const origClean = String(original).replace(/<[^>]+>/g, '').trim();
+    const transClean = String(translated).replace(/<[^>]+>/g, '').trim();
 
-    // Ignoră liniile foarte scurte sau cele doar din punctuație/cifre
     if (!transClean || transClean.length <= 2 || /^[0-9\s\-–—.,?!:'"♪♫♬♩#]+$/.test(origClean)) {
         return false;
     }
@@ -996,8 +1010,8 @@ function hasUntranslatedEnglish(original, translated) {
 }
 
 function hasCorruptedSubtitleText(text, originalText) {
-    const s = String(text || '').trim();
-    const orig = String(originalText || '').trim();
+    const s = String(text || '').replace(/<[^>]+>/g, '').trim();
+    const orig = String(originalText || '').replace(/<[^>]+>/g, '').trim();
 
     const isOriginalEmptyOrJunk = !orig || 
         /^(?:[-–—\s.?!,;:'"♪♫♬♩#]+)$/.test(orig) || 
