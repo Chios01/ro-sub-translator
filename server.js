@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.13',
+    version: '12.78.14',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -459,11 +459,6 @@ function formatSubtitleLine(text) {
     }
 
     const dictionar = [
-        // Corectări punctuale pentru Oppenheimer
-        [/\bthese men\b/gi, 'acești oameni'],
-        [/\beverybody take a welder's glass\b/gi, 'toată lumea să ia o mască de sudură'],
-        [/Everybody take a welder's glass\./gi, 'Toată lumea să ia o mască de sudură.'],
-
         // Etichete de personaje uitate în engleză
         [/^DRIVER:\s*/gmi, 'ȘOFER: '],
         [/\bDRIVER:\s*/gi, 'ȘOFER: '],
@@ -970,6 +965,16 @@ function hasUntranslatedEnglish(original, translated) {
     const originalNorm = normalize(origClean);
     const translatedNorm = normalize(transClean);
 
+    // FIX NOU (v12.78.14): Dacă textul original și cel tradus sunt identice și reprezintă un nume propriu
+    // sau un termen scurt cu majuscule (nume de persoane, locuri, instituții), NU îl considerăm netradus (evităm alarmele false).
+    if (originalNorm === translatedNorm) {
+        const hasCapitals = /[A-Z]/.test(origClean);
+        const wordCount = origClean.split(/\s+/).length;
+        if (hasCapitals && wordCount <= 4) {
+            return false;
+        }
+    }
+
     const strongEnglish = new Set([
         'the', 'and', 'but', 'if', 'then', 'than',
         'they', 'them', 'their', 'we', 'us', 'our',
@@ -1322,7 +1327,6 @@ async function translateSrtWithGemini(srtText, apiKeys) {
             const start = globalIndex * CHUNK_SIZE;
             const end = start + chunk.length;
 
-            // Pauza între calupuri actualizată la 1.5 secunde (1500ms)
             if (localIndex > 0) await sleep(1500 * localIndex);
 
             const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, globalIndex, chunks.length);
@@ -1562,6 +1566,10 @@ function parseSrt(srt) {
 // ============================================================
 // UTILS & START
 // ============================================================
+
+Info: function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
