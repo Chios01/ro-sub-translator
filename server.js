@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.41',
+    version: '12.78.40',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1368,7 +1368,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     // Erorile de JSON/schema nu repetă întregul chunk inutil.
     // 429/503 sunt însă tranzitorii și trebuie retrimise cu backoff exponențial.
     // Nu împărțim chunk-ul doar pentru că API-ul a limitat temporar cererea.
-    const maxKeyAttempts = 4;
+    const maxKeyAttempts = 8;
     let attemptedKeys = new Set();
 
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
