@@ -252,228 +252,186 @@ async function handleSubtitles(req, res) {
         const fNameLower = userFilename.toLowerCase();
 
         // ============================================================
-        // GENERAL RELEASE-AWARE SUBTITLE RANKING
-        // Compares the selected video release with the metadata supplied
-        // by the subtitle providers. No source, translation or cache logic
-        // is changed here.
+        // RANKING SUBTITRARE — singura zonă modificată
+        // Scop: subtitrarea cea mai potrivită pentru EXACT release-ul video
+        // selectat să ajungă pe #1, fără să schimbăm sursele, traducerea,
+        // chunk-urile, retry-urile sau restul fluxului.
         // ============================================================
-
         const normalizeReleaseName = (name) => String(name || '')
             .toLowerCase()
-            .replace(/\[[^\]]+\]/g, ' ')
-            .replace(/\(([^)]+)\)/g, ' $1 ')
-            .replace(/[\._-]+/g, ' ')
-            .replace(/\b(web[\s.-]*dl|web[\s.-]*rip|web)\b/g, ' web ')
-            .replace(/\b(blu[\s.-]*ray|b[\s.-]*ray|brrip|bdrip|bdr)\b/g, ' bluray ')
+            .replace(/[._-]+/g, ' ')
+            .replace(/\b(web[-. ]?dl|web[-. ]?rip)\b/g, ' web ')
+            .replace(/\b(bluray|blu[-. ]?ray|brrip|bdrip|bdr)\b/g, ' bluray ')
             .replace(/\b(2160p|4k|uhd)\b/g, ' 2160p ')
-            .replace(/\b(1080p|fhd)\b/g, ' 1080p ')
-            .replace(/\b(720p|hd)\b/g, ' 720p ')
-            .replace(/\b(576p|480p|sd)\b/g, ' sd ')
-            .replace(/\b(10[\s-]?bit)\b/g, ' 10bit ')
-            .replace(/\b(dolby[\s.-]*vision|dv)\b/g, ' dv ')
-            .replace(/\b(hdr10\+?|hdr)\b/g, ' hdr ')
-            .replace(/\b(ddp|eac3|ac3|aac|dts[\s.-]*hd|dts|truehd|atmos)\b/g, ' $1 ')
-            .replace(/[^a-z0-9]+/g, ' ')
+            .replace(/\b(1080p)\b/g, ' 1080p ')
+            .replace(/\b(720p)\b/g, ' 720p ')
+            .replace(/\b(480p|576p|sd)\b/g, ' sd ')
             .replace(/\s+/g, ' ')
             .trim();
 
-        const tokenSet = (name) => new Set(
-            normalizeReleaseName(name)
-                .split(' ')
-                .filter(t => t.length > 1)
-        );
-
-        const videoName = normalizeReleaseName(userFilename);
-        const videoTokens = tokenSet(userFilename);
-
-        const videoData = {
-            seasonEpisode: (videoName.match(/\bs\d{1,2}e\d{1,2}\b/) || [])[0] || '',
-            resolution: (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '',
-            format:
-                videoName.includes('bluray') ? 'bluray' :
-                videoName.includes('web') ? 'web' :
-                videoName.includes('remux') ? 'remux' : '',
-            provider: (videoName.match(/\b(atvp|amzn|nf|dsnp|hulu|max|paramount|pmtp|appletv)\b/) || [])[1] || '',
-            hdr: videoName.includes('hdr'),
-            dv: videoName.includes('dv'),
-            tenBit: videoName.includes('10bit'),
-            fps: (fNameLower.match(/\b(?:23\.976|24|25|29\.97|30|50|59\.94|60)\b/) || [])[0] || ''
-        };
-
-        const getReleaseField = (s, field) => {
-            const data = s.sourceData || {};
-            return data[field] == null ? '' : String(data[field]);
-        };
-
-        const getCandidateReleaseName = (s) =>
-            getReleaseField(s, 'movieReleaseName') ||
-            getReleaseField(s, 'subtitleFileName') ||
-            s.realName ||
-            '';
-
-        const getCandidateGroup = (s) =>
-            getReleaseField(s, 'releaseGroup') ||
-            '';
-
-        const getCandidateFormat = (s) =>
-            normalizeReleaseName(
-                getReleaseField(s, 'releaseFormat') || getCandidateReleaseName(s)
-            );
-
-        const getCandidateResolution = (s) => {
-            const name = normalizeReleaseName(getCandidateReleaseName(s));
-            return (name.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
-        };
-
-        const getCandidateProvider = (s) => {
-            const name = normalizeReleaseName(getCandidateReleaseName(s));
-            return (name.match(/\b(atvp|amzn|nf|dsnp|hulu|max|paramount|pmtp|appletv)\b/) || [])[1] || '';
-        };
-
-        const getCandidateSeasonEpisode = (s) => {
-            const name = normalizeReleaseName(getCandidateReleaseName(s));
-            return (name.match(/\bs\d{1,2}e\d{1,2}\b/) || [])[0] || '';
-        };
-
-        const releaseFamilyMatches = (videoFormat, candidateFormat) => {
-            if (!videoFormat || !candidateFormat) return false;
-            if (videoFormat === candidateFormat) return true;
-            return false;
-        };
-
-        diverseSubs.forEach(s => {
-            const candidateRelease = normalizeReleaseName(getCandidateReleaseName(s));
-            const candidateTokens = tokenSet(getCandidateReleaseName(s));
-            const candidateGroup = normalizeReleaseName(getCandidateGroup(s));
-            const candidateFormat = getCandidateFormat(s);
-            const candidateResolution = getCandidateResolution(s);
-            const candidateProvider = getCandidateProvider(s);
-            const candidateSeasonEpisode = getCandidateSeasonEpisode(s);
-
-            let score = 0;
-
-            // 1. Correct episode/season is fundamental.
-            if (videoData.seasonEpisode && candidateSeasonEpisode) {
-                if (videoData.seasonEpisode === candidateSeasonEpisode) score += 1200;
-                else score -= 1800;
-            }
-
-            // 2. Exact release group is one of the strongest sync signals.
-            if (videoData.provider || videoData.format) {
-                const videoGroupMatch = fNameLower.match(
-                    /(?:^|[\s._-])([a-z0-9]+)(?=\.(?:mkv|mp4|avi)$|$)/i
-                );
-                const videoGroup = videoGroupMatch ? videoGroupMatch[1].toLowerCase() : '';
-
-                if (videoGroup && candidateGroup && videoGroup === candidateGroup) {
-                    score += 900;
+        const getMetaText = (sub) => {
+            const data = sub && sub.sourceData ? sub.sourceData : {};
+            const preferredKeys = [
+                'movieReleaseName', 'releaseName', 'releaseGroup', 'releaseFormat',
+                'movieRelease', 'release', 'name', 'title', 'filename', 'fileName',
+                'source', 'sourceName', 'provider', 'group', 'format', 'tags'
+            ];
+            const parts = [sub && sub.realName ? sub.realName : ''];
+            for (const key of preferredKeys) {
+                const value = data[key];
+                if (value !== undefined && value !== null && String(value).trim()) {
+                    parts.push(String(value));
                 }
             }
+            return normalizeReleaseName(parts.join(' '));
+        };
 
-            // 3. Match the actual release family selected by the video.
-            if (releaseFamilyMatches(videoData.format, candidateFormat)) {
-                score += 650;
-            } else if (videoData.format && candidateFormat) {
-                // Different release families are worse, but not disqualified.
-                score -= 180;
-            }
+        const videoName = normalizeReleaseName(fNameLower);
 
-            // 4. Match provider/platform when metadata makes it explicit.
-            if (videoData.provider && candidateProvider) {
-                if (videoData.provider === candidateProvider) score += 500;
-                else score -= 80;
-            }
+        const extractSeasonEpisode = (name) => {
+            const m = String(name || '').match(/\bs(\d{1,2})e(\d{1,2})\b/i);
+            return m ? `s${m[1]}e${m[2]}` : '';
+        };
 
-            // 5. Compare meaningful release-name tokens.
-            // Ignore generic technical tokens because they are weak signals.
-            const ignored = new Set([
-                'mkv', 'mp4', 'avi', 'srt', 'subtitle', 'subtitles',
-                '1080p', '2160p', '720p', 'sd', 'web', 'bluray',
-                'hdr', 'dv', '10bit', 'ddp', 'eac3', 'ac3', 'aac',
-                'dts', 'atmos', 'x264', 'x265', 'h264', 'h265', 'hevc'
+        const extractReleaseGroup = (name) => {
+            const raw = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '');
+            const bracket = raw.match(/\[([^\]]+)\](?:\s*)$/);
+            if (bracket) return bracket[1].trim().toLowerCase();
+
+            const tokens = normalizeReleaseName(raw).split(' ').filter(Boolean);
+            const stop = new Set([
+                'the','boys','season','episode','instant','white','hot','wild','series',
+                '2160p','1080p','720p','480p','576p','sd','web','bluray','x264','x265',
+                'h264','h265','hevc','avc','10bit','8bit','aac','ac3','eac3','ddp',
+                'dd','5','1','2','0','1ch','2ch','5ch','6ch','7ch','hdr','hdr10','dv',
+                'dolby','vision','amzn','amazon','nf','netflix','dsnp','disney','hulu','max',
+                'webrip','brrip','bdrip','bdr','torrentgalaxy','mkv','mp4','avi'
             ]);
+            const technical = /^(s\d{1,2}e\d{1,2}|19\d{2}|20\d{2}|\d{1,4}p|x\d+|h\d+|\d+bit|\d+(?:\.\d+)?ch?)$/i;
+            const candidates = tokens.filter(t => !stop.has(t) && !technical.test(t));
+            return candidates.length ? candidates[candidates.length - 1] : '';
+        };
 
-            let meaningfulMatches = 0;
-            let meaningfulVideoTokens = 0;
+        const detectFamily = (name) => {
+            const n = ` ${normalizeReleaseName(name)} `;
+            if (/\bbluray\b/.test(n)) return 'bluray';
+            if (/\bweb\b/.test(n) || /\b(amzn|amazon|nf|netflix|dsnp|disney|hulu|max)\b/.test(n)) return 'web';
+            if (/\bdvdrip\b|\bdvd\b/.test(n)) return 'dvd';
+            if (/\bhdtv\b/.test(n)) return 'hdtv';
+            return '';
+        };
 
-            for (const token of videoTokens) {
-                if (ignored.has(token) || token.length < 3) continue;
-                meaningfulVideoTokens++;
+        const detectProviders = (name) => {
+            const n = ` ${normalizeReleaseName(name)} `;
+            const found = [];
+            if (/\b(amzn|amazon)\b/.test(n)) found.push('amzn');
+            if (/\b(nf|netflix)\b/.test(n)) found.push('nf');
+            if (/\b(dsnp|disney)\b/.test(n)) found.push('dsnp');
+            if (/\bhulu\b/.test(n)) found.push('hulu');
+            if (/\bmax\b/.test(n)) found.push('max');
+            return found;
+        };
 
-                if (candidateTokens.has(token)) {
-                    meaningfulMatches++;
-                    score += 55;
-                }
+        const detectFlags = (name) => {
+            const n = ` ${normalizeReleaseName(name)} `;
+            return {
+                hdr: /\bhdr\b/.test(n),
+                hdr10: /\bhdr10\b/.test(n),
+                dv: /\bdv\b|\bdolby\s+vision\b/.test(n),
+                bit10: /\b10bit\b/.test(n),
+                fps: (n.match(/\b(\d{2,3}(?:\.\d+)?)\s*fps\b/) || [])[1] || ''
+            };
+        };
+
+        const videoTokens = videoName.split(/\s+/).filter(t =>
+            t.length > 2 && !/^(mkv|mp4|avi)$/.test(t)
+        );
+        const videoSeasonEpisode = extractSeasonEpisode(videoName);
+        const videoFamily = detectFamily(videoName);
+        const videoProviders = detectProviders(videoName);
+        const videoGroup = extractReleaseGroup(fNameLower);
+        const videoFlags = detectFlags(videoName);
+        const videoResolution = (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
+
+        const countMeaningfulOverlap = (a, b) => {
+            const ignore = new Set([
+                'the','boys','season','episode','series','instant','white','hot','wild',
+                'year','s03','s04','s05','mkv','mp4','avi'
+            ]);
+            const aTokens = [...new Set(String(a || '').split(/\s+/).filter(x => x.length > 2 && !ignore.has(x)))];
+            if (!aTokens.length) return 0;
+            const bSet = new Set(String(b || '').split(/\s+/));
+            return aTokens.filter(t => bSet.has(t)).length / aTokens.length;
+        };
+
+        diverseSubs.forEach((s, originalOrder) => {
+            const subName = getMetaText(s);
+            const subData = s.sourceData || {};
+            const subFamily = detectFamily(subName);
+            const subProviders = detectProviders(subName);
+            const subGroupRaw = String(subData.releaseGroup || subData.group || extractReleaseGroup(s.realName) || '').toLowerCase().trim();
+            const subGroup = normalizeReleaseName(subGroupRaw);
+            const subFlags = detectFlags(subName);
+            const subResolution = (subName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
+            const subEpisode = extractSeasonEpisode(subName);
+            const overlap = countMeaningfulOverlap(videoName, subName);
+
+            s.score = 0;
+            s._rankingOrder = originalOrder;
+
+            // 1. EPISOD exact — cel mai important criteriu structural.
+            if (videoSeasonEpisode && subEpisode === videoSeasonEpisode) s.score += 1400;
+            else if (videoSeasonEpisode && subEpisode) s.score -= 700;
+
+            // 2. Sursa/release family: WEB trebuie să meargă cu WEB, BluRay cu BluRay.
+            // Nu există o preferință universală pentru WEB sau BluRay.
+            if (videoFamily && subFamily) {
+                if (videoFamily === subFamily) s.score += 1100;
+                else s.score -= 1100;
             }
 
-            if (meaningfulVideoTokens > 0) {
-                const ratio = meaningfulMatches / meaningfulVideoTokens;
-                if (ratio >= 0.80) score += 450;
-                else if (ratio >= 0.50) score += 180;
+            // 3. Platforma/providerul (AMZN, NF, DSNP etc.) când există în ambele.
+            if (videoProviders.length && subProviders.length) {
+                const providerMatch = videoProviders.some(p => subProviders.includes(p));
+                if (providerMatch) s.score += 700;
+                else s.score -= 450;
             }
 
-            // 6. Exact movieReleaseName containment is a strong signal.
-            if (videoName && candidateRelease) {
-                const commonPrefixTokens = videoName.split(' ').filter(
-                    t => t.length >= 3 && candidateTokens.has(t)
-                ).length;
-
-                if (commonPrefixTokens >= 3) score += 220;
+            // 4. Release group: bonus mare pentru aceeași ediție/group.
+            if (videoGroup && subGroup) {
+                if (subGroup === normalizeReleaseName(videoGroup)) s.score += 1300;
+                else if (subGroup.includes(normalizeReleaseName(videoGroup)) || normalizeReleaseName(videoGroup).includes(subGroup)) s.score += 500;
             }
 
-            // 7. Resolution helps, but must never dominate.
-            if (videoData.resolution && candidateResolution) {
-                if (videoData.resolution === candidateResolution) {
-                    score += 120;
-                } else {
-                    // 1080p subtitles are often perfectly valid for 2160p video.
-                    const compatible =
-                        (videoData.resolution === '2160p' && candidateResolution === '1080p') ||
-                        (videoData.resolution === '1080p' && candidateResolution === '720p');
-
-                    if (compatible) score += 35;
-                    else score -= 25;
-                }
+            // 5. Caracteristici tehnice care pot separa două ediții ale aceluiași release.
+            if (videoFlags.hdr && subFlags.hdr) s.score += 220;
+            if (videoFlags.dv && subFlags.dv) s.score += 220;
+            if (videoFlags.bit10 && subFlags.bit10) s.score += 160;
+            if (videoFlags.fps && subFlags.fps) {
+                if (videoFlags.fps === subFlags.fps) s.score += 120;
+                else s.score -= 60;
             }
 
-            // 8. HDR / Dolby Vision / 10-bit are useful tie-breakers.
-            const candidateName = candidateRelease;
-            if (videoData.hdr && /\bhdr\b/.test(candidateName)) score += 55;
-            if (videoData.dv && /\bdv\b/.test(candidateName)) score += 70;
-            if (videoData.tenBit && /\b10bit\b/.test(candidateName)) score += 35;
-
-            // 9. Same FPS is a useful final sync tie-breaker.
-            const candidateFps = String(
-                getReleaseField(s, 'fps') ||
-                getReleaseField(s, 'fpsMilli') ||
-                ''
-            );
-            if (videoData.fps && candidateFps) {
-                const normalizedVideoFps = videoData.fps.replace('.', '');
-                if (candidateFps.includes(videoData.fps) || candidateFps.includes(normalizedVideoFps)) {
-                    score += 45;
-                }
+            // 6. Rezoluția contează, dar mai puțin decât release/source/group.
+            if (videoResolution && subResolution) {
+                if (videoResolution === subResolution) s.score += 250;
+                else s.score -= 80;
             }
 
-            // 10. Penalize variants that are normally less desirable for main dialogue.
-            const candidateFile = normalizeReleaseName(
-                getReleaseField(s, 'subtitleFileName') || s.realName
-            );
+            // 7. Similaritate generală a numelui release-ului.
+            if (overlap >= 0.85) s.score += 500;
+            else if (overlap >= 0.60) s.score += 300;
+            else if (overlap >= 0.35) s.score += 120;
 
-            if (/\b(hi|sdh|hearing impaired)\b/.test(candidateFile)) score -= 140;
-            if (/\b(forced|forced only)\b/.test(candidateFile)) score -= 220;
-            if (/\b(auto|machine|translated|mt)\b/.test(candidateFile)) score -= 300;
-            if (/\b(resync|resynced|sync|corrected)\b/.test(candidateFile)) score -= 160;
+            // 8. Penalizări pentru variante cunoscute ca mai puțin potrivite.
+            if (/\bsdh\b|\bhi\b|hearing\s*impaired/i.test(subName)) s.score -= 80;
+            if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
 
-            s.score = score;
+            // 9. Nu penalizăm lipsa metadata: dacă un provider/group/fps nu există,
+            // candidatul rămâne eligibil și poate câștiga pe criteriile disponibile.
         });
 
-        diverseSubs.sort((a, b) => {
-            if (b.score !== a.score) return b.score - a.score;
-
-            // Stable fallback: provider order / original candidate order.
-            return a.index - b.index;
-        });
+        diverseSubs.sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
 
         diverseSubs = diverseSubs.slice(0, 15);
         
