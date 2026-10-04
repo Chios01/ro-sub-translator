@@ -245,7 +245,7 @@ async function handleSubtitles(req, res) {
         engSubs.forEach((sub, idx) => {
             let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
             if (!trashRegex.test(realName)) {
-                diverseSubs.push({ originalUrl: sub.url, realName, index: idx });
+                diverseSubs.push({ originalUrl: sub.url, realName, index: idx, sourceData: sub });
             }
         });
 
@@ -314,6 +314,14 @@ async function handleSubtitles(req, res) {
         // see why the correct subtitle is not reaching rank 1. Remove after test.
         console.log(`${c.cyan}🔎 [Ranking Debug] Video: ${userFilename || id}${c.reset}`);
         console.log(`${c.cyan}   ${diverseSubs.slice(0, 15).map((s, i) => `#${i + 1} ${s.score} | ${s.realName}`).join(' || ')}${c.reset}`);
+        console.log(`${c.cyan}🔎 [Ranking Data] Câmpurile primite pentru candidate:${c.reset}`);
+        diverseSubs.slice(0, 15).forEach((s, i) => {
+            const safeData = Object.fromEntries(Object.entries(s.sourceData || {}).map(([k, v]) => {
+                if (k === 'url' || k === 'subtitle' || k === 'download') return [k, String(v || '').slice(0, 300)];
+                return [k, v];
+            }));
+            console.log(`${c.cyan}   #${i + 1} keys=[${Object.keys(s.sourceData || {}).join(', ')}] data=${JSON.stringify(safeData)}${c.reset}`);
+        });
 
         diverseSubs = diverseSubs.slice(0, 15);
         
