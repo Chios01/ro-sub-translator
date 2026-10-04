@@ -245,39 +245,236 @@ async function handleSubtitles(req, res) {
         engSubs.forEach((sub, idx) => {
             let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
             if (!trashRegex.test(realName)) {
-                diverseSubs.push({ originalUrl: sub.url, realName, index: idx });
+                diverseSubs.push({ originalUrl: sub.url, realName, index: idx, sourceData: sub });
             }
         });
 
         const fNameLower = userFilename.toLowerCase();
-        const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
+
+        // ============================================================
+        // GENERAL RELEASE-AWARE SUBTITLE RANKING
+        // Compares the selected video release with the metadata supplied
+        // by the subtitle providers. No source, translation or cache logic
+        // is changed here.
+        // ============================================================
+
+        const normalizeReleaseName = (name) => String(name || '')
+            .toLowerCase()
+            .replace(/\[[^\]]+\]/g, ' ')
+            .replace(/\(([^)]+)\)/g, ' $1 ')
+            .replace(/[\._-]+/g, ' ')
+            .replace(/\b(web[\s.-]*dl|web[\s.-]*rip|web)\b/g, ' web ')
+            .replace(/\b(blu[\s.-]*ray|b[\s.-]*ray|brrip|bdrip|bdr)\b/g, ' bluray ')
+            .replace(/\b(2160p|4k|uhd)\b/g, ' 2160p ')
+            .replace(/\b(1080p|fhd)\b/g, ' 1080p ')
+            .replace(/\b(720p|hd)\b/g, ' 720p ')
+            .replace(/\b(576p|480p|sd)\b/g, ' sd ')
+            .replace(/\b(10[\s-]?bit)\b/g, ' 10bit ')
+            .replace(/\b(dolby[\s.-]*vision|dv)\b/g, ' dv ')
+            .replace(/\b(hdr10\+?|hdr)\b/g, ' hdr ')
+            .replace(/\b(ddp|eac3|ac3|aac|dts[\s.-]*hd|dts|truehd|atmos)\b/g, ' $1 ')
+            .replace(/[^a-z0-9]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const tokenSet = (name) => new Set(
+            normalizeReleaseName(name)
+                .split(' ')
+                .filter(t => t.length > 1)
+        );
+
+        const videoName = normalizeReleaseName(userFilename);
+        const videoTokens = tokenSet(userFilename);
+
+        const videoData = {
+            seasonEpisode: (videoName.match(/\bs\d{1,2}e\d{1,2}\b/) || [])[0] || '',
+            resolution: (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '',
+            format:
+                videoName.includes('bluray') ? 'bluray' :
+                videoName.includes('web') ? 'web' :
+                videoName.includes('remux') ? 'remux' : '',
+            provider: (videoName.match(/\b(atvp|amzn|nf|dsnp|hulu|max|paramount|pmtp|appletv)\b/) || [])[1] || '',
+            hdr: videoName.includes('hdr'),
+            dv: videoName.includes('dv'),
+            tenBit: videoName.includes('10bit'),
+            fps: (fNameLower.match(/\b(?:23\.976|24|25|29\.97|30|50|59\.94|60)\b/) || [])[0] || ''
+        };
+
+        const getReleaseField = (s, field) => {
+            const data = s.sourceData || {};
+            return data[field] == null ? '' : String(data[field]);
+        };
+
+        const getCandidateReleaseName = (s) =>
+            getReleaseField(s, 'movieReleaseName') ||
+            getReleaseField(s, 'subtitleFileName') ||
+            s.realName ||
+            '';
+
+        const getCandidateGroup = (s) =>
+            getReleaseField(s, 'releaseGroup') ||
+            '';
+
+        const getCandidateFormat = (s) =>
+            normalizeReleaseName(
+                getReleaseField(s, 'releaseFormat') || getCandidateReleaseName(s)
+            );
+
+        const getCandidateResolution = (s) => {
+            const name = normalizeReleaseName(getCandidateReleaseName(s));
+            return (name.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
+        };
+
+        const getCandidateProvider = (s) => {
+            const name = normalizeReleaseName(getCandidateReleaseName(s));
+            return (name.match(/\b(atvp|amzn|nf|dsnp|hulu|max|paramount|pmtp|appletv)\b/) || [])[1] || '';
+        };
+
+        const getCandidateSeasonEpisode = (s) => {
+            const name = normalizeReleaseName(getCandidateReleaseName(s));
+            return (name.match(/\bs\d{1,2}e\d{1,2}\b/) || [])[0] || '';
+        };
+
+        const releaseFamilyMatches = (videoFormat, candidateFormat) => {
+            if (!videoFormat || !candidateFormat) return false;
+            if (videoFormat === candidateFormat) return true;
+            return false;
+        };
 
         diverseSubs.forEach(s => {
-            s.score = 0;
-            const subName = s.realName.toLowerCase();
-            
-            if (videoTokens.length > 0) {
-                let matchCount = 0;
-                videoTokens.forEach(token => {
-                    if (subName.includes(token)) {
-                        s.score += 60; 
-                        matchCount++;
-                    }
-                });
-                
-                if (matchCount > 0 && matchCount >= videoTokens.length / 2) {
-                    s.score += 300; 
+            const candidateRelease = normalizeReleaseName(getCandidateReleaseName(s));
+            const candidateTokens = tokenSet(getCandidateReleaseName(s));
+            const candidateGroup = normalizeReleaseName(getCandidateGroup(s));
+            const candidateFormat = getCandidateFormat(s);
+            const candidateResolution = getCandidateResolution(s);
+            const candidateProvider = getCandidateProvider(s);
+            const candidateSeasonEpisode = getCandidateSeasonEpisode(s);
+
+            let score = 0;
+
+            // 1. Correct episode/season is fundamental.
+            if (videoData.seasonEpisode && candidateSeasonEpisode) {
+                if (videoData.seasonEpisode === candidateSeasonEpisode) score += 1200;
+                else score -= 1800;
+            }
+
+            // 2. Exact release group is one of the strongest sync signals.
+            if (videoData.provider || videoData.format) {
+                const videoGroupMatch = fNameLower.match(
+                    /(?:^|[\s._-])([a-z0-9]+)(?=\.(?:mkv|mp4|avi)$|$)/i
+                );
+                const videoGroup = videoGroupMatch ? videoGroupMatch[1].toLowerCase() : '';
+
+                if (videoGroup && candidateGroup && videoGroup === candidateGroup) {
+                    score += 900;
                 }
             }
 
-            if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(subName)) s.score += 40;
-            if (/bluray|brrip|bdrip|bdr/i.test(subName)) s.score += 30;
-            if (/yts|yify|rarbg|tgx|qxr|psa/i.test(subName)) s.score += 20;
-            if (/sdh|hi\.|hearing impaired/i.test(subName)) s.score -= 15; 
-            if (/sync|corregido|resync|translated|auto|machine/i.test(subName)) s.score -= 100;
+            // 3. Match the actual release family selected by the video.
+            if (releaseFamilyMatches(videoData.format, candidateFormat)) {
+                score += 650;
+            } else if (videoData.format && candidateFormat) {
+                // Different release families are worse, but not disqualified.
+                score -= 180;
+            }
+
+            // 4. Match provider/platform when metadata makes it explicit.
+            if (videoData.provider && candidateProvider) {
+                if (videoData.provider === candidateProvider) score += 500;
+                else score -= 80;
+            }
+
+            // 5. Compare meaningful release-name tokens.
+            // Ignore generic technical tokens because they are weak signals.
+            const ignored = new Set([
+                'mkv', 'mp4', 'avi', 'srt', 'subtitle', 'subtitles',
+                '1080p', '2160p', '720p', 'sd', 'web', 'bluray',
+                'hdr', 'dv', '10bit', 'ddp', 'eac3', 'ac3', 'aac',
+                'dts', 'atmos', 'x264', 'x265', 'h264', 'h265', 'hevc'
+            ]);
+
+            let meaningfulMatches = 0;
+            let meaningfulVideoTokens = 0;
+
+            for (const token of videoTokens) {
+                if (ignored.has(token) || token.length < 3) continue;
+                meaningfulVideoTokens++;
+
+                if (candidateTokens.has(token)) {
+                    meaningfulMatches++;
+                    score += 55;
+                }
+            }
+
+            if (meaningfulVideoTokens > 0) {
+                const ratio = meaningfulMatches / meaningfulVideoTokens;
+                if (ratio >= 0.80) score += 450;
+                else if (ratio >= 0.50) score += 180;
+            }
+
+            // 6. Exact movieReleaseName containment is a strong signal.
+            if (videoName && candidateRelease) {
+                const commonPrefixTokens = videoName.split(' ').filter(
+                    t => t.length >= 3 && candidateTokens.has(t)
+                ).length;
+
+                if (commonPrefixTokens >= 3) score += 220;
+            }
+
+            // 7. Resolution helps, but must never dominate.
+            if (videoData.resolution && candidateResolution) {
+                if (videoData.resolution === candidateResolution) {
+                    score += 120;
+                } else {
+                    // 1080p subtitles are often perfectly valid for 2160p video.
+                    const compatible =
+                        (videoData.resolution === '2160p' && candidateResolution === '1080p') ||
+                        (videoData.resolution === '1080p' && candidateResolution === '720p');
+
+                    if (compatible) score += 35;
+                    else score -= 25;
+                }
+            }
+
+            // 8. HDR / Dolby Vision / 10-bit are useful tie-breakers.
+            const candidateName = candidateRelease;
+            if (videoData.hdr && /\bhdr\b/.test(candidateName)) score += 55;
+            if (videoData.dv && /\bdv\b/.test(candidateName)) score += 70;
+            if (videoData.tenBit && /\b10bit\b/.test(candidateName)) score += 35;
+
+            // 9. Same FPS is a useful final sync tie-breaker.
+            const candidateFps = String(
+                getReleaseField(s, 'fps') ||
+                getReleaseField(s, 'fpsMilli') ||
+                ''
+            );
+            if (videoData.fps && candidateFps) {
+                const normalizedVideoFps = videoData.fps.replace('.', '');
+                if (candidateFps.includes(videoData.fps) || candidateFps.includes(normalizedVideoFps)) {
+                    score += 45;
+                }
+            }
+
+            // 10. Penalize variants that are normally less desirable for main dialogue.
+            const candidateFile = normalizeReleaseName(
+                getReleaseField(s, 'subtitleFileName') || s.realName
+            );
+
+            if (/\b(hi|sdh|hearing impaired)\b/.test(candidateFile)) score -= 140;
+            if (/\b(forced|forced only)\b/.test(candidateFile)) score -= 220;
+            if (/\b(auto|machine|translated|mt)\b/.test(candidateFile)) score -= 300;
+            if (/\b(resync|resynced|sync|corrected)\b/.test(candidateFile)) score -= 160;
+
+            s.score = score;
         });
 
-        diverseSubs.sort((a, b) => b.score - a.score);
+        diverseSubs.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+
+            // Stable fallback: provider order / original candidate order.
+            return a.index - b.index;
+        });
+
         diverseSubs = diverseSubs.slice(0, 15);
         
         console.log(`${c.green}✔ S-au pregătit ${diverseSubs.length} subtitrări de tradus pentru: ${id}${c.reset}`);
