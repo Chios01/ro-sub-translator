@@ -252,30 +252,61 @@ async function handleSubtitles(req, res) {
         const fNameLower = userFilename.toLowerCase();
         const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
 
+        // Ranking: prioritize the subtitle release that best matches the
+        // exact video variant selected by the user. Keep the existing sources
+        // and architecture unchanged; only improve ordering.
+        const normalizeReleaseName = (name) => name
+            .toLowerCase()
+            .replace(/\b(web[-. ]?dl|web[-. ]?rip)\b/g, 'web')
+            .replace(/\b(bluray|blu[-. ]?ray|brrip|bdrip|bdr)\b/g, 'bluray')
+            .replace(/\b(2160p|4k)\b/g, '2160p')
+            .replace(/\b(1080p)\b/g, '1080p')
+            .replace(/\b(720p)\b/g, '720p')
+            .replace(/\b(480p|576p|sd)\b/g, 'sd')
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+
+        const videoName = normalizeReleaseName(fNameLower);
+        const videoHasWeb = /\bweb\b|\bamzn\b|\bnf\b|\bdsnp\b|\bhulu\b|\bmax\b/.test(videoName);
+        const videoHasBluray = /\bbluray\b/.test(videoName);
+        const videoResolution = (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
+        const videoSeasonEpisode = (videoName.match(/\bs\d{1,2}e\d{1,2}\b/) || [])[0] || '';
+
         diverseSubs.forEach(s => {
             s.score = 0;
-            const subName = s.realName.toLowerCase();
+            const subName = normalizeReleaseName(s.realName);
             
+            // 1. Strong title/release-name overlap with the actual video filename.
             if (videoTokens.length > 0) {
                 let matchCount = 0;
                 videoTokens.forEach(token => {
                     if (subName.includes(token)) {
-                        s.score += 60; 
+                        s.score += 60;
                         matchCount++;
                     }
                 });
-                
-                if (matchCount > 0 && matchCount >= videoTokens.length / 2) {
-                    s.score += 300; 
-                }
+                if (matchCount > 0 && matchCount >= videoTokens.length / 2) s.score += 300;
+                if (matchCount === videoTokens.length) s.score += 500;
             }
 
-            if (/web-dl|webdl|webrip|web|amzn|nf|dsnp|hulu|max/i.test(subName)) s.score += 40;
-            if (/bluray|brrip|bdrip|bdr/i.test(subName)) s.score += 30;
-            if (/yts|yify|rarbg|tgx|qxr|psa/i.test(subName)) s.score += 20;
-            if (/sdh|hi\.|hearing impaired/i.test(subName)) s.score -= 15; 
+            // 2. Exact season/episode match is especially important for series.
+            if (videoSeasonEpisode && subName.includes(videoSeasonEpisode)) s.score += 500;
+
+            // 3. Match the release family actually selected by the user.
+            if (videoHasWeb && /\bweb\b/.test(subName)) s.score += 250;
+            if (videoHasBluray && /\bbluray\b/.test(subName)) s.score += 250;
+            if (videoHasWeb && /\bbluray\b/.test(subName)) s.score -= 120;
+            if (videoHasBluray && /\bweb\b/.test(subName)) s.score -= 120;
+
+            // 4. Match resolution, but keep release-family matching stronger.
+            if (videoResolution && subName.includes(videoResolution)) s.score += 120;
+
+            // 5. Secondary release/source signals.
+            if (/\byts\b|\byify\b|\brarbg\b|\btgx\b|\bqxr\b|\bpsa\b/.test(subName)) s.score += 20;
+            if (/sdh|hi\.|hearing impaired/i.test(subName)) s.score -= 15;
             if (/sync|corregido|resync|translated|auto|machine/i.test(subName)) s.score -= 100;
         });
+                
 
         diverseSubs.sort((a, b) => b.score - a.score);
         diverseSubs = diverseSubs.slice(0, 15);
