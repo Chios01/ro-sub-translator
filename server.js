@@ -309,6 +309,12 @@ async function handleSubtitles(req, res) {
                 
 
         diverseSubs.sort((a, b) => b.score - a.score);
+
+        // TEMPORARY DIAGNOSTIC: expose the candidate names and scores so we can
+        // see why the correct subtitle is not reaching rank 1. Remove after test.
+        console.log(`${c.cyan}🔎 [Ranking Debug] Video: ${userFilename || id}${c.reset}`);
+        console.log(`${c.cyan}   ${diverseSubs.slice(0, 15).map((s, i) => `#${i + 1} ${s.score} | ${s.realName}`).join(' || ')}${c.reset}`);
+
         diverseSubs = diverseSubs.slice(0, 15);
         
         console.log(`${c.green}✔ S-au pregătit ${diverseSubs.length} subtitrări de tradus pentru: ${id}${c.reset}`);
