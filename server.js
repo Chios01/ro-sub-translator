@@ -232,7 +232,7 @@ async function handleSubtitles(req, res) {
             if (uniqueUrls.has(sub.url)) return false;
             uniqueUrls.add(sub.url);
             return true;
-        }).slice(0, 25); 
+        }).slice(0, 35); 
 
         if (engSubs.length === 0) {
             console.log(`${c.yellow}⚠ Nu s-au găsit subtitrări sursă EN pentru: ${id}${c.reset}`);
@@ -1297,7 +1297,11 @@ function chunkArray(array, size) {
 function isJunkOrInterjection(text) {
     const clean = String(text || '').replace(/<[^>]+>/g, '').trim();
     if (!clean) return true;
-    if (/^[0-9\s\-–—.,?!:;\'"♪♫♬♩#]+$/.test(clean)) return true;
+
+    // Marcatori goi/tehnici care nu reprezintă dialog real. Sunt ignorați
+    // complet de verificările de traducere, ca să nu apară în loguri ca suspecți.
+    if (/^[\s0-9\-–—._,;:!?…'"~^`´‚„“”‘’()\[\]{}|\\/♪♫♬♩#]+$/.test(clean)) return true;
+
     if (/^(?:[-–—\s]*)(ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*$/i.test(clean)) return true;
     return false;
 }
@@ -1455,7 +1459,7 @@ LINIILE LIPSĂ:
 ${JSON.stringify(missingItems, null, 2)}
 `;
                 try {
-                    const missingRaw = await callGemini(missingPrompt, keyState, { timeout: 20000, maxAttempts: 1, retry429: false });
+                    const missingRaw = await callGemini(missingPrompt, keyState, { timeout: 20000 });
                     const missingJson = JSON.parse(String(missingRaw).trim());
                     const missingDict = normalizeTranslationPayload(missingJson);
                     for (const obj of missingItems) {
@@ -1608,7 +1612,7 @@ Returnează DOAR JSON valid în forma:
 ]
 `;
 
-                    const raw = await callGemini(singlePrompt, keyState, { maxAttempts: 1, retry429: false, timeout: 30000 });
+                    const raw = await callGemini(singlePrompt, keyState, { timeout: 30000 });
                     const parsed = safeJsonParse(raw);
                     const parsedDict = normalizeTranslationPayload(parsed);
                     const candidateRaw = parsedDict[String(item.id)];
