@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.42',
+    version: '12.78.43',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -252,10 +252,7 @@ async function handleSubtitles(req, res) {
         const fNameLower = userFilename.toLowerCase();
 
         // ============================================================
-        // RANKING SUBTITRARE — singura zonă modificată
-        // Scop: subtitrarea cea mai potrivită pentru EXACT release-ul video
-        // selectat să ajungă pe #1, fără să schimbăm sursele, traducerea,
-        // chunk-urile, retry-urile sau restul fluxului.
+        // RANKING SUBTITRARE (Îmbunătățit cu Cuts/Editions/IMAX/PROPER)
         // ============================================================
         const normalizeReleaseName = (name) => String(name || '')
             .toLowerCase()
@@ -305,7 +302,8 @@ async function handleSubtitles(req, res) {
                 'h264','h265','hevc','avc','10bit','8bit','aac','ac3','eac3','ddp',
                 'dd','5','1','2','0','1ch','2ch','5ch','6ch','7ch','hdr','hdr10','dv',
                 'dolby','vision','amzn','amazon','nf','netflix','dsnp','disney','hulu','max',
-                'webrip','brrip','bdrip','bdr','torrentgalaxy','mkv','mp4','avi'
+                'webrip','brrip','bdrip','bdr','torrentgalaxy','mkv','mp4','avi',
+                'proper','repack','rerip','extended','unrated','theatrical','remastered','director','directors','cut','imax'
             ]);
             const technical = /^(s\d{1,2}e\d{1,2}|19\d{2}|20\d{2}|\d{1,4}p|x\d+|h\d+|\d+bit|\d+(?:\.\d+)?ch?)$/i;
             const candidates = tokens.filter(t => !stop.has(t) && !technical.test(t));
@@ -343,20 +341,33 @@ async function handleSubtitles(req, res) {
             };
         };
 
-        const videoTokens = videoName.split(/\s+/).filter(t =>
-            t.length > 2 && !/^(mkv|mp4|avi)$/.test(t)
-        );
+        // EXTRAGERE EDIȚII, CUT-URI ȘI IMAX
+        const extractEdition = (name) => {
+            const n = ` ${normalizeReleaseName(name)} `;
+            const match = n.match(/\b(extended|director'?s(?:\s*cut)?|unrated|theatrical|recut|special|ultimate|redux|final(?:\s*cut)?|roadshow|assembly|open\s*matte|tv(?:\s*cut)?|international|european|us|uk|cannes|alternative|remastered|anniversary|collector'?s|criterion|definitive|limited|workprint|imax)\b/i);
+            return match ? match[1].replace(/['\s]/g, '').toLowerCase() : '';
+        };
+
+        // EXTRAGERE FIX-URI DE AMBALARE (PROPER / REPACK / RERIP)
+        const isProperOrRepack = (name) => {
+            const n = ` ${normalizeReleaseName(name)} `;
+            return /\b(proper|repack|rerip)\b/i.test(n);
+        };
+
         const videoSeasonEpisode = extractSeasonEpisode(videoName);
         const videoFamily = detectFamily(videoName);
         const videoProviders = detectProviders(videoName);
         const videoGroup = extractReleaseGroup(fNameLower);
         const videoFlags = detectFlags(videoName);
         const videoResolution = (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
+        const videoEdition = extractEdition(videoName);
 
         const countMeaningfulOverlap = (a, b) => {
             const ignore = new Set([
                 'the','boys','season','episode','series','instant','white','hot','wild',
-                'year','s03','s04','s05','mkv','mp4','avi'
+                'year','s03','s04','s05','mkv','mp4','avi',
+                'proper','repack','rerip','imax','extended','unrated','theatrical','remastered',
+                'director','directors','cut','special','edition'
             ]);
             const aTokens = [...new Set(String(a || '').split(/\s+/).filter(x => x.length > 2 && !ignore.has(x)))];
             if (!aTokens.length) return 0;
@@ -374,36 +385,50 @@ async function handleSubtitles(req, res) {
             const subFlags = detectFlags(subName);
             const subResolution = (subName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
             const subEpisode = extractSeasonEpisode(subName);
+            const subEdition = extractEdition(subName);
+            const subIsProper = isProperOrRepack(subName);
             const overlap = countMeaningfulOverlap(videoName, subName);
 
             s.score = 0;
             s._rankingOrder = originalOrder;
 
-            // 1. EPISOD exact — cel mai important criteriu structural.
+            // 1. EPISOD exact
             if (videoSeasonEpisode && subEpisode === videoSeasonEpisode) s.score += 1400;
             else if (videoSeasonEpisode && subEpisode) s.score -= 700;
 
-            // 2. Sursa/release family: WEB trebuie să meargă cu WEB, BluRay cu BluRay.
-            // Nu există o preferință universală pentru WEB sau BluRay.
+            // 2. CUT / EDITION / IMAX (CRITIC PENTRU SINCRONIZARE TIMELINE)
+            if (videoEdition && subEdition) {
+                if (videoEdition === subEdition) s.score += 1500;
+                else s.score -= 2000; // Erori fatale de sync între cut-uri diferite
+            } else if (videoEdition || subEdition) {
+                s.score -= 400; // Doar unul are tag de ediție, risc crescut de desincronizare
+            }
+
+            // 3. PROPER / REPACK / RERIP (Variante de ambalare)
+            if (subIsProper) {
+                s.score += 50; // Bonus mic pt fișiere corectate. Nu penalizăm dacă diferă de video.
+            }
+
+            // 4. Sursa/release family (WEB vs BluRay)
             if (videoFamily && subFamily) {
                 if (videoFamily === subFamily) s.score += 1100;
                 else s.score -= 1100;
             }
 
-            // 3. Platforma/providerul (AMZN, NF, DSNP etc.) când există în ambele.
+            // 5. Platforma/providerul (AMZN, NF, DSNP etc.)
             if (videoProviders.length && subProviders.length) {
                 const providerMatch = videoProviders.some(p => subProviders.includes(p));
                 if (providerMatch) s.score += 700;
                 else s.score -= 450;
             }
 
-            // 4. Release group: bonus mare pentru aceeași ediție/group.
+            // 6. Release group
             if (videoGroup && subGroup) {
                 if (subGroup === normalizeReleaseName(videoGroup)) s.score += 1300;
                 else if (subGroup.includes(normalizeReleaseName(videoGroup)) || normalizeReleaseName(videoGroup).includes(subGroup)) s.score += 500;
             }
 
-            // 5. Caracteristici tehnice care pot separa două ediții ale aceluiași release.
+            // 7. Caracteristici tehnice / Flags
             if (videoFlags.hdr && subFlags.hdr) s.score += 220;
             if (videoFlags.dv && subFlags.dv) s.score += 220;
             if (videoFlags.bit10 && subFlags.bit10) s.score += 160;
@@ -412,23 +437,20 @@ async function handleSubtitles(req, res) {
                 else s.score -= 60;
             }
 
-            // 6. Rezoluția contează, dar mai puțin decât release/source/group.
+            // 8. Rezoluție
             if (videoResolution && subResolution) {
                 if (videoResolution === subResolution) s.score += 250;
                 else s.score -= 80;
             }
 
-            // 7. Similaritate generală a numelui release-ului.
+            // 9. Similaritate generală a numelui
             if (overlap >= 0.85) s.score += 500;
             else if (overlap >= 0.60) s.score += 300;
             else if (overlap >= 0.35) s.score += 120;
 
-            // 8. Penalizări pentru variante cunoscute ca mai puțin potrivite.
+            // 10. Penalizări pentru variante problematice
             if (/\bsdh\b|\bhi\b|hearing\s*impaired/i.test(subName)) s.score -= 80;
             if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
-
-            // 9. Nu penalizăm lipsa metadata: dacă un provider/group/fps nu există,
-            // candidatul rămâne eligibil și poate câștiga pe criteriile disponibile.
         });
 
         diverseSubs.sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
@@ -1120,8 +1142,6 @@ async function callGemini(prompt, keyState, options = {}) {
             throw new Error(`Cheie Gemini invalidă (${status}).`);
         }
         if (status === 429) {
-            // 429 este tratat ca limitare temporară. Nu schimbăm frenetic cheia:
-            // cheile standard aparțin proiectului și pot împărți aceeași cotă.
             const retryAfterHeader = error.response?.headers?.['retry-after'];
             const retryAfterSec = Number(retryAfterHeader);
             const cooldownMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
@@ -1144,7 +1164,6 @@ async function callGemini(prompt, keyState, options = {}) {
 function safeJsonParse(rawText) {
     let clean = String(rawText || '').replace(/^\uFEFF/, '').trim();
 
-    // Elimină eventualele code fences Markdown fără a atinge textul traducerii.
     clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
     const firstObject = clean.indexOf('{');
@@ -1178,8 +1197,6 @@ function safeJsonParse(rawText) {
             }
 
             if (escaped) {
-                // Păstrează escape-urile JSON valide; pentru cele invalide păstrează
-                // caracterul literal, astfel încât JSON-ul să poată fi reparat.
                 if ('"\\/bfnrt'.includes(ch)) out += '\\' + ch;
                 else if (ch === 'u' && /^[0-9a-fA-F]{4}$/.test(input.slice(i + 1, i + 5))) {
                     out += '\\u' + input.slice(i + 1, i + 5); i += 4;
@@ -1204,13 +1221,9 @@ function safeJsonParse(rawText) {
 
     function repairStructure(input) {
         let x = input;
-        // Chei simple fără ghilimele.
         x = x.replace(/([{,]\s*)([A-Za-z0-9_-]+)(\s*:)/g, '$1"$2"$3');
-        // Virgule trailing.
         x = x.replace(/,\s*([}\]])/g, '$1');
-        // Virgula lipsă între proprietăți: "..."\n"123": / }\n"123":
         x = x.replace(/([}\]"\d])\s*\n\s*("[^"\n]+"\s*:)/g, '$1,\n$2');
-        // Două proprietăți lipite după un string.
         x = x.replace(/("(?:\\.|[^"\\])*")\s+("[^"\n]+"\s*:)/g, '$1, $2');
         return x;
     }
@@ -1225,7 +1238,6 @@ function safeJsonParse(rawText) {
         try { return JSON.parse(candidate); } catch (_) {}
     }
 
-    // Ultimul fallback: caractere de control rămase în afara stringurilor.
     const relaxed = candidates[candidates.length - 1].replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
     try { return JSON.parse(relaxed); } catch (err) {
         throw new Error(`JSON Parse failed: ${err.message}`);
@@ -1284,13 +1296,10 @@ function hasUntranslatedEnglish(original, translated) {
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
 
-    // Numele proprii/titlurile pot rămâne intenționat în engleză.
-    // Dacă textul este în mare parte identic, nu marcăm o expresie capitalizată scurtă.
     const namedTitle = /\b(?:The\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,5}|Nobody\s+Beats\s+the\s+Wiz)\b/.test(transClean);
     const romanianSignals = /\b(?:și|să|se|este|sunt|era|erau|nu|da|că|ca|cu|de|din|în|pe|la|un|o|eu|tu|el|ea|noi|voi|ei|ele|mai|foarte|pentru|dar|sau|care|ce|cine|cum|unde|când|aici|acolo|trebuie|poate|fost|avea|am|ai|are|au|mă|te|îl|îi|mi|ți|lor|lui|mea|ta|tău|meu)\b/i;
 
     if (originalNorm === translatedNorm) {
-        // Titlu/nume propriu scurt sau replică formată din nume propriu: acceptă.
         if (namedTitle && !romanianSignals.test(transClean) && tw.length <= 8) return false;
         const strong = tw.filter(w => strongEnglish.has(w)).length;
         const markers = tw.filter(w => englishMarkers.has(w)).length;
@@ -1299,11 +1308,9 @@ function hasUntranslatedEnglish(original, translated) {
         return false;
     }
 
-    // Fragmente englezești distinctive rămase într-o propoziție românească.
     const distinctive = new Set(['the','from','however','although','because','without','between','maybe','please','sorry','thanks','thank','your','would','could','should','cannot','itself','such','indictment']);
     const distinctiveHits = tw.filter(w => distinctive.has(w));
     if (distinctiveHits.length) {
-        // "The Wall Street Journal", "The Lollipop Club", etc. pot fi nume/titluri.
         if (namedTitle && distinctiveHits.every(w => w === 'the' || w === 'a' || w === 'an')) return false;
         return true;
     }
@@ -1365,16 +1372,12 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     let lastError = null;
 
-    // Erorile de JSON/schema nu repetă întregul chunk inutil.
-    // 429/503 sunt însă tranzitorii și trebuie retrimise cu backoff exponențial.
-    // Nu împărțim chunk-ul doar pentru că API-ul a limitat temporar cererea.
-    const maxKeyAttempts = 8;
+    const maxKeyAttempts = 4;
     let attemptedKeys = new Set();
 
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
         let keyState = null;
         try {
-            // Alegem o cheie nefolosită în această încercare.
             const candidates = keyStates
                 .filter(s => !s.disabled && s.pausedUntil <= Date.now())
                 .sort((a, b) => a.lastUsed - b.lastUsed);
@@ -1393,9 +1396,6 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const parsed = JSON.parse(String(raw).trim());
             const dict = normalizeTranslationPayload(parsed);
 
-            // Dacă lipsesc foarte puține ID-uri, le recuperăm punctual.
-            // Dacă lipsesc multe, răspunsul Gemini este probabil trunchiat: împărțim
-            // chunk-ul, NU trimitem zeci de linii într-o cerere secundară care poate bloca slotul.
             const missingItems = chunk.filter(obj => dict[String(obj.id)] === undefined);
             if (missingItems.length > 12) {
                 throw new Error(`Răspuns Gemini sever incomplet: lipsesc ${missingItems.length} ID-uri.`);
@@ -1444,8 +1444,6 @@ ${JSON.stringify(missingItems, null, 2)}
                 return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
             });
 
-            // Verificare LOCALĂ: nu mai facem apel Gemini suplimentar pentru fiecare
-            // linie suspectă. Astfel păstrăm paralelismul 3 și timpul de ~2 minute.
             if (untranslatedItems.length > 0) {
                 console.log(`${c.yellow}⚠ [Local Check] Calupul ${globalChunkIndex + 1}: ${untranslatedItems.length} replici suspecte de engleză/corupere.${c.reset}`);
                 untranslatedItems.slice(0, 10).forEach(item => {
@@ -1461,12 +1459,8 @@ ${JSON.stringify(missingItems, null, 2)}
             const isTransient = is429 || /status code 5\d\d/.test(error.message);
             console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
 
-            // JSON invalid/incomplet => split/targeted completion, fără a repeta întregul chunk.
-            // 429/5xx => backoff exponențial + jitter, fără split.
             if (!isTransient) break;
             if (attempt < maxKeyAttempts) {
-                // 429: cheia care a primit limita este deja în cooldown.
-                // Nu mai blocăm global celelalte 2 fluxuri paralele.
                 if (is429) {
                     continue;
                 }
@@ -1502,8 +1496,6 @@ ${JSON.stringify(missingItems, null, 2)}
 // GLOBAL POST-CHECK + TARGETED RETRY
 // ============================================================
 
-// Nu retrimitem replici formate doar din OK/Okay; utilizatorul dorește
-// ca aceste răspunsuri scurte să rămână exact așa cum au fost produse.
 function isOkOnlySubtitle(text) {
     const clean = String(text || '').replace(/<[^>]+>/g, '').trim();
     return /^(?:[-–—\s]*(?:ok|okay)(?:[.!?…]+)?[-–—\s]*)$/i.test(clean);
@@ -1595,7 +1587,6 @@ Returnează DOAR JSON valid în forma:
                     console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
                 } catch (err) {
                     console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
-                    // Fără retry suplimentar: validatorul global este ultimul filtru.
                 }
             }
 
@@ -1695,12 +1686,6 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 
     console.log(`\n${c.green}✔ Toate cele ${chunks.length} de calupuri finalizate!${c.reset}`);
 
-    // ========================================================
-    // RECOVERY DOAR PENTRU TRADUCERI GOALE
-    // ========================================================
-    // Dacă Gemini a returnat o valoare goală pentru o replică ce
-    // are text original, o cerem din nou punctual. Nu retraducem
-    // chunk-ul și nu pornim recovery pentru alte tipuri de suspiciuni.
     const emptyTranslations = items.filter(item => {
         const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
@@ -1759,8 +1744,6 @@ Returnează DOAR un ARRAY JSON valid în forma:
         }
     }
 
-    // Retry punctual doar pentru liniile rămase suspecte după traducerea normală.
-    // Nu retraducem calupuri întregi și nu schimbăm paralelismul de 3.
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 1);
     console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
 
