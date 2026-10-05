@@ -1075,8 +1075,31 @@ function createKeyState(keys) {
     return keys.map(key => ({ key, pausedUntil: 0, disabled: false, failures: 0, lastUsed: 0 }));
 }
 
+function getGlobal429Until(keyStates) { return Number(keyStates._global429Until || 0); }
+function register429(keyStates, cooldownMs) {
+    const now = Date.now();
+    const paused = keyStates.filter(s => !s.disabled && s.pausedUntil > now).length;
+    const active = keyStates.filter(s => !s.disabled).length;
+    if (active > 0 && paused >= Math.min(2, active)) {
+        keyStates._global429Until = Math.max(
+            getGlobal429Until(keyStates),
+            now + Math.min(30000, Math.max(15000, cooldownMs))
+        );
+    }
+}
+
+async function waitFor429Gate(keyStates) {
+    while (true) {
+        const waitMs = getGlobal429Until(keyStates) - Date.now();
+        if (waitMs <= 0) return;
+        console.log(`${c.yellow}⏳ [429 Gate] Prea multe chei limitate. Aștept ${Math.ceil(waitMs / 1000)}s înainte de următoarea încercare.${c.reset}`);
+        await sleep(waitMs);
+    }
+}
+
 async function getAvailableKey(keyStates) {
     while (true) {
+        await waitFor429Gate(keyStates);
         const now = Date.now();
         const available = keyStates
             .filter(s => !s.disabled && s.pausedUntil <= now)
@@ -1146,6 +1169,9 @@ async function callGemini(prompt, keyState, options = {}) {
             throw new Error(`Cheie Gemini invalidă (${status}).`);
         }
         if (status === 429) {
+            // 429 este tratat ca limitare temporară. Cheia curentă intră
+            // în cooldown; dacă mai multe chei au fost limitate, activăm
+            // temporar poarta globală pentru a evita rotația frenetică.
             const retryAfterHeader = error.response?.headers?.['retry-after'];
             const retryAfterSec = Number(retryAfterHeader);
             const cooldownMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
@@ -1376,12 +1402,15 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     let lastError = null;
 
-    const maxKeyAttempts = 4;
+    // 429/503 sunt tranzitorii. Reîncercăm până la 8 ori, fără a împărți
+    // chunk-ul doar din cauza unui rate-limit temporar.
+    const maxKeyAttempts = 8;
     let attemptedKeys = new Set();
 
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
         let keyState = null;
         try {
+            await waitFor429Gate(keyStates);
             const candidates = keyStates
                 .filter(s => !s.disabled && s.pausedUntil <= Date.now())
                 .sort((a, b) => a.lastUsed - b.lastUsed);
@@ -1460,6 +1489,9 @@ ${JSON.stringify(missingItems, null, 2)}
         } catch (error) {
             lastError = error;
             const is429 = error.isRateLimit429 === true || error.message.includes('429');
+            if (is429 && keyState) {
+                register429(keyStates, Number(error.retryAfterMs) || 15000);
+            }
             const isTransient = is429 || /status code 5\d\d/.test(error.message);
             console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
 
