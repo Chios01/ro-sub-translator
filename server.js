@@ -1575,16 +1575,36 @@ Returnează STRICT un ARRAY JSON valid pentru TOATE liniile de mai jos. Nu omite
 LINIILE LIPSĂ:
 ${JSON.stringify(missingItems, null, 2)}
 `;
-                try {
-                    const missingRaw = await callGemini(missingPrompt, keyState, { timeout: 20000, maxAttempts: 1, retry429: false });
-                    const missingJson = JSON.parse(String(missingRaw).trim());
-                    const missingDict = normalizeTranslationPayload(missingJson);
-                    for (const obj of missingItems) {
-                        const value = missingDict[String(obj.id)];
-                        if (value !== undefined) dict[String(obj.id)] = value;
+                let missingRecovered = false;
+                let lastMissingError = null;
+                for (let recoveryAttempt = 1; recoveryAttempt <= 3 && !missingRecovered; recoveryAttempt++) {
+                    try {
+                        const recoveryKey = recoveryAttempt === 1 ? keyState : await getAvailableKey(keyStates);
+                        const missingRaw = await callGemini(missingPrompt, recoveryKey, { timeout: 30000, maxAttempts: 1, retry429: false });
+                        const missingJson = safeJsonParse(missingRaw);
+                        const missingDict = normalizeTranslationPayload(missingJson);
+                        let recoveredHere = 0;
+                        for (const obj of missingItems) {
+                            const value = missingDict[String(obj.id)];
+                            if (value !== undefined) {
+                                dict[String(obj.id)] = value;
+                                recoveredHere++;
+                            }
+                        }
+                        if (recoveredHere === missingItems.length) {
+                            missingRecovered = true;
+                        } else {
+                            lastMissingError = new Error(`Recuperate ${recoveredHere}/${missingItems.length} ID-uri`);
+                        }
+                    } catch (missingError) {
+                        lastMissingError = missingError;
                     }
-                } catch (missingError) {
-                    console.log(`${c.yellow}  ⚠ [Gemini] Cererea punctuală a eșuat: ${missingError.message}${c.reset}`);
+                    if (!missingRecovered && recoveryAttempt < 3) {
+                        await sleep(500);
+                    }
+                }
+                if (!missingRecovered) {
+                    console.log(`${c.yellow}  ⚠ [Gemini] Cererea punctuală a eșuat după 3 încercări: ${lastMissingError?.message || 'necunoscut'}${c.reset}`);
                 }
             }
 
@@ -1894,29 +1914,53 @@ Returnează DOAR un ARRAY JSON valid în forma:
 `;
 
         try {
-            const recoveryKey = await getAvailableKey(keyStates);
-            const recoveryRaw = await callGemini(recoveryPrompt, recoveryKey);
-            const recoveryJson = safeJsonParse(recoveryRaw);
-            const recoveryDict = normalizeTranslationPayload(recoveryJson);
             let recoveredCount = 0;
+            let pendingEmpty = [...emptyTranslations];
 
-            for (const item of emptyTranslations) {
-                const candidateRaw = recoveryDict[String(item.id)];
-                const candidate = formatSubtitleLine(String(candidateRaw || ''));
+            // Recuperare robustă: dacă răspunsul de grup este incomplet/gol,
+            // reîncercăm doar liniile rămase, fără să atingem traducerea normală.
+            for (let recoveryAttempt = 1; recoveryAttempt <= 3 && pendingEmpty.length; recoveryAttempt++) {
+                const recoveryKey = await getAvailableKey(keyStates);
+                const retryPrompt = recoveryAttempt === 1 ? recoveryPrompt : `
+${MASTER_TRANSLATION_PROMPT}
 
-                if (
-                    candidate &&
-                    !hasUntranslatedEnglish(item.text, candidate) &&
-                    !hasCorruptedSubtitleText(candidate, item.text)
-                ) {
-                    translatedById[String(item.id)] = candidate;
-                    recoveredCount++;
-                    console.log(`${c.green}  ✔ [Empty Recovery] ${item.id} reparată${c.reset}`);
-                } else {
-                    console.log(`${c.red}  ❌ [Empty Recovery] ${item.id} nu a primit o traducere validă${c.reset}`);
+RECOVERY RETRY. Returnează STRICT un ARRAY JSON valid pentru TOATE liniile de mai jos. Nu omite niciun ID.
+${JSON.stringify(pendingEmpty.map(item => ({ id: item.id, text: item.text })), null, 2)}
+`;
+                try {
+                    const recoveryRaw = await callGemini(retryPrompt, recoveryKey, { timeout: 30000, maxAttempts: 1, retry429: false });
+                    const recoveryJson = safeJsonParse(recoveryRaw);
+                    const recoveryDict = normalizeTranslationPayload(recoveryJson);
+                    const stillPending = [];
+
+                    for (const item of pendingEmpty) {
+                        const candidateRaw = recoveryDict[String(item.id)];
+                        const candidate = formatSubtitleLine(String(candidateRaw || ''));
+
+                        if (
+                            candidate &&
+                            !hasUntranslatedEnglish(item.text, candidate) &&
+                            !hasCorruptedSubtitleText(candidate, item.text)
+                        ) {
+                            translatedById[String(item.id)] = candidate;
+                            recoveredCount++;
+                            console.log(`${c.green}  ✔ [Empty Recovery] ${item.id} reparată${c.reset}`);
+                        } else {
+                            stillPending.push(item);
+                        }
+                    }
+                    pendingEmpty = stillPending;
+                } catch (error) {
+                    if (recoveryAttempt === 3) {
+                        console.log(`${c.yellow}⚠ [Empty Recovery] Ultima încercare a eșuat: ${error.message}${c.reset}`);
+                    }
                 }
+                if (pendingEmpty.length && recoveryAttempt < 3) await sleep(500);
             }
 
+            for (const item of pendingEmpty) {
+                console.log(`${c.red}  ❌ [Empty Recovery] ${item.id} nu a primit o traducere validă după 3 încercări${c.reset}`);
+            }
             console.log(`${c.green}✔ [Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${c.reset}`);
         } catch (error) {
             console.log(`${c.yellow}⚠ [Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
