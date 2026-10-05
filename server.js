@@ -386,25 +386,8 @@ async function handleSubtitles(req, res) {
             videoProviders.forEach(p => { if (subProviders.has(p)) s.score += 220; });
             if (videoProviders.size && !subProviders.size) s.score -= 20;
 
-            // 5. Technical match. For 4K/2160p videos, resolution is a strong
-            // signal: prefer an explicitly 2160p subtitle and push 1080p below it.
-            // This does not require the subtitle to be 4K in every case; it only
-            // makes an explicit resolution match win when such a candidate exists.
-            const subResolution = (() => {
-                const d = s.sourceData || {};
-                const explicit = [d.subtitleFileName, d.filename, d.fileName, d.movieReleaseName, d.releaseName, s.realName]
-                    .filter(v => v !== undefined && v !== null && String(v).trim())
-                    .map(v => normalizeReleaseName(String(v)));
-                for (const value of explicit) {
-                    const m = value.match(/\b(2160p|1080p|720p|sd)\b/);
-                    if (m) return m[1];
-                }
-                return '';
-            })();
-            if (videoResolution && subResolution === videoResolution) s.score += 400;
-            if (videoResolution === '2160p' && subResolution === '1080p') s.score -= 300;
-            if (videoResolution === '2160p' && subResolution === '720p') s.score -= 450;
-            if (videoResolution === '1080p' && subResolution === '2160p') s.score -= 250;
+            // 5. Technical match: useful tie-breakers, not dominant over release identity.
+            if (videoResolution && subName.includes(videoResolution)) s.score += 140;
             if (videoFlags.hdr && subFlags.hdr) s.score += 120;
             if (videoFlags.hdr10 && subFlags.hdr10) s.score += 100;
             if (videoFlags.dv && subFlags.dv) s.score += 100;
@@ -442,17 +425,19 @@ async function handleSubtitles(req, res) {
         const generatedSubs = diverseSubs.map((s, index) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
             
-            // Pentru afișare, folosim numele real al fișierului de subtitrare când există.
-            // Unele surse au movieReleaseName corupt (ex. 1080p) deși subtitleFileName este 2160p.
-            const displaySourceName = [
-                s.sourceData?.subtitleFileName,
-                s.sourceData?.filename,
-                s.sourceData?.fileName,
-                s.sourceData?.releaseName,
+            // Display metadata from the actual subtitle filename first.
+            // Some providers return a misleading/corrupt movieReleaseName
+            // (for example 1080p) even when subtitleFileName is 2160p.
+            const displayData = s.sourceData || {};
+            const displayName = [
+                displayData.subtitleFileName,
+                displayData.filename,
+                displayData.fileName,
                 s.realName,
-                s.sourceData?.movieReleaseName
-            ].find(v => v !== undefined && v !== null && String(v).trim()) || '';
-            let vizualName = String(displaySourceName).replace(/[^a-zA-Z0-9.-]/g, ' ');
+                displayData.releaseName,
+                displayData.movieReleaseName
+            ].find(v => v !== undefined && v !== null && String(v).trim());
+            let vizualName = String(displayName || '').replace(/[^a-zA-Z0-9.-]/g, ' ');
             const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             
             let labelName = `🇷🇴 RO AI [${index + 1}]`;
