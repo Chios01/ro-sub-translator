@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.44',
+    version: '12.78.46',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -185,6 +185,8 @@ const BROWSER_USER_AGENT_FETCH = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Appl
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
     
+    console.log(`\n${c.magenta}🔍 [Stremio] Caut subtitrări pentru: ${id} (${type})${c.reset}`);
+
     const host = req.headers.host;
     const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
     const baseUrl = `${protocol}://${host}`;
@@ -442,6 +444,8 @@ async function handleSubtitles(req, res) {
         diverseSubs.sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
         diverseSubs = diverseSubs.slice(0, 15);
         
+        console.log(`${c.green}✔ S-au pregătit ${diverseSubs.length} subtitrări de tradus pentru: ${id}${c.reset}`);
+
         // ============================================================
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
         // ============================================================
@@ -1430,8 +1434,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 keyState.lastUsed = Date.now();
             }
 
-            const keyMask = '...' + keyState.key.slice(-4);
-            console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks} (Model: ${MODEL_NAME} | Cheie: ${keyMask})...${c.reset}`);
+            console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks}...${c.reset}`);
 
             const raw = await callGemini(prompt, keyState);
             const parsed = JSON.parse(String(raw).trim());
@@ -1841,6 +1844,7 @@ app.get('/:configData/translate', async (req, res) => {
     const targetUrl = req.query.targetUrl || req.query.url;
     const configData = req.params.configData;
 
+
     if (!targetUrl) {
         console.log(`${c.red}✖ EROARE: Lipsă URL sursă.${c.reset}`);
         return res.status(400).send('Lipsă URL sursă.');
@@ -1912,10 +1916,10 @@ app.get('/:configData/translate', async (req, res) => {
                 });
                 
                 const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
-                console.log(`${c.cyan}==================================================${c.reset}`);
+                console.log(`${c.cyan}\n==================================================${c.reset}`);
                 console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
                 console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-                console.log(`${c.cyan}==================================================${c.reset}`);
+                console.log(`${c.cyan}==================================================\n${c.reset}`);
                 
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
             })();
@@ -2015,11 +2019,5 @@ app.get('/health', (req, res) => {
 
 const PORT = Number(process.env.PORT) || 7000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`${c.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}`);
     console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
-    console.log(`${c.green}🌐 Port: ${PORT}${c.reset}`);
-    console.log(`${c.green}🤖 Model: ${MODEL_NAME}${c.reset}`);
-    console.log(`${c.green}📦 Chunk: ${CHUNK_SIZE} linii${c.reset}`);
-    console.log(`${c.green}⚡ Paralelism: ${CONCURRENCY_LIMIT} chunk-uri${c.reset}`);
-    console.log(`${c.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}`);
 });
