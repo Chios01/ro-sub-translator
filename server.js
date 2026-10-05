@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.43',
+    version: '12.78.44',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -341,14 +341,12 @@ async function handleSubtitles(req, res) {
             };
         };
 
-        // EXTRAGERE EDIȚII, CUT-URI ȘI IMAX
         const extractEdition = (name) => {
             const n = ` ${normalizeReleaseName(name)} `;
             const match = n.match(/\b(extended|director'?s(?:\s*cut)?|unrated|theatrical|recut|special|ultimate|redux|final(?:\s*cut)?|roadshow|assembly|open\s*matte|tv(?:\s*cut)?|international|european|us|uk|cannes|alternative|remastered|anniversary|collector'?s|criterion|definitive|limited|workprint|imax)\b/i);
             return match ? match[1].replace(/['\s]/g, '').toLowerCase() : '';
         };
 
-        // EXTRAGERE FIX-URI DE AMBALARE (PROPER / REPACK / RERIP)
         const isProperOrRepack = (name) => {
             const n = ` ${normalizeReleaseName(name)} `;
             return /\b(proper|repack|rerip)\b/i.test(n);
@@ -392,43 +390,36 @@ async function handleSubtitles(req, res) {
             s.score = 0;
             s._rankingOrder = originalOrder;
 
-            // 1. EPISOD exact
             if (videoSeasonEpisode && subEpisode === videoSeasonEpisode) s.score += 1400;
             else if (videoSeasonEpisode && subEpisode) s.score -= 700;
 
-            // 2. CUT / EDITION / IMAX (CRITIC PENTRU SINCRONIZARE TIMELINE)
             if (videoEdition && subEdition) {
                 if (videoEdition === subEdition) s.score += 1500;
-                else s.score -= 2000; // Erori fatale de sync între cut-uri diferite
+                else s.score -= 2000; 
             } else if (videoEdition || subEdition) {
-                s.score -= 400; // Doar unul are tag de ediție, risc crescut de desincronizare
+                s.score -= 400; 
             }
 
-            // 3. PROPER / REPACK / RERIP (Variante de ambalare)
             if (subIsProper) {
-                s.score += 50; // Bonus mic pt fișiere corectate. Nu penalizăm dacă diferă de video.
+                s.score += 50; 
             }
 
-            // 4. Sursa/release family (WEB vs BluRay)
             if (videoFamily && subFamily) {
                 if (videoFamily === subFamily) s.score += 1100;
                 else s.score -= 1100;
             }
 
-            // 5. Platforma/providerul (AMZN, NF, DSNP etc.)
             if (videoProviders.length && subProviders.length) {
                 const providerMatch = videoProviders.some(p => subProviders.includes(p));
                 if (providerMatch) s.score += 700;
                 else s.score -= 450;
             }
 
-            // 6. Release group
             if (videoGroup && subGroup) {
                 if (subGroup === normalizeReleaseName(videoGroup)) s.score += 1300;
                 else if (subGroup.includes(normalizeReleaseName(videoGroup)) || normalizeReleaseName(videoGroup).includes(subGroup)) s.score += 500;
             }
 
-            // 7. Caracteristici tehnice / Flags
             if (videoFlags.hdr && subFlags.hdr) s.score += 220;
             if (videoFlags.dv && subFlags.dv) s.score += 220;
             if (videoFlags.bit10 && subFlags.bit10) s.score += 160;
@@ -437,38 +428,51 @@ async function handleSubtitles(req, res) {
                 else s.score -= 60;
             }
 
-            // 8. Rezoluție
             if (videoResolution && subResolution) {
                 if (videoResolution === subResolution) s.score += 250;
                 else s.score -= 80;
             }
 
-            // 9. Similaritate generală a numelui
             if (overlap >= 0.85) s.score += 500;
             else if (overlap >= 0.60) s.score += 300;
             else if (overlap >= 0.35) s.score += 120;
 
-            // 10. Penalizări pentru variante problematice
             if (/\bsdh\b|\bhi\b|hearing\s*impaired/i.test(subName)) s.score -= 80;
             if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
         });
 
         diverseSubs.sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
-
         diverseSubs = diverseSubs.slice(0, 15);
         
         console.log(`${c.green}✔ S-au pregătit ${diverseSubs.length} subtitrări de tradus pentru: ${id}${c.reset}`);
 
+        // ============================================================
+        // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
+        // ============================================================
         const generatedSubs = diverseSubs.map((s, index) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
             
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
-            const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
+            const foundTags = [];
             
+            // 1. Extragem Rezoluția
+            const resMatch = vizualName.match(/\b(2160p|1080p|720p|4k|sd)\b/i);
+            if (resMatch) foundTags.push(resMatch[1].toUpperCase());
+            
+            // 2. Extragem Sursa
+            const sourceMatch = vizualName.match(/\b(bluray|web-dl|webrip|remux|hdtv)\b/i);
+            if (sourceMatch) foundTags.push(sourceMatch[1].toUpperCase());
+            
+            // 3. Extragem Ediția, Fix-urile și Tehnologia (max 2-3 elemente ca să nu umplem ecranul)
+            const extraMatch = vizualName.match(/\b(imax|proper|repack|extended|unrated|director'?s cut|hdr10|hdr|dv)\b/ig);
+            if (extraMatch) {
+                const uniqueExtras = [...new Set(extraMatch.map(t => t.toUpperCase().replace(/\s+/g, ' ')))];
+                foundTags.push(...uniqueExtras.slice(0, 3));
+            }
+
             let labelName = `🇷🇴 RO AI [${index + 1}]`;
-            if (tagMatch) {
-                let cleanTag = tagMatch[0].toUpperCase();
-                labelName = `🇷🇴 RO AI [${index + 1}] • ${cleanTag}`;
+            if (foundTags.length > 0) {
+                labelName += ` • ${foundTags.join(' | ')}`;
             }
 
             return {
