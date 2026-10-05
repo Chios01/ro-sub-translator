@@ -386,8 +386,25 @@ async function handleSubtitles(req, res) {
             videoProviders.forEach(p => { if (subProviders.has(p)) s.score += 220; });
             if (videoProviders.size && !subProviders.size) s.score -= 20;
 
-            // 5. Technical match: useful tie-breakers, not dominant over release identity.
-            if (videoResolution && subName.includes(videoResolution)) s.score += 140;
+            // 5. Technical match. For 4K/2160p videos, resolution is a strong
+            // signal: prefer an explicitly 2160p subtitle and push 1080p below it.
+            // This does not require the subtitle to be 4K in every case; it only
+            // makes an explicit resolution match win when such a candidate exists.
+            const subResolution = (() => {
+                const d = s.sourceData || {};
+                const explicit = [d.subtitleFileName, d.filename, d.fileName, d.movieReleaseName, d.releaseName, s.realName]
+                    .filter(v => v !== undefined && v !== null && String(v).trim())
+                    .map(v => normalizeReleaseName(String(v)));
+                for (const value of explicit) {
+                    const m = value.match(/\b(2160p|1080p|720p|sd)\b/);
+                    if (m) return m[1];
+                }
+                return '';
+            })();
+            if (videoResolution && subResolution === videoResolution) s.score += 400;
+            if (videoResolution === '2160p' && subResolution === '1080p') s.score -= 300;
+            if (videoResolution === '2160p' && subResolution === '720p') s.score -= 450;
+            if (videoResolution === '1080p' && subResolution === '2160p') s.score -= 250;
             if (videoFlags.hdr && subFlags.hdr) s.score += 120;
             if (videoFlags.hdr10 && subFlags.hdr10) s.score += 100;
             if (videoFlags.dv && subFlags.dv) s.score += 100;
@@ -414,18 +431,9 @@ async function handleSubtitles(req, res) {
 
         diverseSubs.sort((a, b) => b.score - a.score);
 
-        // TEMPORARY DIAGNOSTIC: expose the candidate names and scores so we can
-        // see why the correct subtitle is not reaching rank 1. Remove after test.
-        console.log(`${c.cyan}🔎 [Ranking Debug] Video: ${userFilename || id}${c.reset}`);
-        console.log(`${c.cyan}   ${diverseSubs.slice(0, 15).map((s, i) => `#${i + 1} ${s.score} | ${s.realName}`).join(' || ')}${c.reset}`);
-        console.log(`${c.cyan}🔎 [Ranking Data] Câmpurile primite pentru candidate:${c.reset}`);
-        diverseSubs.slice(0, 15).forEach((s, i) => {
-            const safeData = Object.fromEntries(Object.entries(s.sourceData || {}).map(([k, v]) => {
-                if (k === 'url' || k === 'subtitle' || k === 'download') return [k, String(v || '').slice(0, 300)];
-                return [k, v];
-            }));
-            console.log(`${c.cyan}   #${i + 1} keys=[${Object.keys(s.sourceData || {}).join(', ')}] data=${JSON.stringify(safeData)}${c.reset}`);
-        });
+        // Compact ranking diagnostics: never dump full subtitle names or source metadata.
+        console.log(`${c.cyan}🔎 [Ranking] Video: ${userFilename || id}${c.reset}`);
+        console.log(`${c.cyan}   ${diverseSubs.slice(0, 5).map((s, i) => `#${i + 1} ${s.score} | ID ${s.id || s.sourceData?.id || '?'}`).join(' || ')}${c.reset}`);
 
         diverseSubs = diverseSubs.slice(0, 15);
         
