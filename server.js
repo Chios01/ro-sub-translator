@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.40',
+    version: '12.78.43',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -259,6 +259,8 @@ async function handleSubtitles(req, res) {
             .toLowerCase()
             .replace(/\b(web[-. ]?dl|web[-. ]?rip)\b/g, 'web')
             .replace(/\b(bluray|blu[-. ]?ray|brrip|bdrip|bdr)\b/g, 'bluray')
+            .replace(/\bproper\b/g, 'proper')
+            .replace(/\bimax\b/g, 'imax')
             .replace(/\b(2160p|4k)\b/g, '2160p')
             .replace(/\b(1080p)\b/g, '1080p')
             .replace(/\b(720p)\b/g, '720p')
@@ -269,8 +271,8 @@ async function handleSubtitles(req, res) {
         const videoName = normalizeReleaseName(fNameLower);
         const videoHasWeb = /\bweb\b|\bamzn\b|\bnf\b|\bdsnp\b|\bhulu\b|\bmax\b/.test(videoName);
         const videoHasBluray = /\bbluray\b/.test(videoName);
-  const videoHasProper = /\bproper\b/.test(videoName);
-  const videoHasImax = /\bimax\b/.test(videoName);
+        const videoHasProper = /\bproper\b/.test(videoName);
+        const videoHasImax = /\bimax\b/.test(videoName);
         const videoResolution = (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
         const videoSeasonEpisode = (videoName.match(/\bs\d{1,2}e\d{1,2}\b/) || [])[0] || '';
 
@@ -299,6 +301,10 @@ async function handleSubtitles(req, res) {
             if (videoHasBluray && /\bbluray\b/.test(subName)) s.score += 250;
             if (videoHasWeb && /\bbluray\b/.test(subName)) s.score -= 120;
             if (videoHasBluray && /\bweb\b/.test(subName)) s.score -= 120;
+
+            // 3b. Match explicit PROPER / IMAX release variants.
+            if (videoHasProper && /\bproper\b/.test(subName)) s.score += 350;
+            if (videoHasImax && /\bimax\b/.test(subName)) s.score += 350;
 
             // 4. Match resolution, but keep release-family matching stronger.
             if (videoResolution && subName.includes(videoResolution)) s.score += 120;
@@ -1260,7 +1266,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     // Erorile de JSON/schema nu repetă întregul chunk inutil.
     // 429/503 sunt însă tranzitorii și trebuie retrimise cu backoff exponențial.
     // Nu împărțim chunk-ul doar pentru că API-ul a limitat temporar cererea.
-    const maxKeyAttempts = 4;
+    const maxKeyAttempts = 8;
     let attemptedKeys = new Set();
 
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
