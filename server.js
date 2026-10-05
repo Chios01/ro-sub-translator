@@ -264,7 +264,14 @@ async function handleSubtitles(req, res) {
             .replace(/\(([^)]+)\)/g, ' $1 ')
             .replace(/[\._-]+/g, ' ')
             .replace(/\b(web[\s.-]*dl|web[\s.-]*rip|web)\b/g, ' web ')
-            .replace(/\b(blu[\s.-]*ray|b[\s.-]*ray|brrip|bdrip|bdr)\b/g, ' bluray ')
+            .replace(/\b(blu[\s.-]*ray|b[\s.-]*ray|brrip|bdrip|bdr|bluray)\b/g, ' bluray ')
+            .replace(/\b(remux)\b/g, ' remux ')
+            .replace(/\b(hdtv|hdrip|pdtv|sdtv)\b/g, ' hdtv ')
+            .replace(/\b(dvdrip|dvdr|dvd)\b/g, ' dvd ')
+            .replace(/\b(tvrip|tv rip)\b/g, ' tvrip ')
+            .replace(/\b(vhsrip|vhs)\b/g, ' vhs ')
+            .replace(/\b(screener|scr)\b/g, ' screener ')
+            .replace(/\b(telesync|hdts|ts|telecine|tc|camrip|cam)\b/g, ' cam ')
             .replace(/\b(2160p|4k|uhd)\b/g, ' 2160p ')
             .replace(/\b(1080p|fhd)\b/g, ' 1080p ')
             .replace(/\b(720p|hd)\b/g, ' 720p ')
@@ -286,13 +293,24 @@ async function handleSubtitles(req, res) {
         const videoName = normalizeReleaseName(userFilename);
         const videoTokens = tokenSet(userFilename);
 
+        const detectSourceFamily = (name) => {
+            const n = normalizeReleaseName(name);
+            if (n.includes('remux')) return 'remux';
+            if (n.includes('bluray')) return 'bluray';
+            if (n.includes('web')) return 'web';
+            if (n.includes('hdtv')) return 'hdtv';
+            if (n.includes('dvd')) return 'dvd';
+            if (n.includes('tvrip')) return 'tvrip';
+            if (n.includes('vhs')) return 'vhs';
+            if (n.includes('screener')) return 'screener';
+            if (n.includes('cam')) return 'cam';
+            return '';
+        };
+
         const videoData = {
             seasonEpisode: (videoName.match(/\bs\d{1,2}e\d{1,2}\b/) || [])[0] || '',
             resolution: (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '',
-            format:
-                videoName.includes('bluray') ? 'bluray' :
-                videoName.includes('web') ? 'web' :
-                videoName.includes('remux') ? 'remux' : '',
+            format: detectSourceFamily(userFilename),
             provider: (videoName.match(/\b(atvp|amzn|nf|dsnp|hulu|max|paramount|pmtp|appletv)\b/) || [])[1] || '',
             hdr: videoName.includes('hdr'),
             dv: videoName.includes('dv'),
@@ -315,10 +333,50 @@ async function handleSubtitles(req, res) {
             getReleaseField(s, 'releaseGroup') ||
             '';
 
-        const getCandidateFormat = (s) =>
-            normalizeReleaseName(
-                getReleaseField(s, 'releaseFormat') || getCandidateReleaseName(s)
-            );
+        const getCandidateFormat = (s) => {
+            const data = s.sourceData || {};
+            const sourceText = [
+                data.releaseFormat, data.subtitleFileName, data.filename, data.fileName,
+                data.releaseName, data.movieReleaseName, s.realName
+            ].filter(v => v !== undefined && v !== null && String(v).trim()).join(' ');
+            const detected = detectSourceFamily(sourceText);
+            return detected || normalizeReleaseName(sourceText);
+        };
+
+        const detectEditionFlags = (name) => {
+            const n = normalizeReleaseName(name);
+            const has = (re) => re.test(n);
+            return {
+                proper: has(/\bproper\b/),
+                imax: has(/\bimax\b/),
+                extended: has(/\bextended\b/),
+                directorsCut: has(/\bdirectors?\s+cut\b/),
+                unrated: has(/\bunrated\b/),
+                theatrical: has(/\btheatrical\b/),
+                recut: has(/\brecut\b/),
+                special: has(/\bspecial(?:\s+edition)?\b/),
+                ultimate: has(/\bultimate\b/),
+                redux: has(/\bredux\b/),
+                finalCut: has(/\bfinal\s+cut\b/),
+                roadshow: has(/\broadshow\b/),
+                assembly: has(/\bassembly(?:\s+cut)?\b/),
+                openMatte: has(/\bopen\s+matte\b/),
+                tvCut: has(/\btv\s+cut\b|\btelevision\s+cut\b/),
+                international: has(/\binternational\b/),
+                european: has(/\beuropean\b/),
+                us: has(/(?:\b(?:us|usa)\s+(?:cut|version|edition)\b|\b(?:cut|version|edition)\s+(?:us|usa)\b)/),
+                uk: has(/(?:\buk\s+(?:cut|version|edition)\b|\b(?:cut|version|edition)\s+uk\b)/),
+                cannes: has(/\bcannes\b/),
+                alternative: has(/\balternative\b/),
+                remastered: has(/\bremastered\b|\bremaster\b/),
+                anniversary: has(/\banniversary\b/),
+                collectors: has(/\bcollectors?\b/),
+                criterion: has(/\bcriterion\b/),
+                definitive: has(/\bdefinitive\b/),
+                limited: has(/\blimited\b/),
+                workprint: has(/\bworkprint\b/)
+            };
+        };
 
         const getCandidateResolution = (s) => {
             const name = normalizeReleaseName(getCandidateReleaseName(s));
@@ -349,6 +407,16 @@ async function handleSubtitles(req, res) {
             const candidateResolution = getCandidateResolution(s);
             const candidateProvider = getCandidateProvider(s);
             const candidateSeasonEpisode = getCandidateSeasonEpisode(s);
+            const videoEditions = detectEditionFlags(userFilename);
+            const candidateEditionSource = [
+                getReleaseField(s, 'subtitleFileName'),
+                getReleaseField(s, 'filename'),
+                getReleaseField(s, 'fileName'),
+                getReleaseField(s, 'releaseName'),
+                getReleaseField(s, 'movieReleaseName'),
+                s.realName
+            ].filter(v => v && String(v).trim()).join(' ');
+            const candidateEditions = detectEditionFlags(candidateEditionSource);
 
             let score = 0;
 
@@ -384,13 +452,33 @@ async function handleSubtitles(req, res) {
                 else score -= 80;
             }
 
+            // 4b. Match explicit cut/edition variants. These are tie-breakers,
+            // not dominant rules, so a known-good release match can still win.
+            const editionKeys = Object.keys(videoEditions);
+            for (const key of editionKeys) {
+                if (videoEditions[key] && candidateEditions[key]) score += 110;
+                else if (videoEditions[key] && !candidateEditions[key]) score -= 35;
+            }
+
+            // PROPER and IMAX are especially useful release-specific signals.
+            if (videoEditions.proper && candidateEditions.proper) score += 160;
+            if (videoEditions.imax && candidateEditions.imax) score += 160;
+
+            // Repack/Rerip are packaging variants, not different cuts/editions.
+
             // 5. Compare meaningful release-name tokens.
             // Ignore generic technical tokens because they are weak signals.
             const ignored = new Set([
                 'mkv', 'mp4', 'avi', 'srt', 'subtitle', 'subtitles',
                 '1080p', '2160p', '720p', 'sd', 'web', 'bluray',
                 'hdr', 'dv', '10bit', 'ddp', 'eac3', 'ac3', 'aac',
-                'dts', 'atmos', 'x264', 'x265', 'h264', 'h265', 'hevc'
+                'dts', 'atmos', 'x264', 'x265', 'h264', 'h265', 'hevc',
+                'proper', 'imax', 'extended', 'unrated', 'theatrical', 'recut',
+                'special', 'ultimate', 'redux', 'final', 'cut', 'roadshow',
+                'assembly', 'open', 'matte', 'tv', 'international', 'european',
+                'cannes', 'alternative', 'remastered', 'remaster', 'anniversary',
+                'collectors', 'criterion', 'definitive', 'limited', 'workprint',
+                'directors'
             ]);
 
             let meaningfulMatches = 0;
