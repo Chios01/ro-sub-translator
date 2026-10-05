@@ -250,83 +250,195 @@ async function handleSubtitles(req, res) {
         });
 
         const fNameLower = userFilename.toLowerCase();
-        const videoTokens = fNameLower.split(/[^a-z0-9]+/i).filter(t => t.length > 2 && !/^(mkv|mp4|avi)$/.test(t));
 
-        // Ranking: prioritize the subtitle release that best matches the
-        // exact video variant selected by the user. Keep the existing sources
-        // and architecture unchanged; only improve ordering.
-        const normalizeReleaseName = (name) => name
+        // ============================================================
+        // RANKING SUBTITRARE — singura zonă modificată
+        // Scop: subtitrarea cea mai potrivită pentru EXACT release-ul video
+        // selectat să ajungă pe #1, fără să schimbăm sursele, traducerea,
+        // chunk-urile, retry-urile sau restul fluxului.
+        // ============================================================
+        const normalizeReleaseName = (name) => String(name || '')
             .toLowerCase()
-            .replace(/\b(web[-. ]?dl|web[-. ]?rip)\b/g, 'web')
-            .replace(/\b(bluray|blu[-. ]?ray|brrip|bdrip|bdr)\b/g, 'bluray')
-            .replace(/\b(2160p|4k)\b/g, '2160p')
-            .replace(/\b(1080p)\b/g, '1080p')
-            .replace(/\b(720p)\b/g, '720p')
-            .replace(/\b(480p|576p|sd)\b/g, 'sd')
-            .replace(/[^a-z0-9]+/g, ' ')
+            .replace(/[._-]+/g, ' ')
+            .replace(/\b(web[-. ]?dl|web[-. ]?rip)\b/g, ' web ')
+            .replace(/\b(bluray|blu[-. ]?ray|brrip|bdrip|bdr)\b/g, ' bluray ')
+            .replace(/\b(2160p|4k|uhd)\b/g, ' 2160p ')
+            .replace(/\b(1080p)\b/g, ' 1080p ')
+            .replace(/\b(720p)\b/g, ' 720p ')
+            .replace(/\b(480p|576p|sd)\b/g, ' sd ')
+            .replace(/\s+/g, ' ')
             .trim();
 
-        const videoName = normalizeReleaseName(fNameLower);
-        const videoHasWeb = /\bweb\b|\bamzn\b|\bnf\b|\bdsnp\b|\bhulu\b|\bmax\b/.test(videoName);
-        const videoHasBluray = /\bbluray\b/.test(videoName);
-        const videoResolution = (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
-        const videoSeasonEpisode = (videoName.match(/\bs\d{1,2}e\d{1,2}\b/) || [])[0] || '';
+        const getMetaText = (sub) => {
+            const data = sub && sub.sourceData ? sub.sourceData : {};
+            const preferredKeys = [
+                'movieReleaseName', 'releaseName', 'releaseGroup', 'releaseFormat',
+                'movieRelease', 'release', 'name', 'title', 'filename', 'fileName',
+                'source', 'sourceName', 'provider', 'group', 'format', 'tags'
+            ];
+            const parts = [sub && sub.realName ? sub.realName : ''];
+            for (const key of preferredKeys) {
+                const value = data[key];
+                if (value !== undefined && value !== null && String(value).trim()) {
+                    parts.push(String(value));
+                }
+            }
+            return normalizeReleaseName(parts.join(' '));
+        };
 
-        diverseSubs.forEach(s => {
+        const videoName = normalizeReleaseName(fNameLower);
+
+        const extractSeasonEpisode = (name) => {
+            const m = String(name || '').match(/\bs(\d{1,2})e(\d{1,2})\b/i);
+            return m ? `s${m[1]}e${m[2]}` : '';
+        };
+
+        const extractReleaseGroup = (name) => {
+            const raw = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '');
+            const bracket = raw.match(/\[([^\]]+)\](?:\s*)$/);
+            if (bracket) return bracket[1].trim().toLowerCase();
+
+            const tokens = normalizeReleaseName(raw).split(' ').filter(Boolean);
+            const stop = new Set([
+                'the','boys','season','episode','instant','white','hot','wild','series',
+                '2160p','1080p','720p','480p','576p','sd','web','bluray','x264','x265',
+                'h264','h265','hevc','avc','10bit','8bit','aac','ac3','eac3','ddp',
+                'dd','5','1','2','0','1ch','2ch','5ch','6ch','7ch','hdr','hdr10','dv',
+                'dolby','vision','amzn','amazon','nf','netflix','dsnp','disney','hulu','max',
+                'webrip','brrip','bdrip','bdr','torrentgalaxy','mkv','mp4','avi'
+            ]);
+            const technical = /^(s\d{1,2}e\d{1,2}|19\d{2}|20\d{2}|\d{1,4}p|x\d+|h\d+|\d+bit|\d+(?:\.\d+)?ch?)$/i;
+            const candidates = tokens.filter(t => !stop.has(t) && !technical.test(t));
+            return candidates.length ? candidates[candidates.length - 1] : '';
+        };
+
+        const detectFamily = (name) => {
+            const n = ` ${normalizeReleaseName(name)} `;
+            if (/\bbluray\b/.test(n)) return 'bluray';
+            if (/\bweb\b/.test(n) || /\b(amzn|amazon|nf|netflix|dsnp|disney|hulu|max)\b/.test(n)) return 'web';
+            if (/\bdvdrip\b|\bdvd\b/.test(n)) return 'dvd';
+            if (/\bhdtv\b/.test(n)) return 'hdtv';
+            return '';
+        };
+
+        const detectProviders = (name) => {
+            const n = ` ${normalizeReleaseName(name)} `;
+            const found = [];
+            if (/\b(amzn|amazon)\b/.test(n)) found.push('amzn');
+            if (/\b(nf|netflix)\b/.test(n)) found.push('nf');
+            if (/\b(dsnp|disney)\b/.test(n)) found.push('dsnp');
+            if (/\bhulu\b/.test(n)) found.push('hulu');
+            if (/\bmax\b/.test(n)) found.push('max');
+            return found;
+        };
+
+        const detectFlags = (name) => {
+            const n = ` ${normalizeReleaseName(name)} `;
+            return {
+                hdr: /\bhdr\b/.test(n),
+                hdr10: /\bhdr10\b/.test(n),
+                dv: /\bdv\b|\bdolby\s+vision\b/.test(n),
+                bit10: /\b10bit\b/.test(n),
+                proper: /\bproper\b/.test(n),
+                imax: /\bimax\b/.test(n),
+                fps: (n.match(/\b(\d{2,3}(?:\.\d+)?)\s*fps\b/) || [])[1] || ''
+            };
+        };
+
+        const videoTokens = videoName.split(/\s+/).filter(t =>
+            t.length > 2 && !/^(mkv|mp4|avi)$/.test(t)
+        );
+        const videoSeasonEpisode = extractSeasonEpisode(videoName);
+        const videoFamily = detectFamily(videoName);
+        const videoProviders = detectProviders(videoName);
+        const videoGroup = extractReleaseGroup(fNameLower);
+        const videoFlags = detectFlags(videoName);
+        const videoResolution = (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
+
+        const countMeaningfulOverlap = (a, b) => {
+            const ignore = new Set([
+                'the','boys','season','episode','series','instant','white','hot','wild',
+                'year','s03','s04','s05','mkv','mp4','avi'
+            ]);
+            const aTokens = [...new Set(String(a || '').split(/\s+/).filter(x => x.length > 2 && !ignore.has(x)))];
+            if (!aTokens.length) return 0;
+            const bSet = new Set(String(b || '').split(/\s+/));
+            return aTokens.filter(t => bSet.has(t)).length / aTokens.length;
+        };
+
+        diverseSubs.forEach((s, originalOrder) => {
+            const subName = getMetaText(s);
+            const subData = s.sourceData || {};
+            const subFamily = detectFamily(subName);
+            const subProviders = detectProviders(subName);
+            const subGroupRaw = String(subData.releaseGroup || subData.group || extractReleaseGroup(s.realName) || '').toLowerCase().trim();
+            const subGroup = normalizeReleaseName(subGroupRaw);
+            const subFlags = detectFlags(subName);
+            const subResolution = (subName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
+            const subEpisode = extractSeasonEpisode(subName);
+            const overlap = countMeaningfulOverlap(videoName, subName);
+
             s.score = 0;
-            const subName = normalizeReleaseName(s.realName);
-            
-            // 1. Strong title/release-name overlap with the actual video filename.
-            if (videoTokens.length > 0) {
-                let matchCount = 0;
-                videoTokens.forEach(token => {
-                    if (subName.includes(token)) {
-                        s.score += 60;
-                        matchCount++;
-                    }
-                });
-                if (matchCount > 0 && matchCount >= videoTokens.length / 2) s.score += 300;
-                if (matchCount === videoTokens.length) s.score += 500;
+            s._rankingOrder = originalOrder;
+
+            // 1. EPISOD exact — cel mai important criteriu structural.
+            if (videoSeasonEpisode && subEpisode === videoSeasonEpisode) s.score += 1400;
+            else if (videoSeasonEpisode && subEpisode) s.score -= 700;
+
+            // 2. Sursa/release family: WEB trebuie să meargă cu WEB, BluRay cu BluRay.
+            // Nu există o preferință universală pentru WEB sau BluRay.
+            if (videoFamily && subFamily) {
+                if (videoFamily === subFamily) s.score += 1100;
+                else s.score -= 1100;
             }
 
-            // 2. Exact season/episode match is especially important for series.
-            if (videoSeasonEpisode && subName.includes(videoSeasonEpisode)) s.score += 500;
+            // 3. Platforma/providerul (AMZN, NF, DSNP etc.) când există în ambele.
+            if (videoProviders.length && subProviders.length) {
+                const providerMatch = videoProviders.some(p => subProviders.includes(p));
+                if (providerMatch) s.score += 700;
+                else s.score -= 450;
+            }
 
-            // 3. Match the release family actually selected by the user.
-            if (videoHasWeb && /\bweb\b/.test(subName)) s.score += 250;
-            if (videoHasBluray && /\bbluray\b/.test(subName)) s.score += 250;
-            if (videoHasWeb && /\bbluray\b/.test(subName)) s.score -= 120;
-            if (videoHasBluray && /\bweb\b/.test(subName)) s.score -= 120;
+            // 4. Release group: bonus mare pentru aceeași ediție/group.
+            if (videoGroup && subGroup) {
+                if (subGroup === normalizeReleaseName(videoGroup)) s.score += 1300;
+                else if (subGroup.includes(normalizeReleaseName(videoGroup)) || normalizeReleaseName(videoGroup).includes(subGroup)) s.score += 500;
+            }
 
-            // 4. PROPER / IMAX: prioritize only when the selected video carries the tag.
-            // No penalty is applied to ordinary candidates when the video has no tag.
-            if (videoHasProper && /\bproper\b/.test(subName)) s.score += 220;
-            if (videoHasImax && /\bimax\b/.test(subName)) s.score += 220;
+            // 5. Caracteristici tehnice care pot separa două ediții ale aceluiași release.
+            if (videoFlags.hdr && subFlags.hdr) s.score += 220;
+            if (videoFlags.dv && subFlags.dv) s.score += 220;
+            if (videoFlags.bit10 && subFlags.bit10) s.score += 160;
 
-            // 5. Match resolution, but keep release-family matching stronger.
-            if (videoResolution && subName.includes(videoResolution)) s.score += 120;
+            // 5b. PROPER / IMAX: bonus only when the selected video has the tag.
+            // Ordinary releases are not penalized when the video has no tag.
+            if (videoFlags.proper && subFlags.proper) s.score += 220;
+            if (videoFlags.imax && subFlags.imax) s.score += 220;
+            if (videoFlags.fps && subFlags.fps) {
+                if (videoFlags.fps === subFlags.fps) s.score += 120;
+                else s.score -= 60;
+            }
 
-            // 5. Secondary release/source signals.
-            if (/\byts\b|\byify\b|\brarbg\b|\btgx\b|\bqxr\b|\bpsa\b/.test(subName)) s.score += 20;
-            if (/sdh|hi\.|hearing impaired/i.test(subName)) s.score -= 15;
-            if (/sync|corregido|resync|translated|auto|machine/i.test(subName)) s.score -= 100;
+            // 6. Rezoluția contează, dar mai puțin decât release/source/group.
+            if (videoResolution && subResolution) {
+                if (videoResolution === subResolution) s.score += 250;
+                else s.score -= 80;
+            }
+
+            // 7. Similaritate generală a numelui release-ului.
+            if (overlap >= 0.85) s.score += 500;
+            else if (overlap >= 0.60) s.score += 300;
+            else if (overlap >= 0.35) s.score += 120;
+
+            // 8. Penalizări pentru variante cunoscute ca mai puțin potrivite.
+            if (/\bsdh\b|\bhi\b|hearing\s*impaired/i.test(subName)) s.score -= 80;
+            if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
+
+            // 9. Nu penalizăm lipsa metadata: dacă un provider/group/fps nu există,
+            // candidatul rămâne eligibil și poate câștiga pe criteriile disponibile.
         });
-                
 
-        diverseSubs.sort((a, b) => b.score - a.score);
-
-        // TEMPORARY DIAGNOSTIC: expose the candidate names and scores so we can
-        // see why the correct subtitle is not reaching rank 1. Remove after test.
-        console.log(`${c.cyan}🔎 [Ranking Debug] Video: ${userFilename || id}${c.reset}`);
-        console.log(`${c.cyan}   ${diverseSubs.slice(0, 15).map((s, i) => `#${i + 1} ${s.score} | ${s.realName}`).join(' || ')}${c.reset}`);
-        console.log(`${c.cyan}🔎 [Ranking Data] Câmpurile primite pentru candidate:${c.reset}`);
-        diverseSubs.slice(0, 15).forEach((s, i) => {
-            const safeData = Object.fromEntries(Object.entries(s.sourceData || {}).map(([k, v]) => {
-                if (k === 'url' || k === 'subtitle' || k === 'download') return [k, String(v || '').slice(0, 300)];
-                return [k, v];
-            }));
-            console.log(`${c.cyan}   #${i + 1} keys=[${Object.keys(s.sourceData || {}).join(', ')}] data=${JSON.stringify(safeData)}${c.reset}`);
-        });
+        diverseSubs.sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
 
         diverseSubs = diverseSubs.slice(0, 15);
         
