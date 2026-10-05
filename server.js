@@ -345,6 +345,44 @@ async function handleSubtitles(req, res) {
             };
         };
 
+        // Variante de ediție/cut care pot schimba sincronizarea sau conținutul
+        // subtitrării. Se potrivesc numai când video-ul însuși indică explicit
+        // ediția; un video fără tag nu penalizează subtitrările cu tag de ediție.
+        const detectEditions = (name) => {
+            const n = ` ${normalizeReleaseName(name)} `;
+            const editions = new Set();
+            const add = (tag) => editions.add(tag);
+
+            if (/\bextended(?:\s+(?:cut|edition|version))?\b/.test(n)) add('extended');
+            if (/\b(?:director(?:s|['’]s)?\s+cut|directorscut|director\s+cut|direct\s+cut)\b/.test(n) || /\b\b(?:dc)\b/.test(n)) add('directors_cut');
+            if (/\b(?:unrated|uncut|uncensored)\b/.test(n)) add('unrated');
+            if (/\btheatrical(?:\s+(?:cut|version))?\b/.test(n)) add('theatrical');
+            if (/\b(?:recut|re[- ]cut)\b/.test(n)) add('recut');
+            if (/\bspecial(?:\s+(?:cut|edition|extended edition))?\b/.test(n)) add('special');
+            if (/\b(?:ultimate(?:\s+(?:cut|edition|version))?)\b/.test(n)) add('ultimate');
+            if (/\b(?:redux)\b/.test(n)) add('redux');
+            if (/\bfinal\s+cut\b/.test(n)) add('final_cut');
+            if (/\broadshow(?:\s+(?:version|cut))?\b/.test(n)) add('roadshow');
+            if (/\bassembly(?:\s+(?:cut|version))?\b/.test(n)) add('assembly');
+            if (/\b(?:open\s+matte|openmatte)\b/.test(n)) add('open_matte');
+            if (/\b(?:tv|television)\s+cut\b/.test(n)) add('tv_cut');
+            if (/\b(?:international|european|europe|us|uk|cannes)\s+cut\b/.test(n)) add('regional_cut');
+
+            // Ediții/variante suplimentare întâlnite frecvent în release-uri.
+            if (/\b(?:alternative\s+cut|alternative\s+version)\b/.test(n)) add('alternative_cut');
+            if (/\b(?:remastered|remaster(?:ed)?\s+edition)\b/.test(n)) add('remastered');
+            if (/\b(?:anniversary\s+edition|anniversary\s+version|\d+(?:st|nd|rd|th)\s+anniversary)\b/.test(n)) add('anniversary');
+            if (/\b(?:collector(?:'s|s)?\s+edition|collectors\s+edition)\b/.test(n)) add('collector');
+            if (/\b(?:criterion\s+(?:edition|collection)|criterion)\b/.test(n)) add('criterion');
+            if (/\b(?:definitive\s+(?:cut|edition|version))\b/.test(n)) add('definitive');
+            if (/\b(?:limited\s+(?:edition|version))\b/.test(n)) add('limited');
+            if (/\b(?:workprint|work\s+print)\b/.test(n)) add('workprint');
+            if (/\b(?:repack|re-pack)\b/.test(n)) add('repack');
+            if (/\b(?:rerip|re-rip)\b/.test(n)) add('rerip');
+
+            return [...editions];
+        };
+
         const videoTokens = videoName.split(/\s+/).filter(t =>
             t.length > 2 && !/^(mkv|mp4|avi)$/.test(t)
         );
@@ -353,6 +391,7 @@ async function handleSubtitles(req, res) {
         const videoProviders = detectProviders(videoName);
         const videoGroup = extractReleaseGroup(fNameLower);
         const videoFlags = detectFlags(videoName);
+        const videoEditions = detectEditions(videoName);
         const videoResolution = (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
 
         const countMeaningfulOverlap = (a, b) => {
@@ -374,6 +413,7 @@ async function handleSubtitles(req, res) {
             const subGroupRaw = String(subData.releaseGroup || subData.group || extractReleaseGroup(s.realName) || '').toLowerCase().trim();
             const subGroup = normalizeReleaseName(subGroupRaw);
             const subFlags = detectFlags(subName);
+            const subEditions = detectEditions(subName);
             const subResolution = (subName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
             const subEpisode = extractSeasonEpisode(subName);
             const overlap = countMeaningfulOverlap(videoName, subName);
@@ -414,6 +454,19 @@ async function handleSubtitles(req, res) {
             // Ordinary releases are not penalized when the video has no tag.
             if (videoFlags.proper && subFlags.proper) s.score += 220;
             if (videoFlags.imax && subFlags.imax) s.score += 220;
+
+            // 5c. Ediția/cut-ul exact: Extended, Director's Cut/DC, Unrated,
+            // Theatrical, Recut, Special Edition, Ultimate, Redux, Final Cut,
+            // Roadshow, Assembly, Open Matte și câteva cut-uri regionale/TV.
+            // Când video-ul are un tag explicit, aceeași ediție primește bonus
+            // mare, iar o ediție explicit diferită primește penalizare.
+            // Dacă video-ul NU are tag de ediție, nu penalizăm nimic.
+            if (videoEditions.length) {
+                const editionMatch = videoEditions.some(e => subEditions.includes(e));
+                if (editionMatch) s.score += 1250;
+                else if (subEditions.length) s.score -= 1250;
+            }
+
             if (videoFlags.fps && subFlags.fps) {
                 if (videoFlags.fps === subFlags.fps) s.score += 120;
                 else s.score -= 60;
