@@ -442,7 +442,10 @@ async function handleSubtitles(req, res) {
         const generatedSubs = diverseSubs.map((s, index) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
             
-            let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
+            // Pentru afișare, folosim numele real al fișierului de subtitrare când există.
+            // Unele surse au movieReleaseName corupt (ex. 1080p) deși subtitleFileName este 2160p.
+            const displaySourceName = s.sourceData?.subtitleFileName || s.realName;
+            let vizualName = String(displaySourceName || '').replace(/[^a-zA-Z0-9.-]/g, ' ');
             const tagMatch = vizualName.match(/(2160p|1080p|720p|4k|bluray|web-dl|webrip|hdr|remux)/i);
             
             let labelName = `🇷🇴 RO AI [${index + 1}]`;
