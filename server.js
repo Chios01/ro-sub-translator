@@ -1484,8 +1484,13 @@ ${JSON.stringify(missingItems, null, 2)}
             const untranslatedItems = results.filter(result => {
                 const original = chunk.find(obj => obj.id === result.id)?.text || '';
                 const originalClean = String(original).replace(/<[^>]+>/g, '').trim();
+                const translatedClean = String(result.text || '').replace(/<[^>]+>/g, '').trim();
                 if (!originalClean) return false;
                 if (isJunkOrInterjection(original)) return false;
+                // Nu logăm ca „suspectă” o replică al cărei rezultat este gol
+                // sau este doar un marker tehnic (—, -, ..., punctuație etc.).
+                // Acestea sunt gestionate separat de Empty Recovery / validarea finală.
+                if (!translatedClean || isJunkOrInterjection(result.text)) return false;
                 return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
             });
 
