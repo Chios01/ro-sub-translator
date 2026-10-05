@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.45',
+    version: '12.78.44',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -185,8 +185,6 @@ const BROWSER_USER_AGENT_FETCH = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Appl
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
     
-    console.log(`\n${c.magenta}🔍 [Stremio] Caut subtitrări pentru: ${id} (${type})${c.reset}`);
-
     const host = req.headers.host;
     const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
     const baseUrl = `${protocol}://${host}`;
@@ -444,8 +442,6 @@ async function handleSubtitles(req, res) {
         diverseSubs.sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
         diverseSubs = diverseSubs.slice(0, 15);
         
-        console.log(`${c.green}✔ S-au pregătit ${diverseSubs.length} subtitrări de tradus pentru: ${id}${c.reset}`);
-
         // ============================================================
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
         // ============================================================
@@ -1845,8 +1841,6 @@ app.get('/:configData/translate', async (req, res) => {
     const targetUrl = req.query.targetUrl || req.query.url;
     const configData = req.params.configData;
 
-    console.log(`\n${c.cyan}➤ [Stremio] S-a cerut traducerea pentru ID: ${imdbId}${c.reset}`);
-
     if (!targetUrl) {
         console.log(`${c.red}✖ EROARE: Lipsă URL sursă.${c.reset}`);
         return res.status(400).send('Lipsă URL sursă.');
@@ -1884,7 +1878,6 @@ app.get('/:configData/translate', async (req, res) => {
     const cacheKey = targetUrl;
 
     if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
-        console.log(`${c.green}⚡ [Cache RAM] Servit instant pentru: ${imdbId}${c.reset}`);
         res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
         return res.send(memoryCache[cacheKey]);
     }
@@ -1919,10 +1912,10 @@ app.get('/:configData/translate', async (req, res) => {
                 });
                 
                 const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
-                console.log(`${c.cyan}\n==================================================${c.reset}`);
+                console.log(`${c.cyan}==================================================${c.reset}`);
                 console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
                 console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                console.log(`${c.cyan}==================================================${c.reset}`);
                 
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
             })();
