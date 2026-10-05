@@ -532,7 +532,7 @@ function deepCleanSubtitleText(text) {
 
     let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
     cleaned = cleaned.replace(/\b(ăă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
-    cleaned = cleaned.replace(/\s+/g, ' ');
+    cleaned = cleaned.replace(/[^\S\r\n]+/g, ' ');
     
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă|ugh|argh|aah|oof|uf)[!.]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
