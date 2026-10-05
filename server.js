@@ -444,7 +444,6 @@ async function handleSubtitles(req, res) {
         diverseSubs.sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
         diverseSubs = diverseSubs.slice(0, 15);
         
-        console.log(`${c.green}✔ S-au pregătit ${diverseSubs.length} subtitrări de tradus pentru: ${id}${c.reset}`);
 
         // ============================================================
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
