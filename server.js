@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.46',
+    version: '12.78.47',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -185,6 +185,7 @@ const BROWSER_USER_AGENT_FETCH = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Appl
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
     
+    console.log(`\n${c.magenta}🔍 [Stremio] Caut subtitrări pentru: ${id} (${type})${c.reset}`);
 
     const host = req.headers.host;
     const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
@@ -529,8 +530,20 @@ function deepCleanSubtitleText(text) {
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
     let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
-    cleaned = cleaned.replace(/\b(ăă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)\b[,!]*/gmi, ' ').trim();
+    // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație:
+    // „ă”, „ăă”, „îhî”, „mhm”, „ah”, etc. Pot apărea și în interiorul unei replici.
+    cleaned = cleaned.replace(/(^|[\s,;:!?…])(?:ăă|ă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)(?=[\s,;:!?…]|$)[,;:!?…]*/gmi, '$1').trim();
+
+    // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
+    cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț])-\1(?=[A-Za-zĂÂÎȘȚăâîșț])/gi, '$1');
+
+    // Elimină repetarea imediată a aceluiași cuvânt după o pauză: „o să... o să...” → „o să...”.
+    cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț]+(?:\s+[A-Za-zĂÂÎȘȚăâîșț]+)?)\s*\.{2,}\s*\1\b/gi, '$1...');
+
     cleaned = cleaned.replace(/[^\S\r\n]+/g, ' ');
+
+    // După eliminarea unei ezitări, repară majuscula de început de propoziție.
+    cleaned = cleaned.replace(/(^|[.!?]\s+)([a-zăâîșț])/g, (m, prefix, letter) => prefix + letter.toUpperCase());
     
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă|ugh|argh|aah|oof|uf)[!.]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
