@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.47',
+    version: '12.78.48',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -530,12 +530,34 @@ function deepCleanSubtitleText(text) {
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
     let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
-    // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație:
-    // „ă”, „ăă”, „îhî”, „mhm”, „ah”, etc. Pot apărea și în interiorul unei replici.
-    cleaned = cleaned.replace(/(^|[\s,;:!?…])(?:ăă|ă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)(?=[\s,;:!?…]|$)[,;:!?…]*/gmi, '$1').trim();
+    // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație.
+    // IMPORTANT: includem și punctul în delimitatori; altfel „ăă...” / „mhm...”
+    // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
+    // „ă{2,}” prinde și forme precum „ăăă...”, nu doar exact „ăă”.
+    const hesitationToken = '(?:ă{2,}|ă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)';
+
+    // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
+    // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
+    cleaned = cleaned.replace(
+        new RegExp('[,;:]\\s*' + hesitationToken + '[,;:.!?…]*\\s*$', 'gmi'),
+        '...'
+    );
+
+    cleaned = cleaned.replace(
+        new RegExp('(^|[\\s,;:.!?…])' + hesitationToken + '(?=[\\s,;:.!?…]|$)[,;:.!?…]*', 'gmi'),
+        '$1'
+    ).trim();
 
     // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
     cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț])-\1(?=[A-Za-zĂÂÎȘȚăâîșț])/gi, '$1');
+
+    // Varianta foarte scurtă „E-E”, „A-A”, „M-M” etc.
+    // Regex-ul de mai sus nu o prinde deoarece cere încă o literă după al doilea caracter.
+    // Se elimină doar repetarea unei singure litere, nu cuvinte întregi.
+    cleaned = cleaned.replace(
+        /\b([A-Za-zĂÂÎȘȚăâîșț])\s*[-–—]\s*\1\b/gi,
+        '$1'
+    );
 
     // Elimină repetarea imediată a aceluiași cuvânt după o pauză: „o să... o să...” → „o să...”.
     cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț]+(?:\s+[A-Za-zĂÂÎȘȚăâîșț]+)?)\s*\.{2,}\s*\1\b/gi, '$1...');
@@ -982,7 +1004,9 @@ Use standard Romanian diacritics correctly: ă, â, î, ș, ț.
 Proper names, established names, brands, places, titles, character names and other elements that should remain unchanged must remain unchanged unless there is an established Romanian equivalent clearly required by context.
 
 15. AUDIO TAGS & INTERJECTIONS REMOVAL
-Remove non-dialogue audio tags, standalone hesitation sounds, and meaningless interjections (such as "Ah!", "Oh!", "Uh!", "Agh!", "ăă", "mhm") entirely. Do not translate standalone grunts or cries.
+Remove non-dialogue audio tags, standalone hesitation sounds, and meaningless interjections (such as "Ah!", "Oh!", "Uh!", "Agh!", "ăă", "ăăă", "mhm") entirely. Do not translate standalone grunts or cries.
+When a hesitation is embedded in an otherwise meaningful Romanian sentence (for example "Am fost, ăă..." or "Păi, ăă..."), remove the hesitation from the final subtitle while preserving the natural Romanian sentence and punctuation.
+Also remove obvious one-letter stutters such as "E-E", "A-A" or "M-M" when they are merely speech disfluencies.
 
 16. NO ENGLISH LEFT BEHIND & TRANSLATE ALL SPEAKER LABELS
 Translate EVERY actual English dialogue line into Romanian.
