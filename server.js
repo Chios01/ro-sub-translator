@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.48',
+    version: '12.78.49',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -185,7 +185,6 @@ const BROWSER_USER_AGENT_FETCH = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Appl
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
     
-    console.log(`\n${c.magenta}🔍 [Stremio] Caut subtitrări pentru: ${id} (${type})${c.reset}`);
 
     const host = req.headers.host;
     const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
