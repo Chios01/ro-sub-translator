@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.51',
+    version: '12.78.52',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1790,6 +1790,27 @@ IMPORTANT:
 - Returnează DOAR liniile pentru care există o corecție clară și necesară.
 - Pentru liniile deja corecte, nu este nevoie să le returnezi.
 - Dacă nu există nicio corecție clară, returnează cel puțin prima linie exact neschimbată.
+
+VERIFICARE OBLIGATORIE A CORECȚIEI FINALE:
+Pentru fiecare linie pe care alegi să o corectezi, NU te opri după ce găsești prima problemă.
+După ce formulezi noua variantă, recitește și verifică DIN NOU varianta finală ca pe o subtitrare independentă.
+Înainte să o returnezi, confirmă mental toate acestea:
+- toate cuvintele sunt românești, complete și corect scrise;
+- acordurile gramaticale sunt corecte;
+- verbele, pronumele și cliticile sunt corecte;
+- prepozițiile și construcția frazei sunt naturale în română;
+- nu a rămas nicio traducere literală sau fragment corupt;
+- nu ai introdus o nouă greșeală în timp ce ai reparat-o pe cea veche;
+- sensul, registrul și intenția originalului au rămas intacte.
+Dacă după această a doua verificare mai există ORICE problemă evidentă în varianta propusă, NU o returna ca „corectată”; păstrează traducerea actuală.
+Nu marca o linie drept corectată doar pentru că ai schimbat-o. Varianta nouă trebuie să fie efectiv mai bună și corectă.
+
+EXEMPLE DE ERORI CARE TREBUIE VERIFICATE ÎN VARIANTA FINALĂ:
+- „ai făt-o” → verifică să nu rămână forma coruptă; forma corectă uzuală este „ai făcut-o”.
+- „o favoră” → „o favoare”.
+- „mi facă” → verifică forma clitică potrivită contextului, de exemplu „să-mi facă”.
+- „Exact ca i-au făcut...” → verifică legătura gramaticală potrivită contextului, nu doar primul cuvânt schimbat.
+Aceste exemple sunt orientative; NU modifica o replică dacă originalul nu susține corecția.
 
 DATELE DE VERIFICAT:
 ${JSON.stringify(payload, null, 2)}
