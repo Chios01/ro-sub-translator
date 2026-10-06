@@ -33,7 +33,7 @@ const PREVIOUS_TRANSLATION_CONTEXT = 8;
 
 const MODEL_NAME =
     process.env.GEMINI_MODEL ||
-    'gemini-3.6-flash';
+    'gemini-3.5-flash';
 
 // ============================================================
 // CONSOLE COLORS
