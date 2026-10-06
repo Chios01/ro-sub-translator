@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.54',
+    version: '12.78.55',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1777,23 +1777,46 @@ REGULI CRITICE:
 4. NU elimina și NU modifica repetiții intenționate sau bâlbâieli de dialog, de exemplu „Nu-nu”, „Da, eu-eu...”, „Nu, nu, nu.”.
 5. Nu modifica nume proprii, titluri, mărci, locuri sau termeni ficționali doar pentru că par neobișnuiți.
 6. Nu transforma o formulare colocvială corectă într-una literară.
-7. Repară cuvinte deformate, lipite, tăiate sau inventate și acordurile/forme gramaticale evident greșite.
-8. Nu considera automat valid un cuvânt doar pentru că există o secvență asemănătoare în dicționar sau pentru că poate fi interpretat ca nume; verifică dacă forma are sens în propoziția respectivă și dacă este susținută de ORIGINAL.
-9. Când întâlnești un cuvânt suspect, compară-l cu ORIGINALUL și cu replicile din jur înainte de a decide. Obiectivul este să elimini deformările accidentale, nu să „corectezi” expresiile neobișnuite dar intenționate.
-8. Repară traduceri evident greșite atunci când sensul englezesc este clar din ORIGINAL.
-9. Fă o verificare EXPLICITĂ A FIECĂRUI CUVÂNT: caută forme care nu există în româna firească, forme trunchiate, litere schimbate accidental, diacritice corupte sau combinații de litere care par generate prin traducere automată. Exemple de tipul „orgasmato”, „șura”, „tuți”, „fãcut-o” sunt suspecte și trebuie verificate atent; nu le accepta doar pentru că seamănă cu un cuvânt românesc.
-10. Dacă un cuvânt este neobișnuit, verifică mai întâi dacă este nume propriu, marcă, termen fictiv, jargon sau formă colocvială intenționată. Dacă NU există o astfel de justificare și forma este evident coruptă, corecteaz-o folosind ORIGINALUL și contextul.
-11. Verifică și cuvintele foarte scurte sau formele de 2-6 litere, deoarece aici apar frecvent deformări de tipul „mi facă”, „tuți”, „șura” etc. Nu presupune că un cuvânt este corect doar pentru că seamănă cu unul românesc.
-12. Verifică diacriticele caracter cu caracter: „ă/â/î/ș/ț” trebuie să fie caractere românești corecte; formele corupte precum „ã”, „ş”, „ţ” sau combinații mixte trebuie reparate când apar accidental.
-13. Verifică și construcția frazei după corectarea unui cuvânt: o corecție lexicală nu este suficientă dacă propoziția rămâne gramatical greșită sau fără sens.
-14. Caută EXPLICIT secvențe corupte rezultate din traducere automată sau din tăierea accidentală a cuvintelor: fragmente precum „f-o”, „fãcut-o”, „ți-ți”, „mi-mi”, „să-să”, cuvinte tăiate, silabe rămase singure sau două fragmente lipite care nu formează o construcție românească validă. Dacă o astfel de secvență nu este susținută clar de ORIGINAL ca bâlbâială sau repetiție intenționată, trateaz-o ca eroare și repar-o.
-15. O corecție propusă NU este acceptată dacă rezultatul conține o nouă formă evident coruptă, o repetiție accidentală de clitice/pronume, un cuvânt inventat, un fragment trunchiat sau o construcție care nu poate fi justificată gramatical și semantic prin ORIGINAL.
-16. Repară numai când există o variantă românească clară susținută de ORIGINAL și context; dacă sunt posibile mai multe variante și nu există certitudine, păstrează traducerea actuală.
-9. Păstrează sensul original, registrul și intenția replicii.
-10. Nu adăuga informații și nu elimina informații.
-11. Păstrează exact formatul de subtitrare și eventualele line-break-uri relevante.
-12. Nu introduce engleză în traducere și nu introduce caractere non-latine.
-13. Dacă nu ești 100% sigur că există o eroare, PĂSTREAZĂ traducerea actuală.
+7. Repară cuvinte deformate, lipite, tăiate sau inventate și forme gramaticale evident greșite.
+8. Verifică EXPLICIT gramatica la nivel de propoziție, nu doar cuvintele izolate: acord subiect–verb, timp/mod verbal, persoană, gen și număr, articol, pronume, clitice, prepoziții, ordine sintactică și construcția frazei.
+9. Verifică EXPLICIT dacă formularea este română naturală și logică. Detectează calcuri sau transferuri directe din engleză care produc o construcție nenaturală ori greșită în română, dar corectează numai când ORIGINALUL și contextul susțin clar varianta corectă.
+10. Verifică poziționarea cliticelor și a pronumelor: forme precum „aș-o omori”, „nu ți-pasă”, „uită-ce-mi face”, „mi facă” sau alte combinații similare trebuie analizate sintactic, nu doar lexical.
+11. Verifică formele verbale: conjugare, infinitiv, conjunctiv, condițional, acord temporal și terminații. Exemple reale: „să arești” → „să arestezi”, „te admira” → verifică „te admiră”/„te admirau” după ORIGINAL și context.
+12. Verifică prepozițiile și construcțiile prepoziționale: detectează dublări sau combinații forțate precum „pregătit pentru pe 6” și alege corecția numai din sensul ORIGINALULUI.
+13. Verifică cuvintele foarte scurte și formele de 2–6 litere, deoarece pot ascunde deformări: „tuți”, „șura”, „mi”, „f-o” etc. Nu presupune că un cuvânt este corect doar pentru că seamănă cu unul românesc.
+14. Fă o verificare EXPLICITĂ A FIECĂRUI CUVÂNT: caută forme inexistente sau corupte, litere schimbate accidental, cuvinte lipite/splitate, diacritice corupte și forme generate prin traducere automată. Exemple reale: „orgasmato”, „metamorfoți”, „șura”, „tuți”, „fãcut-o”.
+15. Dacă un cuvânt sau o formulare este neobișnuită, verifică mai întâi dacă este nume propriu, marcă, termen fictiv, jargon, vulgaritate sau formă colocvială intenționată. Nu „corecta” doar pentru că sună neobișnuit.
+16. Verifică semantic și sintactic replica în raport cu ORIGINALUL și contextul din jur. O formulare poate avea cuvinte românești corecte și totuși să fie greșită ca structură sau sens. Exemple reale: „Ori dăm de capăt cum să-l antrenăm”, „M-am cerut în căsătorie cu Hughie”, „Și uită-ce-mi face și mie”.
+17. Detectează calcuri evidente din engleză și vocative/construcții traduse mecanic, de exemplu „idioticule” când ORIGINALUL cere un vocativ românesc natural precum „idiotule”. Nu schimba însă jargonul sau termenii intenționați.
+18. Verifică majusculele în context: nu transforma automat începutul unei replici în literă mică sau invers; corectează doar când poziția sintactică este clară.
+19. Caută EXPLICIT secvențe corupte rezultate din traducere automată sau tăiere accidentală: „f-o”, „fãcut-o”, „ți-ți”, „mi-mi”, „să-să”, fragmente rămase singure sau combinații care nu formează o construcție românească validă. Dacă ORIGINALUL nu susține o bâlbâială/repetiție intenționată, tratează-le ca erori.
+20. După orice corecție lexicală, verifică din nou ÎNTREAGA PROPOZIȚIE. Nu este suficient să repari un singur cuvânt dacă acordul, ordinea, cliticele sau sensul rămân greșite.
+21. O corecție propusă NU este acceptată dacă rezultatul introduce o nouă formă coruptă, o repetiție accidentală, un cuvânt inventat, o construcție nenaturală sau o eroare gramaticală.
+22. Repară numai când există o variantă românească clară, susținută de ORIGINAL și context. Dacă sunt posibile mai multe variante plauzibile și nu există certitudine, păstrează traducerea actuală.
+23. Păstrează sensul original, registrul, vulgaritățile, slangul, umorul și intenția replicii.
+24. Nu adăuga informații și nu elimina informații.
+25. Păstrează exact formatul de subtitrare și eventualele line-break-uri relevante.
+26. Nu introduce engleză în traducere și nu introduce caractere non-latine.
+27. Dacă nu ești 100% sigur că există o eroare, PĂSTREAZĂ traducerea actuală.
+
+EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE DE DETECȚIE:
+- „Ori dăm de capăt cum să-l antrenăm” → detectează construcția sintactică nenaturală și corectează conform ORIGINALULUI.
+- „pregătit pentru pe 6” → detectează dublarea prepozițiilor și corectează conform ORIGINALULUI.
+- „ca să...rbătorim” → detectează cuvântul trunchiat și repară „ca să sărbătorim”.
+- „De ce dracu' aș-o omori pe maică-ta?” → detectează poziționarea greșită a cliticului și forma verbală; varianta trebuie verificată în ORIGINAL.
+- „M-am cerut în căsătorie cu Hughie” → detectează construcția semantică/sintactică greșită; ORIGINALUL poate cere „L-am cerut în căsătorie pe Hughie”.
+- „să arești” → „să arestezi”.
+- „idioticule” → verifică dacă este un calchiu greșit; dacă ORIGINALUL cere vocativul românesc, „idiotule”.
+- „Ca să Mă-nvățați” → verifică majuscula nejustificată în interiorul propoziției.
+- „Fete din toată lumea te admira.” → verifică acordul și timpul verbal.
+- „Fără ca idiotul ăsta...” → verifică majuscula în funcție de poziția în frază.
+- „ai nevoie de pașaport” după punct → verifică majuscula de început.
+- „nu ți-pasă” → verifică cliticul și forma corectă „nu-ți pasă”.
+- „metamorfoți” → detectează cuvântul inexistent și reconstruiește forma corectă din ORIGINAL/context.
+- „Și uită-ce-mi face și mie.” → verifică pronumele/cliticul lipsă și construcția „uită-te ce-mi face și mie”.
+- „ftuți” → detectează typo-ul și verifică forma corectă din ORIGINAL/context.
+
+IMPORTANT: Acestea sunt exemple de TIPURI DE ERORI, nu corecții care trebuie aplicate orbește. Pentru fiecare linie, ORIGINALUL și contextul au prioritate.
 
 IMPORTANT:
 - Nu trebuie să modifici toate liniile.
