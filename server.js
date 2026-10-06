@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.52',
+    version: '12.78.53',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1778,7 +1778,15 @@ REGULI CRITICE:
 5. Nu modifica nume proprii, titluri, mărci, locuri sau termeni ficționali doar pentru că par neobișnuiți.
 6. Nu transforma o formulare colocvială corectă într-una literară.
 7. Repară cuvinte deformate, lipite, tăiate sau inventate și acordurile/forme gramaticale evident greșite.
+8. Nu considera automat valid un cuvânt doar pentru că există o secvență asemănătoare în dicționar sau pentru că poate fi interpretat ca nume; verifică dacă forma are sens în propoziția respectivă și dacă este susținută de ORIGINAL.
+9. Când întâlnești un cuvânt suspect, compară-l cu ORIGINALUL și cu replicile din jur înainte de a decide. Obiectivul este să elimini deformările accidentale, nu să „corectezi” expresiile neobișnuite dar intenționate.
 8. Repară traduceri evident greșite atunci când sensul englezesc este clar din ORIGINAL.
+9. Fă o verificare EXPLICITĂ A FIECĂRUI CUVÂNT: caută forme care nu există în româna firească, forme trunchiate, litere schimbate accidental, diacritice corupte sau combinații de litere care par generate prin traducere automată. Exemple de tipul „orgasmato”, „șura”, „tuți”, „fãcut-o” sunt suspecte și trebuie verificate atent; nu le accepta doar pentru că seamănă cu un cuvânt românesc.
+10. Dacă un cuvânt este neobișnuit, verifică mai întâi dacă este nume propriu, marcă, termen fictiv, jargon sau formă colocvială intenționată. Dacă NU există o astfel de justificare și forma este evident coruptă, corecteaz-o folosind ORIGINALUL și contextul.
+11. Verifică și cuvintele foarte scurte sau formele de 2-6 litere, deoarece aici apar frecvent deformări de tipul „mi facă”, „tuți”, „șura” etc. Nu presupune că un cuvânt este corect doar pentru că seamănă cu unul românesc.
+12. Verifică diacriticele caracter cu caracter: „ă/â/î/ș/ț” trebuie să fie caractere românești corecte; formele corupte precum „ã”, „ş”, „ţ” sau combinații mixte trebuie reparate când apar accidental.
+13. Verifică și construcția frazei după corectarea unui cuvânt: o corecție lexicală nu este suficientă dacă propoziția rămâne gramatical greșită sau fără sens.
+14. Repară numai când există o variantă românească clară susținută de ORIGINAL și context; dacă sunt posibile mai multe variante și nu există certitudine, păstrează traducerea actuală.
 9. Păstrează sensul original, registrul și intenția replicii.
 10. Nu adăuga informații și nu elimina informații.
 11. Păstrează exact formatul de subtitrare și eventualele line-break-uri relevante.
@@ -1806,10 +1814,11 @@ Dacă după această a doua verificare mai există ORICE problemă evidentă în
 Nu marca o linie drept corectată doar pentru că ai schimbat-o. Varianta nouă trebuie să fie efectiv mai bună și corectă.
 
 EXEMPLE DE ERORI CARE TREBUIE VERIFICATE ÎN VARIANTA FINALĂ:
-- „ai făt-o” → verifică să nu rămână forma coruptă; forma corectă uzuală este „ai făcut-o”.
+- „ai făt-o” / „fãcut-o” → verifică să nu rămână forma coruptă; forma corectă uzuală este „ai făcut-o”.
 - „o favoră” → „o favoare”.
 - „mi facă” → verifică forma clitică potrivită contextului, de exemplu „să-mi facă”.
 - „Exact ca i-au făcut...” → verifică legătura gramaticală potrivită contextului, nu doar primul cuvânt schimbat.
+- „orgasmato”, „șura”, „tuți” → tratează-le ca forme suspecte care trebuie verificate explicit în ORIGINAL și context; nu le lăsa doar pentru că par aproape de un cuvânt românesc.
 Aceste exemple sunt orientative; NU modifica o replică dacă originalul nu susține corecția.
 
 DATELE DE VERIFICAT:
