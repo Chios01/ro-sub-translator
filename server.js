@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.53',
+    version: '12.78.54',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1786,7 +1786,9 @@ REGULI CRITICE:
 11. Verifică și cuvintele foarte scurte sau formele de 2-6 litere, deoarece aici apar frecvent deformări de tipul „mi facă”, „tuți”, „șura” etc. Nu presupune că un cuvânt este corect doar pentru că seamănă cu unul românesc.
 12. Verifică diacriticele caracter cu caracter: „ă/â/î/ș/ț” trebuie să fie caractere românești corecte; formele corupte precum „ã”, „ş”, „ţ” sau combinații mixte trebuie reparate când apar accidental.
 13. Verifică și construcția frazei după corectarea unui cuvânt: o corecție lexicală nu este suficientă dacă propoziția rămâne gramatical greșită sau fără sens.
-14. Repară numai când există o variantă românească clară susținută de ORIGINAL și context; dacă sunt posibile mai multe variante și nu există certitudine, păstrează traducerea actuală.
+14. Caută EXPLICIT secvențe corupte rezultate din traducere automată sau din tăierea accidentală a cuvintelor: fragmente precum „f-o”, „fãcut-o”, „ți-ți”, „mi-mi”, „să-să”, cuvinte tăiate, silabe rămase singure sau două fragmente lipite care nu formează o construcție românească validă. Dacă o astfel de secvență nu este susținută clar de ORIGINAL ca bâlbâială sau repetiție intenționată, trateaz-o ca eroare și repar-o.
+15. O corecție propusă NU este acceptată dacă rezultatul conține o nouă formă evident coruptă, o repetiție accidentală de clitice/pronume, un cuvânt inventat, un fragment trunchiat sau o construcție care nu poate fi justificată gramatical și semantic prin ORIGINAL.
+16. Repară numai când există o variantă românească clară susținută de ORIGINAL și context; dacă sunt posibile mai multe variante și nu există certitudine, păstrează traducerea actuală.
 9. Păstrează sensul original, registrul și intenția replicii.
 10. Nu adăuga informații și nu elimina informații.
 11. Păstrează exact formatul de subtitrare și eventualele line-break-uri relevante.
