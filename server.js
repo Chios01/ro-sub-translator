@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.50',
+    version: '12.78.51',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1725,6 +1725,121 @@ Returnează DOAR JSON valid în forma:
 }
 
 // ============================================================
+// FILTRU SUPLIMENTAR — GRAMATICĂ + CALITATEA TRADUCERII
+// Rulează separat de mecanismul principal și aplică doar corecții certe.
+// ============================================================
+
+const GRAMMAR_REVIEW_BATCH_SIZE = 120;
+
+async function grammarTranslationReview(items, translatedById, keyStates) {
+    const candidates = items.filter(item => {
+        const original = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        const translated = String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim();
+        if (!original || !translated) return false;
+        if (isJunkOrInterjection(item.text)) return false;
+        if (isOkOnlySubtitle(translated)) return false;
+        return true;
+    });
+
+    if (!candidates.length) {
+        console.log(`${c.green}✔ [Grammar Review] Nu există replici eligibile pentru verificare.${c.reset}`);
+        return { checked: 0, fixed: 0 };
+    }
+
+    console.log(`\n${c.cyan}📝 VERIFICARE SUPLIMENTARĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
+    console.log(`   Verificate: ${candidates.length} replici`);
+
+    const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
+    let checked = 0;
+    let fixed = 0;
+
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        console.log(`${c.cyan}➤ [Grammar Review] Calup ${batchIndex + 1}/${batches.length}...${c.reset}`);
+
+        const payload = batch.map(item => ({
+            id: item.id,
+            original: item.text,
+            translation: translatedById[String(item.id)]
+        }));
+
+        const prompt = `
+Ești un corector profesionist de subtitrări ENGLEZĂ → ROMÂNĂ.
+
+Aceasta este o VERIFICARE SUPLIMENTARĂ, independentă de traducerea principală.
+NU retraduce automat și NU rescrie replicile pentru stil.
+Scopul este să identifici și să corectezi DOAR greșelile CLARE de gramatică, ortografie sau traducere care fac replica română incorectă, coruptă sau evident lipsită de sens.
+
+REGULI CRITICE:
+1. Dacă traducerea este corectă și naturală, NU O MODIFICA.
+2. Dacă există orice dubiu că o schimbare ar putea modifica sensul, păstrează traducerea actuală.
+3. Nu schimba slangul, vulgaritățile, expresiile colocviale, sarcasmul, umorul sau stilul personajului dacă sunt inteligibile și corecte.
+4. NU elimina și NU modifica repetiții intenționate sau bâlbâieli de dialog, de exemplu „Nu-nu”, „Da, eu-eu...”, „Nu, nu, nu.”.
+5. Nu modifica nume proprii, titluri, mărci, locuri sau termeni ficționali doar pentru că par neobișnuiți.
+6. Nu transforma o formulare colocvială corectă într-una literară.
+7. Repară cuvinte deformate, lipite, tăiate sau inventate și acordurile/forme gramaticale evident greșite.
+8. Repară traduceri evident greșite atunci când sensul englezesc este clar din ORIGINAL.
+9. Păstrează sensul original, registrul și intenția replicii.
+10. Nu adăuga informații și nu elimina informații.
+11. Păstrează exact formatul de subtitrare și eventualele line-break-uri relevante.
+12. Nu introduce engleză în traducere și nu introduce caractere non-latine.
+13. Dacă nu ești 100% sigur că există o eroare, PĂSTREAZĂ traducerea actuală.
+
+IMPORTANT:
+- Nu trebuie să modifici toate liniile.
+- Returnează DOAR liniile pentru care există o corecție clară și necesară.
+- Pentru liniile deja corecte, nu este nevoie să le returnezi.
+- Dacă nu există nicio corecție clară, returnează cel puțin prima linie exact neschimbată.
+
+DATELE DE VERIFICAT:
+${JSON.stringify(payload, null, 2)}
+
+Returnează DOAR JSON valid în forma:
+[
+  {"id": 123, "text": "traducerea corectată"}
+]
+`;
+
+        try {
+            const keyState = await getAvailableKey(keyStates);
+            const raw = await callGemini(prompt, keyState, { timeout: 60000 });
+            const parsed = safeJsonParse(raw);
+            const parsedDict = normalizeTranslationPayload(parsed);
+
+            checked += batch.length;
+
+            for (const item of batch) {
+                const id = String(item.id);
+                const candidateRaw = parsedDict[id];
+                if (candidateRaw == null) continue;
+
+                const current = formatSubtitleLine(String(translatedById[id] || ''));
+                const candidate = formatSubtitleLine(String(candidateRaw || ''));
+
+                if (!candidate || candidate === current) continue;
+
+                // Filtrul suplimentar poate aplica doar o corecție care rămâne
+                // compatibilă cu verificările deja existente.
+                if (hasUntranslatedEnglish(item.text, candidate) ||
+                    hasCorruptedSubtitleText(candidate, item.text)) {
+                    console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: noua variantă a devenit suspectă${c.reset}`);
+                    continue;
+                }
+
+                translatedById[id] = candidate;
+                fixed++;
+                console.log(`${c.green}  ✔ [Grammar Review] ${item.id} corectată${c.reset}`);
+            }
+        } catch (error) {
+            console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat: ${error.message}${c.reset}`);
+        }
+    }
+
+    console.log(`${c.green}✔ [Grammar Review] Final: ${checked} verificate, ${fixed} corectate${c.reset}`);
+    return { checked, fixed };
+}
+
+// ============================================================
 // MOTORUL PRINCIPAL DE TRADUCERE SRT
 // ============================================================
 
@@ -1832,6 +1947,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
+
+    await grammarTranslationReview(items, translatedById, keyStates);
 
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
