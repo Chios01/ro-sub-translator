@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.64',
+    version: '12.78.65',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2011,6 +2011,41 @@ INTEGRARE SUPLIMENTARĂ — AUDIT STRICT AL SENSULUI ȘI AL NATURALITĂȚII:
 91. DETECTEAZĂ „ROMÂNĂ CORECTĂ, DAR SENS GREȘIT”: Acesta este un caz CRITIC. Dacă RO este gramatical și natural, dar schimbă cine face acțiunea, cine primește acțiunea, obiectul, posesia, relația dintre personaje, introduce un obiect care nu există în EN, elimină un element important din EN, schimbă funcția unei înjurături/intensificator într-un substantiv sau obiect concret ori schimbă sensul unei expresii, COREctează traducerea numai pe baza ORIGINALULUI și a contextului.
 92. ÎNAINTE DE ORICE CORECȚIE SEMANTICĂ: Compară obligatoriu ORIGINALUL, traducerea actuală, context_anterior și context_urmator. Nu corecta doar pentru că o altă formulare românească sună mai bine. Corectează numai dacă există o diferență reală de sens și există o variantă clară, susținută de surse.
 93. DUPĂ CORECȚIE: Recitește propoziția română completă și verifică din nou dacă noua variantă păstrează sensul EN, tonul, registrul și vulgaritatea atunci când există, fără să introducă cuvinte, obiecte, acțiuni sau idei inexistente în EN și fără să elimine informații importante. Dacă noua variantă nu este clar mai fidelă semantic, NU o returna.
+
+94. DETECTEAZĂ CALCURILE SINTACTICE ȘI IDIOMATICE CARE PAR GRAMATICALE, DAR NU SUNT ROMÂNĂ NATURALĂ.
+
+O traducere poate conține numai cuvinte românești corecte și totuși să fie formulată greșit deoarece structura originalului englezesc a fost copiată mecanic.
+
+Exemplu:
+RO: „E un cuptor dracului aici.”
+Această formulare trebuie verificată obligatoriu și NU trebuie acceptată doar pentru că fiecare cuvânt este valid în română.
+
+Verifică dacă relația dintre substantiv, atribut, complement, intensificator și restul propoziției este una firească în română.
+Nu copia mecanic ordinea sau construcția din engleză. Dacă originalul folosește o expresie figurată, colocvială sau un intensificator, traducerea trebuie să redea FUNCȚIA și SENSUL expresiei în română, nu să traducă fiecare componentă separat.
+
+95. ACORDĂ ATENȚIE SPECIALĂ CONSTRUCȚIILOR „SUBSTANTIV + ÎNJURĂTURĂ/INTENSIFICATOR”.
+
+Forme precum „un X dracului”, „un X naibii”, „un X al naibii” sau alte combinații similare NU sunt automat corecte doar pentru că există în limba română.
+Verifică dacă expresia rezultată este realmente naturală în context și dacă reproduce sensul și funcția din original.
+
+96. NU CONFUNDA „CUVÂNT ROMÂNESC VALID” CU „CONSTRUCȚIE ROMÂNEASCĂ VALIDĂ”.
+
+Grammar Review trebuie să verifice simultan:
+- sensul fiecărui cuvânt;
+- relația dintre cuvinte;
+- funcția expresiei;
+- topica naturală în română;
+- sensul întregii propoziții;
+- echivalența cu originalul.
+
+Dacă toate cuvintele sunt corecte individual, dar combinația lor produce o formulare nenaturală, calchiată sau semantic greșită, COREctează propoziția.
+
+97. PENTRU EXPRESIILE COLOCVIALE/VULGARE, VERIFICĂ ÎNTÂI FUNCȚIA, APOI FORMA.
+
+Nu presupune că „fucking” = „dracului” în orice context, „damn” = „dracului” în orice context, „hell” = „iad” în orice context sau „fuck” = un substantiv/verb literal în orice context.
+Stabilește funcția expresiei în propoziția EN și caută echivalentul românesc natural pentru ACEA FUNCȚIE.
+
+
 
 DATELE DE VERIFICAT:
 Fiecare obiect conține și context_anterior/context_urmator. Acestea sunt DOAR pentru înțelegerea sensului, acordului și continuității.
