@@ -106,6 +106,8 @@ app.get('/ping', (req, res) => {
 
 app.get('/diagnostic/:configData', async (req, res) => {
     const runs = Math.min(10, Math.max(1, Number(req.query.runs) || 5));
+    const requestedCase = String(req.query.case || '9001');
+    const cooldownMs = Math.min(90000, Math.max(10000, Number(req.query.cooldownMs) || 65000));
     const tests = [
         {
             id: 9001,
@@ -127,6 +129,11 @@ app.get('/diagnostic/:configData', async (req, res) => {
         }
     ];
 
+    const selectedTests = tests.filter(test => requestedCase === 'all' || String(test.id) === requestedCase);
+    if (!selectedTests.length) {
+        return res.status(400).json({ ok: false, error: 'Caz invalid. Folosește case=9001, case=9002, case=9003 sau case=all.' });
+    }
+
     let userKeys = [];
     try {
         const decoded = Buffer.from(req.params.configData, 'base64').toString('utf8');
@@ -145,7 +152,7 @@ app.get('/diagnostic/:configData', async (req, res) => {
     const keyStates = createKeyState(userKeys);
     const results = [];
 
-    for (const test of tests) {
+    for (const test of selectedTests) {
         const item = { id: test.id, text: test.text };
         const allItems = [
             { id: test.id - 1, text: test.prev },
@@ -159,6 +166,9 @@ app.get('/diagnostic/:configData', async (req, res) => {
 
         for (let run = 1; run <= runs; run++) {
             try {
+                // Diagnosticul rulează intenționat secvențial, cu pauză între cereri,
+                // pentru a nu transforma testul de variabilitate într-un test de 429.
+                if (run > 1) await new Promise(resolve => setTimeout(resolve, cooldownMs));
                 const keyState = await getAvailableKey(keyStates);
                 const raw = await callGemini(prompt, keyState, { timeout: 60000 });
                 const parsed = normalizeTranslationPayload(safeJsonParse(raw));
@@ -180,7 +190,9 @@ app.get('/diagnostic/:configData', async (req, res) => {
         model: MODEL_NAME,
         temperature: 0.0,
         runs,
-        note: 'Acesta este un test diagnostic separat. Nu rulează Grammar Review, Post-Check sau traducerea unui episod.',
+        case: requestedCase,
+        cooldownMs,
+        note: 'Acesta este un test diagnostic separat. Rulează un singur caz selectat secvențial și nu rulează Grammar Review, Post-Check sau traducerea unui episod.',
         results
     });
 });
