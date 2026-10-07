@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.62',
+    version: '12.78.63',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1958,7 +1958,7 @@ IMPORTANT:
 - Nu trebuie să modifici toate liniile.
 - Returnează DOAR liniile pentru care există o corecție clară și necesară.
 - Pentru liniile deja corecte, nu este nevoie să le returnezi.
-- Dacă nu există nicio corecție clară, returnează cel puțin prima linie exact neschimbată.
+- Dacă nu există nicio corecție clară, returnează un ARRAY GOL: [].
 
 VERIFICARE OBLIGATORIE A CORECȚIEI FINALE:
 Pentru fiecare linie pe care alegi să o corectezi, NU te opri după ce găsești prima problemă.
@@ -1988,6 +1988,22 @@ EXEMPLE DE ERORI CARE TREBUIE VERIFICATE ÎN VARIANTA FINALĂ:
 - „Totul se mișcă în doi.” → verifică dacă este un calchiu și dacă ORIGINALUL cere o construcție românească de tipul „ne mișcăm câte doi”.
 - „orgasmato”, „șura”, „tuți” → tratează-le ca forme suspecte care trebuie verificate explicit în ORIGINAL și context; nu le lăsa doar pentru că par aproape de un cuvânt românesc.
 Aceste exemple sunt orientative; NU modifica o replică dacă originalul nu susține corecția.
+
+INTEGRARE SUPLIMENTARĂ — AUDIT STRICT AL SENSULUI ȘI AL NATURALITĂȚII:
+73. Compară obligatoriu „translation” cu „original” înainte de orice corecție. Nu presupune că o formulare românească este greșită doar pentru că ai fi tradus-o altfel. Corectează numai dacă există o eroare reală și clară de sens, gramatică, ortografie, sintaxă sau naturalețe.
+74. Verifică explicit CALCURILE ȘI TRADUCERILE LITERALE din engleză. Dacă „translation” este o traducere mecanică ce nu are sens sau sună evident nenatural în română, reconstruiește formularea folosind sensul din „original” și context. Exemplul de tip „Suntem oameni în voi” trebuie analizat semantic și reformulat numai dacă originalul confirmă sensul corect.
+75. Verifică explicit FORMULĂRILE CARE SUNT ROMÂNEȘTI CA VOCABULAR, DAR GREȘITE CA RELAȚIE SINTACTICĂ SAU SEMANTICĂ. Nu este suficient ca toate cuvintele să existe în dicționar. Verifică dacă verbul, subiectul, complementele, pronumele și prepozițiile formează împreună o construcție validă și dacă redau relația din „original”.
+76. Verifică explicit FORMELE VERBALE ȘI CONSTRUCȚIILE VERBALE COMPLETE. Nu repara doar un sufix sau o literă dacă problema afectează întreaga construcție. Exemple: „să arești” → verifică „să arestezi”; „aș-o omori” → „aș omorî-o”; „mi-am amintesc” → „îmi amintesc”.
+77. Verifică explicit ACORDUL DE GEN, NUMĂR ȘI PERSOANĂ folosind și contextul. Dacă traducerea curentă contrazice subiectul real, antecedentul pronumelui sau referința din original, corectează întreaga construcție, nu doar cuvântul problematic.
+78. Verifică explicit TOPICA CLITICELOR ȘI A PRONUMELOR. Forme precum „nu ți-pasă”, „aș-o omori”, „uită-ce-mi face” sau combinații similare trebuie analizate ca structuri complete și corectate numai dacă „original” și contextul susțin clar corecția.
+79. Verifică explicit CUVINTELE CORUPTE, TRUNCHIATE, LIPITE SAU INVENTATE, inclusiv forme care par aproape românești. Exemple: „metamorfoți”, „reeligitată”, „Iertați-man”, „ała”, „frecându-menta”, „mizerijile”. Pentru fiecare astfel de caz, verifică „original”, „ctx_ant” și „ctx_urm” înainte de a reconstrui forma.
+80. Verifică explicit DIACRITICELE ȘI CARACTERELE ATIPICE în interiorul cuvintelor. Caractere precum „ł”, „ø”, „æ”, „å”, „ñ”, „ç”, „ð”, „þ”, „ß”, „đ” sau alte caractere neobișnuite într-un cuvânt românesc pot indica o corupere. Nu le corecta automat dacă fac parte dintr-un nume propriu, termen străin, marcă sau alt element intenționat.
+81. Verifică explicit MAJUSCULELE ACCIDENTALE din interiorul propoziției. Exemple de tipul „Ca să Mă înveți...”, „..., Oricum.” sau „De ce i-ar Pasa...” trebuie analizate în context. Nu modifica nume proprii, titluri, mărci, începuturi de propoziție sau citate legitime.
+82. Verifică explicit NATURALEȚEA ROMÂNEASCĂ, dar NU o confunda cu preferința stilistică. Dacă formularea este corectă și transmite sensul originalului, păstreaz-o chiar dacă există o variantă pe care ai prefera-o. Intervine numai când formularea este evident greșită, ilogică, calchiată sau nenaturală pentru un vorbitor nativ.
+83. Păstrează obligatoriu slangul, vulgaritățile, sarcasmul, umorul, bâlbâielile și repetițiile intenționate. Nu transforma „Nu-nu”, „Da, eu-eu...” sau „Nu, nu, nu.” în formulări mai elegante dacă „original” indică intenția respectivă.
+84. După fiecare corecție propusă, fă o VERIFICARE FINALĂ A VARIANTEI NOI: recitește propoziția completă, compar-o din nou cu „original”, verifică acordurile, verbele, cliticile, prepozițiile, sensul, diacriticele și naturalețea. Dacă noua variantă introduce orice eroare sau dacă nu ești sigur că este mai corectă decât varianta existentă, NU returna corecția.
+85. Nu modifica o replică doar pentru a o „îmbunătăți”. Dacă „translation” este corectă, naturală și transmite corect „original”, ignor-o complet. Nu returna replicile bune.
+86. Dacă există două variante posibile și nu există suficiente informații în „original”, „ctx_ant” și „ctx_urm” pentru a decide fără dubiu, păstrează traducerea existentă. Prioritatea este conservarea unei traduceri bune, nu forțarea unei corecții.
 
 DATELE DE VERIFICAT:
 Fiecare obiect conține și context_anterior/context_urmator. Acestea sunt DOAR pentru înțelegerea sensului, acordului și continuității.
