@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.57',
+    version: '12.78.58',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1795,9 +1795,10 @@ async function grammarTranslationReview(items, translatedById, keyStates) {
     let checked = 0;
     let fixed = 0;
 
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        const batch = batches[batchIndex];
-        console.log(`${c.cyan}➤ [Grammar Review] Calup ${batchIndex + 1}/${batches.length}...${c.reset}`);
+    const rateLimitRetryQueue = [];
+
+    const processGrammarBatch = async (batch, batchIndex, label) => {
+        console.log(`${c.cyan}➤ [Grammar Review] ${label}...${c.reset}`);
 
         const payload = batch.map(item => {
             const index = items.findIndex(x => String(x.id) === String(item.id));
@@ -1850,16 +1851,19 @@ REGULI CRITICE:
 27. Detectează formulările care sunt traduceri literale ale unei expresii englezești și care devin nenaturale sau lipsite de sens în română. Exemplu de tip: „suntem la anghinare rău de tot acum” pentru o expresie idiomatică precum „we're in a pickle”. Dacă sensul originalului este clar, adaptează expresia în română naturală fără a-i schimba intenția.
 28. Nu confunda naturalețea cu preferința stilistică. Corectează doar când formularea este efectiv greșită, ambiguă, ilogică sau nenaturală într-un mod evident pentru un vorbitor nativ; nu rescrie o formulare doar pentru că ai prefera o altă variantă.
 29. Caută EXPLICIT secvențe corupte rezultate din traducere automată sau tăiere accidentală: „f-o”, „fãcut-o”, „ți-ți”, „mi-mi”, „să-să”, fragmente rămase singure sau combinații care nu formează o construcție românească validă. Dacă ORIGINALUL nu susține o bâlbâială/repetiție intenționată, tratează-le ca erori.
-30. După orice corecție lexicală, verifică din nou ÎNTREAGA PROPOZIȚIE. Nu este suficient să repari un singur cuvânt dacă acordul, ordinea, cliticele sau sensul rămân greșite.
-31. O corecție propusă NU este acceptată dacă rezultatul introduce o nouă formă coruptă, o repetiție accidentală, un cuvânt inventat, o construcție nenaturală sau o eroare gramaticală.
-32. Repară numai când există o variantă românească clară, susținută de ORIGINAL și context. Dacă sunt posibile mai multe variante plauzibile și nu există certitudine, păstrează traducerea actuală.
-33. Păstrează sensul original, registrul, vulgaritățile, slangul, umorul și intenția replicii.
-34. Nu adăuga informații și nu elimina informații.
-35. Păstrează exact formatul de subtitrare și eventualele line-break-uri relevante.
-36. Nu introduce engleză în traducere și nu introduce caractere non-latine.
-37. Dacă nu ești 100% sigur că există o eroare, PĂSTREAZĂ traducerea actuală.
+30. Pentru orice token care conține o bucată suspectă lipită de un cuvânt valid, fă o verificare separată a tokenului și apoi a propoziției complete. Exemple: „Țin-ținta e prea mică.”, „T-Ar trebui...”, „frecându-menta”, „nu ți-pasă”. Dacă prima parte nu are funcție gramaticală în context și nu este o bâlbâială susținută de ORIGINAL, nu păstra tokenul doar pentru că partea finală este un cuvânt românesc valid. Reconstruiește forma corectă din ORIGINAL și context.
+31. Cazul „Țin-ținta e prea mică.” este un exemplu de FRAGMENT CORUPT, nu de repetiție intenționată: dacă ORIGINALUL nu indică o bâlbâială, varianta corectă trebuie să elimine fragmentul „Țin-” și să păstreze sensul propoziției, de tipul „Ținta e prea mică.”. Nu lăsa o formă precum „T-ținta”, „Țin-ținta” sau altă combinație intermediară.
+32. După orice corecție lexicală, verifică din nou ÎNTREAGA PROPOZIȚIE. Nu este suficient să repari un singur cuvânt dacă acordul, ordinea, cliticele sau sensul rămân greșite.
+33. O corecție propusă NU este acceptată dacă rezultatul introduce o nouă formă coruptă, o repetiție accidentală, un cuvânt inventat, o construcție nenaturală sau o eroare gramaticală.
+34. Repară numai când există o variantă românească clară, susținută de ORIGINAL și context. Dacă sunt posibile mai multe variante plauzibile și nu există certitudine, păstrează traducerea actuală.
+35. Păstrează sensul original, registrul, vulgaritățile, slangul, umorul și intenția replicii.
+36. Nu adăuga informații și nu elimina informații.
+37. Păstrează exact formatul de subtitrare și eventualele line-break-uri relevante.
+38. Nu introduce engleză în traducere și nu introduce caractere non-latine.
+39. Dacă nu ești 100% sigur că există o eroare, PĂSTREAZĂ traducerea actuală.
 
-EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE DE DETECȚIE:
+EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE
+ DE DETECȚIE:
 - „Ori dăm de capăt cum să-l antrenăm” → detectează construcția sintactică nenaturală și corectează conform ORIGINALULUI.
 - „pregătit pentru pe 6” → detectează dublarea prepozițiilor și corectează conform ORIGINALULUI.
 - „ca să...rbătorim” → detectează cuvântul trunchiat și repară „ca să sărbătorim”.
@@ -1954,8 +1958,50 @@ Returnează DOAR JSON valid în forma:
                 console.log(`${c.green}  ✔ [Grammar Review] ${item.id} corectată${c.reset}`);
             }
         } catch (error) {
+            const is429 = error?.isRateLimit429 === true || /429/.test(String(error?.message || ''));
             console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat: ${error.message}${c.reset}`);
+            return { success: false, is429 };
         }
+
+        return { success: true, is429: false };
+    };
+
+    // Prima trecere: dacă un calup primește 429, nu îl abandonăm definitiv.
+    // Îl punem la coadă și îl reîncercăm după ce terminăm toate calupurile normale.
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        const result = await processGrammarBatch(
+            batch,
+            batchIndex,
+            `Calup ${batchIndex + 1}/${batches.length}`
+        );
+
+        if (result.is429) {
+            rateLimitRetryQueue.push({ batch, batchIndex });
+        }
+    }
+
+    // Maximum 2 reîncercări suplimentare DOAR pentru calupurile care au eșuat cu 429.
+    // Nu modificăm aici logica 429 a traducerii principale sau a altor etape.
+    for (let retryRound = 1; retryRound <= 2 && rateLimitRetryQueue.length; retryRound++) {
+        const pending = rateLimitRetryQueue.splice(0);
+        console.log(`${c.cyan}🔄 [Grammar Review] Reîncerc 429: ${pending.length} calupuri (runda ${retryRound}/2)...${c.reset}`);
+
+        for (const queued of pending) {
+            const result = await processGrammarBatch(
+                queued.batch,
+                queued.batchIndex,
+                `Reîncercare 429 — Calup ${queued.batchIndex + 1}/${batches.length} (runda ${retryRound}/2)`
+            );
+
+            if (result.is429 && retryRound < 2) {
+                rateLimitRetryQueue.push(queued);
+            }
+        }
+    }
+
+    if (rateLimitRetryQueue.length) {
+        console.log(`${c.yellow}⚠ [Grammar Review] ${rateLimitRetryQueue.length} calupuri au rămas neverificate după cele 2 reîncercări 429.${c.reset}`);
     }
 
     console.log(`${c.green}✔ [Grammar Review] Final: ${checked} verificate, ${fixed} corectate${c.reset}`);
