@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.63',
+    version: '12.78.64',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2004,6 +2004,13 @@ INTEGRARE SUPLIMENTARĂ — AUDIT STRICT AL SENSULUI ȘI AL NATURALITĂȚII:
 84. După fiecare corecție propusă, fă o VERIFICARE FINALĂ A VARIANTEI NOI: recitește propoziția completă, compar-o din nou cu „original”, verifică acordurile, verbele, cliticile, prepozițiile, sensul, diacriticele și naturalețea. Dacă noua variantă introduce orice eroare sau dacă nu ești sigur că este mai corectă decât varianta existentă, NU returna corecția.
 85. Nu modifica o replică doar pentru a o „îmbunătăți”. Dacă „translation” este corectă, naturală și transmite corect „original”, ignor-o complet. Nu returna replicile bune.
 86. Dacă există două variante posibile și nu există suficiente informații în „original”, „ctx_ant” și „ctx_urm” pentru a decide fără dubiu, păstrează traducerea existentă. Prioritatea este conservarea unei traduceri bune, nu forțarea unei corecții.
+87. VERIFICARE SEMANTICĂ OBLIGATORIE: Nu este suficient ca traducerea română să fie gramaticală sau să sune natural. Compară sensul COMPLET al originalului în engleză cu traducerea română. Detectează cazurile în care traducerea este o propoziție românească validă, dar transmite ALTĂ IDEE decât originalul. Exemplu: EN „Get out of my head.” / RO „Ieși-mi din cap.” — dacă, în context, sensul cerut este „Get out of my head”, preferă o formulare care păstrează fidel sensul și posesia din original, precum „Ieși din capul meu”, numai dacă ORIGINALUL și contextul confirmă.
+88. NU ACCEPTA REFORMULĂRI CARE SCHIMBĂ RELAȚIA DINTRE CUVINTE: Verifică atent prepozițiile, pronumele, posesivele, complementele și expresiile fixe. O propoziție poate fi perfect gramaticală în română și totuși să fie o traducere greșită. Exemplu: EN „Don't fucking touch me.” / RO „Să nu mă atingi de pulă.” — aceasta NU este echivalentă semantic; aici „fucking” funcționează ca intensificator/vulgarism, nu ca indicator al unui obiect sexual. Corectează numai dacă ORIGINALUL și contextul confirmă funcția respectivă.
+89. VERIFICĂ VULGARITĂȚILE DUPĂ FUNCȚIA LOR ÎN ORIGINAL: Un cuvânt vulgar englezesc precum „fuck”, „fucking”, „damn”, „shit” etc. poate funcționa ca verb literal, intensificator, înjurătură, interjecție sau element de insistență/emfază. NU presupune automat că trebuie tradus literal. Stabilește mai întâi funcția lui în propoziția originală și păstrează nivelul de vulgaritate, fără a inventa obiecte, acțiuni sau relații care nu există în ORIGINAL.
+90. VERIFICĂ EXPRESIILE IDIOMATICE ȘI COLOQUIALE CA UNITĂȚI DE SENS: Nu traduce fiecare cuvânt separat. Compară sensul expresiei întregi din EN cu sensul expresiei întregi din RO. O formulare românească literală, dar cu alt sens, trebuie tratată ca eroare semantică chiar dacă este gramaticală.
+91. DETECTEAZĂ „ROMÂNĂ CORECTĂ, DAR SENS GREȘIT”: Acesta este un caz CRITIC. Dacă RO este gramatical și natural, dar schimbă cine face acțiunea, cine primește acțiunea, obiectul, posesia, relația dintre personaje, introduce un obiect care nu există în EN, elimină un element important din EN, schimbă funcția unei înjurături/intensificator într-un substantiv sau obiect concret ori schimbă sensul unei expresii, COREctează traducerea numai pe baza ORIGINALULUI și a contextului.
+92. ÎNAINTE DE ORICE CORECȚIE SEMANTICĂ: Compară obligatoriu ORIGINALUL, traducerea actuală, context_anterior și context_urmator. Nu corecta doar pentru că o altă formulare românească sună mai bine. Corectează numai dacă există o diferență reală de sens și există o variantă clară, susținută de surse.
+93. DUPĂ CORECȚIE: Recitește propoziția română completă și verifică din nou dacă noua variantă păstrează sensul EN, tonul, registrul și vulgaritatea atunci când există, fără să introducă cuvinte, obiecte, acțiuni sau idei inexistente în EN și fără să elimine informații importante. Dacă noua variantă nu este clar mai fidelă semantic, NU o returna.
 
 DATELE DE VERIFICAT:
 Fiecare obiect conține și context_anterior/context_urmator. Acestea sunt DOAR pentru înțelegerea sensului, acordului și continuității.
