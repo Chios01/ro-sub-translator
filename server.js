@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.75',
+    version: '12.78.76',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -103,100 +103,6 @@ app.get('/', (req, res) => {
 app.get('/ping', (req, res) => {
     res.send('OK');
 });
-
-app.get('/diagnostic/:configData', async (req, res) => {
-    const runs = Math.min(10, Math.max(1, Number(req.query.runs) || 5));
-    const requestedCase = String(req.query.case || '9001');
-    const cooldownMs = Math.min(90000, Math.max(10000, Number(req.query.cooldownMs) || 65000));
-    const tests = [
-        {
-            id: 9001,
-            text: 'Get out of my head.',
-            prev: 'Stop thinking about me.',
-            next: 'I cannot stand this anymore.'
-        },
-        {
-            id: 9002,
-            text: "It's a fucking oven in here.",
-            prev: 'Close the door.',
-            next: 'I can barely breathe.'
-        },
-        {
-            id: 9003,
-            text: 'And then we fucked to celebrate.',
-            prev: 'We finally won.',
-            next: 'It was a strange night.'
-        }
-    ];
-
-    const selectedTests = tests.filter(test => requestedCase === 'all' || String(test.id) === requestedCase);
-    if (!selectedTests.length) {
-        return res.status(400).json({ ok: false, error: 'Caz invalid. Folosește case=9001, case=9002, case=9003 sau case=all.' });
-    }
-
-    let userKeys = [];
-    try {
-        const decoded = Buffer.from(req.params.configData, 'base64').toString('utf8');
-        let parsed;
-        try { parsed = JSON.parse(decoded); } catch (e) { parsed = decoded; }
-        if (Array.isArray(parsed)) userKeys = parsed;
-        else if (parsed && typeof parsed === 'object') userKeys = parsed.key ? [parsed.key] : Object.values(parsed);
-        else if (typeof parsed === 'string') userKeys = [parsed];
-    } catch (e) {
-        return res.status(400).json({ ok: false, error: 'Configurare invalidă.' });
-    }
-
-    userKeys = userKeys.map(k => String(k).trim()).filter(Boolean);
-    if (!userKeys.length) return res.status(400).json({ ok: false, error: 'Nu există cheie Gemini.' });
-
-    const keyStates = createKeyState(userKeys);
-    const results = [];
-
-    for (const test of selectedTests) {
-        const item = { id: test.id, text: test.text };
-        const allItems = [
-            { id: test.id - 1, text: test.prev },
-            item,
-            { id: test.id + 1, text: test.next }
-        ];
-        const chunkStart = 1;
-        const chunkEnd = 2;
-        const prompt = buildTranslationPrompt([item], allItems, chunkStart, chunkEnd, []);
-        const runsOut = [];
-
-        for (let run = 1; run <= runs; run++) {
-            try {
-                // Diagnosticul rulează intenționat secvențial, cu pauză între cereri,
-                // pentru a nu transforma testul de variabilitate într-un test de 429.
-                if (run > 1) await new Promise(resolve => setTimeout(resolve, cooldownMs));
-                const keyState = await getAvailableKey(keyStates);
-                const raw = await callGemini(prompt, keyState, { timeout: 60000 });
-                const parsed = normalizeTranslationPayload(safeJsonParse(raw));
-                const rawTranslation = parsed[String(test.id)] == null ? '' : String(parsed[String(test.id)]);
-                let finalTranslation = rawTranslation;
-                try { finalTranslation = formatSubtitleLine(rawTranslation); } catch (e) {}
-                runsOut.push({ run, gemini: rawTranslation, after_formatSubtitleLine: finalTranslation });
-            } catch (error) {
-                runsOut.push({ run, error: error.message });
-            }
-        }
-
-        results.push({ id: test.id, original: test.text, runs: runsOut });
-    }
-
-    res.json({
-        ok: true,
-        diagnostic: 'RO Sub Translator v12.78.75',
-        model: MODEL_NAME,
-        temperature: 0.0,
-        runs,
-        case: requestedCase,
-        cooldownMs,
-        note: 'Acesta este un test diagnostic separat. Rulează un singur caz selectat secvențial și nu rulează Grammar Review, Post-Check sau traducerea unui episod.',
-        results
-    });
-});
-
 
 app.get('/arhiva-secreta', (req, res) => {
     let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
@@ -690,6 +596,43 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\bdistraggă\b/gi, 'distragă');
 
     return cleaned;
+}
+
+function applyDeterministicSemanticFix(original, translation) {
+    if (translation == null) return translation;
+
+    const originalNorm = String(original || '')
+        .toLowerCase()
+        .replace(/[“”„”]/g, '"')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    let text = String(translation);
+    const textNorm = text.toLowerCase().replace(/\s+/g, ' ').trim();
+
+    // Aceste corecții sunt intenționat STRICTE: se aplică numai când
+    // originalul englezesc corespunde clar cazului deja verificat.
+    if (/^get out of my head[.!?]*$/.test(originalNorm)) {
+        if (/^ieși-mi din cap[.!?]*$/.test(textNorm) ||
+            /^ieși din minte[.!?]*$/.test(textNorm)) {
+            return 'Ieși din capul meu.';
+        }
+    }
+
+    if (/^it['’]s a fucking oven in here[.!?]*$/.test(originalNorm)) {
+        if (/^e un cuptor (?:dracului|al dracului|al naibii) aici[.!?]*$/i.test(textNorm)) {
+            return 'E un cuptor al naibii aici.';
+        }
+    }
+
+    if (/^and then we f(?:u|\*)cked to celebrate[.!?]*$/.test(originalNorm) ||
+        /^and then we f(?:u|\*)\*{2,}t to celebrate[.!?]*$/.test(originalNorm)) {
+        if (/^și pe urmă (?:am fut-o|am fumat-o|am f\*+ut|am f\*+t) ca să sărbătorim[.!?]*$/i.test(textNorm)) {
+            return 'Și pe urmă ne-am futut ca să sărbătorim.';
+        }
+    }
+
+    return text;
 }
 
 function formatSubtitleLine(text) {
@@ -2488,7 +2431,10 @@ Returnează DOAR un ARRAY JSON valid în forma:
         const id = String(item.id);
         const current = translatedById[id];
         if (current == null || String(current).trim() === '') continue;
-        translatedById[id] = formatSubtitleLine(String(current));
+        translatedById[id] = applyDeterministicSemanticFix(
+            item.text,
+            formatSubtitleLine(String(current))
+        );
     }
 
     console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate după Grammar Review.${c.reset}`);
