@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.58',
+    version: '12.78.59',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1862,6 +1862,17 @@ REGULI CRITICE:
 38. Nu introduce engleză în traducere și nu introduce caractere non-latine.
 39. Dacă nu ești 100% sigur că există o eroare, PĂSTREAZĂ traducerea actuală.
 
+EXEMPLE SUPLIMENTARE DE ERORI RECENTE:
+- „Ce naiba veți faceți la Los Alamos?” → verifică auxiliarul + verbul; forma așteptată poate fi „veți face”.
+- „Mecanica cuantică spun că e din ambele.” → verifică acordul subiect–verb și sensul complet.
+- „Printre oamenii de știință a fost unanimă.” → verifică subiectul logic, acordul și construcția semantică.
+- „Mm, mi-am amintesc bine.” → verifică reflexivul și persoana; dacă ORIGINALUL cere „îmi amintesc”, repară întreaga construcție.
+- „Există o persoană pe care n-o veți niciodată învinge.” → verifică ordinea naturală „n-o veți învinge niciodată”.
+- „Destul de puternic să-l omoare pe Homelander l-ar transforma...” → verifică ordinea sintactică a întregii propoziții.
+- „De ce dracu' aș-o omori pe maică-ta?” → verifică simultan condiționalul, infinitivul și cliticul.
+- „Deci chiar ai f-o.” → verifică forma verbală completă și cliticul; nu păstra fragmentul „f-o” dacă ORIGINALUL cere „făcut-o”.
+- „nu ți-acționează puterile?” → verifică poziția cliticului și construcția verbală completă.
+
 EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE
  DE DETECȚIE:
 - „Ori dăm de capăt cum să-l antrenăm” → detectează construcția sintactică nenaturală și corectează conform ORIGINALULUI.
@@ -1885,6 +1896,19 @@ EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE
 - „De ce i-ar pasa ce fac?” → verifică forma verbală „păsa” și construcția completă „i-ar păsa”.
 - „...cumpărate in ziua...” → verifică diacriticele și forma gramaticală „în”.
 - „De ce i-o fi spus lui Einstein de m-a vorbit de rău.” → verifică legătura sintactică dintre verbe, pronume și subordonate; nu accepta o propoziție doar pentru că toate cuvintele sunt românești.
+
+39. Verifică explicit CONSTRUCȚIILE CU AUXILIARE ȘI MODALE. Forme precum „veți faceți”, „ar trebui să mergiți” sau alte combinații incompatibile de forme verbale sunt erori clare când ORIGINALUL și contextul confirmă forma corectă.
+40. Verifică explicit ORDINEA CLITICELOR în infinitiv, condițional, conjunctiv și perfect compus. Forme precum „aș-o omori”, „nu ți-acționează”, „ai f-o” trebuie analizate ca structură completă, nu reparate doar caracter cu caracter.
+41. Verifică explicit ACORDUL SUBIECT–VERB. „Mecanica cuantică spun că e din ambele” trebuie analizat chiar dacă fiecare cuvânt există în română.
+42. Verifică explicit PREPOZIȚIILE ȘI COMPLEMENTELE CERUTE DE VERB. Nu accepta combinații precum „pregătit pentru pe 6” sau complemente incompatibile; verifică relația sintactică completă.
+43. Verifică explicit construcții de tipul „Printre oamenii de știință a fost unanimă”: stabilește subiectul logic și verifică acordul și sensul.
+44. Verifică explicit FRAGMENTELE care par corecte lexical, dar sunt rupte sintactic. Dacă structura este evident coruptă, reconstruiește numai partea susținută de ORIGINAL și context.
+45. Verifică explicit VERBELE REFLEXIVE ȘI PRONUMELE PERSONALE. „mi-am amintesc”, „m-am cerut în căsătorie”, „aș-o omori” și „mi facă” trebuie evaluate ca întregi construcții verbale.
+46. Verifică explicit ORDINEA NATURALĂ A CUVINTELOR. „Există o persoană pe care n-o veți niciodată învinge” trebuie evaluat ca propoziție, nu ca listă de cuvinte corecte.
+47. Verifică explicit VOCATIVELE ȘI CALCURILE LEXICALE; „idioticule” poate fi un calchiu dacă ORIGINALUL cere „idiotule”.
+48. Formele scurte corupte („veți faceți”, „ai f-o”, „ți-acționează”, „aș-o omori”, „mi-am amintesc”, „ftuți”, „realejată”, „fãcut-o”) sunt semnale pentru o verificare sintactică mai largă.
+49. Nu considera o linie corectă doar pentru că trece un detector lexical. Caută activ erori care apar exclusiv din relația dintre cuvinte: acord, guvernare verbală, clitice, complemente, ordine sintactică și sens.
+50. După orice corecție verbală, pronominală sau de ordine a cuvintelor, verifică din nou întreaga propoziție față de ORIGINAL și context.
 
 IMPORTANT: Acestea sunt exemple de TIPURI DE ERORI, nu corecții care trebuie aplicate orbește. Pentru fiecare linie, ORIGINALUL și contextul au prioritate.
 
