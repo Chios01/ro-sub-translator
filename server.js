@@ -1504,7 +1504,19 @@ function hasUntranslatedEnglish(original, translated) {
 
     const distinctive = new Set(['the','from','however','although','because','without','between','maybe','please','sorry','thanks','thank','your','would','could','should','cannot','itself','such','indictment']);
     const distinctiveHits = tw.filter(w => distinctive.has(w));
+
+    // Protejează numele proprii păstrate intenționat din original, inclusiv
+    // nume de forma „Tyler, the Creator”. Dacă secvența englezească apare
+    // identic și în ORIGINAL și este clar parte dintr-un nume propriu, nu o
+    // marca drept cuvânt netradus.
+    const properNameMatches = transClean.match(/\b[A-Z][A-Za-zÀ-ÖØ-öø-ÿ]+(?:\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ]+){0,3}(?:,\s*the\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ]+)?\b/g) || [];
+    const hasPreservedProperName = properNameMatches.some(name => {
+        const normalizedName = normalize(name);
+        return normalizedName.length >= 4 && originalNorm.includes(normalizedName);
+    });
+
     if (distinctiveHits.length) {
+        if (hasPreservedProperName && distinctiveHits.every(w => w === 'the' || w === 'a' || w === 'an')) return false;
         if (namedTitle && distinctiveHits.every(w => w === 'the' || w === 'a' || w === 'an')) return false;
         return true;
     }
@@ -2261,7 +2273,7 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                 checked += batch.length;
 
                 for (const item of batch) {
-                const id = String(item.id);
+                    const id = String(item.id);
                 const candidateRaw = parsedDict[id];
                 if (candidateRaw == null) continue;
 
@@ -2282,6 +2294,11 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                 fixed++;
                 console.log(`${c.green}  ✔ [Grammar Review] ${item.id} corectată${c.reset}`);
                 }
+
+                // IMPORTANT: dacă răspunsul JSON a fost valid și am procesat calupul,
+                // calupul este REUȘIT. Nu lăsăm bucla de retry să cadă ulterior în
+                // fallback-ul „eroare necunoscută” și să dubleze contorul checked.
+                return { success: true, is429: false };
             } catch (error) {
                 lastJsonError = error;
                 const message = String(error?.message || '');
