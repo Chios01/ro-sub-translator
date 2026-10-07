@@ -1285,6 +1285,19 @@ async function getAvailableKey(keyStates) {
 async function callGemini(prompt, keyState, options = {}) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
     const timeout = Number.isInteger(options.timeout) ? options.timeout : 120000;
+    const responseSchema = options.responseSchema || {
+        type: 'ARRAY',
+        minItems: 1,
+        items: {
+            type: 'OBJECT',
+            properties: {
+                id: { type: 'INTEGER' },
+                text: { type: 'STRING' }
+            },
+            required: ['id', 'text'],
+            propertyOrdering: ['id', 'text']
+        }
+    };
 
     try {
         const response = await axios.post(
@@ -1294,19 +1307,7 @@ async function callGemini(prompt, keyState, options = {}) {
                 generationConfig: {
                     temperature: 0.0,
                     responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: 'ARRAY',
-                        minItems: 1,
-                        items: {
-                            type: 'OBJECT',
-                            properties: {
-                                id: { type: 'INTEGER' },
-                                text: { type: 'STRING' }
-                            },
-                            required: ['id', 'text'],
-                            propertyOrdering: ['id', 'text']
-                        }
-                    }
+                    responseSchema
                 },
                 safetySettings: [
                     { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -2264,9 +2265,25 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
 
                 const keyState = await getAvailableKey(keyStates);
                 const requestPrompt = jsonAttempt > 0
-                    ? `${prompt}\n\nRETRY TEHNIC — Răspunsul anterior nu a putut fi interpretat ca JSON valid. Returnează ACUM DOAR un ARRAY JSON valid, fără markdown, fără explicații și fără text înainte sau după ARRAY. Escapă obligatoriu ghilimelele interne din valorile text și nu modifica ID-urile. Dacă nu există corecții, returnează exact [].`
+                    ? `${prompt}\n\nRETRY TEHNIC: Returnează DOAR JSON valid, fără markdown sau explicații. Format exact: [{\"id\":123,\"text\":\"...\"}]. Pentru nicio corecție returnează exact []. Nu modifica ID-urile. Escapă toate ghilimelele interne din text.`
                     : prompt;
-                const raw = await callGemini(requestPrompt, keyState, { timeout: GRAMMAR_REVIEW_TIMEOUT_MS });
+                const raw = await callGemini(requestPrompt, keyState, {
+                    timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
+                    responseSchema: {
+                        type: 'ARRAY',
+                        minItems: 0,
+                        maxItems: batch.length,
+                        items: {
+                            type: 'OBJECT',
+                            properties: {
+                                id: { type: 'INTEGER' },
+                                text: { type: 'STRING' }
+                            },
+                            required: ['id', 'text'],
+                            propertyOrdering: ['id', 'text']
+                        }
+                    }
+                });
                 const parsed = safeJsonParse(raw);
                 const parsedDict = normalizeTranslationPayload(parsed);
 
