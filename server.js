@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.61',
+    version: '12.78.62',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1927,6 +1927,11 @@ EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE
 66. Verifică explicit EXPRESIILE TEMPORALE CU „LA/PÂNĂ LA/PÂNĂ”. Formulări precum „pregătit pe 6” trebuie comparate cu ORIGINALUL pentru a stabili dacă sensul este „pregătit la șase”, „pregătit până la șase” sau altceva. Nu accepta o prepoziție doar pentru că traducerea literală o permite.
 67. Verifică explicit CONSTRUCȚIILE CU „ÎN DOI/ÎN DOUĂ” ȘI EXPRESIILE DE MOD/NUMĂR. O formulare precum „totul se mișcă în doi” poate fi un calchiu al englezei; verifică ORIGINALUL și contextul pentru o formulare românească naturală, de tipul „ne mișcăm câte doi”, dacă sensul o confirmă.
 68. Când găsești o formă suspectă, nu corecta doar cuvântul izolat. Reanalizează întreaga propoziție după înlocuire și verifică din nou acordul, sensul, complementele și naturalețea.
+69. Verifică explicit ORICE CARACTER ATIPIC DINTR-UN CUVÂNT ROMÂNESC. Româna standard folosește literele latine și diacriticele „ă â î ș ț”. Caractere precum „ł, ø, æ, å, ñ, ç, ð, þ, ß, đ” sau alte caractere neobișnuite inserate în cuvinte românești trebuie tratate ca POSIBILĂ CORUPERE/EROARE. Exemplu: „ała” trebuie verificat ca posibilă formă coruptă a lui „ăla”. Verifică întotdeauna ORIGINALUL și contextul înainte de corectare.
+70. Nu trata automat orice caracter străin ca eroare. Nume proprii, mărci, locuri, termeni ficționali și cuvinte străine intenționale pot conține caractere neobișnuite; păstrează-le dacă ORIGINALUL și contextul confirmă că sunt deliberate.
+71. Verifică explicit MAJUSCULELE ACCIDENTALE DIN INTERIORUL PROPOZIȚIEI. Un cuvânt românesc obișnuit nu trebuie să înceapă accidental cu majusculă în mijlocul propoziției. Exemple: „Ca să Mă înveți...”, „..., Oricum.” sau „De ce i-ar Pasa...” trebuie verificate. Corectează numai dacă nu este început de propoziție, nume propriu, marcă, titlu, citat sau alt caz justificat de context.
+72. Pentru caracterele atipice și majusculele suspecte, nu face o corecție izolată doar pentru că forma „arată ciudat”. Compară ORIGINALUL, context_anterior și context_urmator și verifică întreaga propoziție înainte de a decide.
+
 
 EXEMPLE SUPLIMENTARE — INTEGRITATE SINTACTICĂ ȘI ORTOGRAFICĂ:
 - „Există o persoană pe care n-o veți niciodată învinge.” → ordinea corectă este de tipul „Există o persoană pe care n-o veți învinge niciodată.”; verifică întreaga construcție, nu doar cuvântul „învinge”.
