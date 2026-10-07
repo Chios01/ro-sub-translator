@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.74',
+    version: '12.78.75',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2386,6 +2386,18 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
     await grammarTranslationReview(items, translatedById, keyStates);
 
+    // Ultima protecție: corecțiile mecanice certe trebuie aplicate DUPĂ Grammar Review.
+    // Altfel, verificatorul LLM poate rescrie din nou o formă deja corectată și rezultatul
+    // devine dependent de variația aleatorie a modelului. formatSubtitleLine() este
+    // idempotent pentru aceste corecții și reaplică dicționarul determinist la final.
+    for (const item of items) {
+        const id = String(item.id);
+        const current = translatedById[id];
+        if (current == null || String(current).trim() === '') continue;
+        translatedById[id] = formatSubtitleLine(String(current));
+    }
+
+    console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate după Grammar Review.${c.reset}`);
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
