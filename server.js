@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.59',
+    version: '12.78.60',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1909,6 +1909,35 @@ EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE
 48. Formele scurte corupte („veți faceți”, „ai f-o”, „ți-acționează”, „aș-o omori”, „mi-am amintesc”, „ftuți”, „realejată”, „fãcut-o”) sunt semnale pentru o verificare sintactică mai largă.
 49. Nu considera o linie corectă doar pentru că trece un detector lexical. Caută activ erori care apar exclusiv din relația dintre cuvinte: acord, guvernare verbală, clitice, complemente, ordine sintactică și sens.
 50. După orice corecție verbală, pronominală sau de ordine a cuvintelor, verifică din nou întreaga propoziție față de ORIGINAL și context.
+51. Fă o VERIFICARE DE INTEGRITATE A PROPOZIȚIEI după analiza lexicală: dacă toate cuvintele există în română, verifică totuși dacă împreună formează o propoziție completă, coerentă și gramaticală. Nu considera „toate cuvintele sunt românești” drept dovadă că traducerea este corectă.
+52. Fă o VERIFICARE ORTOGRAFICĂ FINALĂ pentru fiecare linie: caută litere lipsă, litere în plus, inversări, forme fără diacritice care schimbă cuvântul, spații puse greșit în jurul cratimei și cuvinte trunchiate. Exemple de tip: „invige”, „reeleasă”, „nite”, „făt-o”, „f-ut-o”, „N- ar”, „trebui” în loc de „trebuie”.
+53. Fă o VERIFICARE DE FORMA VERBALĂ + CONSTRUCȚIE VERBALĂ: dacă apare un verb suspect, verifică simultan infinitivul/conjunctivul/condiționalul, persoana, numărul, auxiliarul, cliticul și complementul cerut. Nu repara doar terminația unui verb dacă întreaga construcție rămâne greșită.
+54. Fă o VERIFICARE DE ORDINE SINTACTICĂ: pentru fiecare propoziție suspectă, rearanjează mental componentele în ordinea românească naturală și compară cu ORIGINALUL. Exemple: „Destul de puternic să-l omoare pe Homelander l-ar transforma...” și „Există o persoană pe care n-o veți niciodată învinge.” sunt probleme de structură, nu simple typo-uri.
+55. Fă o VERIFICARE DE ACORD ȘI REFERINȚĂ: verifică subiectul real al fiecărui verb/adjectiv/participiu și antecedentul fiecărui pronume. Nu accepta acorduri sau referințe care par plauzibile local, dar nu se potrivesc cu propoziția completă ori cu contextul.
+56. Fă o VERIFICARE DE COMPLETITUDINE: caută cuvinte lipsă care fac propoziția să pară aproape corectă, dar nu corectă, inclusiv clitice, auxiliare, prepoziții, terminații și elemente obligatorii ale construcției. Exemple: „De ce dracu' aș-o omori...”, „Deci ai f-o.” și „nu ți-acționează...” trebuie evaluate ca structuri complete.
+57. Fă o VERIFICARE PENTRU ERORI DE TIP „CUVÂNT CORECT, RELAȚIE GREȘITĂ”: un verb poate fi corect ca formă, dar greșit în persoană; un substantiv poate fi corect, dar legat prin prepoziția greșită; două cuvinte pot fi corecte separat, dar combinația poate fi imposibilă în română. Aceste cazuri trebuie corectate dacă ORIGINALUL și contextul oferă o soluție clară.
+58. Pentru propozițiile împărțite între două sau mai multe subtitluri, fă verificarea la nivelul frazei complete folosind context_anterior și context_urmator. Nu lăsa o eroare de acord, timp verbal, clitic sau ordine a cuvintelor să treacă doar pentru că fragmentul local pare acceptabil.
+59. Fă o ultimă trecere mentală de tip NATIV ROMÂN: „Aș spune această propoziție exact așa în română?” Dacă răspunsul este clar „nu” din cauza unei greșeli gramaticale/sintactice sau a unui calchiu evident, verifică ORIGINALUL și propune corecția. Dacă este doar o preferință stilistică, NU modifica.
+60. Nu te opri după găsirea primei erori. După ce identifici o problemă într-o linie, verifică și restul liniei pentru alte erori independente înainte de a returna corecția.
+
+EXEMPLE SUPLIMENTARE — INTEGRITATE SINTACTICĂ ȘI ORTOGRAFICĂ:
+- „Există o persoană pe care n-o veți niciodată învinge.” → ordinea corectă este de tipul „Există o persoană pe care n-o veți învinge niciodată.”; verifică întreaga construcție, nu doar cuvântul „învinge”.
+- „Destul de puternic să-l omoare pe Homelander l-ar transforma...” → propoziția trebuie reconstruită în ordinea românească susținută de ORIGINAL; nu accepta structura doar pentru că fiecare cuvânt este valid.
+- „Ce naiba veți faceți la Los Alamos?” → „veți face”; elimină combinația auxiliar + formă verbală incompatibilă.
+- „Atacul de panică ăla trebui să fie un avertisment.” → „Atacul de panică ăla trebuie să fie un avertisment.”; verifică forma verbală completă.
+- „să fiu reeleasă peste patru ani.” → „să fiu realeasă peste patru ani.”; verifică forma lexicală/participială.
+- „Mai bine mă omorau, decât ce i-am făcut fetei aceia.” → „...fetei aceleia.”; verifică acordul în construcția completă.
+- „Poți să-mi iei nite Sugarfish?” → „niște”; verifică ortografia și diacriticele.
+- „N- ar trebui să fie așa.” → „N-ar trebui să fie așa.”; verifică spațierea în jurul cratimei.
+- „Ca să Mă-nveți cum să-mi ucid tatăl?” → „Ca să mă-nveți...”; verifică majuscula în context.
+- „Exact ca au făcut-o cu tatăl meu.” → verifică prepoziția/conectorul și construcția; dacă ORIGINALUL confirmă, „Exact cum au făcut-o...” este forma naturală.
+- „Mecanica cuantică spun că e din ambele.” → verifică subiectul singular și acordul verbal, chiar dacă toate cuvintele sunt valide.
+- „Printre oamenii de știință a fost unanimă.” → verifică subiectul logic și acordul; nu accepta o propoziție doar pentru că adjectivul este românesc.
+- „Mm, mi-am amintesc bine.” → verifică reflexivul și forma verbală completă; dacă ORIGINALUL cere „îmi amintesc”, corectează întreaga construcție.
+- „De ce i-ar pasa ce fac?” → „De ce i-ar păsa ce fac?”; verifică forma verbală și construcția condițională.
+- „...cumpărate in ziua...” → „...cumpărate în ziua...”; verifică diacritica și forma gramaticală.
+- „făt-o”, „f-ut-o”, „ai f-o” → dacă ORIGINALUL nu indică o bâlbâială intenționată, reconstruiește forma verbală completă, de tipul „făcut-o”.
+- „invige”, „reeleasă”, „nite”, „frecându-menta”, „mizerijile” → tratează-le ca posibile deformări și verifică propoziția completă înainte de corectare.
 
 IMPORTANT: Acestea sunt exemple de TIPURI DE ERORI, nu corecții care trebuie aplicate orbește. Pentru fiecare linie, ORIGINALUL și contextul au prioritate.
 
