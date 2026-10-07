@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.55',
+    version: '12.78.56',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -907,6 +907,27 @@ function formatSubtitleLine(text) {
         [/\bTrapuri\b/gi, 'Capcane'],
         [/\bîn a naibii\b/gi, 'întreagă, la naiba'],
         [/\bAltor orte\b/gi, 'Alcuiva'],
+
+        // Corecții mecanice certe observate în verificările recente.
+        // Sunt intenționat conservative: repară doar forme clar corupte/typo.
+        [/\bDe ce (?:ne|mi|ți|v|i)-ar pasa\b/gi, m => m.replace(/pasa\b/gi, 'păsa')],
+        [/\bmizerijile\b/gi, 'mizeriile'],
+        [/\bfrecându-menta\b/gi, 'frecând menta'],
+        [/\bT-Ar trebui\b/g, 'Ar trebui'],
+        [/\btuți\b/gi, 'toți'],
+        [/\bțin-ținta\b/gi, 'ținta'],
+        [/\bfãcut-o\b/gi, 'făcut-o'],
+        [/\bca i-au făcut\b/gi, 'cum i-au făcut'],
+        [/\bpână la adânci bătrânețe\b/gi, 'până la adânci bătrâneți'],
+        [/\breeligitată\b/gi, 'realeasă'],
+        [/\bîn ourselves\b/gi, 'înșine'],
+        [/\bMă-nvățați\b/g, 'mă-nvățați'],
+        [/\bmi l-a învățat tata\b/gi, 'm-a învățat tata'],
+        [/\bvirusul ăla naibii\b/gi, 'virusul ăla al naibii'],
+        [/\bDe ce ne-ar pasa\b/gi, 'De ce ne-ar păsa'],
+        [/\bDe ce i-ar pasa\b/gi, 'De ce i-ar păsa'],
+        [/\bcomuniștii erau periculoase\b/gi, 'comuniștii erau periculoși'],
+        [/\bîn ziua în care\b/gi, 'în ziua în care'],
         [/\.icon\b/gi, '']
     ];
 
@@ -1087,13 +1108,32 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
     const contextBefore = allItems.slice(Math.max(0, chunkStart - CONTEXT_LINES_BEFORE), chunkStart);
     const contextAfter = allItems.slice(chunkEnd, Math.min(allItems.length, chunkEnd + CONTEXT_LINES_AFTER));
 
-    const keysToTranslate = chunk.map(obj => ({ id: obj.id, text: obj.text }));
+    // Fiecare replică primește câteva replici vecine direct în obiectul JSON.
+    // Astfel Gemini poate lega gramatical replica de ceea ce vine imediat înainte/după,
+    // fără request-uri suplimentare și fără a modifica numărul de linii traduse.
+    // Context direct pentru fiecare replică: o linie înainte și una după.
+    // Nu creează request-uri suplimentare; este trimis în același JSON.
+    const keysToTranslate = chunk.map((obj, localIndex) => {
+        const absoluteIndex = chunkStart + localIndex;
+        const previous = allItems[absoluteIndex - 1];
+        const next = allItems[absoluteIndex + 1];
+
+        return {
+            id: obj.id,
+            text: obj.text,
+            context_anterior: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
+            context_urmator: next ? `[${next.id}] ${next.text}` : '(niciunul)'
+        };
+    });
 
     return `
 ${MASTER_TRANSLATION_PROMPT}
 
 Context inainte (pentru referinta):
 ${contextBefore.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
+
+Context dupa (pentru referinta):
+${contextAfter.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
 
 Context anterior tradus in Romana (pentru continuitate):
 ${previousTranslatedContext.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
@@ -1103,6 +1143,8 @@ Tradu STRICT următoarele replici și returnează un ARRAY JSON cu exact câte u
   {"id": 123, "text": "traducerea în română"}
 ]
 Nu modifica ID-urile și nu omite nicio replică.
+Câmpurile context_anterior și context_urmator sunt DOAR pentru înțelegerea replicii curente; NU le traduce și NU le include în răspuns.
+Folosește contextul pentru acord, pronume, continuitate, topică și sens, dar modifică DOAR câmpul text al ID-ului curent.
 
 REPLICILE DE TRADUS:
 ${JSON.stringify(keysToTranslate, null, 2)}
