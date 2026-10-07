@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.69',
+    version: '12.78.70',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -920,6 +920,10 @@ function formatSubtitleLine(text) {
         [/\bmergem orbești\b/gi, 'mergem orbește'],
         [/\bo favoră\b/gi, 'o favoare'],
         [/\bMă închizi într-o cușcă\s*\/\s*dacă nu accept să fii arma ta\b/gi, 'Mă închizi într-o cușcă / dacă nu accept să fiu arma ta'],
+        [/\bIași-mi din cap\b/gi, 'Ieși din capul meu'],
+        [/\bȘi pe urmă am fumat-o de sărbătoare\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
+        [/\bRezoluția Concurrentă\b/gi, 'Rezoluția Concurentă'],
+        [/\bun cerc de încrederi\b/gi, 'un cerc de încredere'],
 
         // Sunt intenționat conservative: repară doar forme clar corupte/typo.
         [/\bDe ce (?:ne|mi|ți|v|i)-ar pasa\b/gi, m => m.replace(/pasa\b/gi, 'păsa')],
@@ -2116,6 +2120,18 @@ Corectează numai ceea ce este efectiv greșit.
 104. REGULĂ FINALĂ ÎN CAZ DE DUBIU.
 Dacă după compararea ORIGINAL + translation + context_anterior_en + context_urmator_en + context_anterior_ro + context_urmator_ro nu există suficiente dovezi pentru o corecție sigură, NU returna nimic pentru acel ID.
 Este preferabil să rămână o formulare ușor imperfectă decât să fie înlocuită o traducere corectă cu o reformulare greșită.
+
+106. ANTI-HALUCINAȚIE SEMANTICĂ — NU INVENTA ELEMENTE CARE NU EXISTĂ ÎN ORIGINAL.
+Nu introduce în traducerea română etnii, categorii sociale, religii, obiecte, persoane, acțiuni sau alte informații care nu sunt susținute de EN și context. Dacă o vulgaritate, insultă sau expresie englezească este ambiguă, verifică funcția și sensul ei în EN înainte de a alege echivalentul românesc.
+
+107. PROTEJEAZĂ REGISTRUL ȘI INTENȚIA ORIGINALULUI.
+Nu înlocui o vulgaritate cu un eufemism inventat și nu transforma o expresie vulgară într-o referire la o etnie sau altă categorie socială doar pentru că aceasta pare o soluție locală. Păstrează registrul, tonul și intensitatea originalului atunci când există un echivalent românesc firesc.
+
+108. VULGARITĂȚILE TREBUIE INTERPRETATE DUPĂ FUNCȚIE.
+Dacă un termen precum "fuck/fucking", "shit", "damn", "hell" etc. funcționează ca verb, act sexual, intensificator, înjurătură sau interjecție, stabilește funcția din EN înainte de traducere. Nu inventa un alt verb, obiect sau acțiune doar pentru a evita vulgaritatea.
+
+109. CORECȚIE DOAR CU DOVADĂ.
+Dacă nu poți demonstra din EN + context că traducerea RO este greșită ca sens, gramatică, vocabular sau construcție, PĂSTREAZĂ traducerea existentă. Nu modifica doar pentru că o altă formulare ți se pare mai elegantă.
 
 105. ORDINEA PRIORITĂȚILOR.
 Respectă această ordine strictă:
