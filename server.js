@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.68',
+    version: '12.78.69',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -909,6 +909,18 @@ function formatSubtitleLine(text) {
         [/\bAltor orte\b/gi, 'Alcuiva'],
 
         // Corecții mecanice certe observate în verificările recente.
+        // Erori recurente confirmate: corecții native, deterministe.
+        [/\bca să\.\.\.rbătorim\b/gi, 'ca să sărbătorim'],
+        [/\bM-am cerut în căsătorie cu\b/gi, 'L-am cerut în căsătorie pe'],
+        [/\bCitească-gânduri\b/gi, 'Cititoare de gânduri'],
+        [/\bdemocracția\b/gi, 'democrația'],
+        [/\bMă reasigur în patru ani\b/gi, 'Să fiu realeasă în patru ani'],
+        [/\bS-a dus totul pe râpă\b/gi, 'S-a dus totul de râpă'],
+        [/\bo bullet\b/gi, 'un glonț'],
+        [/\bmergem orbești\b/gi, 'mergem orbește'],
+        [/\bo favoră\b/gi, 'o favoare'],
+        [/\bMă închizi într-o cușcă\s*\/\s*dacă nu accept să fii arma ta\b/gi, 'Mă închizi într-o cușcă / dacă nu accept să fiu arma ta'],
+
         // Sunt intenționat conservative: repară doar forme clar corupte/typo.
         [/\bDe ce (?:ne|mi|ți|v|i)-ar pasa\b/gi, m => m.replace(/pasa\b/gi, 'păsa')],
         [/\bmizerijile\b/gi, 'mizeriile'],
