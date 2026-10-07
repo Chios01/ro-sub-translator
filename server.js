@@ -1854,6 +1854,7 @@ const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
 const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
 const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
 const GRAMMAR_REVIEW_JSON_RETRY_LIMIT = 1;
+const GRAMMAR_REVIEW_JSON_SPLIT_MIN = 20;
 
 async function grammarTranslationReview(items, translatedById, keyStates) {
     const candidates = items.filter(item => {
@@ -2250,7 +2251,10 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                 }
 
                 const keyState = await getAvailableKey(keyStates);
-                const raw = await callGemini(prompt, keyState, { timeout: GRAMMAR_REVIEW_TIMEOUT_MS });
+                const requestPrompt = jsonAttempt > 0
+                    ? `${prompt}\n\nRETRY TEHNIC — Răspunsul anterior nu a putut fi interpretat ca JSON valid. Returnează ACUM DOAR un ARRAY JSON valid, fără markdown, fără explicații și fără text înainte sau după ARRAY. Escapă obligatoriu ghilimelele interne din valorile text și nu modifica ID-urile. Dacă nu există corecții, returnează exact [].`
+                    : prompt;
+                const raw = await callGemini(requestPrompt, keyState, { timeout: GRAMMAR_REVIEW_TIMEOUT_MS });
                 const parsed = safeJsonParse(raw);
                 const parsedDict = normalizeTranslationPayload(parsed);
 
@@ -2325,25 +2329,25 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                 }
 
                 const isJsonError = /JSON Parse failed|Unexpected token|Unexpected end of JSON|Expected ',' or '}'|Expected property name/i.test(message);
-                if (!isJsonError) {
-                    console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat: ${message}${c.reset}`);
-                    return { success: false, is429: false };
-                }
 
-                // Eroare JSON: retry-ul buclei încearcă din nou același calup.
-                if (jsonAttempt < GRAMMAR_REVIEW_JSON_RETRY_LIMIT) {
+                // Prima eroare JSON/conținut gol: retry pe același calup, cu prompt
+                // explicit de reparare. Nu împărțim încă pentru a păstra viteza normală.
+                if ((isJsonError || /conținut gol|empty content/i.test(message)) &&
+                    jsonAttempt < GRAMMAR_REVIEW_JSON_RETRY_LIMIT) {
+                    lastJsonError = error;
                     continue;
                 }
 
-                // După retry, nu abandonăm 120 de replici. Îl împărțim și
-                // procesăm separat; astfel o singură replică problematică nu
-                // blochează restul calupului.
-                if (batch.length > 20) {
+                // Dacă am ajuns aici după un retry JSON eșuat, NU mai abandonăm
+                // calupul indiferent dacă a doua eroare a fost JSON, răspuns gol sau
+                // o eroare neașteptată. Îl împărțim pentru a izola replica problematică.
+                if (batch.length > GRAMMAR_REVIEW_JSON_SPLIT_MIN &&
+                    (isJsonError || jsonAttempt > 0 || /conținut gol|empty content/i.test(message))) {
                     const middle = Math.ceil(batch.length / 2);
                     const left = batch.slice(0, middle);
                     const right = batch.slice(middle);
 
-                    console.log(`${c.yellow}⚠ [Grammar Review] JSON invalid și după retry la ${batch.length} replici; împart calupul în ${left.length}+${right.length}...${c.reset}`);
+                    console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batch.length} nu a putut fi returnat ca JSON; împart în ${left.length}+${right.length} și reîncerc separat...${c.reset}`);
 
                     const leftResult = await processGrammarBatch(
                         left,
@@ -2362,7 +2366,7 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                     };
                 }
 
-                console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat nici după retry JSON: ${message}${c.reset}`);
+                console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat: ${message || 'eroare necunoscută'}${c.reset}`);
                 return { success: false, is429: false };
             }
         }
