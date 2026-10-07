@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.66',
+    version: '12.78.67',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -927,6 +927,11 @@ function formatSubtitleLine(text) {
         [/\bDe ce ne-ar pasa\b/gi, 'De ce ne-ar păsa'],
         [/\bDe ce i-ar pasa\b/gi, 'De ce i-ar păsa'],
         [/\bcomuniștii erau periculoase\b/gi, 'comuniștii erau periculoși'],
+        // Corecții mecanice suplimentare, strict pentru forme deja identificate ca erori clare.
+        [/\bjucând biliard în buzunar\b/gi, 'frecând menta'],
+        [/\bo mișto\b/gi, 'mișto'],
+        [/\borbești(?=[.\s,!?]*$)/gi, 'orbește'],
+        [/\bcunoscută de omenire\b/gi, 'cunoscută omenirii'],
         [/\bîn ziua în care\b/gi, 'în ziua în care'],
         [/\.icon\b/gi, '']
     ];
@@ -1805,12 +1810,19 @@ async function grammarTranslationReview(items, translatedById, keyStates) {
             const previous = index > 0 ? items[index - 1] : null;
             const next = index >= 0 && index < items.length - 1 ? items[index + 1] : null;
 
+            const previousRo = previous ? translatedById[String(previous.id)] : null;
+            const nextRo = next ? translatedById[String(next.id)] : null;
+
             return {
                 id: item.id,
                 original: item.text,
                 translation: translatedById[String(item.id)],
                 context_anterior: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
-                context_urmator: next ? `[${next.id}] ${next.text}` : '(niciunul)'
+                context_urmator: next ? `[${next.id}] ${next.text}` : '(niciunul)',
+                context_anterior_en: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
+                context_anterior_ro: previousRo ? `[${previous.id}] ${previousRo}` : '(niciunul)',
+                context_urmator_en: next ? `[${next.id}] ${next.text}` : '(niciunul)',
+                context_urmator_ro: nextRo ? `[${next.id}] ${nextRo}` : '(niciunul)'
             };
         });
 
@@ -1841,7 +1853,7 @@ REGULI CRITICE:
 17. Detectează calcuri evidente din engleză și vocative/construcții traduse mecanic, de exemplu „idioticule” când ORIGINALUL cere un vocativ românesc natural precum „idiotule”. Nu schimba însă jargonul sau termenii intenționați.
 18. Verifică majusculele în context: nu transforma automat începutul unei replici în literă mică sau invers; corectează doar când poziția sintactică este clară.
 19. Fă o AUDITARE SINTACTICĂ COMPLETĂ a fiecărei replici, chiar dacă toate cuvintele individuale par românești. Nu presupune că o propoziție este corectă doar pentru că nu conține typo-uri. Verifică dacă subiectul, predicatul, complementele, pronumele și determinările se leagă logic între ele și dacă ordinea cuvintelor produce o propoziție românească firească.
-20. Compară fiecare traducere cu ORIGINALUL și, când este util, cu replicile din „context_anterior” și „context_urmator”. Contextul este doar pentru înțelegerea sensului și a continuității; corectează numai replica curentă. Folosește contextul pentru a detecta persoana verbală, referința pronumelor, acordul, construcțiile care continuă din replica anterioară și propozițiile împărțite între subtitrări.
+20. Compară fiecare traducere cu ORIGINALUL și folosește obligatoriu, când este relevant, atât context_anterior_en/context_urmator_en, cât și context_anterior_ro/context_urmator_ro. EN este autoritatea pentru sensul sursă; RO ajută la continuitate, acord, referința pronumelor și propozițiile împărțite între subtitrări. Corectează numai replica curentă.
 21. Fii atent la erorile „gramatical românești la nivel de cuvinte, dar greșite ca propoziție”: acord greșit ascuns, complement legat de verbul greșit, prepoziție nepotrivită, verb la persoana/numărul greșit, pronume cu antecedent greșit, ordine sintactică anormală, construcție tranzitivă/intranzitivă greșită sau formulare care schimbă relația dintre personaje.
 22. Verifică separat CONSTRUCȚIILE VERBALE. Nu analiza doar forma verbului, ci și ce complemente cere verbul în română. De exemplu, o construcție precum „M-am cerut în căsătorie cu Hughie” poate avea cuvinte corecte individual, dar verbul și complementul sunt incompatibile; dacă ORIGINALUL spune că vorbitorul a cerut o altă persoană în căsătorie, reconstruiește construcția corectă.
 23. Verifică separat ACORDUL LOGIC, nu doar acordul gramatical superficial. Subiectul real trebuie să determine corect genul, numărul și persoana predicatului și ale adjectivelor/participiilor. De exemplu, „comuniștii erau periculoase” trebuie identificat ca acord greșit chiar dacă fiecare cuvânt există în română.
@@ -2098,8 +2110,12 @@ Regulile 98–105 au rol de protecție împotriva supra-corectării și prevalea
 
 
 DATELE DE VERIFICAT:
-Fiecare obiect conține și context_anterior/context_urmator. Acestea sunt DOAR pentru înțelegerea sensului, acordului și continuității.
-Nu le traduce și nu le modifica. Returnează corecții DOAR pentru câmpul translation al ID-ului curent.
+Fiecare obiect conține original + translation pentru replica curentă și, pentru context, atât variantele EN cât și RO ale replicilor vecine:
+- context_anterior_en / context_urmator_en = originalul englezesc al replicilor vecine;
+- context_anterior_ro / context_urmator_ro = traducerea română curentă a replicilor vecine;
+- context_anterior / context_urmator sunt păstrate ca referință compatibilă și conțin originalul vecin.
+Folosește EN pentru sensul sursă și RO pentru continuitate, acord și relațiile gramaticale dintre subtitrări. Nu modifica replicile vecine și returnează corecții DOAR pentru câmpul translation al ID-ului curent.
+Nu presupune că o formulare este greșită doar fiindcă vecinii RO sunt neobișnuiți; verifică întotdeauna și ORIGINALUL EN.
 ${JSON.stringify(payload, null, 2)}
 
 Returnează DOAR JSON valid în forma:
