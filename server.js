@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.65',
+    version: '12.78.66',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2045,6 +2045,56 @@ Dacă toate cuvintele sunt corecte individual, dar combinația lor produce o for
 Nu presupune că „fucking” = „dracului” în orice context, „damn” = „dracului” în orice context, „hell” = „iad” în orice context sau „fuck” = un substantiv/verb literal în orice context.
 Stabilește funcția expresiei în propoziția EN și caută echivalentul românesc natural pentru ACEA FUNCȚIE.
 
+
+
+98. REGULĂ DE CONSERVARE PRIORITARĂ — NU REPARA CE ESTE DEJA BUN.
+Scopul Grammar Review NU este să facă traducerea „mai frumoasă”, „mai elegantă” sau să aleagă formularea pe care tu ai prefera-o.
+Dacă „translation” este gramaticală, naturală suficient pentru un vorbitor nativ și transmite corect sensul din „original”, NU O MODIFICA.
+O diferență de preferință stilistică, sinonim, topică acceptabilă sau formulare alternativă NU este motiv de corecție.
+Dacă nu poți identifica o eroare concretă și demonstrabilă, păstrează varianta existentă.
+
+99. PRAG RIDICAT PENTRU CORECȚIE.
+Returnează o corecție numai dacă poți explica în mod clar ce este greșit în varianta actuală și de ce varianta nouă este mai corectă.
+Nu corecta pe baza unor formulări precum „ar suna mai bine”, „aș spune mai natural”, „poate ar fi mai potrivit” sau „prefer această variantă”.
+Dacă problema este discutabilă sau există mai multe variante corecte, NU CORECTA.
+
+100. NATURALEȚEA SE VERIFICĂ FĂRĂ SUPRA-CORRECTARE.
+Regulile 94–97 despre calcuri, intensificatori și construcții nefirești trebuie aplicate conservator.
+Nu presupune că o structură neobișnuită este greșită doar pentru că nu este formularea ta preferată.
+Pentru a modifica o construcție, trebuie să existe simultan:
+- o problemă reală de română sau o nepotrivire clară de sens;
+- o explicație susținută de ORIGINAL și context;
+- o variantă nouă clar mai corectă.
+Dacă lipsește oricare dintre acestea, păstrează traducerea actuală.
+
+101. NU GENERALIZA DIN EXEMPLE.
+Exemplele din regulile anterioare, inclusiv „E un cuptor dracului aici.”, „Ieși-mi din cap.” sau exemplele cu vulgarități, sunt doar cazuri de test și NU reprezintă tipare care trebuie reparate automat în toate replicile similare.
+Nu modifica o replică doar pentru că seamănă superficial cu un exemplu.
+Compară întotdeauna ORIGINALUL, traducerea actuală și contextul concret.
+
+102. O SINGURĂ EVALUARE COMPLETĂ, NU REPARAȚII ÎN CASCADĂ.
+Înainte de a propune o corecție, analizează întreaga replică și toate problemele posibile deodată.
+Alege o singură variantă finală care rezolvă problema identificată fără să introducă alte modificări inutile.
+Nu face „îmbunătățiri” secundare după ce problema principală a fost rezolvată.
+După formularea variantei finale, verific-o din nou ca pe o replică nouă.
+
+103. PĂSTREAZĂ REGISTRUL ȘI INTENȚIA EXISTENTE.
+Nu elimina vulgaritatea, slangul, sarcasmul, umorul, repetițiile intenționate sau stilul personajului doar pentru a obține o română mai formală.
+În același timp, nu introduce vulgaritate, intensitate, obiecte sau sensuri care nu există în ORIGINAL.
+Corectează numai ceea ce este efectiv greșit.
+
+104. REGULĂ FINALĂ ÎN CAZ DE DUBIU.
+Dacă după compararea ORIGINAL + translation + context_anterior + context_urmator nu există suficiente dovezi pentru o corecție sigură, NU returna nimic pentru acel ID.
+Este preferabil să rămână o formulare ușor imperfectă decât să fie înlocuită o traducere corectă cu o reformulare greșită.
+
+105. ORDINEA PRIORITĂȚILOR.
+Respectă această ordine strictă:
+1) fidelitatea față de ORIGINAL;
+2) corectitudinea gramaticală și semantică;
+3) naturalețea românească;
+4) stilul și preferința de formulare.
+O prioritate inferioară NU poate justifica modificarea unei variante corecte la o prioritate superioară.
+Regulile 98–105 au rol de protecție împotriva supra-corectării și prevalează atunci când există conflict cu o regulă anterioară.
 
 
 DATELE DE VERIFICAT:
