@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.67',
+    version: '12.78.68',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -927,11 +927,6 @@ function formatSubtitleLine(text) {
         [/\bDe ce ne-ar pasa\b/gi, 'De ce ne-ar păsa'],
         [/\bDe ce i-ar pasa\b/gi, 'De ce i-ar păsa'],
         [/\bcomuniștii erau periculoase\b/gi, 'comuniștii erau periculoși'],
-        // Corecții mecanice suplimentare, strict pentru forme deja identificate ca erori clare.
-        [/\bjucând biliard în buzunar\b/gi, 'frecând menta'],
-        [/\bo mișto\b/gi, 'mișto'],
-        [/\borbești(?=[.\s,!?]*$)/gi, 'orbește'],
-        [/\bcunoscută de omenire\b/gi, 'cunoscută omenirii'],
         [/\bîn ziua în care\b/gi, 'în ziua în care'],
         [/\.icon\b/gi, '']
     ];
@@ -1810,19 +1805,14 @@ async function grammarTranslationReview(items, translatedById, keyStates) {
             const previous = index > 0 ? items[index - 1] : null;
             const next = index >= 0 && index < items.length - 1 ? items[index + 1] : null;
 
-            const previousRo = previous ? translatedById[String(previous.id)] : null;
-            const nextRo = next ? translatedById[String(next.id)] : null;
-
             return {
                 id: item.id,
                 original: item.text,
                 translation: translatedById[String(item.id)],
-                context_anterior: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
-                context_urmator: next ? `[${next.id}] ${next.text}` : '(niciunul)',
                 context_anterior_en: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
-                context_anterior_ro: previousRo ? `[${previous.id}] ${previousRo}` : '(niciunul)',
                 context_urmator_en: next ? `[${next.id}] ${next.text}` : '(niciunul)',
-                context_urmator_ro: nextRo ? `[${next.id}] ${nextRo}` : '(niciunul)'
+                context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
+                context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)'
             };
         });
 
@@ -1853,7 +1843,7 @@ REGULI CRITICE:
 17. Detectează calcuri evidente din engleză și vocative/construcții traduse mecanic, de exemplu „idioticule” când ORIGINALUL cere un vocativ românesc natural precum „idiotule”. Nu schimba însă jargonul sau termenii intenționați.
 18. Verifică majusculele în context: nu transforma automat începutul unei replici în literă mică sau invers; corectează doar când poziția sintactică este clară.
 19. Fă o AUDITARE SINTACTICĂ COMPLETĂ a fiecărei replici, chiar dacă toate cuvintele individuale par românești. Nu presupune că o propoziție este corectă doar pentru că nu conține typo-uri. Verifică dacă subiectul, predicatul, complementele, pronumele și determinările se leagă logic între ele și dacă ordinea cuvintelor produce o propoziție românească firească.
-20. Compară fiecare traducere cu ORIGINALUL și folosește obligatoriu, când este relevant, atât context_anterior_en/context_urmator_en, cât și context_anterior_ro/context_urmator_ro. EN este autoritatea pentru sensul sursă; RO ajută la continuitate, acord, referința pronumelor și propozițiile împărțite între subtitrări. Corectează numai replica curentă.
+20. Compară fiecare traducere cu ORIGINALUL și, când este util, cu replicile din „context_anterior_en/context_urmator_en” și „context_anterior_ro/context_urmator_ro”. Contextul este doar pentru înțelegerea sensului și a continuității; corectează numai replica curentă. Folosește contextul pentru a detecta persoana verbală, referința pronumelor, acordul, construcțiile care continuă din replica anterioară și propozițiile împărțite între subtitrări.
 21. Fii atent la erorile „gramatical românești la nivel de cuvinte, dar greșite ca propoziție”: acord greșit ascuns, complement legat de verbul greșit, prepoziție nepotrivită, verb la persoana/numărul greșit, pronume cu antecedent greșit, ordine sintactică anormală, construcție tranzitivă/intranzitivă greșită sau formulare care schimbă relația dintre personaje.
 22. Verifică separat CONSTRUCȚIILE VERBALE. Nu analiza doar forma verbului, ci și ce complemente cere verbul în română. De exemplu, o construcție precum „M-am cerut în căsătorie cu Hughie” poate avea cuvinte corecte individual, dar verbul și complementul sunt incompatibile; dacă ORIGINALUL spune că vorbitorul a cerut o altă persoană în căsătorie, reconstruiește construcția corectă.
 23. Verifică separat ACORDUL LOGIC, nu doar acordul gramatical superficial. Subiectul real trebuie să determine corect genul, numărul și persoana predicatului și ale adjectivelor/participiilor. De exemplu, „comuniștii erau periculoase” trebuie identificat ca acord greșit chiar dacă fiecare cuvânt există în română.
@@ -1866,6 +1856,22 @@ REGULI CRITICE:
 30. Pentru orice token care conține o bucată suspectă lipită de un cuvânt valid, fă o verificare separată a tokenului și apoi a propoziției complete. Exemple: „Țin-ținta e prea mică.”, „T-Ar trebui...”, „frecându-menta”, „nu ți-pasă”. Dacă prima parte nu are funcție gramaticală în context și nu este o bâlbâială susținută de ORIGINAL, nu păstra tokenul doar pentru că partea finală este un cuvânt românesc valid. Reconstruiește forma corectă din ORIGINAL și context.
 31. Cazul „Țin-ținta e prea mică.” este un exemplu de FRAGMENT CORUPT, nu de repetiție intenționată: dacă ORIGINALUL nu indică o bâlbâială, varianta corectă trebuie să elimine fragmentul „Țin-” și să păstreze sensul propoziției, de tipul „Ținta e prea mică.”. Nu lăsa o formă precum „T-ținta”, „Țin-ținta” sau altă combinație intermediară.
 32. După orice corecție lexicală, verifică din nou ÎNTREAGA PROPOZIȚIE. Nu este suficient să repari un singur cuvânt dacă acordul, ordinea, cliticele sau sensul rămân greșite.
+33. FOLOSEȘTE ACEST SET DE REGRESIE CA TEST OBLIGATORIU, DAR NU CA DICȚIONAR GLOBAL.
+Înainte de a returna corecțiile, verifică dacă poți identifica și corecta tipurile de erori de mai jos atunci când ORIGINALUL și contextul le confirmă. Acestea sunt exemple de erori reale; NU aplica înlocuiri mecanice tuturor replicilor similare.
+- „Ieși-mi din cap” → verifică dacă sensul corect este „Ieși din capul meu”. Problema este relația de posesie/sens, nu doar gramatica.
+- „într-una extrem de letală” pentru un substantiv masculin precum „virus” → „într-unul extrem de letal”. Verifică acordul de gen și referința pronumelui.
+- „momentul potrivitur” → „momentul potrivit”. Repară typo-urile evidente.
+- „ca să...rbătorim” → „ca să sărbătorim”. Repară cuvintele fragmentate/trunchiate.
+- „Citească-gânduri, ții minte?” → verifică dacă ORIGINALUL cere o expresie precum „Cititoare de gânduri” sau altă formulare naturală; nu aplica automat aceeași corecție în alte contexte.
+- „democracția” → „democrația”. Repară erorile ortografice evidente.
+- „mă reasigur” pentru „get reelected” → verifică sensul politic și, dacă ORIGINALUL/contextul îl confirmă, corectează către sensul „să fiu reales/realeasă”.
+- „rămas pe jos” pentru „left standing” → verifică dacă sensul este „rămas în picioare”/„rămas prin preajmă”, în funcție de context.
+- „S-a dus totul pe râpă” → verifică expresia românească și, dacă ORIGINALUL cere această idiomă, corectează „de râpă”.
+- „o bullet” → „un glonț” dacă ORIGINALUL folosește „bullet” cu sensul de proiectil. Dacă „bullet” este altceva, păstrează sensul real.
+- „n-ai putut să scape” → „n-ai putut să scapi” când subiectul este „tu”. Verifică persoana verbală.
+- „mergem orbești” → „mergem orbește” când este folosit adverbial. Verifică funcția gramaticală, nu doar forma cuvântului.
+Aceste exemple trebuie folosite pentru a detecta CATEGORIILE de eroare: semantică, acord, typo, fragmentare, calchiu, ortografie, fals prieten, idiom, cuvânt netradus, conjugare și adverbializare. Dacă o variantă actuală este corectă, NU o modifica doar pentru că seamănă cu un exemplu.
+
 33. O corecție propusă NU este acceptată dacă rezultatul introduce o nouă formă coruptă, o repetiție accidentală, un cuvânt inventat, o construcție nenaturală sau o eroare gramaticală.
 34. Repară numai când există o variantă românească clară, susținută de ORIGINAL și context. Dacă sunt posibile mai multe variante plauzibile și nu există certitudine, păstrează traducerea actuală.
 35. Păstrează sensul original, registrul, vulgaritățile, slangul, umorul și intenția replicii.
@@ -2096,7 +2102,7 @@ Nu elimina vulgaritatea, slangul, sarcasmul, umorul, repetițiile intenționate 
 Corectează numai ceea ce este efectiv greșit.
 
 104. REGULĂ FINALĂ ÎN CAZ DE DUBIU.
-Dacă după compararea ORIGINAL + translation + context_anterior + context_urmator nu există suficiente dovezi pentru o corecție sigură, NU returna nimic pentru acel ID.
+Dacă după compararea ORIGINAL + translation + context_anterior_en + context_urmator_en + context_anterior_ro + context_urmator_ro nu există suficiente dovezi pentru o corecție sigură, NU returna nimic pentru acel ID.
 Este preferabil să rămână o formulare ușor imperfectă decât să fie înlocuită o traducere corectă cu o reformulare greșită.
 
 105. ORDINEA PRIORITĂȚILOR.
@@ -2110,12 +2116,8 @@ Regulile 98–105 au rol de protecție împotriva supra-corectării și prevalea
 
 
 DATELE DE VERIFICAT:
-Fiecare obiect conține original + translation pentru replica curentă și, pentru context, atât variantele EN cât și RO ale replicilor vecine:
-- context_anterior_en / context_urmator_en = originalul englezesc al replicilor vecine;
-- context_anterior_ro / context_urmator_ro = traducerea română curentă a replicilor vecine;
-- context_anterior / context_urmator sunt păstrate ca referință compatibilă și conțin originalul vecin.
-Folosește EN pentru sensul sursă și RO pentru continuitate, acord și relațiile gramaticale dintre subtitrări. Nu modifica replicile vecine și returnează corecții DOAR pentru câmpul translation al ID-ului curent.
-Nu presupune că o formulare este greșită doar fiindcă vecinii RO sunt neobișnuiți; verifică întotdeauna și ORIGINALUL EN.
+Fiecare obiect conține și context_anterior_en/context_urmator_en și context_anterior_ro/context_urmator_ro. Acestea sunt DOAR pentru înțelegerea sensului, acordului și continuității.
+Nu le traduce și nu le modifica. Returnează corecții DOAR pentru câmpul translation al ID-ului curent.
 ${JSON.stringify(payload, null, 2)}
 
 Returnează DOAR JSON valid în forma:
