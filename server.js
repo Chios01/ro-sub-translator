@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.71',
+    version: '12.78.73',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -680,7 +680,10 @@ function formatSubtitleLine(text) {
     // Corecții mecanice certe confirmate în verificările recente.
     // Sunt intenționat specifice pentru a evita corecții globale riscante.
     const dictionar = [
-        [/\bIași-mi din cap\b/gi, 'Ieși din capul meu'],
+        // Forme generate variabil de model pentru aceeași construcție semantică.
+        // Sunt limitate la expresii confirmate ca greșite în acest proiect.
+        [/\b(?:Iași|Iasi|Ieși|Iesi)[- ]mi din cap\b/gi, 'Ieși din capul meu'],
+        [/\b(?:Ia|I-a) mâna după mine\b/gi, 'Ia mâna de pe mine'],
         [/\bȘi pe urmă am fut-o ca să sărbătorim\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
         [/\bRezoluția Concurrentă\b/g, 'Rezoluția Concurentă'],
         [/\bun cerc de încrederi\b/gi, 'un cerc de încredere'],
@@ -938,7 +941,6 @@ function formatSubtitleLine(text) {
         [/\bmergem orbești\b/gi, 'mergem orbește'],
         [/\bo favoră\b/gi, 'o favoare'],
         [/\bMă închizi într-o cușcă\s*\/\s*dacă nu accept să fii arma ta\b/gi, 'Mă închizi într-o cușcă / dacă nu accept să fiu arma ta'],
-        [/\bIași-mi din cap\b/gi, 'Ieși din capul meu'],
         [/\bȘi pe urmă am fumat-o de sărbătoare\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
         [/\bRezoluția Concurrentă\b/gi, 'Rezoluția Concurentă'],
         [/\bun cerc de încrederi\b/gi, 'un cerc de încredere'],
@@ -1720,6 +1722,8 @@ ${JSON.stringify(item.text)}
 TRADUCEREA ACTUALĂ (poate fi greșită):
 ${JSON.stringify(current)}
 
+Înainte de JSON, fă o ultimă verificare semantică a fiecărei corecții: compară EN → RO, pronumele, prepozițiile, subiectul, obiectul și relațiile dintre personaje. Nu accepta o corecție care doar sună mai bine.
+
 Returnează DOAR JSON valid în forma:
 [
   {"id": ${item.id}, "text": "traducerea română"}
@@ -2162,6 +2166,15 @@ Nu introduce în traducerea română persoane, obiecte, etnii, categorii sociale
 
 110. CORECȚIE DOAR CU DOVADĂ.
 Dacă nu poți demonstra din EN + context că traducerea RO este greșită ca sens, gramatică, vocabular sau construcție, PĂSTREAZĂ traducerea existentă. Nu modifica doar pentru că o altă formulare ți se pare mai elegantă.
+
+111. VERIFICARE SEMANTICĂ A CONSTRUCȚIILOR CU PRONUME ȘI PREPOZIȚII.
+Nu verifica doar dacă fiecare cuvânt există în română. Compară relația exprimată în EN cu relația exprimată în RO: cine acționează, asupra cui, unde, de pe ce, către cine, cui aparține ceva și dacă acțiunea este reflexivă sau reciprocă. O schimbare aparent mică de prepoziție sau pronume poate schimba sensul. Dacă EN cere o relație clară și RO o schimbă, corectează întreaga construcție, nu doar cuvântul izolat.
+
+112. ACEEAȘI IDEE POATE FI GENERATĂ ÎN MAI MULTE FORME.
+Nu presupune că o eroare semantică va apărea mereu sub aceeași formulare românească. Detectează tipul construcției greșite și verifică sensul ei în raport cu EN, chiar dacă modelul a schimbat cuvintele, flexiunea sau topica. Exemplele „Ieși-mi din cap” și „Ia mâna după mine” sunt cazuri de test pentru verificarea sensului, NU tipare care trebuie aplicate orbește altor replici.
+
+113. REPARĂ CONSTRUCȚIA COMPLETĂ CÂND E NECESAR.
+Dacă eroarea este de sens sau de relație sintactică, nu face o înlocuire cosmetică a unui singur cuvânt. Reformează doar partea necesară astfel încât rezultatul final să fie simultan fidel EN, corect gramatical și natural în română. După corecție, verifică din nou întreaga propoziție.
 
 REGULĂ SPECIALĂ ÎMPOTRIVA PREFERINȚEI STILISTICE:
 Nu folosi faptul că „ai spune tu altfel” sau că o variantă „sună mai bine” ca dovadă de eroare. O formulare diferită, dar corectă și fidelă, trebuie păstrată.
