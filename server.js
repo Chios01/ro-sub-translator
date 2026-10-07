@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.73',
+    version: '12.78.74',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -685,6 +685,9 @@ function formatSubtitleLine(text) {
         [/\b(?:Iași|Iasi|Ieși|Iesi)[- ]mi din cap\b/gi, 'Ieși din capul meu'],
         [/\b(?:Ia|I-a) mâna după mine\b/gi, 'Ia mâna de pe mine'],
         [/\bȘi pe urmă am fut-o ca să sărbătorim\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
+        [/\b(?:Și|Si) pe urmă am f\*{2,}ut ca să sărbătorim\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
+        [/\b(?:Și|Si) pe urmă am f\*{2,}t ca să sărbătorim\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
+        [/\bE un cuptor dracului aici\b/gi, 'E un cuptor al naibii aici'],
         [/\bRezoluția Concurrentă\b/g, 'Rezoluția Concurentă'],
         [/\bun cerc de încrederi\b/gi, 'un cerc de încredere'],
         [/\bcuando îți zic\b/gi, 'când îți zic'],
