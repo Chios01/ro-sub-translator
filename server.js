@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.77',
+    version: '12.78.78',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1852,6 +1852,8 @@ Returnează DOAR JSON valid în forma:
 const GRAMMAR_REVIEW_BATCH_SIZE = 120;
 const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
 const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
+const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
+const GRAMMAR_REVIEW_JSON_RETRY_LIMIT = 1;
 
 async function grammarTranslationReview(items, translatedById, keyStates) {
     const candidates = items.filter(item => {
@@ -2233,15 +2235,28 @@ Returnează DOAR JSON valid în forma:
 Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obiect.
 `;
 
-        try {
-            const keyState = await getAvailableKey(keyStates);
-            const raw = await callGemini(prompt, keyState, { timeout: GRAMMAR_REVIEW_TIMEOUT_MS });
-            const parsed = safeJsonParse(raw);
-            const parsedDict = normalizeTranslationPayload(parsed);
+        let lastJsonError = null;
 
-            checked += batch.length;
+        // JSON-ul Gemini poate fi invalid ocazional chiar dacă promptul cere
+        // explicit JSON valid. Nu abandonăm calupul la prima eroare: facem
+        // un retry punctual pe același calup, iar dacă răspunsul rămâne invalid
+        // îl împărțim automat în două. Astfel păstrăm 120 ca dimensiune normală
+        // și nu pierdem verificări doar din cauza unei ghilimele/virgule stricate.
+        for (let jsonAttempt = 0; jsonAttempt <= GRAMMAR_REVIEW_JSON_RETRY_LIMIT; jsonAttempt++) {
+            try {
+                if (jsonAttempt > 0) {
+                    console.log(`${c.yellow}↻ [Grammar Review] JSON invalid la ${batch.length} replici; retry ${jsonAttempt}/${GRAMMAR_REVIEW_JSON_RETRY_LIMIT}...${c.reset}`);
+                    await sleep(GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS);
+                }
 
-            for (const item of batch) {
+                const keyState = await getAvailableKey(keyStates);
+                const raw = await callGemini(prompt, keyState, { timeout: GRAMMAR_REVIEW_TIMEOUT_MS });
+                const parsed = safeJsonParse(raw);
+                const parsedDict = normalizeTranslationPayload(parsed);
+
+                checked += batch.length;
+
+                for (const item of batch) {
                 const id = String(item.id);
                 const candidateRaw = parsedDict[id];
                 if (candidateRaw == null) continue;
@@ -2262,47 +2277,99 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                 translatedById[id] = candidate;
                 fixed++;
                 console.log(`${c.green}  ✔ [Grammar Review] ${item.id} corectată${c.reset}`);
+                }
+            } catch (error) {
+                lastJsonError = error;
+                const message = String(error?.message || '');
+                const is429 = error?.isRateLimit429 === true || /429/.test(message);
+                const isTimeout = error?.code === 'ECONNABORTED' ||
+                    error?.code === 'ETIMEDOUT' ||
+                    /timeout|timed out/i.test(message);
+
+                // 429 și timeout-ul au propriul mecanism de retry/split.
+                // Nu le tratăm ca eroare JSON.
+                if (is429 || isTimeout) {
+                    if (isTimeout && batch.length > 20) {
+                        const middle = Math.ceil(batch.length / 2);
+                        const left = batch.slice(0, middle);
+                        const right = batch.slice(middle);
+
+                        console.log(`${c.yellow}⚠ [Grammar Review] Timeout la ${batch.length} replici; împart calupul în ${left.length}+${right.length} și reîncerc...${c.reset}`);
+                        await sleep(GRAMMAR_REVIEW_TIMEOUT_RETRY_MS);
+
+                        const leftResult = await processGrammarBatch(
+                            left,
+                            batchIndex,
+                            `${label} — partea 1/${2}`
+                        );
+                        const rightResult = await processGrammarBatch(
+                            right,
+                            batchIndex,
+                            `${label} — partea 2/${2}`
+                        );
+
+                        return {
+                            success: leftResult.success && rightResult.success,
+                            is429: leftResult.is429 || rightResult.is429
+                        };
+                    }
+
+                    // 429 este trimis mai departe către coada existentă.
+                    if (is429) {
+                        return { success: false, is429: true };
+                    }
+
+                    // Timeout pe calup mic: păstrăm comportamentul existent.
+                    console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} a expirat și nu mai poate fi împărțit.${c.reset}`);
+                    return { success: false, is429: false };
+                }
+
+                const isJsonError = /JSON Parse failed|Unexpected token|Unexpected end of JSON|Expected ',' or '}'|Expected property name/i.test(message);
+                if (!isJsonError) {
+                    console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat: ${message}${c.reset}`);
+                    return { success: false, is429: false };
+                }
+
+                // Eroare JSON: retry-ul buclei încearcă din nou același calup.
+                if (jsonAttempt < GRAMMAR_REVIEW_JSON_RETRY_LIMIT) {
+                    continue;
+                }
+
+                // După retry, nu abandonăm 120 de replici. Îl împărțim și
+                // procesăm separat; astfel o singură replică problematică nu
+                // blochează restul calupului.
+                if (batch.length > 20) {
+                    const middle = Math.ceil(batch.length / 2);
+                    const left = batch.slice(0, middle);
+                    const right = batch.slice(middle);
+
+                    console.log(`${c.yellow}⚠ [Grammar Review] JSON invalid și după retry la ${batch.length} replici; împart calupul în ${left.length}+${right.length}...${c.reset}`);
+
+                    const leftResult = await processGrammarBatch(
+                        left,
+                        batchIndex,
+                        `${label} — JSON split 1/${2}`
+                    );
+                    const rightResult = await processGrammarBatch(
+                        right,
+                        batchIndex,
+                        `${label} — JSON split 2/${2}`
+                    );
+
+                    return {
+                        success: leftResult.success && rightResult.success,
+                        is429: leftResult.is429 || rightResult.is429
+                    };
+                }
+
+                console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat nici după retry JSON: ${message}${c.reset}`);
+                return { success: false, is429: false };
             }
-        } catch (error) {
-            const message = String(error?.message || '');
-            const is429 = error?.isRateLimit429 === true || /429/.test(message);
-            const isTimeout = error?.code === 'ECONNABORTED' ||
-                error?.code === 'ETIMEDOUT' ||
-                /timeout|timed out/i.test(message);
-
-            // Grammar Review trebuie să fie tolerant la răspunsuri lente.
-            // Dacă un calup mare depășește timeout-ul, îl împărțim în două
-            // calupuri mai mici și le reîncercăm, fără să pierdem verificarea.
-            if (isTimeout && batch.length > 20) {
-                const middle = Math.ceil(batch.length / 2);
-                const left = batch.slice(0, middle);
-                const right = batch.slice(middle);
-
-                console.log(`${c.yellow}⚠ [Grammar Review] Timeout la ${batch.length} replici; împart calupul în ${left.length}+${right.length} și reîncerc...${c.reset}`);
-                await sleep(GRAMMAR_REVIEW_TIMEOUT_RETRY_MS);
-
-                const leftResult = await processGrammarBatch(
-                    left,
-                    batchIndex,
-                    `${label} — partea 1/${2}`
-                );
-                const rightResult = await processGrammarBatch(
-                    right,
-                    batchIndex,
-                    `${label} — partea 2/${2}`
-                );
-
-                return {
-                    success: leftResult.success && rightResult.success,
-                    is429: leftResult.is429 || rightResult.is429
-                };
-            }
-
-            console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat: ${error.message}${c.reset}`);
-            return { success: false, is429 };
         }
 
-        return { success: true, is429: false };
+        // Protecție teoretică; bucla de mai sus fie returnează, fie reia retry-ul.
+        console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} a eșuat: ${lastJsonError?.message || 'eroare necunoscută'}${c.reset}`);
+        return { success: false, is429: false };
     };
 
     // Prima trecere: dacă un calup primește 429, nu îl abandonăm definitiv.
