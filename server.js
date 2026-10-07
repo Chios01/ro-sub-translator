@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.70',
+    version: '12.78.71',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -677,20 +677,38 @@ function formatSubtitleLine(text) {
         text = wrappedLines.join('\n');
     }
 
+    // Corecții mecanice certe confirmate în verificările recente.
+    // Sunt intenționat specifice pentru a evita corecții globale riscante.
     const dictionar = [
+        [/\bIași-mi din cap\b/gi, 'Ieși din capul meu'],
+        [/\bȘi pe urmă am fut-o ca să sărbătorim\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
+        [/\bRezoluția Concurrentă\b/g, 'Rezoluția Concurentă'],
+        [/\bun cerc de încrederi\b/gi, 'un cerc de încredere'],
+        [/\bcuando îți zic\b/gi, 'când îți zic'],
+        [/\bmult așteptatului film\b/gi, 'mult așteptatul film'],
+        [/\bnăibii\b/gi, 'naibii'],
+        [/\blar că sunteți aici\b/gi, 'că sunteți aici'],
+        [/\bn-am gânit\b/gi, 'n-am gândit'],
+        [/\bnicodată\b/gi, 'niciodată'],
+        [/\bNu iau sifilis de Schifter\b/gi, 'Nu iau sifilis de Shapeshifter'],
+        [/\bCa sămă înveți\b/gi, 'Ca să mă înveți'],
+        [/\bCititoare de minți\b/gi, 'Cititoare de gânduri'],
+        [/\bA dat C-ul din sac\b/gi, 'S-a aflat secretul'],
+        [/\bsingurul tău prieten rămas pe dracu\'\b/gi, 'singurul tău prieten care ți-a mai rămas'],
+        [/\bsub pământ jucând biliard în buzunar\b/gi, 'sub pământ frecând menta'],
+
         [/\bjhonson\b/gi, 'Johnson'],
         [/\bsuch a detailed indictment\b/gi, 'un rechizitoriu atât de detaliat'],
         [/\bHowever,\b/gi, 'Cu toate acestea,'],
         [/\bdilettante\b/gi, 'diletant'],
         [/\babroach\b/gi, 'abordare'],
         [/\bfrom project\b/gi, 'din proiect'],
-        [/\bfrom\b/gi, 'de la'],
-        [/\bbackground\b/gi, 'trecut'],
         [/\bbanca acuzaților bancul acuzaților\b/gi, 'pe banca acuzaților'],
         [/\bîn joi\b/gi, 'joi'],
         [/\bde la embedding itself in a mudbank\.?/gi, 'de la a se înfige într-un mal de noroi.'],
         [/\bembedding itself in a mudbank\.?/gi, 'a se înfige într-un mal de noroi.'],
         [/\bN-a fost nic67\b/gi, 'Nu era niciun loc aici?'],
+        // Corecție contextuală păstrată; regula globală „background → trecut” a fost eliminată.
         [/\bbackground juridic\b/gi, 'trecut juridic'],
         [/\bCă\.E\.A\./gi, 'A.E.C.'],
         [/\bpro Jean Tatlock\b/gi, 'despre Jean Tatlock'],
@@ -2050,9 +2068,9 @@ INTEGRARE SUPLIMENTARĂ — AUDIT STRICT AL SENSULUI ȘI AL NATURALITĂȚII:
 
 O traducere poate conține numai cuvinte românești corecte și totuși să fie formulată greșit deoarece structura originalului englezesc a fost copiată mecanic.
 
-Exemplu:
+Exemplu de tip de problemă:
 RO: „E un cuptor dracului aici.”
-Această formulare trebuie verificată obligatoriu și NU trebuie acceptată doar pentru că fiecare cuvânt este valid în română.
+Această formulare trebuie analizată în raport cu ORIGINALUL și contextul; exemplul NU este o corecție automată și nu trebuie modificat doar pentru că seamănă cu acest caz.
 
 Verifică dacă relația dintre substantiv, atribut, complement, intensificator și restul propoziției este una firească în română.
 Nu copia mecanic ordinea sau construcția din engleză. Dacă originalul folosește o expresie figurată, colocvială sau un intensificator, traducerea trebuie să redea FUNCȚIA și SENSUL expresiei în română, nu să traducă fiecare componentă separat.
@@ -2121,6 +2139,15 @@ Corectează numai ceea ce este efectiv greșit.
 Dacă după compararea ORIGINAL + translation + context_anterior_en + context_urmator_en + context_anterior_ro + context_urmator_ro nu există suficiente dovezi pentru o corecție sigură, NU returna nimic pentru acel ID.
 Este preferabil să rămână o formulare ușor imperfectă decât să fie înlocuită o traducere corectă cu o reformulare greșită.
 
+105. ORDINEA PRIORITĂȚILOR.
+Respectă această ordine strictă:
+1) fidelitatea față de ORIGINAL;
+2) corectitudinea gramaticală și semantică;
+3) naturalețea românească;
+4) stilul și preferința de formulare.
+O prioritate inferioară NU poate justifica modificarea unei variante corecte la o prioritate superioară.
+Regulile 98–110 au rol de protecție împotriva supra-corectării și prevalează atunci când există conflict cu o regulă anterioară.
+
 106. ANTI-HALUCINAȚIE SEMANTICĂ — NU INVENTA ELEMENTE CARE NU EXISTĂ ÎN ORIGINAL.
 Nu introduce în traducerea română etnii, categorii sociale, religii, obiecte, persoane, acțiuni sau alte informații care nu sunt susținute de EN și context. Dacă o vulgaritate, insultă sau expresie englezească este ambiguă, verifică funcția și sensul ei în EN înainte de a alege echivalentul românesc.
 
@@ -2130,18 +2157,14 @@ Nu înlocui o vulgaritate cu un eufemism inventat și nu transforma o expresie v
 108. VULGARITĂȚILE TREBUIE INTERPRETATE DUPĂ FUNCȚIE.
 Dacă un termen precum "fuck/fucking", "shit", "damn", "hell" etc. funcționează ca verb, act sexual, intensificator, înjurătură sau interjecție, stabilește funcția din EN înainte de traducere. Nu inventa un alt verb, obiect sau acțiune doar pentru a evita vulgaritatea.
 
-109. CORECȚIE DOAR CU DOVADĂ.
+109. VERIFICARE ANTI-HALUCINAȚIE ȘI RELAȚIILE ACȚIUNII.
+Nu introduce în traducerea română persoane, obiecte, etnii, categorii sociale, acțiuni sau relații care nu există în ORIGINAL. Verifică explicit cine face acțiunea, asupra cui se face și dacă acțiunea este reciprocă/reflexivă. Nu transforma accidental o construcție de tip „we + verb” într-o acțiune asupra unei persoane terțe și nu transforma un vulgarism într-o insultă socială/etnică sau într-un eufemism care schimbă sensul. Dacă traducerea existentă este fidelă, nu o modifica.
+
+110. CORECȚIE DOAR CU DOVADĂ.
 Dacă nu poți demonstra din EN + context că traducerea RO este greșită ca sens, gramatică, vocabular sau construcție, PĂSTREAZĂ traducerea existentă. Nu modifica doar pentru că o altă formulare ți se pare mai elegantă.
 
-105. ORDINEA PRIORITĂȚILOR.
-Respectă această ordine strictă:
-1) fidelitatea față de ORIGINAL;
-2) corectitudinea gramaticală și semantică;
-3) naturalețea românească;
-4) stilul și preferința de formulare.
-O prioritate inferioară NU poate justifica modificarea unei variante corecte la o prioritate superioară.
-Regulile 98–105 au rol de protecție împotriva supra-corectării și prevalează atunci când există conflict cu o regulă anterioară.
-
+REGULĂ SPECIALĂ ÎMPOTRIVA PREFERINȚEI STILISTICE:
+Nu folosi faptul că „ai spune tu altfel” sau că o variantă „sună mai bine” ca dovadă de eroare. O formulare diferită, dar corectă și fidelă, trebuie păstrată.
 
 DATELE DE VERIFICAT:
 Fiecare obiect conține și context_anterior_en/context_urmator_en și context_anterior_ro/context_urmator_ro. Acestea sunt DOAR pentru înțelegerea sensului, acordului și continuității.
@@ -2152,6 +2175,7 @@ Returnează DOAR JSON valid în forma:
 [
   {"id": 123, "text": "traducerea corectată"}
 ]
+Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obiect.
 `;
 
         try {
