@@ -104,6 +104,88 @@ app.get('/ping', (req, res) => {
     res.send('OK');
 });
 
+app.get('/diagnostic/:configData', async (req, res) => {
+    const runs = Math.min(10, Math.max(1, Number(req.query.runs) || 5));
+    const tests = [
+        {
+            id: 9001,
+            text: 'Get out of my head.',
+            prev: 'Stop thinking about me.',
+            next: 'I cannot stand this anymore.'
+        },
+        {
+            id: 9002,
+            text: "It's a fucking oven in here.",
+            prev: 'Close the door.',
+            next: 'I can barely breathe.'
+        },
+        {
+            id: 9003,
+            text: 'And then we fucked to celebrate.',
+            prev: 'We finally won.',
+            next: 'It was a strange night.'
+        }
+    ];
+
+    let userKeys = [];
+    try {
+        const decoded = Buffer.from(req.params.configData, 'base64').toString('utf8');
+        let parsed;
+        try { parsed = JSON.parse(decoded); } catch (e) { parsed = decoded; }
+        if (Array.isArray(parsed)) userKeys = parsed;
+        else if (parsed && typeof parsed === 'object') userKeys = parsed.key ? [parsed.key] : Object.values(parsed);
+        else if (typeof parsed === 'string') userKeys = [parsed];
+    } catch (e) {
+        return res.status(400).json({ ok: false, error: 'Configurare invalidă.' });
+    }
+
+    userKeys = userKeys.map(k => String(k).trim()).filter(Boolean);
+    if (!userKeys.length) return res.status(400).json({ ok: false, error: 'Nu există cheie Gemini.' });
+
+    const keyStates = createKeyState(userKeys);
+    const results = [];
+
+    for (const test of tests) {
+        const item = { id: test.id, text: test.text };
+        const allItems = [
+            { id: test.id - 1, text: test.prev },
+            item,
+            { id: test.id + 1, text: test.next }
+        ];
+        const chunkStart = 1;
+        const chunkEnd = 2;
+        const prompt = buildTranslationPrompt([item], allItems, chunkStart, chunkEnd, []);
+        const runsOut = [];
+
+        for (let run = 1; run <= runs; run++) {
+            try {
+                const keyState = await getAvailableKey(keyStates);
+                const raw = await callGemini(prompt, keyState, { timeout: 60000 });
+                const parsed = normalizeTranslationPayload(safeJsonParse(raw));
+                const rawTranslation = parsed[String(test.id)] == null ? '' : String(parsed[String(test.id)]);
+                let finalTranslation = rawTranslation;
+                try { finalTranslation = formatSubtitleLine(rawTranslation); } catch (e) {}
+                runsOut.push({ run, gemini: rawTranslation, after_formatSubtitleLine: finalTranslation });
+            } catch (error) {
+                runsOut.push({ run, error: error.message });
+            }
+        }
+
+        results.push({ id: test.id, original: test.text, runs: runsOut });
+    }
+
+    res.json({
+        ok: true,
+        diagnostic: 'RO Sub Translator v12.78.75',
+        model: MODEL_NAME,
+        temperature: 0.0,
+        runs,
+        note: 'Acesta este un test diagnostic separat. Nu rulează Grammar Review, Post-Check sau traducerea unui episod.',
+        results
+    });
+});
+
+
 app.get('/arhiva-secreta', (req, res) => {
     let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
     html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
