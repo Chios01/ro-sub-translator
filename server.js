@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.76',
+    version: '12.78.77',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1850,6 +1850,8 @@ Returnează DOAR JSON valid în forma:
 // ============================================================
 
 const GRAMMAR_REVIEW_BATCH_SIZE = 120;
+const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
+const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
 
 async function grammarTranslationReview(items, translatedById, keyStates) {
     const candidates = items.filter(item => {
@@ -2233,7 +2235,7 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
 
         try {
             const keyState = await getAvailableKey(keyStates);
-            const raw = await callGemini(prompt, keyState, { timeout: 60000 });
+            const raw = await callGemini(prompt, keyState, { timeout: GRAMMAR_REVIEW_TIMEOUT_MS });
             const parsed = safeJsonParse(raw);
             const parsedDict = normalizeTranslationPayload(parsed);
 
@@ -2262,7 +2264,40 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                 console.log(`${c.green}  ✔ [Grammar Review] ${item.id} corectată${c.reset}`);
             }
         } catch (error) {
-            const is429 = error?.isRateLimit429 === true || /429/.test(String(error?.message || ''));
+            const message = String(error?.message || '');
+            const is429 = error?.isRateLimit429 === true || /429/.test(message);
+            const isTimeout = error?.code === 'ECONNABORTED' ||
+                error?.code === 'ETIMEDOUT' ||
+                /timeout|timed out/i.test(message);
+
+            // Grammar Review trebuie să fie tolerant la răspunsuri lente.
+            // Dacă un calup mare depășește timeout-ul, îl împărțim în două
+            // calupuri mai mici și le reîncercăm, fără să pierdem verificarea.
+            if (isTimeout && batch.length > 20) {
+                const middle = Math.ceil(batch.length / 2);
+                const left = batch.slice(0, middle);
+                const right = batch.slice(middle);
+
+                console.log(`${c.yellow}⚠ [Grammar Review] Timeout la ${batch.length} replici; împart calupul în ${left.length}+${right.length} și reîncerc...${c.reset}`);
+                await sleep(GRAMMAR_REVIEW_TIMEOUT_RETRY_MS);
+
+                const leftResult = await processGrammarBatch(
+                    left,
+                    batchIndex,
+                    `${label} — partea 1/${2}`
+                );
+                const rightResult = await processGrammarBatch(
+                    right,
+                    batchIndex,
+                    `${label} — partea 2/${2}`
+                );
+
+                return {
+                    success: leftResult.success && rightResult.success,
+                    is429: leftResult.is429 || rightResult.is429
+                };
+            }
+
             console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat: ${error.message}${c.reset}`);
             return { success: false, is429 };
         }
