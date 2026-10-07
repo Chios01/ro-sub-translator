@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.56',
+    version: '12.78.57',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1799,11 +1799,19 @@ async function grammarTranslationReview(items, translatedById, keyStates) {
         const batch = batches[batchIndex];
         console.log(`${c.cyan}➤ [Grammar Review] Calup ${batchIndex + 1}/${batches.length}...${c.reset}`);
 
-        const payload = batch.map(item => ({
-            id: item.id,
-            original: item.text,
-            translation: translatedById[String(item.id)]
-        }));
+        const payload = batch.map(item => {
+            const index = items.findIndex(x => String(x.id) === String(item.id));
+            const previous = index > 0 ? items[index - 1] : null;
+            const next = index >= 0 && index < items.length - 1 ? items[index + 1] : null;
+
+            return {
+                id: item.id,
+                original: item.text,
+                translation: translatedById[String(item.id)],
+                context_anterior: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
+                context_urmator: next ? `[${next.id}] ${next.text}` : '(niciunul)'
+            };
+        });
 
         const prompt = `
 Ești un corector profesionist de subtitrări ENGLEZĂ → ROMÂNĂ.
@@ -1831,15 +1839,25 @@ REGULI CRITICE:
 16. Verifică semantic și sintactic replica în raport cu ORIGINALUL și contextul din jur. O formulare poate avea cuvinte românești corecte și totuși să fie greșită ca structură sau sens. Exemple reale: „Ori dăm de capăt cum să-l antrenăm”, „M-am cerut în căsătorie cu Hughie”, „Și uită-ce-mi face și mie”.
 17. Detectează calcuri evidente din engleză și vocative/construcții traduse mecanic, de exemplu „idioticule” când ORIGINALUL cere un vocativ românesc natural precum „idiotule”. Nu schimba însă jargonul sau termenii intenționați.
 18. Verifică majusculele în context: nu transforma automat începutul unei replici în literă mică sau invers; corectează doar când poziția sintactică este clară.
-19. Caută EXPLICIT secvențe corupte rezultate din traducere automată sau tăiere accidentală: „f-o”, „fãcut-o”, „ți-ți”, „mi-mi”, „să-să”, fragmente rămase singure sau combinații care nu formează o construcție românească validă. Dacă ORIGINALUL nu susține o bâlbâială/repetiție intenționată, tratează-le ca erori.
-20. După orice corecție lexicală, verifică din nou ÎNTREAGA PROPOZIȚIE. Nu este suficient să repari un singur cuvânt dacă acordul, ordinea, cliticele sau sensul rămân greșite.
-21. O corecție propusă NU este acceptată dacă rezultatul introduce o nouă formă coruptă, o repetiție accidentală, un cuvânt inventat, o construcție nenaturală sau o eroare gramaticală.
-22. Repară numai când există o variantă românească clară, susținută de ORIGINAL și context. Dacă sunt posibile mai multe variante plauzibile și nu există certitudine, păstrează traducerea actuală.
-23. Păstrează sensul original, registrul, vulgaritățile, slangul, umorul și intenția replicii.
-24. Nu adăuga informații și nu elimina informații.
-25. Păstrează exact formatul de subtitrare și eventualele line-break-uri relevante.
-26. Nu introduce engleză în traducere și nu introduce caractere non-latine.
-27. Dacă nu ești 100% sigur că există o eroare, PĂSTREAZĂ traducerea actuală.
+19. Fă o AUDITARE SINTACTICĂ COMPLETĂ a fiecărei replici, chiar dacă toate cuvintele individuale par românești. Nu presupune că o propoziție este corectă doar pentru că nu conține typo-uri. Verifică dacă subiectul, predicatul, complementele, pronumele și determinările se leagă logic între ele și dacă ordinea cuvintelor produce o propoziție românească firească.
+20. Compară fiecare traducere cu ORIGINALUL și, când este util, cu replicile din „context_anterior” și „context_urmator”. Contextul este doar pentru înțelegerea sensului și a continuității; corectează numai replica curentă. Folosește contextul pentru a detecta persoana verbală, referința pronumelor, acordul, construcțiile care continuă din replica anterioară și propozițiile împărțite între subtitrări.
+21. Fii atent la erorile „gramatical românești la nivel de cuvinte, dar greșite ca propoziție”: acord greșit ascuns, complement legat de verbul greșit, prepoziție nepotrivită, verb la persoana/numărul greșit, pronume cu antecedent greșit, ordine sintactică anormală, construcție tranzitivă/intranzitivă greșită sau formulare care schimbă relația dintre personaje.
+22. Verifică separat CONSTRUCȚIILE VERBALE. Nu analiza doar forma verbului, ci și ce complemente cere verbul în română. De exemplu, o construcție precum „M-am cerut în căsătorie cu Hughie” poate avea cuvinte corecte individual, dar verbul și complementul sunt incompatibile; dacă ORIGINALUL spune că vorbitorul a cerut o altă persoană în căsătorie, reconstruiește construcția corectă.
+23. Verifică separat ACORDUL LOGIC, nu doar acordul gramatical superficial. Subiectul real trebuie să determine corect genul, numărul și persoana predicatului și ale adjectivelor/participiilor. De exemplu, „comuniștii erau periculoase” trebuie identificat ca acord greșit chiar dacă fiecare cuvânt există în română.
+24. Verifică FORMELE CU DIACRITICE și formele omografe care schimbă gramatica: „pasa/păsa”, „in/în” și alte cazuri în care lipsa diacriticii poate ascunde o formă greșită. Nu corecta automat orice lipsă de diacritică dacă este nume propriu, marcă sau caz legitim.
+25. Verifică FRAGMENTELE CORUPTE chiar și atunci când verificarea lexicală nu le marchează: „Ț-ținta”, „frecându-menta”, „mizerijile”, „reeligitată” sau combinații similare. Dacă forma rezultată nu poate funcționa în propoziția respectivă, reconstruiește-o din ORIGINAL și context.
+26. Dacă o replică este împărțită pe două linii de subtitrare sau continuă evident în contextul vecin, evaluează sensul propoziției COMPLETE, nu doar fiecare fragment izolat. Nu introduce punctuație, majuscule sau reformulări doar pentru a face fragmentul izolat să pară complet.
+27. Detectează formulările care sunt traduceri literale ale unei expresii englezești și care devin nenaturale sau lipsite de sens în română. Exemplu de tip: „suntem la anghinare rău de tot acum” pentru o expresie idiomatică precum „we're in a pickle”. Dacă sensul originalului este clar, adaptează expresia în română naturală fără a-i schimba intenția.
+28. Nu confunda naturalețea cu preferința stilistică. Corectează doar când formularea este efectiv greșită, ambiguă, ilogică sau nenaturală într-un mod evident pentru un vorbitor nativ; nu rescrie o formulare doar pentru că ai prefera o altă variantă.
+29. Caută EXPLICIT secvențe corupte rezultate din traducere automată sau tăiere accidentală: „f-o”, „fãcut-o”, „ți-ți”, „mi-mi”, „să-să”, fragmente rămase singure sau combinații care nu formează o construcție românească validă. Dacă ORIGINALUL nu susține o bâlbâială/repetiție intenționată, tratează-le ca erori.
+30. După orice corecție lexicală, verifică din nou ÎNTREAGA PROPOZIȚIE. Nu este suficient să repari un singur cuvânt dacă acordul, ordinea, cliticele sau sensul rămân greșite.
+31. O corecție propusă NU este acceptată dacă rezultatul introduce o nouă formă coruptă, o repetiție accidentală, un cuvânt inventat, o construcție nenaturală sau o eroare gramaticală.
+32. Repară numai când există o variantă românească clară, susținută de ORIGINAL și context. Dacă sunt posibile mai multe variante plauzibile și nu există certitudine, păstrează traducerea actuală.
+33. Păstrează sensul original, registrul, vulgaritățile, slangul, umorul și intenția replicii.
+34. Nu adăuga informații și nu elimina informații.
+35. Păstrează exact formatul de subtitrare și eventualele line-break-uri relevante.
+36. Nu introduce engleză în traducere și nu introduce caractere non-latine.
+37. Dacă nu ești 100% sigur că există o eroare, PĂSTREAZĂ traducerea actuală.
 
 EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE DE DETECȚIE:
 - „Ori dăm de capăt cum să-l antrenăm” → detectează construcția sintactică nenaturală și corectează conform ORIGINALULUI.
@@ -1857,6 +1875,12 @@ EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE DE DETECȚIE:
 - „metamorfoți” → detectează cuvântul inexistent și reconstruiește forma corectă din ORIGINAL/context.
 - „Și uită-ce-mi face și mie.” → verifică pronumele/cliticul lipsă și construcția „uită-te ce-mi face și mie”.
 - „ftuți” → detectează typo-ul și verifică forma corectă din ORIGINAL/context.
+- „Și comuniștii erau periculoase?” → verifică acordul de gen și număr dintre subiect și predicat/nume predicativ: „comuniștii” cere „periculoși”.
+- „Apar și dispari din viața mea” → verifică persoana și paralelismul verbal; nu accepta combinații precum „apar” + „dispari” dacă ORIGINALUL/contextul cere aceeași persoană verbală.
+- „De ce? Țin-ținta e prea mică.” → detectează fragmentul corupt și verifică întreaga construcție, nu doar cuvântul „ținta”.
+- „De ce i-ar pasa ce fac?” → verifică forma verbală „păsa” și construcția completă „i-ar păsa”.
+- „...cumpărate in ziua...” → verifică diacriticele și forma gramaticală „în”.
+- „De ce i-o fi spus lui Einstein de m-a vorbit de rău.” → verifică legătura sintactică dintre verbe, pronume și subordonate; nu accepta o propoziție doar pentru că toate cuvintele sunt românești.
 
 IMPORTANT: Acestea sunt exemple de TIPURI DE ERORI, nu corecții care trebuie aplicate orbește. Pentru fiecare linie, ORIGINALUL și contextul au prioritate.
 
@@ -1889,6 +1913,8 @@ EXEMPLE DE ERORI CARE TREBUIE VERIFICATE ÎN VARIANTA FINALĂ:
 Aceste exemple sunt orientative; NU modifica o replică dacă originalul nu susține corecția.
 
 DATELE DE VERIFICAT:
+Fiecare obiect conține și context_anterior/context_urmator. Acestea sunt DOAR pentru înțelegerea sensului, acordului și continuității.
+Nu le traduce și nu le modifica. Returnează corecții DOAR pentru câmpul translation al ID-ului curent.
 ${JSON.stringify(payload, null, 2)}
 
 Returnează DOAR JSON valid în forma:
