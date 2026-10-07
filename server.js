@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.60',
+    version: '12.78.61',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1919,6 +1919,14 @@ EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE
 58. Pentru propozițiile împărțite între două sau mai multe subtitluri, fă verificarea la nivelul frazei complete folosind context_anterior și context_urmator. Nu lăsa o eroare de acord, timp verbal, clitic sau ordine a cuvintelor să treacă doar pentru că fragmentul local pare acceptabil.
 59. Fă o ultimă trecere mentală de tip NATIV ROMÂN: „Aș spune această propoziție exact așa în română?” Dacă răspunsul este clar „nu” din cauza unei greșeli gramaticale/sintactice sau a unui calchiu evident, verifică ORIGINALUL și propune corecția. Dacă este doar o preferință stilistică, NU modifica.
 60. Nu te opri după găsirea primei erori. După ce identifici o problemă într-o linie, verifică și restul liniei pentru alte erori independente înainte de a returna corecția.
+61. Verifică explicit FORMELE VERBALE TRUNCHIATE SAU LIPSITE DE LITERE. Exemple precum „t trebui” trebuie analizate ca posibile forme corupte ale lui „trebuie”; nu lăsa forma doar pentru că restul propoziției este inteligibil.
+62. Verifică explicit CUVINTELE SCURTE DEFORMATE. Forme precum „nite” trebuie tratate ca posibile deformări ale lui „niște” și verificate în ORIGINAL și context înainte de corectare.
+63. Verifică explicit CUVINTELE INVENTATE/DEFORMATE CARE PAR PLAUZIBILE. O formă precum „peștinat” trebuie considerată suspectă chiar dacă seamănă cu o formă românească; reconstruiește forma corectă numai după ORIGINAL și context.
+64. Verifică explicit MAJUSCULELE NEJUSTIFICATE ÎN INTERIORUL PROPOZIȚIEI. „Ca să Mă înveți...” trebuie evaluat ca posibilă eroare de capitalizare; dacă nu este nume propriu sau citat intenționat, forma firească este „Ca să mă înveți...”.
+65. Verifică explicit CONECTORII „CA/CUM” ȘI CONSTRUCȚIILE COMPARATIVE/REFERENȚIALE. O formulare precum „Exact ca i-ați făcut tatălui meu” poate fi coruptă; dacă ORIGINALUL exprimă modul în care s-a făcut ceva, verifică dacă este necesar „Exact cum i-ați făcut tatălui meu”. Nu schimba automat fără suportul ORIGINALULUI.
+66. Verifică explicit EXPRESIILE TEMPORALE CU „LA/PÂNĂ LA/PÂNĂ”. Formulări precum „pregătit pe 6” trebuie comparate cu ORIGINALUL pentru a stabili dacă sensul este „pregătit la șase”, „pregătit până la șase” sau altceva. Nu accepta o prepoziție doar pentru că traducerea literală o permite.
+67. Verifică explicit CONSTRUCȚIILE CU „ÎN DOI/ÎN DOUĂ” ȘI EXPRESIILE DE MOD/NUMĂR. O formulare precum „totul se mișcă în doi” poate fi un calchiu al englezei; verifică ORIGINALUL și contextul pentru o formulare românească naturală, de tipul „ne mișcăm câte doi”, dacă sensul o confirmă.
+68. Când găsești o formă suspectă, nu corecta doar cuvântul izolat. Reanalizează întreaga propoziție după înlocuire și verifică din nou acordul, sensul, complementele și naturalețea.
 
 EXEMPLE SUPLIMENTARE — INTEGRITATE SINTACTICĂ ȘI ORTOGRAFICĂ:
 - „Există o persoană pe care n-o veți niciodată învinge.” → ordinea corectă este de tipul „Există o persoană pe care n-o veți învinge niciodată.”; verifică întreaga construcție, nu doar cuvântul „învinge”.
@@ -1966,6 +1974,13 @@ EXEMPLE DE ERORI CARE TREBUIE VERIFICATE ÎN VARIANTA FINALĂ:
 - „o favoră” → „o favoare”.
 - „mi facă” → verifică forma clitică potrivită contextului, de exemplu „să-mi facă”.
 - „Exact ca i-au făcut...” → verifică legătura gramaticală potrivită contextului, nu doar primul cuvânt schimbat.
+- „Atacul ăla de panică trebui să fie un avertisment...” → forma verbală este suspectă; verifică „trebuie” în raport cu ORIGINALUL.
+- „Poți să-mi iei nite Sugarfish?” → verifică forma „nite” și, dacă ORIGINALUL confirmă pluralul nehotărât, corectează la „niște”.
+- „Lenny era să se peștinat când i-am spus.” → tratează „peștinat” ca formă coruptă și reconstruiește propoziția numai din ORIGINAL/context.
+- „Ca să Mă înveți cum să-mi ucid tatăl?” → dacă „Mă” nu este nume propriu sau început de citat, corectează la „mă”.
+- „Exact ca i-ați făcut tatălui meu.” → verifică dacă „ca” trebuie să fie „cum” pentru construcția cerută de ORIGINAL.
+- „Asigură-te că e pregătit pe 6.” → verifică sensul temporal în ORIGINAL; nu păstra „pe 6” dacă engleza cere „la 6” sau „până la 6”.
+- „Totul se mișcă în doi.” → verifică dacă este un calchiu și dacă ORIGINALUL cere o construcție românească de tipul „ne mișcăm câte doi”.
 - „orgasmato”, „șura”, „tuți” → tratează-le ca forme suspecte care trebuie verificate explicit în ORIGINAL și context; nu le lăsa doar pentru că par aproape de un cuvânt românesc.
 Aceste exemple sunt orientative; NU modifica o replică dacă originalul nu susține corecția.
 
