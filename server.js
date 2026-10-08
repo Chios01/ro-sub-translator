@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.84',
+    version: '12.78.85',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2551,11 +2551,23 @@ function detectLocalGrammarReviewReasons(text) {
 
     // Calcuri/construcții observate în QA manual. Sunt DOAR semnale: nu sunt
     // modificate automat fără comparație cu originalul și contextul.
-    if (/(?:^|[^\p{L}])înșiși\s+semnalele(?:$|[^\p{L}])/iu.test(clean)) reasons.push('acord suspect „înșiși semnalele”');
+    if (/(?:^|[^\p{L}])(?:însuși|insusi|insuşi)\s+semnalele(?:$|[^\p{L}])/iu.test(clean)) reasons.push('acord suspect „însuși semnalele”');
     if (/\bnici\s+mai\s+mult\s+decât\s+este\s+el\b/i.test(clean)) reasons.push('construcție comparativă suspectă');
 
-    // Un cuvânt englezesc izolat care poate scăpa detectorului generic.
-    if (/\binnate\b/i.test(clean)) reasons.push('cuvânt englezesc izolat „innate”');
+    // Detectare țintită pentru cuvinte englezești de conținut care pot rămâne
+    // integrate într-o propoziție românească și pot scăpa detectorului global.
+    // Lista este intenționat scurtă și conservatoare pentru a evita nume proprii
+    // sau împrumuturi uzuale din română.
+    const highConfidenceEnglish = new Set([
+        'upheaval', 'innate', 'indictment', 'disregard', 'however', 'although',
+        'meanwhile', 'witness', 'threat', 'helpless', 'sudden', 'footage',
+        'outcome', 'warning', 'breach', 'device', 'evidence'
+    ]);
+    const englishIntegrated = clean.match(/[A-Za-z]+/g) || [];
+    const englishHits = englishIntegrated.filter(word => highConfidenceEnglish.has(word.toLowerCase()));
+    for (const word of [...new Set(englishHits.map(w => w.toLowerCase()))]) {
+        reasons.push(`cuvânt englezesc integrat „${word}”`);
+    }
 
     return reasons;
 }
@@ -2781,10 +2793,6 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
     await grammarTranslationReview(items, translatedById, keyStates);
 
-    // Verificare punctuală după Grammar Review pentru traduceri devenite goale.
-    // Sunt retrimise doar ID-urile goale, nu întregul fișier.
-    await recoverEmptyTranslationsAfterGrammarReview(items, translatedById, keyStates);
-
     // Strat local foarte ieftin: repară doar typo-uri cu încredere mare și
     // selectează replicile care merită încă o verificare AI punctuală.
     const microGrammar = await runLocalGrammarQualityPass(items, translatedById);
@@ -2797,6 +2805,11 @@ Returnează DOAR un ARRAY JSON valid în forma:
         );
     }
 
+    // Ultima recuperare după TOATE trecerile Grammar Review.
+    // Astfel, o corecție punctuală care a produs accidental un text gol nu mai ajunge
+    // în fișierul final. Sunt retrimise doar ID-urile goale, nu întregul fișier.
+    await recoverEmptyTranslationsAfterGrammarReview(items, translatedById, keyStates);
+
     // Ultima protecție: corecțiile mecanice certe trebuie aplicate DUPĂ Grammar Review.
     // Altfel, verificatorul LLM poate rescrie din nou o formă deja corectată și rezultatul
     // devine dependent de variația aleatorie a modelului. formatSubtitleLine() este
@@ -2805,10 +2818,12 @@ Returnează DOAR un ARRAY JSON valid în forma:
         const id = String(item.id);
         const current = translatedById[id];
         if (current == null || String(current).trim() === '') continue;
-        translatedById[id] = applyDeterministicSemanticFix(
+        let finalText = applyDeterministicSemanticFix(
             item.text,
             formatSubtitleLine(String(current))
         );
+        finalText = applyLocalGrammarDeterministicFixes(finalText);
+        translatedById[id] = formatSubtitleLine(finalText);
     }
 
     console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate după Grammar Review.${c.reset}`);
