@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.87',
+    version: '12.78.88',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1904,7 +1904,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     const rateLimitRetryQueue = [];
 
     const processGrammarBatch = async (batch, batchIndex, label) => {
-        console.log(`${c.cyan}➤ [Grammar Review] ${label}...${c.reset}`);
+        const batchFixedBefore = fixed;
 
         const payload = batch.map(item => {
             const index = contextItems.findIndex(x => String(x.id) === String(item.id));
@@ -2319,12 +2319,13 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
 
                 translatedById[id] = candidate;
                 fixed++;
-                console.log(`${c.green}  ✔ [Grammar Review] ${item.id} corectată${c.reset}`);
                 }
 
                 // IMPORTANT: dacă răspunsul JSON a fost valid și am procesat calupul,
                 // calupul este REUȘIT. Nu lăsăm bucla de retry să cadă ulterior în
                 // fallback-ul „eroare necunoscută” și să dubleze contorul checked.
+                const batchFixed = fixed - batchFixedBefore;
+                console.log(`${c.green}✔ [Grammar Review] Calup ${batchIndex + 1}/${batches.length}: ${batchFixed} corectate${c.reset}`);
                 return { success: true, is429: false };
             } catch (error) {
                 lastJsonError = error;
@@ -2729,6 +2730,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
 `;
 
     let recoveredCount = 0;
+    const recoveredIds = [];
+    const failedIds = [];
 
     try {
         const recoveryKey = await getAvailableKey(keyStates);
@@ -2747,16 +2750,18 @@ Returnează DOAR un ARRAY JSON valid în forma:
             ) {
                 translatedById[String(item.id)] = candidate;
                 recoveredCount++;
-                console.log(`${c.green}  ✔ [Post-Grammar Empty Recovery] ${item.id} reparată${c.reset}`);
+                recoveredIds.push(String(item.id));
             } else {
-                console.log(`${c.red}  ❌ [Post-Grammar Empty Recovery] ${item.id} nu a primit o traducere validă${c.reset}`);
+                failedIds.push(String(item.id));
             }
         }
     } catch (error) {
         console.log(`${c.yellow}⚠ [Post-Grammar Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
     }
 
-    console.log(`${c.green}✔ [Post-Grammar Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${c.reset}`);
+    const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
+    const failedSuffix = failedIds.length ? `; nereparate: ${failedIds.join(', ')}` : '';
+    console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Post-Grammar Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
     return { detected: emptyTranslations.length, recovered: recoveredCount };
 }
 
@@ -2842,6 +2847,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
             const recoveryJson = safeJsonParse(recoveryRaw);
             const recoveryDict = normalizeTranslationPayload(recoveryJson);
             let recoveredCount = 0;
+            const recoveredIds = [];
+            const failedIds = [];
 
             for (const item of emptyTranslations) {
                 const candidateRaw = recoveryDict[String(item.id)];
@@ -2854,13 +2861,15 @@ Returnează DOAR un ARRAY JSON valid în forma:
                 ) {
                     translatedById[String(item.id)] = candidate;
                     recoveredCount++;
-                    console.log(`${c.green}  ✔ [Empty Recovery] ${item.id} reparată${c.reset}`);
+                    recoveredIds.push(String(item.id));
                 } else {
-                    console.log(`${c.red}  ❌ [Empty Recovery] ${item.id} nu a primit o traducere validă${c.reset}`);
+                    failedIds.push(String(item.id));
                 }
             }
 
-            console.log(`${c.green}✔ [Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${c.reset}`);
+            const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
+            const failedSuffix = failedIds.length ? `; nereparate: ${failedIds.join(', ')}` : '';
+            console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
         } catch (error) {
             console.log(`${c.yellow}⚠ [Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
         }
