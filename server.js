@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.89',
+    version: '12.78.90',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -491,6 +491,20 @@ async function handleSubtitles(req, res) {
 
 app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
 app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
+
+// ============================================================
+// EMPTY SOURCE BLOCK PROTECTION
+// Ignoră blocurile care conțin doar spații sau caractere invizibile
+// (zero-width/BOM/formatting). Acestea nu reprezintă replici reale.
+// ============================================================
+
+function isEffectivelyEmptySubtitleText(text) {
+    const clean = String(text || '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/[\p{Cf}\s]/gu, '')
+        .trim();
+    return clean === '';
+}
 
 // ============================================================
 // CLEAN TEXT FOR JSON 
@@ -1652,7 +1666,7 @@ ${JSON.stringify(missingItems, null, 2)}
 
             const untranslatedItems = results.filter(result => {
                 const original = chunk.find(obj => obj.id === result.id)?.text || '';
-                const originalClean = String(original).replace(/<[^>]+>/g, '').trim();
+                const originalClean = isEffectivelyEmptySubtitleText(original) ? '' : String(original).replace(/<[^>]+>/g, '').trim();
                 const translatedClean = String(result.text || '').replace(/<[^>]+>/g, '').trim();
                 if (!originalClean) return false;
                 if (isJunkOrInterjection(original)) return false;
@@ -1728,7 +1742,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
 
     for (let pass = 1; pass <= maxPasses; pass++) {
         const suspicious = items.filter(item => {
-            const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+            const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
             if (!originalClean) return false;
             if (isJunkOrInterjection(item.text)) return false;
 
@@ -1823,7 +1837,7 @@ Returnează DOAR JSON valid în forma:
         await Promise.all(Array.from({ length: retryConcurrency }, () => retryWorker()));
 
         const remaining = items.filter(item => {
-            const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+            const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
             if (!originalClean) return false;
             if (isJunkOrInterjection(item.text)) return false;
 
@@ -1846,7 +1860,7 @@ Returnează DOAR JSON valid în forma:
     }
 
     const remaining = items.filter(item => {
-        const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
         if (isJunkOrInterjection(item.text)) return false;
 
@@ -2700,7 +2714,7 @@ function runSemanticSpotCheck(items, translatedById) {
 
 async function recoverEmptyTranslationsAfterGrammarReview(items, translatedById, keyStates) {
     const emptyTranslations = items.filter(item => {
-        const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
 
         // IMPORTANT: aici nu excludem interjecțiile. Dacă o replică originală
@@ -2816,7 +2830,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     console.log(`\n${c.green}✔ Toate cele ${chunks.length} de calupuri finalizate!${c.reset}`);
 
     const emptyTranslations = items.filter(item => {
-        const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
         if (isJunkOrInterjection(item.text)) return false;
 
@@ -2932,7 +2946,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
-        const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
         if (isJunkOrInterjection(item.text)) return false;
 
@@ -3269,7 +3283,7 @@ function parseSrt(srt) {
         let rawText = lines.slice(2).join('\n');
         const text = cleanTextForJson(rawText);
 
-        if (!text || text === ' ') continue;
+        if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) continue;
 
         result.push({ id, start: match[1], end: match[2], text });
     }
