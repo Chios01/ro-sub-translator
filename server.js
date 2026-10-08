@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.86',
+    version: '12.78.87',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2699,8 +2699,10 @@ async function recoverEmptyTranslationsAfterGrammarReview(items, translatedById,
     const emptyTranslations = items.filter(item => {
         const originalClean = String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
-        if (isJunkOrInterjection(item.text)) return false;
 
+        // IMPORTANT: aici nu excludem interjecțiile. Dacă o replică originală
+        // precum "Oh", "Oof", "Uf", "Doamne!" a rămas goală după Grammar Review,
+        // trebuie recuperată la fel ca orice altă replică reală.
         const translated = translatedById[String(item.id)];
         const translatedClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
         return !translatedClean;
