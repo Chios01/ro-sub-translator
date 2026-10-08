@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.83',
+    version: '12.78.84',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2492,7 +2492,20 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\brenumerate\b/gi, 'remunerate'],
     [/\brenumerată\b/gi, 'remunerată'],
     [/\brenumerat\b/gi, 'remunerat'],
-    [/\bsugist\b/gi, 'sugi']
+    [/\bsugist\b/gi, 'sugi'],
+
+    // Corecții locale suplimentare cu încredere foarte mare, validate în QA.
+    [/\bdeciizi\b/gi, 'decizi'],
+    [/\bco\s+cerul\b/gi, 'că cerul'],
+    [/\bAlelea\b/gi, 'Alea'],
+    [/\bn-mai\b/gi, 'nu mai'],
+    [/\bBine,,/gi, 'Bine,'],
+    [/\bpropria\s+noastre\b/gi, 'propria noastră'],
+    [/\binnascute\b/gi, 'înnăscute'],
+    [/\binnascuta\b/gi, 'înnăscută'],
+    [/\binnascut\b/gi, 'înnăscut'],
+    [/\binnascuti\b/gi, 'înnăscuți'],
+    [/(?<![\p{L}])ți-a\s+pasat\b/iu, 'ți-a păsat']
 ];
 
 function applyLocalGrammarDeterministicFixes(text) {
@@ -2521,7 +2534,9 @@ function detectLocalGrammarReviewReasons(text) {
 
     // Repetiție imediată de cuvânt: nu o corectăm automat, deoarece poate fi
     // o bâlbâială/replică intenționată; o lăsăm Grammar Review să decidă.
-    const duplicate = clean.match(/\b([A-Za-zĂÂÎȘȚăâîșț]{2,})\s+\1\b/i);
+    // Limitele sunt Unicode-aware pentru a nu confunda prefixe precum
+    // „de” din „deștept” sau „cu” din „cuțitul” cu duplicate reale.
+    const duplicate = clean.match(/(?<![\p{L}])([\p{L}]{2,})\s+\1(?![\p{L}-])/iu);
     const intentionalRepeatWords = new Set(['nu', 'da', 'mă', 'te', 'eu', 'tu', 'ha', 'haha', 'hei']);
     if (duplicate && !intentionalRepeatWords.has(String(duplicate[1]).toLowerCase())) {
         reasons.push(`cuvânt repetat: „${duplicate[0]}”`);
@@ -2536,7 +2551,7 @@ function detectLocalGrammarReviewReasons(text) {
 
     // Calcuri/construcții observate în QA manual. Sunt DOAR semnale: nu sunt
     // modificate automat fără comparație cu originalul și contextul.
-    if (/\bînsele\s+semnalele\b/i.test(clean)) reasons.push('construcție suspectă „însele semnalele”');
+    if (/(?:^|[^\p{L}])înșiși\s+semnalele(?:$|[^\p{L}])/iu.test(clean)) reasons.push('acord suspect „înșiși semnalele”');
     if (/\bnici\s+mai\s+mult\s+decât\s+este\s+el\b/i.test(clean)) reasons.push('construcție comparativă suspectă');
 
     // Un cuvânt englezesc izolat care poate scăpa detectorului generic.
