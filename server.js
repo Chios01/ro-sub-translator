@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.92',
+    version: '12.78.93',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -500,13 +500,34 @@ app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 // ============================================================
 
 function isEffectivelyEmptySubtitleText(text) {
-    // Considerăm gol orice text format doar din whitespace, caractere de control/format
-    // sau semne Unicode invizibile care pot rămâne într-un bloc SRT aparent gol.
+    // Considerăm gol orice text format doar din whitespace, caractere de control/format,
+    // semne Unicode invizibile SAU entități HTML care reprezintă astfel de caractere.
     // Verificarea este folosită doar pentru DETECTAREA GOLULUI; nu modifică textul real.
-    const clean = String(text || '')
-        .replace(/<[^>]+>/g, '')
+    let clean = String(text || '')
+        .replace(/<[^>]+>/g, '');
+
+    // Unele SRT-uri encodează spațiile/caracterele invizibile ca entități HTML.
+    // Le decodăm doar în scopul detectării golului.
+    clean = clean.replace(/&#x([0-9a-f]+);?/gi, (_, hex) => {
+        const codePoint = Number.parseInt(hex, 16);
+        return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10FFFF
+            ? String.fromCodePoint(codePoint)
+            : '';
+    });
+
+    clean = clean.replace(/&#(\d+);?/g, (_, decimal) => {
+        const codePoint = Number.parseInt(decimal, 10);
+        return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10FFFF
+            ? String.fromCodePoint(codePoint)
+            : '';
+    });
+
+    clean = clean
+        .replace(/&(?:nbsp);?/gi, ' ')
+        .replace(/&(?:zwsp|zwnj|zwj|lrm|rlm|shy|feff);?/gi, '')
         .replace(/[\p{C}\p{M}\s]/gu, '')
         .trim();
+
     return clean === '';
 }
 
@@ -3297,6 +3318,13 @@ function parseSrt(srt) {
         if (!match) continue;
 
         let rawText = lines.slice(2).join('\n');
+
+        // Verificăm textul ORIGINAL înainte de cleanTextForJson(). Unele surse folosesc
+        // entități HTML pentru spații/caractere invizibile, iar etapa de curățare poate
+        // transforma aceste entități într-un fragment aparent nenul. Un astfel de bloc
+        // este totuși gol și nu trebuie să intre în pipeline-ul de traducere.
+        if (isEffectivelyEmptySubtitleText(rawText)) continue;
+
         const text = cleanTextForJson(rawText);
 
         if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) continue;
