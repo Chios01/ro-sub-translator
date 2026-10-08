@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.82',
+    version: '12.78.83',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1484,7 +1484,10 @@ function hasUntranslatedEnglish(original, translated) {
         'see','sees','saw','say','says','said','tell','tells','told','find','finds','found','leave','leaves','left','keep','keeps','kept',
         'disregard','forget','ignore','remember','good','bad','right','wrong','now','here','there','very','really','just','only','still',
         'already','first','last','next','back','again','colonel','minutes','ready','killed','enough','nothing','maybe','little','well','sure',
-        'itself','himself','herself','themselves','myself','yourself','such','indictment','however','although','though','perhaps','rather','still'
+        'itself','himself','herself','themselves','myself','yourself','such','indictment','however','although','though','perhaps','rather','still',
+        // Cuvinte englezești izolate care au fost observate în output și care
+        // nu sunt forme românești valide. Sunt folosite doar ca semnal de control.
+        'innate'
     ]);
 
     const tokenize = value => value.match(/[a-zăâîșț]+(?:'[a-zăâîșț]+)?/g) || [];
@@ -1869,7 +1872,10 @@ const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
 const GRAMMAR_REVIEW_JSON_RETRY_LIMIT = 1;
 const GRAMMAR_REVIEW_JSON_SPLIT_MIN = 20;
 
-async function grammarTranslationReview(items, translatedById, keyStates) {
+async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
+    const contextItems = options.contextItems || items;
+    const isTargetedReview = options.mode === 'targeted';
+
     const candidates = items.filter(item => {
         const original = String(item.text || '').replace(/<[^>]+>/g, '').trim();
         const translated = String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim();
@@ -1884,7 +1890,11 @@ async function grammarTranslationReview(items, translatedById, keyStates) {
         return { checked: 0, fixed: 0 };
     }
 
-    console.log(`\n${c.cyan}📝 VERIFICARE SUPLIMENTARĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
+    if (isTargetedReview) {
+        console.log(`\n${c.cyan}🎯 VERIFICARE PUNCTUALĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
+    } else {
+        console.log(`\n${c.cyan}📝 VERIFICARE SUPLIMENTARĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
+    }
     console.log(`   Verificate: ${candidates.length} replici`);
 
     const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
@@ -1897,9 +1907,9 @@ async function grammarTranslationReview(items, translatedById, keyStates) {
         console.log(`${c.cyan}➤ [Grammar Review] ${label}...${c.reset}`);
 
         const payload = batch.map(item => {
-            const index = items.findIndex(x => String(x.id) === String(item.id));
-            const previous = index > 0 ? items[index - 1] : null;
-            const next = index >= 0 && index < items.length - 1 ? items[index + 1] : null;
+            const index = contextItems.findIndex(x => String(x.id) === String(item.id));
+            const previous = index > 0 ? contextItems[index - 1] : null;
+            const next = index >= 0 && index < contextItems.length - 1 ? contextItems[index + 1] : null;
 
             return {
                 id: item.id,
@@ -2453,6 +2463,132 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
 }
 
 // ============================================================
+// MICRO-CHECK LOCAL — ORTOGRAFIE + GRAMATICĂ EVIDENTĂ
+// Nu folosește Gemini. Aplică doar corecții cu încredere foarte mare
+// și marchează restul pentru o verificare punctuală.
+// ============================================================
+
+const LOCAL_GRAMMAR_FIXES = [
+    // Greșeli reale observate în verificări manuale ale subtitrărilor.
+    [/\brenumererațiile\b/gi, 'remunerațiile'],
+    [/\brenumererație\b/gi, 'remunerație'],
+    [/\brenumererația\b/gi, 'remunerația'],
+    [/\brenumererației\b/gi, 'remunerației'],
+    [/\brenumererațiilor\b/gi, 'remunerațiilor'],
+    [/\brenumererați\b/gi, 'remunerați'],
+    [/\brenumererate\b/gi, 'remunerate'],
+    [/\brenumerată\b/gi, 'remunerată'],
+    [/\brenumerat\b/gi, 'remunerat'],
+    [/\brenumerare\b/gi, 'remunerare'],
+    [/\brenumerarea\b/gi, 'remunerarea'],
+    [/\brenumerării\b/gi, 'remunerării'],
+    [/\brenumerările\b/gi, 'remunerările'],
+    [/\brenumerațiile\b/gi, 'remunerațiile'],
+    [/\brenumerație\b/gi, 'remunerație'],
+    [/\brenumerația\b/gi, 'remunerația'],
+    [/\brenumerației\b/gi, 'remunerației'],
+    [/\brenumerațiilor\b/gi, 'remunerațiilor'],
+    [/\brenumerați\b/gi, 'remunerați'],
+    [/\brenumerate\b/gi, 'remunerate'],
+    [/\brenumerată\b/gi, 'remunerată'],
+    [/\brenumerat\b/gi, 'remunerat'],
+    [/\bsugist\b/gi, 'sugi']
+];
+
+function applyLocalGrammarDeterministicFixes(text) {
+    let result = String(text || '');
+    for (const [pattern, replacement] of LOCAL_GRAMMAR_FIXES) {
+        result = result.replace(pattern, match => {
+            if (match === match.toUpperCase()) return replacement.toUpperCase();
+            if (match[0] === match[0].toUpperCase()) {
+                return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+            }
+            return replacement;
+        });
+    }
+    return result;
+}
+
+function detectLocalGrammarReviewReasons(text) {
+    const clean = String(text || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!clean) return [];
+
+    const reasons = [];
+
+    // Repetiție imediată de cuvânt: nu o corectăm automat, deoarece poate fi
+    // o bâlbâială/replică intenționată; o lăsăm Grammar Review să decidă.
+    const duplicate = clean.match(/\b([A-Za-zĂÂÎȘȚăâîșț]{2,})\s+\1\b/i);
+    const intentionalRepeatWords = new Set(['nu', 'da', 'mă', 'te', 'eu', 'tu', 'ha', 'haha', 'hei']);
+    if (duplicate && !intentionalRepeatWords.has(String(duplicate[1]).toLowerCase())) {
+        reasons.push(`cuvânt repetat: „${duplicate[0]}”`);
+    }
+
+    // Construcții de clitic evident suspecte, pe care Grammar Review deja știe
+    // să le analizeze, dar care merită o verificare punctuală atunci când apar.
+    if (/\baș-o\b/i.test(clean)) reasons.push('clitic suspect „aș-o”');
+    if (/\bnu\s+ți-pasă\b/i.test(clean)) reasons.push('clitic suspect „nu ți-pasă”');
+    if (/\buită-ce-mi\b/i.test(clean)) reasons.push('clitic suspect „uită-ce-mi”');
+    if (/(?:^|\s)(?:să|sa)\s+mi\s+facă\b/i.test(clean)) reasons.push('clitic suspect „să mi facă”');
+
+    // Calcuri/construcții observate în QA manual. Sunt DOAR semnale: nu sunt
+    // modificate automat fără comparație cu originalul și contextul.
+    if (/\bînsele\s+semnalele\b/i.test(clean)) reasons.push('construcție suspectă „însele semnalele”');
+    if (/\bnici\s+mai\s+mult\s+decât\s+este\s+el\b/i.test(clean)) reasons.push('construcție comparativă suspectă');
+
+    // Un cuvânt englezesc izolat care poate scăpa detectorului generic.
+    if (/\binnate\b/i.test(clean)) reasons.push('cuvânt englezesc izolat „innate”');
+
+    return reasons;
+}
+
+async function runLocalGrammarQualityPass(items, translatedById) {
+    let autoFixed = 0;
+    const flagged = [];
+
+    for (const item of items) {
+        const id = String(item.id);
+        const current = String(translatedById[id] || '');
+        if (!current.trim()) continue;
+        if (isJunkOrInterjection(item.text)) continue;
+
+        const fixed = applyLocalGrammarDeterministicFixes(current);
+        if (fixed !== current) {
+            translatedById[id] = formatSubtitleLine(fixed);
+            autoFixed++;
+            continue;
+        }
+
+        const reasons = detectLocalGrammarReviewReasons(current);
+        if (reasons.length) {
+            flagged.push({
+                item,
+                reasons
+            });
+        }
+    }
+
+    console.log(`${c.green}✔ [Micro-Grammar] ${autoFixed} corecții locale certe aplicate.${c.reset}`);
+
+    if (flagged.length) {
+        console.log(`${c.yellow}⚠ [Micro-Grammar] ${flagged.length} replici marcate pentru verificare punctuală.${c.reset}`);
+        flagged.slice(0, 20).forEach(entry => {
+            console.log(`  ${c.yellow}• ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
+        });
+    } else {
+        console.log(`${c.green}✔ [Micro-Grammar] Nicio replică nu necesită verificare punctuală.${c.reset}`);
+    }
+
+    return {
+        autoFixed,
+        flaggedItems: flagged.map(entry => entry.item)
+    };
+}
+
+// ============================================================
 // RECUPERARE DUPĂ GRAMMAR REVIEW — TRADUCERI DEVENITE GOALE
 // ============================================================
 
@@ -2633,6 +2769,18 @@ Returnează DOAR un ARRAY JSON valid în forma:
     // Verificare punctuală după Grammar Review pentru traduceri devenite goale.
     // Sunt retrimise doar ID-urile goale, nu întregul fișier.
     await recoverEmptyTranslationsAfterGrammarReview(items, translatedById, keyStates);
+
+    // Strat local foarte ieftin: repară doar typo-uri cu încredere mare și
+    // selectează replicile care merită încă o verificare AI punctuală.
+    const microGrammar = await runLocalGrammarQualityPass(items, translatedById);
+    if (microGrammar.flaggedItems.length) {
+        await grammarTranslationReview(
+            microGrammar.flaggedItems,
+            translatedById,
+            keyStates,
+            { mode: 'targeted', contextItems: items }
+        );
+    }
 
     // Ultima protecție: corecțiile mecanice certe trebuie aplicate DUPĂ Grammar Review.
     // Altfel, verificatorul LLM poate rescrie din nou o formă deja corectată și rezultatul
