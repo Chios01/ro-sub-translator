@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.90',
+    version: '12.78.91',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2934,12 +2934,24 @@ Returnează DOAR un ARRAY JSON valid în forma:
         const id = String(item.id);
         const current = translatedById[id];
         if (current == null || String(current).trim() === '') continue;
+
+        // Protecție suplimentară: formatterul final nu are voie să șteargă
+        // accidental o traducere care exista deja. Dacă după curățare toate
+        // caracterele dispar, păstrăm ultima traducere nenulă disponibilă.
+        const currentText = String(current);
         let finalText = applyDeterministicSemanticFix(
             item.text,
-            formatSubtitleLine(String(current))
+            formatSubtitleLine(currentText)
         );
         finalText = applyLocalGrammarDeterministicFixes(finalText);
-        translatedById[id] = formatSubtitleLine(finalText);
+        const formattedFinalText = formatSubtitleLine(finalText);
+
+        if (String(formattedFinalText).trim()) {
+            translatedById[id] = formattedFinalText;
+        } else {
+            translatedById[id] = currentText;
+            console.log(`${c.yellow}⚠ [Protecție finală] ID ${id}: formatterul ar fi golit traducerea; am păstrat ultima variantă nenulă.${c.reset}`);
+        }
     }
 
     console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate după Grammar Review.${c.reset}`);
