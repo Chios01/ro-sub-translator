@@ -72,7 +72,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.85',
+    version: '12.78.86',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2616,6 +2616,82 @@ async function runLocalGrammarQualityPass(items, translatedById) {
 }
 
 // ============================================================
+// SEMANTIC SPOT CHECK — SEMNALE PUTERNICE DE TRADUCERE CORUPTĂ
+// Nu încearcă să evalueze stilul. Marchează doar construcții care sunt
+// suficient de suspecte încât merită o singură verificare AI punctuală.
+// Se combină cu Micro-Grammar în același request pentru a nu adăuga
+// o trecere Gemini separată.
+// ============================================================
+
+function detectSemanticSpotCheckReasons(text) {
+    const clean = String(text || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!clean) return [];
+
+    const reasons = [];
+
+    // Construcție clar suspectă: româna standard cere „în fața cui/câtor...”,
+    // nu „în fața a cine/câți...”. Verificăm doar formele cu risc foarte mare.
+    if (/(?<![\p{L}])în\s+fața\s+a\s+(?:cine|câți|câte)(?=$|[^\p{L}])/iu.test(clean)) {
+        reasons.push('construcție foarte suspectă „în fața a cine/câți...”');
+    }
+
+    // „De câți oameni a fost nevoie” este construcția firească. Dacă lipsește
+    // prepoziția „de”, trimitem replica la verificare punctuală.
+    if (/\b(?:câți|câte)\s+(?:\p{L}+\s+){0,5}a\s+fost\s+nevoie\b/iu.test(clean) &&
+        !/\bde\s+(?:câți|câte)\s+(?:\p{L}+\s+){0,5}a\s+fost\s+nevoie\b/iu.test(clean)) {
+        reasons.push('posibilă lipsă a prepoziției „de” în construcția „a fost nevoie”');
+    }
+
+    // Concatenări fără spațiu observate în QA. Sunt foarte specifice și
+    // nu modifică automat textul; doar declanșează verificarea punctuală.
+    if (/\b(?:unimpact|unregizor|unregizoare|unactor|oameniiși)\b/iu.test(clean)) {
+        reasons.push('posibilă concatenare accidentală de cuvinte');
+    }
+
+    // „am învățat-o Biblia” / „ai învățat-o cartea” sunt semnale foarte puternice
+    // de structură coruptă; nu marcăm construcții cu „pe” (care pot fi valide).
+    if (/\b(?:am|ai|a|au|ați|aveam|aveai|avea)\s+învățat-o\s+(?!pe\b)\p{L}{2,}\b/iu.test(clean)) {
+        reasons.push('structură suspectă după „învățat-o”');
+    }
+
+    // Cazul observat în QA: „ce și tu și eu avem nevoie să...”
+    // Este suficient de specific pentru a evita false positive-uri.
+    if (/\b(?:ce|ceea\s+ce)\s+și\s+tu\s+și\s+eu\s+avem\s+nevoie\s+să\b/iu.test(clean)) {
+        reasons.push('construcție semantică suspectă „și tu și eu avem nevoie...”');
+    }
+
+    return reasons;
+}
+
+function runSemanticSpotCheck(items, translatedById) {
+    const flagged = [];
+
+    for (const item of items) {
+        const current = String(translatedById[String(item.id)] || '');
+        if (!current.trim()) continue;
+        if (isJunkOrInterjection(item.text)) continue;
+
+        const reasons = detectSemanticSpotCheckReasons(current);
+        if (reasons.length) flagged.push({ item, reasons });
+    }
+
+    if (flagged.length) {
+        console.log(`${c.yellow}⚠ [Semantic Spot Check] ${flagged.length} replici marcate pentru verificare punctuală.${c.reset}`);
+        flagged.slice(0, 20).forEach(entry => {
+            console.log(`  ${c.yellow}• ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
+        });
+    } else {
+        console.log(`${c.green}✔ [Semantic Spot Check] Nicio replică nu necesită verificare punctuală.${c.reset}`);
+    }
+
+    return flagged.map(entry => entry.item);
+}
+
+// ============================================================
 // RECUPERARE DUPĂ GRAMMAR REVIEW — TRADUCERI DEVENITE GOALE
 // ============================================================
 
@@ -2796,9 +2872,22 @@ Returnează DOAR un ARRAY JSON valid în forma:
     // Strat local foarte ieftin: repară doar typo-uri cu încredere mare și
     // selectează replicile care merită încă o verificare AI punctuală.
     const microGrammar = await runLocalGrammarQualityPass(items, translatedById);
-    if (microGrammar.flaggedItems.length) {
+    const semanticSpotCheckItems = runSemanticSpotCheck(items, translatedById);
+
+    // Combinăm Micro-Grammar + Semantic Spot Check într-o singură verificare AI
+    // punctuală. Astfel, dacă nu există semnale puternice, nu există niciun request
+    // suplimentar; dacă există, toate sunt trimise într-o singură trecere țintită.
+    const targetedReviewMap = new Map();
+    for (const item of microGrammar.flaggedItems) {
+        targetedReviewMap.set(String(item.id), item);
+    }
+    for (const item of semanticSpotCheckItems) {
+        targetedReviewMap.set(String(item.id), item);
+    }
+
+    if (targetedReviewMap.size) {
         await grammarTranslationReview(
-            microGrammar.flaggedItems,
+            [...targetedReviewMap.values()],
             translatedById,
             keyStates,
             { mode: 'targeted', contextItems: items }
