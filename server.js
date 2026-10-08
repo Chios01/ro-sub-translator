@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.91',
+    version: '12.78.92',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -495,13 +495,17 @@ app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
 // ============================================================
 // EMPTY SOURCE BLOCK PROTECTION
 // Ignoră blocurile care conțin doar spații sau caractere invizibile
-// (zero-width/BOM/formatting). Acestea nu reprezintă replici reale.
+// (zero-width/BOM/formatting/mark-uri Unicode). Acestea nu reprezintă
+// replici reale și nu trebuie să ajungă în pipeline-ul Gemini.
 // ============================================================
 
 function isEffectivelyEmptySubtitleText(text) {
+    // Considerăm gol orice text format doar din whitespace, caractere de control/format
+    // sau semne Unicode invizibile care pot rămâne într-un bloc SRT aparent gol.
+    // Verificarea este folosită doar pentru DETECTAREA GOLULUI; nu modifică textul real.
     const clean = String(text || '')
         .replace(/<[^>]+>/g, '')
-        .replace(/[\p{Cf}\s]/gu, '')
+        .replace(/[\p{C}\p{M}\s]/gu, '')
         .trim();
     return clean === '';
 }
