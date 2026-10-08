@@ -2,6 +2,8 @@ const express = require('express');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
+const dns = require('dns').promises;
+const net = require('net');
 
 const app = express();
 
@@ -72,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.88',
+    version: '12.78.89',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2964,6 +2966,144 @@ Returnează DOAR un ARRAY JSON valid în forma:
 }
 
 // ============================================================
+// TARGET URL VALIDATION / SSRF PROTECTION
+// ============================================================
+
+function isPrivateOrReservedIp(address) {
+    const family = net.isIP(address);
+
+    if (family === 4) {
+        const parts = address.split('.').map(Number);
+        if (parts.length !== 4 || parts.some(n => !Number.isInteger(n) || n < 0 || n > 255)) {
+            return true;
+        }
+
+        const value = ((parts[0] * 256 + parts[1]) * 256 + parts[2]) * 256 + parts[3];
+        const inRange = (start, end) => value >= start && value <= end;
+
+        return (
+            inRange(0x00000000, 0x00FFFFFF) || // 0.0.0.0/8
+            inRange(0x0A000000, 0x0AFFFFFF) || // 10.0.0.0/8
+            inRange(0x64400000, 0x647FFFFF) || // 100.64.0.0/10
+            inRange(0x7F000000, 0x7FFFFFFF) || // 127.0.0.0/8
+            inRange(0xA9FE0000, 0xA9FEFFFF) || // 169.254.0.0/16
+            inRange(0xAC100000, 0xAC1FFFFF) || // 172.16.0.0/12
+            inRange(0xC0000000, 0xC00000FF) || // 192.0.0.0/24
+            inRange(0xC0000200, 0xC00002FF) || // 192.0.2.0/24
+            inRange(0xC0A80000, 0xC0A8FFFF) || // 192.168.0.0/16
+            inRange(0xC6120000, 0xC613FFFF) || // 198.18.0.0/15
+            inRange(0xC6336400, 0xC63364FF) || // 198.51.100.0/24
+            inRange(0xCB007100, 0xCB0071FF) || // 203.0.113.0/24
+            inRange(0xE0000000, 0xFFFFFFFF)    // multicast/reserved
+        );
+    }
+
+    if (family === 6) {
+        const normalized = address.toLowerCase().replace(/%.+$/, '');
+
+        if (
+            normalized === '::' ||
+            normalized === '::1' ||
+            normalized.startsWith('fc') ||
+            normalized.startsWith('fd') ||
+            /^(fe[89ab])/.test(normalized) ||
+            normalized.startsWith('ff') ||
+            normalized.startsWith('2001:db8:')
+        ) {
+            return true;
+        }
+
+        const mappedMatch = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+        if (mappedMatch) {
+            return isPrivateOrReservedIp(mappedMatch[1]);
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
+async function validateTargetUrl(rawUrl) {
+    let parsed;
+
+    try {
+        parsed = new URL(String(rawUrl || '').trim());
+    } catch (error) {
+        throw new Error('URL sursă invalid.');
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('Sunt permise doar URL-uri HTTP sau HTTPS.');
+    }
+
+    if (parsed.username || parsed.password) {
+        throw new Error('URL-urile cu autentificare inclusă nu sunt permise.');
+    }
+
+    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+
+    if (!hostname || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || hostname.endsWith('.internal') || hostname.endsWith('.home.arpa')) {
+        throw new Error('Destinația URL nu este permisă.');
+    }
+
+    let addresses;
+
+    if (net.isIP(hostname)) {
+        addresses = [{ address: hostname, family: net.isIP(hostname) }];
+    } else {
+        try {
+            addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+        } catch (error) {
+            throw new Error('Nu s-a putut rezolva gazda URL-ului.');
+        }
+    }
+
+    if (!addresses.length || addresses.some(entry => isPrivateOrReservedIp(entry.address))) {
+        throw new Error('Destinația URL nu este permisă.');
+    }
+
+    return {
+        url: parsed.toString(),
+        address: addresses[0].address,
+        family: addresses[0].family
+    };
+}
+
+async function fetchValidatedSubtitleUrl(initialUrl) {
+    let currentUrl = initialUrl;
+    const maxRedirects = 5;
+
+    for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
+        const validation = await validateTargetUrl(currentUrl);
+
+        const response = await axios.get(validation.url, {
+            headers: { 'User-Agent': BROWSER_USER_AGENT },
+            timeout: 30000,
+            responseType: 'text',
+            maxRedirects: 0,
+            validateStatus: status => status >= 200 && status < 400,
+            lookup: (hostname, options, callback) => {
+                callback(null, validation.address, validation.family);
+            }
+        });
+
+        if (response.status >= 300) {
+            const location = response.headers.location;
+            if (!location) {
+                throw new Error('Redirecționare URL fără destinație validă.');
+            }
+            currentUrl = new URL(location, validation.url).toString();
+            continue;
+        }
+
+        return response;
+    }
+
+    throw new Error('Prea multe redirecționări pentru URL-ul sursă.');
+}
+
+// ============================================================
 // TRANSLATION ROUTE
 // ============================================================
 
@@ -2976,6 +3116,14 @@ app.get('/:configData/translate', async (req, res) => {
     if (!targetUrl) {
         console.log(`${c.red}✖ EROARE: Lipsă URL sursă.${c.reset}`);
         return res.status(400).send('Lipsă URL sursă.');
+    }
+
+    let validatedTarget;
+    try {
+        validatedTarget = await validateTargetUrl(targetUrl);
+    } catch (error) {
+        console.log(`${c.red}✖ EROARE: URL sursă respins: ${error.message}${c.reset}`);
+        return res.status(400).send(error.message);
     }
 
     let userKeys = [];
@@ -3007,7 +3155,7 @@ app.get('/:configData/translate', async (req, res) => {
         return res.status(400).send('Nu există chei Gemini configurate.');
     }
 
-    const cacheKey = targetUrl;
+    const cacheKey = validatedTarget.url;
 
     if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
         res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
@@ -3037,11 +3185,7 @@ app.get('/:configData/translate', async (req, res) => {
             const startTime = Date.now();
             
             processPromise = (async () => {
-                const srtRes = await axios.get(targetUrl, {
-                    headers: { 'User-Agent': BROWSER_USER_AGENT },
-                    timeout: 30000,
-                    responseType: 'text'
-                });
+                const srtRes = await fetchValidatedSubtitleUrl(validatedTarget.url);
                 
                 const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
                 console.log(`${c.cyan}\n==================================================${c.reset}`);
