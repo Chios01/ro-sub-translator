@@ -73,11 +73,11 @@ function cleanMemoryCache() {
 // ============================================================
 
 const manifest = {
-    id: 'community.chios.geminitranslator.test',
-    version: '12.78.94-test.5',
-    name: 'RO Sub Translator TEST',
+    id: 'community.chios.geminitranslator',
+    version: '12.78.93',
+    name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
-    description: 'VERSIUNE DE TEST — nu înlocuiește addonul stabil. Subtitrări EN→RO prin Gemini AI.',
+    description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
     resources: ['subtitles'],
     types: ['movie', 'series'],
     catalogs: [],
@@ -544,14 +544,13 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
 
-    clean = clean.replace(/<[iIbBuU]>\s*(?:ă+|um+|uh+|erm+|er+)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
+    clean = clean.replace(/<[iIbBuU]>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
-    // Păstrăm textul necunoscut dintre paranteze pătrate: poate conține context util.
-    // Indicațiile sonore cunoscute sunt eliminate de regula dedicată de mai sus.
+    clean = clean.replace(/\[[^\]]*?\]/g, '');
     clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughter)[^)]*?\)/gi, '');
-    // Păstrăm parantezele cu text necunoscut; nu presupunem că tot ce e între ele e zgomot.
+    clean = clean.replace(/\([^)]*?\)/g, '');
 
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
     clean = lines.join('\n');
@@ -570,10 +569,12 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    let cleaned = text.replace(/^<[^>]+>\s*(?:ă+|um+|uh+|erm+|er+)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
-    // Eliminăm numai ezitările fără valoare semantică; păstrăm reacțiile și confirmările.
-    // Exemple de ezitări: „ă”, „ăă”, „um”, „uh”, „erm”.
-    const hesitationToken = '(?:ă+|um+|uh+|erm+|er+)';
+    let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
+    // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație.
+    // IMPORTANT: includem și punctul în delimitatori; altfel „ăă...” / „mhm...”
+    // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
+    // „ă{2,}” prinde și forme precum „ăăă...”, nu doar exact „ăă”.
+    const hesitationToken = '(?:ă{2,}|ă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)';
 
     // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
     // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
@@ -586,21 +587,6 @@ function deepCleanSubtitleText(text) {
         new RegExp('(^|[\\s,;:.!?…])' + hesitationToken + '(?=[\\s,;:.!?…]|$)[,;:.!?…]*', 'gmi'),
         '$1'
     ).trim();
-
-    // Elimină bâlbâielile de tip „Eu-eu”, „ei-ei”, „Nu-nu” atunci când
-    // repetarea este legată prin cratimă (marcaj de ezitare), fără a șterge
-    // repetări normale separate prin spațiu, precum „Nu, nu, nu”.
-    cleaned = cleaned.replace(
-        /\b([A-Za-zĂÂÎȘȚăâîșț]{1,12})\s*[-–—]\s*\1(?=[\s.,!?;:]|$)/giu,
-        '$1'
-    );
-
-    // Elimină bâlbâieli în care se repetă un segment compus cu cratimă,
-    // precum „N-am-n-am”, fără a elimina repetițiile normale separate prin spațiu.
-    cleaned = cleaned.replace(
-        /\b([A-Za-zĂÂÎȘȚăâîșț]{1,12}-[A-Za-zĂÂÎȘȚăâîșț]{1,12})\s*[-–—]\s*\1(?=[\s.,!?;:]|$)/giu,
-        '$1'
-    );
 
     // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
     cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț])-\1(?=[A-Za-zĂÂÎȘȚăâîșț])/gi, '$1');
@@ -621,7 +607,7 @@ function deepCleanSubtitleText(text) {
     // După eliminarea unei ezitări, repară majuscula de început de propoziție.
     cleaned = cleaned.replace(/(^|[.!?]\s+)([a-zăâîșț])/g, (m, prefix, letter) => prefix + letter.toUpperCase());
     
-    if (/^(?:ă+|um+|uh+|erm+|er+)[!.…]*$/i.test(cleaned)) return '';
+    if (/^(ah|oh|uh|agh|aâ|aoleu|ăă|ugh|argh|aah|oof|uf)[!.]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
     cleaned = cleaned.replace(/\\+/g, ' ');
@@ -696,7 +682,15 @@ function formatSubtitleLine(text) {
     text = deepCleanSubtitleText(text);
     if (!text.trim()) return ' ';
 
-    // Nu folosim reguli semantice bazate doar pe cuvinte-cheie: pot rescrie o replică fără legătură.
+    let lowerText = text.toLowerCase();
+    
+    if (lowerText.includes('înțeles') && lowerText.includes('hei') && lowerText.includes('când')) {
+        return 'Am înțeles. Hei, când ai o secundă...';
+    }
+    
+    if ((lowerText.includes('holba') || lowerText.includes('uita') || lowerText.includes('ochii') || lowerText.includes('holbezi') || lowerText.includes('oprește-te') || lowerText.includes('termină')) && (/\bsân(i|ii)?\b/.test(lowerText) || lowerText.includes('țâțe') || lowerText.includes('decolteu') || lowerText.includes('tăiței') || lowerText.includes('piept'))) {
+        return 'Nu te mai holba la sânii mei.';
+    }
     
     text = text.replace(/(^|[\s])([cCsS])(?=[\s.,!?:;]|$)/gm, function(match, spatiu, litera) {
         return spatiu + litera + 'ă';
@@ -723,7 +717,7 @@ function formatSubtitleLine(text) {
         } else if (l.includes(' - ') && !l.startsWith('-')) {
             let parts = l.split(' - ');
             expandedLines.push(parts[0].trim());
-            expandedLines.push(parts.slice(1).join(' - ').trim());
+            expandedLines.push(parts[1].trim());
         } else {
             expandedLines.push(l);
         }
@@ -756,8 +750,7 @@ function formatSubtitleLine(text) {
         .filter(Boolean);
 
     if (wrappedLines.length > 2) {
-        // Păstrăm toate cuvintele: restul segmentelor se reunesc în al doilea rând.
-        text = `${wrappedLines[0]}\n${wrappedLines.slice(1).join(' ')}`;
+        text = wrappedLines.slice(0, 2).join('\n');
     } else {
         text = wrappedLines.join('\n');
     }
@@ -925,7 +918,7 @@ function formatSubtitleLine(text) {
         [/\bse bucură de prea multă binefacere\b/gi, 'sunt bineveniți'],
         [/\bce-ți veni\b/gi, 'ce-ai pățit'],
         [/\bmarșă de manevră\b/gi, 'marjă de manevră'],
-        [/^\s*(?:ă+|um+|uh+|erm+|er+)[!.…]*\s*$/gmi, ''],
+        [/\b(Ah|Oh|Uh|Agh|Aoleu)[!.]+$/gmi, ''],
         [/\bV Dumneata\b/gi, 'Dumneata'],
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
         [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
@@ -1132,7 +1125,7 @@ Use correct feminine and masculine forms whenever the context establishes the sp
 
 11. PRONOUNS AND VERB FORMS
 Be especially careful with Romanian forms such as:
-să-mi, să-ți, să-l, să-i, să ne, să vă,
+să-mi, să-ți, să-l, să-i, să-ne, să-vă,
 mi-ai, ți-ai, i-ai, ne-am, v-ați,
 n-am, n-ai, n-are, n-avem, n-au.
 Use the correct natural Romanian form instead of broken combinations.
@@ -1148,7 +1141,9 @@ Use standard Romanian diacritics correctly: ă, â, î, ș, ț.
 Proper names, established names, brands, places, titles, character names and other elements that should remain unchanged must remain unchanged unless there is an established Romanian equivalent clearly required by context.
 
 15. AUDIO TAGS & INTERJECTIONS REMOVAL
-Remove non-dialogue audio tags. Remove meaningless hesitation fillers such as "ă", "ăă", "um", "uh" and "erm" when they carry no meaning. If a filler is embedded in a meaningful sentence (for example "Am fost, ăă..." or "Păi, um..."), remove only the filler and preserve the sentence and natural punctuation. Preserve meaningful reactions and confirmations such as "Ah!", "Oh!", "Aoleu!", "Mhm", "Îhî", "Uf!" and "Oof!" when they express emotion or agreement. Remove obvious one-letter stutters such as "E-E", "A-A" or "M-M" when they are merely speech disfluencies.
+Remove non-dialogue audio tags, standalone hesitation sounds, and meaningless interjections (such as "Ah!", "Oh!", "Uh!", "Agh!", "ăă", "ăăă", "mhm") entirely. Do not translate standalone grunts or cries.
+When a hesitation is embedded in an otherwise meaningful Romanian sentence (for example "Am fost, ăă..." or "Păi, ăă..."), remove the hesitation from the final subtitle while preserving the natural Romanian sentence and punctuation.
+Also remove obvious one-letter stutters such as "E-E", "A-A" or "M-M" when they are merely speech disfluencies.
 
 16. NO ENGLISH LEFT BEHIND & TRANSLATE ALL SPEAKER LABELS
 Translate EVERY actual English dialogue line into Romanian.
@@ -1178,13 +1173,13 @@ Am înțeles!
 21. NEVER OUTPUT DIALOGUE DASHES OR STANDALONE INTERJECTIONS
 NEVER prefix a dialogue line with hyphens or dashes such as "-", "–", or "—".
 NEVER output a subtitle line containing ONLY hyphens, dashes, or empty markers.
-NEVER output meaningless standalone hesitation fillers such as "ă", "ăă", "um", "uh" or "erm". Preserve meaningful interjections and affirmative reactions.
+NEVER output standalone hesitation sounds or interjections such as "ăă", "îhî", "mhm", "Ah!", "Oh!", "Uh!", "Agh!", "Aâ!".
 
 22. NO INVENTED OR CORRUPTED ROMANIAN WORDS
 NEVER invent Romanian words. Words such as "molmoșește", "anghang", "tangou" (when misused) and similar malformed forms sunt strict interzise.
 
 23. STRICT GRAMMAR AND CLEAN PUNCTUATION
-NEVER output malformed forms such as "Ț-am", "Eu acționează" (incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am", "să-i", "să-ți", "să-și") and proper grammar. 
+NEVER output malformed forms such as "Ț-am", "Eu acționez" (or incorrect agreement), or double hyphens ("--") where standard Romanian punctuation is required. Use correct clitics ("Ți-am", "să-i", "să-ți", "să-și") and proper grammar. 
 
 24. NO UNESCAPED DOUBLE QUOTES INSIDE TEXT
 NEVER use unescaped double quotes (") inside the translated text values. If dialogue requires quotation marks or direct quotes, always use single quotes (') instead to ensure valid JSON formatting.
@@ -1501,7 +1496,7 @@ function isJunkOrInterjection(text) {
     // complet de verificările de traducere, ca să nu apară în loguri ca suspecți.
     if (/^[\s0-9\-–—._,;:!?…'"~^`´‚„“”‘’()\[\]{}|\\/♪♫♬♩#]+$/.test(clean)) return true;
 
-    if (/^(?:[-–—\s]*)(?:ă+|um+|uh+|erm+|er+)[!.,?\s-]*$/i.test(clean)) return true;
+    if (/^(?:[-–—\s]*)(ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*$/i.test(clean)) return true;
     return false;
 }
 
@@ -1911,7 +1906,7 @@ Returnează DOAR JSON valid în forma:
 // Rulează separat de mecanismul principal și aplică doar corecții certe.
 // ============================================================
 
-const GRAMMAR_REVIEW_BATCH_SIZE = 60;
+const GRAMMAR_REVIEW_BATCH_SIZE = 120;
 const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
 const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
 const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
@@ -1979,7 +1974,7 @@ REGULI CRITICE:
 1. Dacă traducerea este corectă și naturală, NU O MODIFICA.
 2. Dacă există orice dubiu că o schimbare ar putea modifica sensul, păstrează traducerea actuală.
 3. Nu schimba slangul, vulgaritățile, expresiile colocviale, sarcasmul, umorul sau stilul personajului dacă sunt inteligibile și corecte.
-4. Păstrează repetițiile cu sens, separate normal prin spațiu, precum „Nu, nu, nu.”. Elimină însă marcajele de bâlbâială legate prin cratimă, precum „Eu-eu”, „ei-ei”, „V-vin”, dacă sunt ezitări și nu schimbă sensul replicii.
+4. NU elimina și NU modifica repetiții intenționate sau bâlbâieli de dialog, de exemplu „Nu-nu”, „Da, eu-eu...”, „Nu, nu, nu.”.
 5. Nu modifica nume proprii, titluri, mărci, locuri sau termeni ficționali doar pentru că par neobișnuiți.
 6. Nu transforma o formulare colocvială corectă într-una literară.
 7. Repară cuvinte deformate, lipite, tăiate sau inventate și forme gramaticale evident greșite.
@@ -2541,14 +2536,6 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\brenumerat\b/gi, 'remunerat'],
     [/\bsugist\b/gi, 'sugi'],
 
-    // Erori ortografice certe observate în QA; corecțiile sunt generale,
-    // nu depind de film, episod sau ID-ul replicii.
-    [/\bincongit\b/gi, 'incognito'],
-    [/\bimpremeabili\b/gi, 'impermeabili'],
-    [/\bimpremeabil\b/gi, 'impermeabil'],
-    [/\bimpremeabilă\b/gi, 'impermeabilă'],
-    [/\bimpremeabile\b/gi, 'impermeabile'],
-
     // Corecții locale suplimentare cu încredere foarte mare, validate în QA.
     [/\bdeciizi\b/gi, 'decizi'],
     [/\bco\s+cerul\b/gi, 'că cerul'],
@@ -2565,19 +2552,6 @@ const LOCAL_GRAMMAR_FIXES = [
 
 function applyLocalGrammarDeterministicFixes(text) {
     let result = String(text || '');
-
-    // Corecție gramaticală sigură: construcția românească este „de câți/câte
-    // ... a fost nevoie”. Se aplică doar când prepoziția lipsește înaintea
-    // acestei construcții; formulările deja corecte rămân neschimbate.
-    result = result.replace(
-        /(?<!de\s)\b(câți|câte)(?=\s+(?:[\p{L}]+\s+){0,5}a\s+fost\s+nevoie\b)/giu,
-        (match, word, offset, fullText) => {
-            const before = fullText.slice(0, offset);
-            const sentenceStart = !before.trim() || /[.!?…]\s*$/.test(before);
-            return `${sentenceStart ? 'De' : 'de'} ${word}`;
-        }
-    );
-
     for (const [pattern, replacement] of LOCAL_GRAMMAR_FIXES) {
         result = result.replace(pattern, match => {
             if (match === match.toUpperCase()) return replacement.toUpperCase();
@@ -2599,18 +2573,6 @@ function detectLocalGrammarReviewReasons(text) {
     if (!clean) return [];
 
     const reasons = [];
-
-    // Semnale de QA observate în testele reale. Nu modifică textul automat:
-    // trimit replica și contextul în engleză la verificarea punctuală.
-    if (/\bdacă\s+păr\b/iu.test(clean)) {
-        reasons.push('posibil verb „par” deformat în „păr”; verifică originalul');
-    }
-    if (/\bor[aă]ș\s+or[aă]șenesc\b/iu.test(clean)) {
-        reasons.push('formulare tautologică „oraș orășenesc”; verifică sensul original');
-    }
-    if (/(?:^|[^\p{L}])și\s+complet\s+pe\s+\p{L}+/iu.test(clean)) {
-        reasons.push('construcție nenaturală „și complet pe ...”; verifică sensul original');
-    }
 
     // Repetiție imediată de cuvânt: nu o corectăm automat, deoarece poate fi
     // o bâlbâială/replică intenționată; o lăsăm Grammar Review să decidă.
@@ -2650,53 +2612,6 @@ function detectLocalGrammarReviewReasons(text) {
     }
 
     return reasons;
-}
-
-function normalizeSubtitleForDuplicateCheck(text) {
-    return String(text || '')
-        .replace(/<[^>]+>/g, ' ')
-        .toLowerCase()
-        .replace(/[“”„"'’‘]/g, '')
-        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function findAdjacentDuplicateTranslationIssues(items, translatedById) {
-    const pairs = [];
-    const flaggedItems = new Map();
-
-    for (let i = 1; i < items.length; i++) {
-        const previous = items[i - 1];
-        const current = items[i];
-        const previousTranslation = normalizeSubtitleForDuplicateCheck(translatedById[String(previous.id)] || '');
-        const currentTranslation = normalizeSubtitleForDuplicateCheck(translatedById[String(current.id)] || '');
-
-        // Evităm false positives pentru „Da.” / „Nu.” și alte răspunsuri scurte.
-        if (!previousTranslation || previousTranslation.length < 18 || previousTranslation.split(' ').length < 3) continue;
-        if (previousTranslation !== currentTranslation) continue;
-
-        const previousOriginal = normalizeSubtitleForDuplicateCheck(previous.text);
-        const currentOriginal = normalizeSubtitleForDuplicateCheck(current.text);
-        if (!previousOriginal || !currentOriginal || previousOriginal === currentOriginal) continue;
-
-        pairs.push({ previous, current, translation: previousTranslation });
-        flaggedItems.set(String(previous.id), previous);
-        flaggedItems.set(String(current.id), current);
-    }
-
-    return { pairs, items: [...flaggedItems.values()] };
-}
-
-function logAdjacentDuplicateTranslationCheck(result, stage) {
-    if (result.pairs.length) {
-        console.log(`${c.yellow}⚠ [Cross-Cue Duplicate Check] ${result.pairs.length} perechi consecutive au traduceri identice, dar originale diferite (${stage}); trimit replicile la verificare punctuală.${c.reset}`);
-        result.pairs.slice(0, 10).forEach(pair => {
-            console.log(`  ${c.yellow}• ID ${pair.previous.id}/${pair.current.id}: ${pair.translation.slice(0, 100)}${c.reset}`);
-        });
-    } else {
-        console.log(`${c.green}✔ [Cross-Cue Duplicate Check] Nicio pereche suspectă de traduceri identice (${stage}).${c.reset}`);
-    }
 }
 
 async function runLocalGrammarQualityPass(items, translatedById) {
@@ -2827,11 +2742,9 @@ async function recoverEmptyTranslationsAfterGrammarReview(items, translatedById,
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
 
-        // Nu retrimitem marcatorii tehnici de ezitare (ă/um/uh/erm) care sunt
-        // eliminați intenționat. Interjecțiile reale precum „Oh”, „Oof”, „Uf”
-        // și „Doamne!” nu sunt marcate astfel și se recuperează normal.
-        if (isJunkOrInterjection(item.text)) return false;
-
+        // IMPORTANT: aici nu excludem interjecțiile. Dacă o replică originală
+        // precum "Oh", "Oof", "Uf", "Doamne!" a rămas goală după Grammar Review,
+        // trebuie recuperată la fel ca orice altă replică reală.
         const translated = translatedById[String(item.id)];
         const translatedClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
         return !translatedClean;
@@ -2869,19 +2782,10 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
         for (const item of emptyTranslations) {
             const candidateRaw = recoveryDict[String(item.id)];
-            const candidateSource = String(candidateRaw == null ? '' : candidateRaw).trim();
-
-            // formatSubtitleLine('') poate întoarce un șir cu spațiu; validăm
-            // răspunsul brut ca să nu contorizăm o traducere goală drept recuperată.
-            if (!candidateSource) {
-                failedIds.push(String(item.id));
-                continue;
-            }
-
-            const candidate = formatSubtitleLine(candidateSource);
+            const candidate = formatSubtitleLine(String(candidateRaw || ''));
 
             if (
-                String(candidate || '').trim() &&
+                candidate &&
                 !hasUntranslatedEnglish(item.text, candidate) &&
                 !hasCorruptedSubtitleText(candidate, item.text)
             ) {
@@ -3021,20 +2925,15 @@ Returnează DOAR un ARRAY JSON valid în forma:
     // selectează replicile care merită încă o verificare AI punctuală.
     const microGrammar = await runLocalGrammarQualityPass(items, translatedById);
     const semanticSpotCheckItems = runSemanticSpotCheck(items, translatedById);
-    const duplicateTranslationCheck = findAdjacentDuplicateTranslationIssues(items, translatedById);
-    logAdjacentDuplicateTranslationCheck(duplicateTranslationCheck, 'înainte de targeted review');
 
-    // Combinăm Micro-Grammar + Semantic Spot Check + dublurile consecutive
-    // într-o singură verificare AI punctuală, fără request separat dacă nu există
-    // niciun semnal; dacă există, toate sunt trimise într-o singură trecere țintită.
+    // Combinăm Micro-Grammar + Semantic Spot Check într-o singură verificare AI
+    // punctuală. Astfel, dacă nu există semnale puternice, nu există niciun request
+    // suplimentar; dacă există, toate sunt trimise într-o singură trecere țintită.
     const targetedReviewMap = new Map();
     for (const item of microGrammar.flaggedItems) {
         targetedReviewMap.set(String(item.id), item);
     }
     for (const item of semanticSpotCheckItems) {
-        targetedReviewMap.set(String(item.id), item);
-    }
-    for (const item of duplicateTranslationCheck.items) {
         targetedReviewMap.set(String(item.id), item);
     }
 
@@ -3098,65 +2997,23 @@ Returnează DOAR un ARRAY JSON valid în forma:
     });
 
     if (finalSuspicious.length > 0) {
-        console.log(`${c.yellow}⚠ ${finalSuspicious.length} replici suspecte de engleză/corupere rămân după Global Post-Check${c.reset}`);
+        console.log(`${c.yellow}⚠ ${finalSuspicious.length} replici suspecte rămân după Global Post-Check${c.reset}`);
         finalSuspicious.slice(0, 20).forEach(item => {
             console.log(`  ${c.red}❌ ${item.id}: ${String(translatedById[String(item.id)] || '').slice(0, 120)}${c.reset}`);
         });
     } else {
-        console.log(`${c.green}✔ 0 replici suspecte de engleză/corupere${c.reset}`);
+        console.log(`${c.green}✔ 0 replici suspecte${c.reset}`);
     }
 
-    const remainingDuplicateTranslations = findAdjacentDuplicateTranslationIssues(items, translatedById);
-    logAdjacentDuplicateTranslationCheck(remainingDuplicateTranslations, 'verificarea finală');
-
-    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici verificate înainte de serializarea SRT${c.reset}`);
+    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide${c.reset}`);
     console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
 
-    const omittedHesitationIds = [];
-    const outputBlocks = items.map(item => {
-        const rawTranslated = translatedById[String(item.id)];
-        const translatedClean = String(rawTranslated || '').trim();
-
-        // O ezitare tehnică rămasă fără conținut poate fi eliminată intenționat.
-        // Înregistrăm ID-ul ca verificarea finală să nu o raporteze ca traducere pierdută.
-        if (!translatedClean && isJunkOrInterjection(item.text)) {
-            omittedHesitationIds.push(String(item.id));
-            return null;
-        }
-
-        const translated = translatedClean ? String(rawTranslated) : item.text;
+    const output = items.map(item => {
+        const translated = translatedById[String(item.id)] || item.text;
         return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
-    }).filter(Boolean);
+    }).join('\n');
 
-    const finalSrtOutput = outputBlocks.join('\n').trim() + '\n';
-    const serializedBlocks = finalSrtOutput.trim().split(/\n{2,}/).filter(Boolean);
-    const serializedIds = serializedBlocks.map(block => {
-        const firstLine = block.split('\n')[0].trim();
-        return /^\d+$/.test(firstLine) ? firstLine : null;
-    });
-    const expectedIds = items.filter(item => {
-        const translatedClean = String(translatedById[String(item.id)] || '').trim();
-        return translatedClean || !isJunkOrInterjection(item.text);
-    }).map(item => String(item.id));
-
-    const serializedIdSet = new Set(serializedIds.filter(Boolean));
-    const expectedIdSet = new Set(expectedIds);
-    const missingOutputIds = [...expectedIdSet].filter(id => !serializedIdSet.has(id));
-    const unexpectedOutputIds = [...serializedIdSet].filter(id => !expectedIdSet.has(id));
-    const duplicatedOutputIds = serializedIds.filter((id, index) => id && serializedIds.indexOf(id) !== index);
-
-    if (missingOutputIds.length || unexpectedOutputIds.length || duplicatedOutputIds.length ||
-        serializedIds.some(id => !id) || serializedIds.length !== expectedIds.length) {
-        console.log(`${c.yellow}⚠ [SRT Final Integrity] Intrări așteptate: ${expectedIds.length}; blocuri serializate: ${serializedIds.length}; lipsă: ${missingOutputIds.slice(0, 20).join(', ') || 'niciuna'}; neașteptate: ${unexpectedOutputIds.slice(0, 20).join(', ') || 'niciuna'}; duplicate: ${duplicatedOutputIds.slice(0, 20).join(', ') || 'niciuna'}.${c.reset}`);
-    } else {
-        console.log(`${c.green}✔ [SRT Final Integrity] ${serializedIds.length}/${expectedIds.length} blocuri finale verificate structural.${c.reset}`);
-    }
-
-    if (omittedHesitationIds.length) {
-        console.log(`${c.cyan}ℹ [SRT Final Integrity] ${omittedHesitationIds.length} marcatori tehnici de ezitare fără traducere eliminați intenționat (ID: ${omittedHesitationIds.slice(0, 20).join(', ')}).${c.reset}`);
-    }
-
-    return finalSrtOutput;
+    return output.trim() + '\n';
 }
 
 // ============================================================
