@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator.test',
-    version: '12.78.94-test.3',
+    version: '12.78.94-test.4',
     name: 'RO Sub Translator TEST',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'VERSIUNE DE TEST — nu înlocuiește addonul stabil. Subtitrări EN→RO prin Gemini AI.',
@@ -586,6 +586,14 @@ function deepCleanSubtitleText(text) {
         new RegExp('(^|[\\s,;:.!?…])' + hesitationToken + '(?=[\\s,;:.!?…]|$)[,;:.!?…]*', 'gmi'),
         '$1'
     ).trim();
+
+    // Elimină bâlbâielile de tip „Eu-eu”, „ei-ei”, „Nu-nu” atunci când
+    // repetarea este legată prin cratimă (marcaj de ezitare), fără a șterge
+    // repetări normale separate prin spațiu, precum „Nu, nu, nu”.
+    cleaned = cleaned.replace(
+        /\b([A-Za-zĂÂÎȘȚăâîșț]{1,12})\s*[-–—]\s*\1(?=[\s.,!?;:]|$)/giu,
+        '$1'
+    );
 
     // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
     cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț])-\1(?=[A-Za-zĂÂÎȘȚăâîșț])/gi, '$1');
@@ -1896,7 +1904,7 @@ Returnează DOAR JSON valid în forma:
 // Rulează separat de mecanismul principal și aplică doar corecții certe.
 // ============================================================
 
-const GRAMMAR_REVIEW_BATCH_SIZE = 120;
+const GRAMMAR_REVIEW_BATCH_SIZE = 60;
 const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
 const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
 const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
@@ -1964,7 +1972,7 @@ REGULI CRITICE:
 1. Dacă traducerea este corectă și naturală, NU O MODIFICA.
 2. Dacă există orice dubiu că o schimbare ar putea modifica sensul, păstrează traducerea actuală.
 3. Nu schimba slangul, vulgaritățile, expresiile colocviale, sarcasmul, umorul sau stilul personajului dacă sunt inteligibile și corecte.
-4. NU elimina și NU modifica repetiții intenționate sau bâlbâieli de dialog, de exemplu „Nu-nu”, „Da, eu-eu...”, „Nu, nu, nu.”.
+4. Păstrează repetițiile cu sens, separate normal prin spațiu, precum „Nu, nu, nu.”. Elimină însă marcajele de bâlbâială legate prin cratimă, precum „Eu-eu”, „ei-ei”, „V-vin”, dacă sunt ezitări și nu schimbă sensul replicii.
 5. Nu modifica nume proprii, titluri, mărci, locuri sau termeni ficționali doar pentru că par neobișnuiți.
 6. Nu transforma o formulare colocvială corectă într-una literară.
 7. Repară cuvinte deformate, lipite, tăiate sau inventate și forme gramaticale evident greșite.
@@ -2625,6 +2633,53 @@ function detectLocalGrammarReviewReasons(text) {
     return reasons;
 }
 
+function normalizeSubtitleForDuplicateCheck(text) {
+    return String(text || '')
+        .replace(/<[^>]+>/g, ' ')
+        .toLowerCase()
+        .replace(/[“”„"'’‘]/g, '')
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function findAdjacentDuplicateTranslationIssues(items, translatedById) {
+    const pairs = [];
+    const flaggedItems = new Map();
+
+    for (let i = 1; i < items.length; i++) {
+        const previous = items[i - 1];
+        const current = items[i];
+        const previousTranslation = normalizeSubtitleForDuplicateCheck(translatedById[String(previous.id)] || '');
+        const currentTranslation = normalizeSubtitleForDuplicateCheck(translatedById[String(current.id)] || '');
+
+        // Evităm false positives pentru „Da.” / „Nu.” și alte răspunsuri scurte.
+        if (!previousTranslation || previousTranslation.length < 18 || previousTranslation.split(' ').length < 3) continue;
+        if (previousTranslation !== currentTranslation) continue;
+
+        const previousOriginal = normalizeSubtitleForDuplicateCheck(previous.text);
+        const currentOriginal = normalizeSubtitleForDuplicateCheck(current.text);
+        if (!previousOriginal || !currentOriginal || previousOriginal === currentOriginal) continue;
+
+        pairs.push({ previous, current, translation: previousTranslation });
+        flaggedItems.set(String(previous.id), previous);
+        flaggedItems.set(String(current.id), current);
+    }
+
+    return { pairs, items: [...flaggedItems.values()] };
+}
+
+function logAdjacentDuplicateTranslationCheck(result, stage) {
+    if (result.pairs.length) {
+        console.log(`${c.yellow}⚠ [Cross-Cue Duplicate Check] ${result.pairs.length} perechi consecutive au traduceri identice, dar originale diferite (${stage}); trimit replicile la verificare punctuală.${c.reset}`);
+        result.pairs.slice(0, 10).forEach(pair => {
+            console.log(`  ${c.yellow}• ID ${pair.previous.id}/${pair.current.id}: ${pair.translation.slice(0, 100)}${c.reset}`);
+        });
+    } else {
+        console.log(`${c.green}✔ [Cross-Cue Duplicate Check] Nicio pereche suspectă de traduceri identice (${stage}).${c.reset}`);
+    }
+}
+
 async function runLocalGrammarQualityPass(items, translatedById) {
     let autoFixed = 0;
     const flagged = [];
@@ -2936,15 +2991,20 @@ Returnează DOAR un ARRAY JSON valid în forma:
     // selectează replicile care merită încă o verificare AI punctuală.
     const microGrammar = await runLocalGrammarQualityPass(items, translatedById);
     const semanticSpotCheckItems = runSemanticSpotCheck(items, translatedById);
+    const duplicateTranslationCheck = findAdjacentDuplicateTranslationIssues(items, translatedById);
+    logAdjacentDuplicateTranslationCheck(duplicateTranslationCheck, 'înainte de targeted review');
 
-    // Combinăm Micro-Grammar + Semantic Spot Check într-o singură verificare AI
-    // punctuală. Astfel, dacă nu există semnale puternice, nu există niciun request
-    // suplimentar; dacă există, toate sunt trimise într-o singură trecere țintită.
+    // Combinăm Micro-Grammar + Semantic Spot Check + dublurile consecutive
+    // într-o singură verificare AI punctuală, fără request separat dacă nu există
+    // niciun semnal; dacă există, toate sunt trimise într-o singură trecere țintită.
     const targetedReviewMap = new Map();
     for (const item of microGrammar.flaggedItems) {
         targetedReviewMap.set(String(item.id), item);
     }
     for (const item of semanticSpotCheckItems) {
+        targetedReviewMap.set(String(item.id), item);
+    }
+    for (const item of duplicateTranslationCheck.items) {
         targetedReviewMap.set(String(item.id), item);
     }
 
@@ -3008,15 +3068,18 @@ Returnează DOAR un ARRAY JSON valid în forma:
     });
 
     if (finalSuspicious.length > 0) {
-        console.log(`${c.yellow}⚠ ${finalSuspicious.length} replici suspecte rămân după Global Post-Check${c.reset}`);
+        console.log(`${c.yellow}⚠ ${finalSuspicious.length} replici suspecte de engleză/corupere rămân după Global Post-Check${c.reset}`);
         finalSuspicious.slice(0, 20).forEach(item => {
             console.log(`  ${c.red}❌ ${item.id}: ${String(translatedById[String(item.id)] || '').slice(0, 120)}${c.reset}`);
         });
     } else {
-        console.log(`${c.green}✔ 0 replici suspecte${c.reset}`);
+        console.log(`${c.green}✔ 0 replici suspecte de engleză/corupere${c.reset}`);
     }
 
-    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide${c.reset}`);
+    const remainingDuplicateTranslations = findAdjacentDuplicateTranslationIssues(items, translatedById);
+    logAdjacentDuplicateTranslationCheck(remainingDuplicateTranslations, 'verificarea finală');
+
+    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide structural${c.reset}`);
     console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
 
     const outputBlocks = items.map(item => {
