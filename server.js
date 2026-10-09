@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator.test',
-    version: '12.78.94-test.2',
+    version: '12.78.94-test.3',
     name: 'RO Sub Translator TEST',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'VERSIUNE DE TEST — nu înlocuiește addonul stabil. Subtitrări EN→RO prin Gemini AI.',
@@ -2526,6 +2526,14 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\brenumerat\b/gi, 'remunerat'],
     [/\bsugist\b/gi, 'sugi'],
 
+    // Erori ortografice certe observate în QA; corecțiile sunt generale,
+    // nu depind de film, episod sau ID-ul replicii.
+    [/\bincongit\b/gi, 'incognito'],
+    [/\bimpremeabili\b/gi, 'impermeabili'],
+    [/\bimpremeabil\b/gi, 'impermeabil'],
+    [/\bimpremeabilă\b/gi, 'impermeabilă'],
+    [/\bimpremeabile\b/gi, 'impermeabile'],
+
     // Corecții locale suplimentare cu încredere foarte mare, validate în QA.
     [/\bdeciizi\b/gi, 'decizi'],
     [/\bco\s+cerul\b/gi, 'că cerul'],
@@ -2542,6 +2550,19 @@ const LOCAL_GRAMMAR_FIXES = [
 
 function applyLocalGrammarDeterministicFixes(text) {
     let result = String(text || '');
+
+    // Corecție gramaticală sigură: construcția românească este „de câți/câte
+    // ... a fost nevoie”. Se aplică doar când prepoziția lipsește înaintea
+    // acestei construcții; formulările deja corecte rămân neschimbate.
+    result = result.replace(
+        /(?<!de\s)\b(câți|câte)(?=\s+(?:[\p{L}]+\s+){0,5}a\s+fost\s+nevoie\b)/giu,
+        (match, word, offset, fullText) => {
+            const before = fullText.slice(0, offset);
+            const sentenceStart = !before.trim() || /[.!?…]\s*$/.test(before);
+            return `${sentenceStart ? 'De' : 'de'} ${word}`;
+        }
+    );
+
     for (const [pattern, replacement] of LOCAL_GRAMMAR_FIXES) {
         result = result.replace(pattern, match => {
             if (match === match.toUpperCase()) return replacement.toUpperCase();
