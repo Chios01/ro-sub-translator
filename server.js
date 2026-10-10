@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.113',
+    version: '12.78.114',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -549,14 +549,30 @@ function cleanTextForJson(text) {
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
     clean = clean.replace(/\[[^\]]*?\]/g, '');
-    clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughter)[^)]*?\)/gi, '');
-    clean = clean.replace(/\([^)]*?\)/g, '');
+    clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughs|laughing|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|chuckles|pant|groan|sigh|chuckle|whisper)[^)]*?\)/gi, '');
+    // Nu eliminăm parantezele în mod global: pot conține dialog real (de ex. (I mean)).
+    // Sunt eliminate doar parantezele care conțin indicații sonore, mai sus.
 
     // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
-    let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
+    // Normalize spacing left behind after removed sound labels.
+    clean = clean.replace(/[ \t]{2,}/g, ' ');
+
+    // Like SubStudio, drop a subtitle block that consists only of a standalone
+    // filler sound. Do not drop multi-word expressions such as “Oh my God”.
+    const standaloneSourceFillers = new Set((
+        'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
+    ).split(/\s+/));
+    let lines = clean.split('\n').map(l => l.trim()).filter(Boolean).filter(line => {
+        const token = line.replace(/<[^>]+>/g, ' ')
+            .replace(/^[-–—]\s*/, '')
+            .replace(/[.,!?;:…]+$/g, '')
+            .trim()
+            .toLocaleLowerCase('ro-RO');
+        return !standaloneSourceFillers.has(token);
+    });
     clean = lines.join('\n');
 
     if (!clean.trim()) return ' ';
@@ -1127,59 +1143,44 @@ function formatSubtitleLine(text) {
 // MASTER CINEMATIC TRANSLATION PROMPT
 // ============================================================
 
-const MASTER_TRANSLATION_PROMPT = `
-MISSION
-You are a professional English-to-Romanian film and TV subtitle localizer. Translate ALL supplied subtitle texts into natural, modern, vivid Romanian—the kind of dialogue Romanian viewers hear in contemporary films. Localize the meaning and cultural intent, not the English word order.
+const MASTER_TRANSLATION_PROMPT = `MISSION
+Translate every supplied English subtitle block into natural, modern spoken Romanian for films and TV. Localize the intended meaning and tone; do not copy English word order when it sounds unnatural in Romanian.
 
-OUTPUT FORMAT — CRITICAL
-- Return ONLY a valid JSON array. No markdown, code fences, comments, or explanation.
-- Return exactly one object for each supplied ID, in the original order, with exactly these fields: {"id": integer, "text": "Romanian translation"}.
-- Keep every original ID unchanged. Do not add IDs, omit IDs, duplicate IDs, merge subtitle entries, or move text to a neighboring ID.
-- The input schema used by this addon is "id" + "text". Do not return SubStudio's "index" schema.
+OUTPUT — CRITICAL
+- Return ONLY a valid JSON array, with exactly one object for every supplied ID, in the original order.
+- Every object must have exactly these fields: {"id": integer, "text": "Romanian translation"}.
+- Preserve IDs exactly. Never omit, duplicate, invent, merge, or move content to a neighboring ID.
+- Do not return markdown, code fences, comments, or explanations.
 
-MEANING, CONTEXT, AND LOCALIZATION
-- Translate every sentence, phrase, and expression into Romanian. Do not leave ordinary English fragments untranslated. Only preserve proper names, titles, brands, established abbreviations, or expressions intentionally spoken in another language.
-- Preserve the full meaning: who does what to whom, negation, tense, possession, relationships, pronouns, references, intent, humor, and emotional tone. Do not invent or omit information.
-- Use neighboring subtitles to understand the complete thought, speaker, addressee, gender, references, jokes, and continuity. Treat the source lines within a single ID as one subtitle block; translate all of them under that same ID.
-- A sentence may continue across multiple IDs. Understand it as a whole, but translate only the words belonging to the current ID. Never shift words to an adjacent ID.
-- Adapt idioms, sarcasm, jokes, wordplay, slang, and colloquial expressions to natural Romanian equivalents with the same intended meaning. Do not translate word by word when that would sound awkward or mean something different.
-- Use natural contemporary spoken Romanian, not stiff, literal, overly formal, timid, or childlike phrasing. Prefer the expression a Romanian speaker would actually use in that scene.
-- Preserve the character's actual level of vulgarity, bluntness, affection, hostility, informality, or politeness. Do not censor, sanitize, soften, or make direct adult dialogue sound childish. Do not add stronger vulgarity than the source either.
-- When the English explicitly names a body part or uses a direct sexual/anatomical term, translate that term directly and accurately. Do NOT replace it with vague euphemisms such as „jos”, „acolo” or „locul meu” when the source explicitly names the body part. Keep the same referent and degree of explicitness as the original.
-- Do not add diminutives or cutesy forms (for example endings such as „-iță”, „-ică”, „-uleț”) unless the source expresses a diminutive, smallness, tenderness, or affection. Preserve the source's singular/plural, gender, number, and exact referent. Do not turn a singular object into a plural one or make a term more childish.
-- Choose terms of endearment according to the scene and relationship. Do not translate “babe”, “honey”, or “baby” mechanically to the same Romanian word every time.
-- At the beginning of a sentence or clause, translate “But” as „Dar”; do not leave it in English.
-- Translate exclamations according to their actual function when they form a meaningful expression. For example, “Oh my God” can become „Doamne!” or „Doamne Dumnezeule!” depending on context.
-- When an ordinary real-world quantity is expressed in imperial units and conversion is natural for Romanian viewers, use an appropriate metric equivalent (1 ft ≈ 0.30 m; 1 mile ≈ 1.6 km; 1 lb ≈ 0.45 kg; convert Fahrenheit to Celsius). Do not convert names, idioms, plot-critical technical measurements, or values where conversion may mislead. Translate “lakh” as one hundred thousand and “crore” as ten million when relevant.
-- Use natural Romanian number formatting, including a dot for thousands where appropriate (130,000 → 130.000), without changing the numeric value.
+TRANSLATION AND CONTEXT
+- Translate every meaningful sentence, phrase, joke, idiom, slang expression, and fragment into Romanian. Preserve names and established foreign expressions only when they genuinely belong in the source.
+- Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
+- If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
+- Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
+- Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
+- Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
+- When the source explicitly names an anatomical or sexual term, use an accurate Romanian equivalent. Do not replace it with vague euphemisms such as „jos” or „acolo”. Preserve the grammatical relationship too: for example, “the sound that dries my vagina” means „sunetul care-mi usucă vaginul”, not „sunetul care mă usucă în vagin”.
+- Preserve singular/plural, gender, and the identity of the object. A singular source noun such as “a hat” must not become plural „căciuli”. Do not add diminutives such as „căciuliță” unless smallness, affection, or a diminutive is actually expressed by the source.
+- Translate idioms and profanity by their function in context, not by mechanically matching each English word. For example, “fucking” may be an intensifier, an insult, or a literal verb; choose the Romanian equivalent for that function.
+- Choose terms of endearment according to the relationship and context; do not translate “babe”, “honey”, or “baby” mechanically every time.
+- Translate “But” as „Dar” when it begins a clause. Do not leave ordinary English dialogue untranslated.
+- Use correct Romanian grammar, spelling, punctuation, and diacritics (ă, â, î, ș, ț). Use complete real Romanian words; never truncate, merge, invent, or corrupt a word. Check pronouns, clitics, prepositions, conjugation, and agreement.
+- Convert ordinary imperial measurements to metric where natural and safe: feet to metres, miles to kilometres, pounds to kilograms, Fahrenheit to Celsius. Do not convert plot-critical or idiomatic measurements. Translate “lakh” as 100,000 and “crore” as 10 million when relevant.
 
-ROMANIAN LANGUAGE QUALITY
-- Use correct standard Romanian grammar, spelling, conjugation, pronouns, clitics, prepositions, agreement, punctuation, and the diacritics ă, â, î, ș, ț.
-- Output only real, complete Romanian words. Never invent, truncate, merge, split, or corrupt words. Check for missing or extra letters, malformed clitics, wrong verb forms, agreement errors, misplaced diacritics, and accidental English leftovers.
-- Pay special attention to forms such as „să-mi”, „să-ți”, „să-i”, „să-și”, „ți-am”, „mi-ai”, „ne-am”, „v-ați”, „n-avem”.
-- Preserve real profanity when the source uses it. Translate what the vulgar word is doing in the sentence: a literal sexual act, a body part, an insult, an intensifier, or an exclamation. Do not translate “fucking”, “damn”, “shit”, or “hell” mechanically into the same Romanian word in every context.
-- Use only Romanian Latin script and correct Romanian characters. Preserve intentional names and foreign terms, but do not leave ordinary English dialogue untranslated.
-- Do not provide multiple alternatives. Choose one natural Romanian translation.
+SUBTITLE FORMATTING
+- Keep each visible line at or below 43 characters whenever the wording allows. Use no more than TWO text lines per subtitle block.
+- Split at natural phrase boundaries, not arbitrary points; if necessary, rephrase concisely without losing meaning.
+- If the thought continues on the second visual line, start that line lowercase unless a proper noun or new sentence requires otherwise.
+- If two speakers share one source block, keep both under the SAME ID on separate lines, each with “- ” and a capitalized first word. Never move a speaker to another ID.
+- Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
-SUBTITLE FORMATTING — FOLLOW STRICTLY
-- Each visible line must be at most 43 characters whenever the wording allows it.
-- Use at most TWO text lines in a subtitle block. If a line is too long, split it at a natural phrase boundary using a line break (\\n); if the text still does not fit, rephrase more concisely without losing meaning.
-- Keep the translation readable on screen. Prefer balanced, logical line breaks rather than splitting at an arbitrary midpoint or separating a short preposition/article from the phrase it belongs to.
-- If a sentence continues onto the second visual line, start that continuation with a lowercase letter unless it is a proper name or the source starts a new sentence.
-- If one subtitle block contains two speakers, keep both speakers under the SAME ID and put them on separate lines. Format dialogue lines with a dash followed by one space and a capitalized first word: „- Bună.” then „- Ce faci?” Do not move either speaker into a neighboring subtitle entry.
-- If a source block contains multiple source lines, translate all of its content as one unit under the same ID; rewrap within that block, without dropping text.
-- Do not leave more than two text lines. Merge/rephrase excess source lines into no more than two readable lines while preserving all meaningful content.
-- Do not use unescaped double quotes inside JSON text values. Use Romanian quotation marks or single quotation marks when dialogue quotes are necessary.
+INTERJECTIONS AND FILLERS
+- Remove standalone filler sounds and meaningless hesitation tokens (including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Wow”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”) from the subtitle.
+- Remove an embedded filler when it is only hesitation, then repair punctuation and capitalization. Do not delete a meaningful multi-word expression simply because it begins with an interjection; translate the expression by meaning.
+- Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise, not meaningful spoken dialogue.
 
-INTERJECTION AND FILLER CLEANUP — REMOVE FROM SUBTITLES
-Remove standalone filler sounds and interjections from the translated subtitle entirely, including: Aaah, Aah, Ah, Ahem, Ahh, Argh, Aw, Aww, Eh, Ehm, Er, Erm, Err, Gah, Ha, Heh, Hm, Hmm, Hmmm, Hmph, Huh, Mm, Mmm, Mhm, Oh, Ohh, Ooh, Oops, Ouch, Ow, Pff, Pfft, Phew, Psst, Sh, Shh, Shhh, Ugh, Uh, Uhh, Uhm, Um, Umm, Whew, Whoa, Wow, Yikes, plus Romanian hesitation forms such as „ă”, „ăă”, „ăăă”, „îhî” and „mhm”.
-- Remove non-dialogue sound labels and standalone grunts or cries when they are only subtitle noise, not meaningful spoken dialogue.
-- Remove meaningless hesitation sounds from inside an otherwise meaningful sentence too, and repair the punctuation so the Romanian sentence remains natural.
-- Do not leave empty dash markers or empty text lines after cleaning.
-- Meaningful multi-word expressions must still be translated by meaning; do not delete an entire sentence just because it starts with an interjection.
-
-FINAL MANDATORY REVIEW
-Before returning the JSON, silently proofread every translation against the English source and available context. Check the complete meaning, Romanian naturalness, adult/colloquial register, grammatical agreement, full spelling and diacritics, untranslatable fragments, line lengths, line count, dialogue formatting, filler cleanup, and strict one-to-one ID alignment. Fix genuine errors, but do not change the meaning or invent content.
+FINAL CHECK
+Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, dialogue format, filler cleanup, and one-to-one ID alignment. Correct clear errors without adding or deleting meaning.
 `;
 
 // ============================================================
@@ -1622,8 +1623,103 @@ function getMissingExplicitAnatomicalTerms(original, translation) {
         .map(rule => rule.label);
 }
 
+function getSourceFidelityIssues(original, translation) {
+    const sourceText = String(original || '').replace(/<[^>]+>/g, ' ');
+    const targetText = String(translation || '').replace(/<[^>]+>/g, ' ');
+    if (!sourceText.trim() || !targetText.trim()) return [];
+
+    const issues = getMissingExplicitAnatomicalTerms(sourceText, targetText)
+        .map(term => `termen explicit „${term}” absent sau înlocuit cu o formulare vagă`);
+    const sourceNorm = sourceText.toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
+    const targetNorm = targetText.toLocaleLowerCase('ro-RO').replace(/\s+/g, ' ').trim();
+
+    // Relație semantică: „dries my vagina” numește vaginul ca obiect direct.
+    // Prezența cuvântului „vagin” într-o construcție locativă nu este suficientă.
+    if (/\b(?:dry|dries|dried|drying)\s+(?:my|your|her|his|their|the)\s+vagina\b/i.test(sourceNorm) &&
+        /\b(?:mă|ma)\s+usuc[ăa]\s+(?:în|in|la)\s+vagin(?:ul)?\b/iu.test(targetNorm)) {
+        issues.push('relație semantică greșită: „dry my vagina” a devenit „mă usucă în vagin” în locul unei construcții cu „vaginul” ca obiect direct');
+    }
+
+    // Conservă numărul gramatical pentru substantive uzuale de tip „hat/cap”.
+    // Este activ doar când sursa are clar un singur obiect numărabil.
+    const hasSingularHatSource = /\b(?:a|an|one)\s+(?:(?:[a-z]+)\s+){0,2}(?:hat|cap|beanie|bonnet)\b/i.test(sourceNorm);
+    const sourceAlsoNamesPluralHats = /\b(?:hats|caps|beanies|bonnets)\b/i.test(sourceNorm);
+    if (hasSingularHatSource && !sourceAlsoNamesPluralHats) {
+        const pluralHat = /(?<![\p{L}\p{N}_])(?:căciuli(?:le)?|caciuli(?:le)?|căciulițe|caciulite|șepci|sepci|fesuri|bonete|pălării|palarii)(?![\p{L}\p{N}_])/iu.test(targetNorm);
+        const singularHat = /(?<![\p{L}\p{N}_])(?:căciulă|caciula|căciuliță|caciulita|șapcă|sapca|fes|bonetă|boneta|pălărie|palarie)(?![\p{L}\p{N}_])/iu.test(targetNorm);
+        if (pluralHat && !singularHat) {
+            issues.push('număr gramatical schimbat: un obiect singular „hat/cap/beanie” a fost tradus la plural');
+        }
+        const diminutivesWithoutSourceCue = /(?<![\p{L}\p{N}_])(?:căciuliță|caciulita|șepcuță|sepcuta)(?![\p{L}\p{N}_])/iu.test(targetNorm) &&
+            !/\b(?:little|small|tiny|miniature|cute|baby|adorable)\b/i.test(sourceNorm);
+        if (diminutivesWithoutSourceCue) {
+            issues.push('diminutiv introdus fără suport evident în sursă');
+        }
+    }
+
+    return issues;
+}
+
 function hasLostExplicitSourceTerm(original, translation) {
-    return getMissingExplicitAnatomicalTerms(original, translation).length > 0;
+    // Păstrăm numele funcției pentru compatibilitate cu toate protecțiile existente,
+    // dar verificarea acoperă acum și relația semantică și numărul, nu doar vocabularul.
+    return getSourceFidelityIssues(original, translation).length > 0;
+}
+
+function applySourceGroundedSemanticFixes(original, translation) {
+    let text = String(translation || '');
+    const sourceText = String(original || '').replace(/<[^>]+>/g, ' ');
+    const sourceNorm = sourceText.toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
+
+    // Reparație foarte îngustă, activată numai dacă engleza conține verbul tranzitiv
+    // „dry + my/the vagina”. Nu schimbă alte utilizări ale lui „mă usucă”.
+    if (/\b(?:dry|dries|dried|drying)\s+(?:my|the)\s+vagina\b/i.test(sourceNorm)) {
+        text = text.replace(/\b(mă|ma)\s+usuc[ăa]\s+(?:în|in|la)\s+vagin(?:ul)?\b/giu, match => {
+            const startsUpper = match[0] === match[0].toLocaleUpperCase('ro-RO');
+            return startsUpper ? 'Îmi usucă vaginul' : 'îmi usucă vaginul';
+        });
+    }
+
+    // Pentru un singur hat/cap/beanie în sursă, conservăm întâi numărul gramatical.
+    // Normalizăm doar un mic set de echivalente evidente pentru acoperământul de cap.
+    const hasSingularHatSource = /\b(?:a|an|one)\s+(?:(?:[a-z]+)\s+){0,2}(?:hat|cap|beanie|bonnet)\b/i.test(sourceNorm);
+    const sourceAlsoNamesPluralHats = /\b(?:hats|caps|beanies|bonnets)\b/i.test(sourceNorm);
+    const hasDiminutiveCue = /\b(?:little|small|tiny|miniature|cute|baby|adorable)\b/i.test(sourceNorm);
+    if (hasSingularHatSource && !sourceAlsoNamesPluralHats) {
+        const numberReplacements = [
+            [/(?<![\p{L}\p{N}_])căciuli(?:le)?(?![\p{L}\p{N}_])/giu, 'căciulă'],
+            [/(?<![\p{L}\p{N}_])caciuli(?:le)?(?![\p{L}\p{N}_])/giu, 'căciulă'],
+            [/(?<![\p{L}\p{N}_])șepci(?![\p{L}\p{N}_])/giu, 'șapcă'],
+            [/(?<![\p{L}\p{N}_])sepci(?![\p{L}\p{N}_])/giu, 'șapcă'],
+            [/(?<![\p{L}\p{N}_])fesuri(?![\p{L}\p{N}_])/giu, 'fes'],
+            [/(?<![\p{L}\p{N}_])bonete(?![\p{L}\p{N}_])/giu, 'bonetă'],
+            [/(?<![\p{L}\p{N}_])pălării(?![\p{L}\p{N}_])/giu, 'pălărie'],
+            [/(?<![\p{L}\p{N}_])palarii(?![\p{L}\p{N}_])/giu, 'pălărie']
+        ];
+        for (const [pattern, replacement] of numberReplacements) {
+            text = text.replace(pattern, match => {
+                const startsUpper = match[0] === match[0].toLocaleUpperCase('ro-RO');
+                return startsUpper ? replacement[0].toLocaleUpperCase('ro-RO') + replacement.slice(1) : replacement;
+            });
+        }
+        // Pluralul diminutivelor devine singular, păstrând diminutivul doar când sursa îl susține.
+        if (hasDiminutiveCue) {
+            text = text.replace(/(?<![\p{L}\p{N}_])căciulițe(?![\p{L}\p{N}_])/giu, 'căciuliță');
+            text = text.replace(/(?<![\p{L}\p{N}_])caciulite(?![\p{L}\p{N}_])/giu, 'căciuliță');
+            text = text.replace(/(?<![\p{L}\p{N}_])șepcuțe(?![\p{L}\p{N}_])/giu, 'șepcuță');
+            text = text.replace(/(?<![\p{L}\p{N}_])sepcute(?![\p{L}\p{N}_])/giu, 'șepcuță');
+        } else {
+            text = text.replace(/(?<![\p{L}\p{N}_])căciulițe(?![\p{L}\p{N}_])/giu, 'căciulă');
+            text = text.replace(/(?<![\p{L}\p{N}_])caciulite(?![\p{L}\p{N}_])/giu, 'căciulă');
+            text = text.replace(/(?<![\p{L}\p{N}_])căciuliță(?![\p{L}\p{N}_])/giu, match => match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Căciulă' : 'căciulă');
+            text = text.replace(/(?<![\p{L}\p{N}_])caciulita(?![\p{L}\p{N}_])/giu, match => match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Căciulă' : 'căciulă');
+            text = text.replace(/(?<![\p{L}\p{N}_])șepcuțe(?![\p{L}\p{N}_])/giu, 'șapcă');
+            text = text.replace(/(?<![\p{L}\p{N}_])sepcute(?![\p{L}\p{N}_])/giu, 'șapcă');
+            text = text.replace(/(?<![\p{L}\p{N}_])șepcuță(?![\p{L}\p{N}_])/giu, match => match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Șapcă' : 'șapcă');
+            text = text.replace(/(?<![\p{L}\p{N}_])sepcuta(?![\p{L}\p{N}_])/giu, match => match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Șapcă' : 'șapcă');
+        }
+    }
+    return text;
 }
 
 function normalizeTranslationPayload(parsed) {
@@ -1829,10 +1925,10 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
                 try {
                     const keyState = await getAvailableKey(keyStates);
                     const current = translatedById[String(item.id)] || '';
-                    const missingExplicitTerms = getMissingExplicitAnatomicalTerms(item.text, current);
-                    const explicitTermInstruction = missingExplicitTerms.length
+                    const sourceFidelityIssues = getSourceFidelityIssues(item.text, current);
+                    const explicitTermInstruction = sourceFidelityIssues.length
                         ? `
-PROBLEMĂ SEMANTICĂ DETECTATĂ: ORIGINALUL numește explicit ${missingExplicitTerms.join(', ')}. Traducerea actuală pierde acest referent. Păstrează termenul anatomic într-un echivalent românesc direct și natural; nu-l înlocui cu „jos”, „acolo” sau o formulare vagă.
+PROBLEMĂ DE FIDELITATE SEMANTICĂ DETECTATĂ: ${sourceFidelityIssues.join('; ')}. Repară sensul, nu doar vocabularul. Păstrează termenii expliciți și relația gramaticală din original: obiect direct versus loc, subiect, complement, posesie, număr singular/plural. Pentru „dries my vagina”, folosește o construcție de tipul „îmi usucă vaginul”, nu „mă usucă în vagin”. Pentru „a hat”, păstrează un singur obiect, nu „căciuli”.
 `
                         : '';
 
@@ -1996,353 +2092,36 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
                 context_urmator_en: next ? `[${next.id}] ${next.text}` : '(niciunul)',
                 context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
                 context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)',
-                avertisment_semantic: getMissingExplicitAnatomicalTerms(item.text, translatedById[String(item.id)] || '').length
-                    ? `Originalul conține ${getMissingExplicitAnatomicalTerms(item.text, translatedById[String(item.id)] || '').join(', ')}, dar traducerea nu păstrează termenul explicit.`
-                    : ''
+                avertisment_semantic: getSourceFidelityIssues(item.text, translatedById[String(item.id)] || '').join('; ')
             };
         });
 
-        const prompt = `
-Ești un corector profesionist de subtitrări ENGLEZĂ → ROMÂNĂ.
+        const prompt = `Ești un editor profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Revizuiești traducerea existentă, nu o retraducești automat.
 
-Aceasta este o VERIFICARE SUPLIMENTARĂ, independentă de traducerea principală.
-NU retraduce automat și NU rescrie replicile pentru stil.
-Scopul este să identifici și să corectezi DOAR greșelile CLARE de gramatică, ortografie sau traducere care fac replica română incorectă, coruptă sau evident lipsită de sens.
+SCOP
+Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică.
 
-REGULI CRITICE:
-1. Dacă traducerea este corectă și naturală, NU O MODIFICA.
-2. Dacă există orice dubiu că o schimbare ar putea modifica sensul, păstrează traducerea actuală.
-3. Nu schimba slangul, vulgaritățile, expresiile colocviale, sarcasmul, umorul sau stilul personajului dacă sunt inteligibile și corecte.
-3a. Păstrează registrul adult și direct al ORIGINALULUI. Dacă sursa numește explicit un organ sau un termen sexual/anatomic, NU îl înlocui cu un eufemism vag precum „jos” sau „acolo”. Păstrează sensul și gradul de explicitate al sursei.
-3b. Nu adăuga diminutive sau forme copilărești care nu sunt susținute de ORIGINAL. Verifică singularul/pluralul, genul și referentul; nu transforma arbitrar un termen singular în plural sau într-un diminutiv.
-3c. Nu face dialogul mai cuminte, mai formal sau mai copilăresc decât sursa. Păstrează vulgaritatea și umorul adult atunci când există în ORIGINAL, fără să le intensifici.
-3d. Dacă valoarea câmpului „avertisment_semantic” NU este goală, tratează-l ca pe un posibil detaliu semantic omis, nu ca pe o preferință stilistică. Dacă originalul numește explicit un organ anatomic, păstrează un echivalent românesc direct; nu-l înlocui cu „jos”, „acolo” sau alt eufemism vag. Corectează formularea în întregime, păstrând sensul și registrul.
-4. NU elimina și NU modifica repetiții intenționate sau bâlbâieli de dialog, de exemplu „Nu-nu”, „Da, eu-eu...”, „Nu, nu, nu.”.
-5. Nu modifica nume proprii, titluri, mărci, locuri sau termeni ficționali doar pentru că par neobișnuiți.
-6. Nu transforma o formulare colocvială corectă într-una literară.
-7. Repară cuvinte deformate, lipite, tăiate sau inventate și forme gramaticale evident greșite.
-8. Verifică EXPLICIT gramatica la nivel de propoziție, nu doar cuvintele izolate: acord subiect–verb, timp/mod verbal, persoană, gen și număr, articol, pronume, clitice, prepoziții, ordine sintactică și construcția frazei.
-9. Verifică EXPLICIT dacă formularea este română naturală și logică. Detectează calcuri sau transferuri directe din engleză care produc o construcție nenaturală ori greșită în română, dar corectează numai când ORIGINALUL și contextul susțin clar varianta corectă.
-10. Verifică poziționarea cliticelor și a pronumelor: forme precum „aș-o omori”, „nu ți-pasă”, „uită-ce-mi face”, „mi facă” sau alte combinații similare trebuie analizate sintactic, nu doar lexical.
-11. Verifică formele verbale: conjugare, infinitiv, conjunctiv, condițional, acord temporal și terminații. Exemple reale: „să arești” → „să arestezi”, „te admira” → verifică „te admiră”/„te admirau” după ORIGINAL și context.
-12. Verifică prepozițiile și construcțiile prepoziționale: detectează dublări sau combinații forțate precum „pregătit pentru pe 6” și alege corecția numai din sensul ORIGINALULUI.
-13. Verifică cuvintele foarte scurte și formele de 2–6 litere, deoarece pot ascunde deformări: „tuți”, „șura”, „mi”, „f-o” etc. Nu presupune că un cuvânt este corect doar pentru că seamănă cu unul românesc.
-14. Fă o verificare EXPLICITĂ A FIECĂRUI CUVÂNT: caută forme inexistente sau corupte, litere schimbate accidental, cuvinte lipite/splitate, diacritice corupte și forme generate prin traducere automată. Exemple reale: „orgasmato”, „metamorfoți”, „șura”, „tuți”, „fãcut-o”.
-15. Dacă un cuvânt sau o formulare este neobișnuită, verifică mai întâi dacă este nume propriu, marcă, termen fictiv, jargon, vulgaritate sau formă colocvială intenționată. Nu „corecta” doar pentru că sună neobișnuit.
-16. Verifică semantic și sintactic replica în raport cu ORIGINALUL și contextul din jur. O formulare poate avea cuvinte românești corecte și totuși să fie greșită ca structură sau sens. Exemple reale: „Ori dăm de capăt cum să-l antrenăm”, „M-am cerut în căsătorie cu Hughie”, „Și uită-ce-mi face și mie”.
-17. Detectează calcuri evidente din engleză și vocative/construcții traduse mecanic, de exemplu „idioticule” când ORIGINALUL cere un vocativ românesc natural precum „idiotule”. Nu schimba însă jargonul sau termenii intenționați.
-18. Verifică majusculele în context: nu transforma automat începutul unei replici în literă mică sau invers; corectează doar când poziția sintactică este clară.
-19. Fă o AUDITARE SINTACTICĂ COMPLETĂ a fiecărei replici, chiar dacă toate cuvintele individuale par românești. Nu presupune că o propoziție este corectă doar pentru că nu conține typo-uri. Verifică dacă subiectul, predicatul, complementele, pronumele și determinările se leagă logic între ele și dacă ordinea cuvintelor produce o propoziție românească firească.
-20. Compară fiecare traducere cu ORIGINALUL și, când este util, cu replicile din „context_anterior_en/context_urmator_en” și „context_anterior_ro/context_urmator_ro”. Contextul este doar pentru înțelegerea sensului și a continuității; corectează numai replica curentă. Folosește contextul pentru a detecta persoana verbală, referința pronumelor, acordul, construcțiile care continuă din replica anterioară și propozițiile împărțite între subtitrări.
-21. Fii atent la erorile „gramatical românești la nivel de cuvinte, dar greșite ca propoziție”: acord greșit ascuns, complement legat de verbul greșit, prepoziție nepotrivită, verb la persoana/numărul greșit, pronume cu antecedent greșit, ordine sintactică anormală, construcție tranzitivă/intranzitivă greșită sau formulare care schimbă relația dintre personaje.
-22. Verifică separat CONSTRUCȚIILE VERBALE. Nu analiza doar forma verbului, ci și ce complemente cere verbul în română. De exemplu, o construcție precum „M-am cerut în căsătorie cu Hughie” poate avea cuvinte corecte individual, dar verbul și complementul sunt incompatibile; dacă ORIGINALUL spune că vorbitorul a cerut o altă persoană în căsătorie, reconstruiește construcția corectă.
-23. Verifică separat ACORDUL LOGIC, nu doar acordul gramatical superficial. Subiectul real trebuie să determine corect genul, numărul și persoana predicatului și ale adjectivelor/participiilor. De exemplu, „comuniștii erau periculoase” trebuie identificat ca acord greșit chiar dacă fiecare cuvânt există în română.
-24. Verifică FORMELE CU DIACRITICE și formele omografe care schimbă gramatica: „pasa/păsa”, „in/în” și alte cazuri în care lipsa diacriticii poate ascunde o formă greșită. Nu corecta automat orice lipsă de diacritică dacă este nume propriu, marcă sau caz legitim.
-25. Verifică FRAGMENTELE CORUPTE chiar și atunci când verificarea lexicală nu le marchează: „Ț-ținta”, „frecându-menta”, „mizerijile”, „reeligitată” sau combinații similare. Dacă forma rezultată nu poate funcționa în propoziția respectivă, reconstruiește-o din ORIGINAL și context.
-26. Dacă o replică este împărțită pe două linii de subtitrare sau continuă evident în contextul vecin, evaluează sensul propoziției COMPLETE, nu doar fiecare fragment izolat. Nu introduce punctuație, majuscule sau reformulări doar pentru a face fragmentul izolat să pară complet.
-27. Detectează formulările care sunt traduceri literale ale unei expresii englezești și care devin nenaturale sau lipsite de sens în română. Exemplu de tip: „suntem la anghinare rău de tot acum” pentru o expresie idiomatică precum „we're in a pickle”. Dacă sensul originalului este clar, adaptează expresia în română naturală fără a-i schimba intenția.
-28. Nu confunda naturalețea cu preferința stilistică. Corectează doar când formularea este efectiv greșită, ambiguă, ilogică sau nenaturală într-un mod evident pentru un vorbitor nativ; nu rescrie o formulare doar pentru că ai prefera o altă variantă.
-29. Caută EXPLICIT secvențe corupte rezultate din traducere automată sau tăiere accidentală: „f-o”, „fãcut-o”, „ți-ți”, „mi-mi”, „să-să”, fragmente rămase singure sau combinații care nu formează o construcție românească validă. Dacă ORIGINALUL nu susține o bâlbâială/repetiție intenționată, tratează-le ca erori.
-30. Pentru orice token care conține o bucată suspectă lipită de un cuvânt valid, fă o verificare separată a tokenului și apoi a propoziției complete. Exemple: „Țin-ținta e prea mică.”, „T-Ar trebui...”, „frecându-menta”, „nu ți-pasă”. Dacă prima parte nu are funcție gramaticală în context și nu este o bâlbâială susținută de ORIGINAL, nu păstra tokenul doar pentru că partea finală este un cuvânt românesc valid. Reconstruiește forma corectă din ORIGINAL și context.
-31. Cazul „Țin-ținta e prea mică.” este un exemplu de FRAGMENT CORUPT, nu de repetiție intenționată: dacă ORIGINALUL nu indică o bâlbâială, varianta corectă trebuie să elimine fragmentul „Țin-” și să păstreze sensul propoziției, de tipul „Ținta e prea mică.”. Nu lăsa o formă precum „T-ținta”, „Țin-ținta” sau altă combinație intermediară.
-32. După orice corecție lexicală, verifică din nou ÎNTREAGA PROPOZIȚIE. Nu este suficient să repari un singur cuvânt dacă acordul, ordinea, cliticele sau sensul rămân greșite.
-33. FOLOSEȘTE ACEST SET DE REGRESIE CA TEST OBLIGATORIU, DAR NU CA DICȚIONAR GLOBAL.
-Înainte de a returna corecțiile, verifică dacă poți identifica și corecta tipurile de erori de mai jos atunci când ORIGINALUL și contextul le confirmă. Acestea sunt exemple de erori reale; NU aplica înlocuiri mecanice tuturor replicilor similare.
-- „Ieși-mi din cap” → verifică dacă sensul corect este „Ieși din capul meu”. Problema este relația de posesie/sens, nu doar gramatica.
-- „într-una extrem de letală” pentru un substantiv masculin precum „virus” → „într-unul extrem de letal”. Verifică acordul de gen și referința pronumelui.
-- „momentul potrivitur” → „momentul potrivit”. Repară typo-urile evidente.
-- „ca să...rbătorim” → „ca să sărbătorim”. Repară cuvintele fragmentate/trunchiate.
-- „Citească-gânduri, ții minte?” → verifică dacă ORIGINALUL cere o expresie precum „Cititoare de gânduri” sau altă formulare naturală; nu aplica automat aceeași corecție în alte contexte.
-- „democracția” → „democrația”. Repară erorile ortografice evidente.
-- „mă reasigur” pentru „get reelected” → verifică sensul politic și, dacă ORIGINALUL/contextul îl confirmă, corectează către sensul „să fiu reales/realeasă”.
-- „rămas pe jos” pentru „left standing” → verifică dacă sensul este „rămas în picioare”/„rămas prin preajmă”, în funcție de context.
-- „S-a dus totul pe râpă” → verifică expresia românească și, dacă ORIGINALUL cere această idiomă, corectează „de râpă”.
-- „o bullet” → „un glonț” dacă ORIGINALUL folosește „bullet” cu sensul de proiectil. Dacă „bullet” este altceva, păstrează sensul real.
-- „n-ai putut să scape” → „n-ai putut să scapi” când subiectul este „tu”. Verifică persoana verbală.
-- „mergem orbești” → „mergem orbește” când este folosit adverbial. Verifică funcția gramaticală, nu doar forma cuvântului.
-Aceste exemple trebuie folosite pentru a detecta CATEGORIILE de eroare: semantică, acord, typo, fragmentare, calchiu, ortografie, fals prieten, idiom, cuvânt netradus, conjugare și adverbializare. Dacă o variantă actuală este corectă, NU o modifica doar pentru că seamănă cu un exemplu.
+VERIFICĂ ÎN ORDINE
+1. Compară ORIGINALUL, traducerea și contextul imediat înainte/după. Verifică sensul complet, expresiile idiomatice, cine face acțiunea și cine/ce o primește.
+2. Verifică relațiile gramaticale, nu doar prezența cuvintelor: obiect direct versus loc, prepoziții, pronume/clitice, posesie, negație, timp, persoană, gen și număr. De exemplu, pentru EN “the sound that dries my vagina”, „îmi usucă vaginul” păstrează relația de obiect direct; „mă usucă în vagin” schimbă sensul.
+3. Păstrează termenii expliciți și sensul direct când sursa îi folosește. Nu îi înlocui cu eufemisme și nu transforma intensificatorii/înjurăturile în obiecte, acțiuni sau insulte diferite.
+4. Păstrează singularul/pluralul și referentul. De exemplu, “a hat” nu trebuie tradus „căciuli”. Nu adăuga diminutive precum „căciuliță” dacă sursa nu exprimă micime, afecțiune sau diminutiv.
+5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase.
+6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
+7. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
 
-33. O corecție propusă NU este acceptată dacă rezultatul introduce o nouă formă coruptă, o repetiție accidentală, un cuvânt inventat, o construcție nenaturală sau o eroare gramaticală.
-34. Repară numai când există o variantă românească clară, susținută de ORIGINAL și context. Dacă sunt posibile mai multe variante plauzibile și nu există certitudine, păstrează traducerea actuală.
-35. Păstrează sensul original, registrul, vulgaritățile, slangul, umorul și intenția replicii.
-36. Nu adăuga informații și nu elimina informații.
-37. Păstrează formatul de subtitrare: maximum 2 rânduri, ideal maximum 43 de caractere pe rând; dacă block-ul are doi vorbitori, păstrează-i pe rânduri separate cu formatul „- Text”. Nu muta textul între ID-uri.
-37a. Pentru o împărțire vizuală în două rânduri a aceleiași propoziții, preferă un punct natural de rupere; al doilea rând începe cu literă mică dacă propoziția continuă, cu excepția numelor proprii sau a unei propoziții noi.
-38. Nu introduce engleză în traducere și nu introduce caractere non-latine.
-39. Dacă nu ești 100% sigur că există o eroare, PĂSTREAZĂ traducerea actuală.
+REGULĂ DE PRUDENȚĂ
+Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
 
-EXEMPLE SUPLIMENTARE DE ERORI RECENTE:
-- „Ce naiba veți faceți la Los Alamos?” → verifică auxiliarul + verbul; forma așteptată poate fi „veți face”.
-- „Mecanica cuantică spun că e din ambele.” → verifică acordul subiect–verb și sensul complet.
-- „Printre oamenii de știință a fost unanimă.” → verifică subiectul logic, acordul și construcția semantică.
-- „Mm, mi-am amintesc bine.” → verifică reflexivul și persoana; dacă ORIGINALUL cere „îmi amintesc”, repară întreaga construcție.
-- „Există o persoană pe care n-o veți niciodată învinge.” → verifică ordinea naturală „n-o veți învinge niciodată”.
-- „Destul de puternic să-l omoare pe Homelander l-ar transforma...” → verifică ordinea sintactică a întregii propoziții.
-- „De ce dracu' aș-o omori pe maică-ta?” → verifică simultan condiționalul, infinitivul și cliticul.
-- „Deci chiar ai f-o.” → verifică forma verbală completă și cliticul; nu păstra fragmentul „f-o” dacă ORIGINALUL cere „făcut-o”.
-- „nu ți-acționează puterile?” → verifică poziția cliticului și construcția verbală completă.
-
-EXEMPLE REALE DIN SUBTITRĂRI CARE TREBUIE FOLOSITE CA MODELE
- DE DETECȚIE:
-- „Ori dăm de capăt cum să-l antrenăm” → detectează construcția sintactică nenaturală și corectează conform ORIGINALULUI.
-- „pregătit pentru pe 6” → detectează dublarea prepozițiilor și corectează conform ORIGINALULUI.
-- „ca să...rbătorim” → detectează cuvântul trunchiat și repară „ca să sărbătorim”.
-- „De ce dracu' aș-o omori pe maică-ta?” → detectează poziționarea greșită a cliticului și forma verbală; varianta trebuie verificată în ORIGINAL.
-- „M-am cerut în căsătorie cu Hughie” → detectează construcția semantică/sintactică greșită; ORIGINALUL poate cere „L-am cerut în căsătorie pe Hughie”.
-- „să arești” → „să arestezi”.
-- „idioticule” → verifică dacă este un calchiu greșit; dacă ORIGINALUL cere vocativul românesc, „idiotule”.
-- „Ca să Mă-nvățați” → verifică majuscula nejustificată în interiorul propoziției.
-- „Fete din toată lumea te admira.” → verifică acordul și timpul verbal.
-- „Fără ca idiotul ăsta...” → verifică majuscula în funcție de poziția în frază.
-- „ai nevoie de pașaport” după punct → verifică majuscula de început.
-- „nu ți-pasă” → verifică cliticul și forma corectă „nu-ți pasă”.
-- „metamorfoți” → detectează cuvântul inexistent și reconstruiește forma corectă din ORIGINAL/context.
-- „Și uită-ce-mi face și mie.” → verifică pronumele/cliticul lipsă și construcția „uită-te ce-mi face și mie”.
-- „ftuți” → detectează typo-ul și verifică forma corectă din ORIGINAL/context.
-- „Și comuniștii erau periculoase?” → verifică acordul de gen și număr dintre subiect și predicat/nume predicativ: „comuniștii” cere „periculoși”.
-- „Apar și dispari din viața mea” → verifică persoana și paralelismul verbal; nu accepta combinații precum „apar” + „dispari” dacă ORIGINALUL/contextul cere aceeași persoană verbală.
-- „De ce? Țin-ținta e prea mică.” → detectează fragmentul corupt și verifică întreaga construcție, nu doar cuvântul „ținta”.
-- „De ce i-ar pasa ce fac?” → verifică forma verbală „păsa” și construcția completă „i-ar păsa”.
-- „...cumpărate in ziua...” → verifică diacriticele și forma gramaticală „în”.
-- „De ce i-o fi spus lui Einstein de m-a vorbit de rău.” → verifică legătura sintactică dintre verbe, pronume și subordonate; nu accepta o propoziție doar pentru că toate cuvintele sunt românești.
-
-39. Verifică explicit CONSTRUCȚIILE CU AUXILIARE ȘI MODALE. Forme precum „veți faceți”, „ar trebui să mergiți” sau alte combinații incompatibile de forme verbale sunt erori clare când ORIGINALUL și contextul confirmă forma corectă.
-40. Verifică explicit ORDINEA CLITICELOR în infinitiv, condițional, conjunctiv și perfect compus. Forme precum „aș-o omori”, „nu ți-acționează”, „ai f-o” trebuie analizate ca structură completă, nu reparate doar caracter cu caracter.
-41. Verifică explicit ACORDUL SUBIECT–VERB. „Mecanica cuantică spun că e din ambele” trebuie analizat chiar dacă fiecare cuvânt există în română.
-42. Verifică explicit PREPOZIȚIILE ȘI COMPLEMENTELE CERUTE DE VERB. Nu accepta combinații precum „pregătit pentru pe 6” sau complemente incompatibile; verifică relația sintactică completă.
-43. Verifică explicit construcții de tipul „Printre oamenii de știință a fost unanimă”: stabilește subiectul logic și verifică acordul și sensul.
-44. Verifică explicit FRAGMENTELE care par corecte lexical, dar sunt rupte sintactic. Dacă structura este evident coruptă, reconstruiește numai partea susținută de ORIGINAL și context.
-45. Verifică explicit VERBELE REFLEXIVE ȘI PRONUMELE PERSONALE. „mi-am amintesc”, „m-am cerut în căsătorie”, „aș-o omori” și „mi facă” trebuie evaluate ca întregi construcții verbale.
-46. Verifică explicit ORDINEA NATURALĂ A CUVINTELOR. „Există o persoană pe care n-o veți niciodată învinge” trebuie evaluat ca propoziție, nu ca listă de cuvinte corecte.
-47. Verifică explicit VOCATIVELE ȘI CALCURILE LEXICALE; „idioticule” poate fi un calchiu dacă ORIGINALUL cere „idiotule”.
-48. Formele scurte corupte („veți faceți”, „ai f-o”, „ți-acționează”, „aș-o omori”, „mi-am amintesc”, „ftuți”, „realejată”, „fãcut-o”) sunt semnale pentru o verificare sintactică mai largă.
-49. Nu considera o linie corectă doar pentru că trece un detector lexical. Caută activ erori care apar exclusiv din relația dintre cuvinte: acord, guvernare verbală, clitice, complemente, ordine sintactică și sens.
-50. După orice corecție verbală, pronominală sau de ordine a cuvintelor, verifică din nou întreaga propoziție față de ORIGINAL și context.
-51. Fă o VERIFICARE DE INTEGRITATE A PROPOZIȚIEI după analiza lexicală: dacă toate cuvintele există în română, verifică totuși dacă împreună formează o propoziție completă, coerentă și gramaticală. Nu considera „toate cuvintele sunt românești” drept dovadă că traducerea este corectă.
-52. Fă o VERIFICARE ORTOGRAFICĂ FINALĂ pentru fiecare linie: caută litere lipsă, litere în plus, inversări, forme fără diacritice care schimbă cuvântul, spații puse greșit în jurul cratimei și cuvinte trunchiate. Exemple de tip: „invige”, „reeleasă”, „nite”, „făt-o”, „f-ut-o”, „N- ar”, „trebui” în loc de „trebuie”.
-53. Fă o VERIFICARE DE FORMA VERBALĂ + CONSTRUCȚIE VERBALĂ: dacă apare un verb suspect, verifică simultan infinitivul/conjunctivul/condiționalul, persoana, numărul, auxiliarul, cliticul și complementul cerut. Nu repara doar terminația unui verb dacă întreaga construcție rămâne greșită.
-54. Fă o VERIFICARE DE ORDINE SINTACTICĂ: pentru fiecare propoziție suspectă, rearanjează mental componentele în ordinea românească naturală și compară cu ORIGINALUL. Exemple: „Destul de puternic să-l omoare pe Homelander l-ar transforma...” și „Există o persoană pe care n-o veți niciodată învinge.” sunt probleme de structură, nu simple typo-uri.
-55. Fă o VERIFICARE DE ACORD ȘI REFERINȚĂ: verifică subiectul real al fiecărui verb/adjectiv/participiu și antecedentul fiecărui pronume. Nu accepta acorduri sau referințe care par plauzibile local, dar nu se potrivesc cu propoziția completă ori cu contextul.
-56. Fă o VERIFICARE DE COMPLETITUDINE: caută cuvinte lipsă care fac propoziția să pară aproape corectă, dar nu corectă, inclusiv clitice, auxiliare, prepoziții, terminații și elemente obligatorii ale construcției. Exemple: „De ce dracu' aș-o omori...”, „Deci ai f-o.” și „nu ți-acționează...” trebuie evaluate ca structuri complete.
-57. Fă o VERIFICARE PENTRU ERORI DE TIP „CUVÂNT CORECT, RELAȚIE GREȘITĂ”: un verb poate fi corect ca formă, dar greșit în persoană; un substantiv poate fi corect, dar legat prin prepoziția greșită; două cuvinte pot fi corecte separat, dar combinația poate fi imposibilă în română. Aceste cazuri trebuie corectate dacă ORIGINALUL și contextul oferă o soluție clară.
-58. Pentru propozițiile împărțite între două sau mai multe subtitluri, fă verificarea la nivelul frazei complete folosind context_anterior și context_urmator. Nu lăsa o eroare de acord, timp verbal, clitic sau ordine a cuvintelor să treacă doar pentru că fragmentul local pare acceptabil.
-59. Fă o ultimă trecere mentală de tip NATIV ROMÂN: „Aș spune această propoziție exact așa în română?” Dacă răspunsul este clar „nu” din cauza unei greșeli gramaticale/sintactice sau a unui calchiu evident, verifică ORIGINALUL și propune corecția. Dacă este doar o preferință stilistică, NU modifica.
-60. Nu te opri după găsirea primei erori. După ce identifici o problemă într-o linie, verifică și restul liniei pentru alte erori independente înainte de a returna corecția.
-61. Verifică explicit FORMELE VERBALE TRUNCHIATE SAU LIPSITE DE LITERE. Exemple precum „t trebui” trebuie analizate ca posibile forme corupte ale lui „trebuie”; nu lăsa forma doar pentru că restul propoziției este inteligibil.
-62. Verifică explicit CUVINTELE SCURTE DEFORMATE. Forme precum „nite” trebuie tratate ca posibile deformări ale lui „niște” și verificate în ORIGINAL și context înainte de corectare.
-63. Verifică explicit CUVINTELE INVENTATE/DEFORMATE CARE PAR PLAUZIBILE. O formă precum „peștinat” trebuie considerată suspectă chiar dacă seamănă cu o formă românească; reconstruiește forma corectă numai după ORIGINAL și context.
-64. Verifică explicit MAJUSCULELE NEJUSTIFICATE ÎN INTERIORUL PROPOZIȚIEI. „Ca să Mă înveți...” trebuie evaluat ca posibilă eroare de capitalizare; dacă nu este nume propriu sau citat intenționat, forma firească este „Ca să mă înveți...”.
-65. Verifică explicit CONECTORII „CA/CUM” ȘI CONSTRUCȚIILE COMPARATIVE/REFERENȚIALE. O formulare precum „Exact ca i-ați făcut tatălui meu” poate fi coruptă; dacă ORIGINALUL exprimă modul în care s-a făcut ceva, verifică dacă este necesar „Exact cum i-ați făcut tatălui meu”. Nu schimba automat fără suportul ORIGINALULUI.
-66. Verifică explicit EXPRESIILE TEMPORALE CU „LA/PÂNĂ LA/PÂNĂ”. Formulări precum „pregătit pe 6” trebuie comparate cu ORIGINALUL pentru a stabili dacă sensul este „pregătit la șase”, „pregătit până la șase” sau altceva. Nu accepta o prepoziție doar pentru că traducerea literală o permite.
-67. Verifică explicit CONSTRUCȚIILE CU „ÎN DOI/ÎN DOUĂ” ȘI EXPRESIILE DE MOD/NUMĂR. O formulare precum „totul se mișcă în doi” poate fi un calchiu al englezei; verifică ORIGINALUL și contextul pentru o formulare românească naturală, de tipul „ne mișcăm câte doi”, dacă sensul o confirmă.
-68. Când găsești o formă suspectă, nu corecta doar cuvântul izolat. Reanalizează întreaga propoziție după înlocuire și verifică din nou acordul, sensul, complementele și naturalețea.
-69. Verifică explicit ORICE CARACTER ATIPIC DINTR-UN CUVÂNT ROMÂNESC. Româna standard folosește literele latine și diacriticele „ă â î ș ț”. Caractere precum „ł, ø, æ, å, ñ, ç, ð, þ, ß, đ” sau alte caractere neobișnuite inserate în cuvinte românești trebuie tratate ca POSIBILĂ CORUPERE/EROARE. Exemplu: „ała” trebuie verificat ca posibilă formă coruptă a lui „ăla”. Verifică întotdeauna ORIGINALUL și contextul înainte de corectare.
-70. Nu trata automat orice caracter străin ca eroare. Nume proprii, mărci, locuri, termeni ficționali și cuvinte străine intenționale pot conține caractere neobișnuite; păstrează-le dacă ORIGINALUL și contextul confirmă că sunt deliberate.
-71. Verifică explicit MAJUSCULELE ACCIDENTALE DIN INTERIORUL PROPOZIȚIEI. Un cuvânt românesc obișnuit nu trebuie să înceapă accidental cu majusculă în mijlocul propoziției. Exemple: „Ca să Mă înveți...”, „..., Oricum.” sau „De ce i-ar Pasa...” trebuie verificate. Corectează numai dacă nu este început de propoziție, nume propriu, marcă, titlu, citat sau alt caz justificat de context.
-72. Pentru caracterele atipice și majusculele suspecte, nu face o corecție izolată doar pentru că forma „arată ciudat”. Compară ORIGINALUL, context_anterior și context_urmator și verifică întreaga propoziție înainte de a decide.
-
-
-EXEMPLE SUPLIMENTARE — INTEGRITATE SINTACTICĂ ȘI ORTOGRAFICĂ:
-- „Există o persoană pe care n-o veți niciodată învinge.” → ordinea corectă este de tipul „Există o persoană pe care n-o veți învinge niciodată.”; verifică întreaga construcție, nu doar cuvântul „învinge”.
-- „Destul de puternic să-l omoare pe Homelander l-ar transforma...” → propoziția trebuie reconstruită în ordinea românească susținută de ORIGINAL; nu accepta structura doar pentru că fiecare cuvânt este valid.
-- „Ce naiba veți faceți la Los Alamos?” → „veți face”; elimină combinația auxiliar + formă verbală incompatibilă.
-- „Atacul de panică ăla trebui să fie un avertisment.” → „Atacul de panică ăla trebuie să fie un avertisment.”; verifică forma verbală completă.
-- „să fiu reeleasă peste patru ani.” → „să fiu realeasă peste patru ani.”; verifică forma lexicală/participială.
-- „Mai bine mă omorau, decât ce i-am făcut fetei aceia.” → „...fetei aceleia.”; verifică acordul în construcția completă.
-- „Poți să-mi iei nite Sugarfish?” → „niște”; verifică ortografia și diacriticele.
-- „N- ar trebui să fie așa.” → „N-ar trebui să fie așa.”; verifică spațierea în jurul cratimei.
-- „Ca să Mă-nveți cum să-mi ucid tatăl?” → „Ca să mă-nveți...”; verifică majuscula în context.
-- „Exact ca au făcut-o cu tatăl meu.” → verifică prepoziția/conectorul și construcția; dacă ORIGINALUL confirmă, „Exact cum au făcut-o...” este forma naturală.
-- „Mecanica cuantică spun că e din ambele.” → verifică subiectul singular și acordul verbal, chiar dacă toate cuvintele sunt valide.
-- „Printre oamenii de știință a fost unanimă.” → verifică subiectul logic și acordul; nu accepta o propoziție doar pentru că adjectivul este românesc.
-- „Mm, mi-am amintesc bine.” → verifică reflexivul și forma verbală completă; dacă ORIGINALUL cere „îmi amintesc”, corectează întreaga construcție.
-- „De ce i-ar pasa ce fac?” → „De ce i-ar păsa ce fac?”; verifică forma verbală și construcția condițională.
-- „...cumpărate in ziua...” → „...cumpărate în ziua...”; verifică diacritica și forma gramaticală.
-- „făt-o”, „f-ut-o”, „ai f-o” → dacă ORIGINALUL nu indică o bâlbâială intenționată, reconstruiește forma verbală completă, de tipul „făcut-o”.
-- „invige”, „reeleasă”, „nite”, „frecându-menta”, „mizerijile” → tratează-le ca posibile deformări și verifică propoziția completă înainte de corectare.
-
-IMPORTANT: Acestea sunt exemple de TIPURI DE ERORI, nu corecții care trebuie aplicate orbește. Pentru fiecare linie, ORIGINALUL și contextul au prioritate.
-
-IMPORTANT:
-- Nu trebuie să modifici toate liniile.
-- Returnează DOAR liniile pentru care există o corecție clară și necesară.
-- Pentru liniile deja corecte, nu este nevoie să le returnezi.
-- Dacă nu există nicio corecție clară, returnează un ARRAY GOL: [].
-
-VERIFICARE OBLIGATORIE A CORECȚIEI FINALE:
-Pentru fiecare linie pe care alegi să o corectezi, NU te opri după ce găsești prima problemă.
-După ce formulezi noua variantă, recitește și verifică DIN NOU varianta finală ca pe o subtitrare independentă.
-Înainte să o returnezi, confirmă mental toate acestea:
-- toate cuvintele sunt românești, complete și corect scrise;
-- acordurile gramaticale sunt corecte;
-- verbele, pronumele și cliticile sunt corecte;
-- prepozițiile și construcția frazei sunt naturale în română;
-- nu a rămas nicio traducere literală sau fragment corupt;
-- nu ai introdus o nouă greșeală în timp ce ai reparat-o pe cea veche;
-- sensul, registrul și intenția originalului au rămas intacte.
-Dacă după această a doua verificare mai există ORICE problemă evidentă în varianta propusă, NU o returna ca „corectată”; păstrează traducerea actuală.
-Nu marca o linie drept corectată doar pentru că ai schimbat-o. Varianta nouă trebuie să fie efectiv mai bună și corectă.
-
-EXEMPLE DE ERORI CARE TREBUIE VERIFICATE ÎN VARIANTA FINALĂ:
-- „ai făt-o” / „fãcut-o” → verifică să nu rămână forma coruptă; forma corectă uzuală este „ai făcut-o”.
-- „o favoră” → „o favoare”.
-- „mi facă” → verifică forma clitică potrivită contextului, de exemplu „să-mi facă”.
-- „Exact ca i-au făcut...” → verifică legătura gramaticală potrivită contextului, nu doar primul cuvânt schimbat.
-- „Atacul ăla de panică trebui să fie un avertisment...” → forma verbală este suspectă; verifică „trebuie” în raport cu ORIGINALUL.
-- „Poți să-mi iei nite Sugarfish?” → verifică forma „nite” și, dacă ORIGINALUL confirmă pluralul nehotărât, corectează la „niște”.
-- „Lenny era să se peștinat când i-am spus.” → tratează „peștinat” ca formă coruptă și reconstruiește propoziția numai din ORIGINAL/context.
-- „Ca să Mă înveți cum să-mi ucid tatăl?” → dacă „Mă” nu este nume propriu sau început de citat, corectează la „mă”.
-- „Exact ca i-ați făcut tatălui meu.” → verifică dacă „ca” trebuie să fie „cum” pentru construcția cerută de ORIGINAL.
-- „Asigură-te că e pregătit pe 6.” → verifică sensul temporal în ORIGINAL; nu păstra „pe 6” dacă engleza cere „la 6” sau „până la 6”.
-- „Totul se mișcă în doi.” → verifică dacă este un calchiu și dacă ORIGINALUL cere o construcție românească de tipul „ne mișcăm câte doi”.
-- „orgasmato”, „șura”, „tuți” → tratează-le ca forme suspecte care trebuie verificate explicit în ORIGINAL și context; nu le lăsa doar pentru că par aproape de un cuvânt românesc.
-Aceste exemple sunt orientative; NU modifica o replică dacă originalul nu susține corecția.
-
-INTEGRARE SUPLIMENTARĂ — AUDIT STRICT AL SENSULUI ȘI AL NATURALITĂȚII:
-73. Compară obligatoriu „translation” cu „original” înainte de orice corecție. Nu presupune că o formulare românească este greșită doar pentru că ai fi tradus-o altfel. Corectează numai dacă există o eroare reală și clară de sens, gramatică, ortografie, sintaxă sau naturalețe.
-74. Verifică explicit CALCURILE ȘI TRADUCERILE LITERALE din engleză. Dacă „translation” este o traducere mecanică ce nu are sens sau sună evident nenatural în română, reconstruiește formularea folosind sensul din „original” și context. Exemplul de tip „Suntem oameni în voi” trebuie analizat semantic și reformulat numai dacă originalul confirmă sensul corect.
-75. Verifică explicit FORMULĂRILE CARE SUNT ROMÂNEȘTI CA VOCABULAR, DAR GREȘITE CA RELAȚIE SINTACTICĂ SAU SEMANTICĂ. Nu este suficient ca toate cuvintele să existe în dicționar. Verifică dacă verbul, subiectul, complementele, pronumele și prepozițiile formează împreună o construcție validă și dacă redau relația din „original”.
-76. Verifică explicit FORMELE VERBALE ȘI CONSTRUCȚIILE VERBALE COMPLETE. Nu repara doar un sufix sau o literă dacă problema afectează întreaga construcție. Exemple: „să arești” → verifică „să arestezi”; „aș-o omori” → „aș omorî-o”; „mi-am amintesc” → „îmi amintesc”.
-77. Verifică explicit ACORDUL DE GEN, NUMĂR ȘI PERSOANĂ folosind și contextul. Dacă traducerea curentă contrazice subiectul real, antecedentul pronumelui sau referința din original, corectează întreaga construcție, nu doar cuvântul problematic.
-78. Verifică explicit TOPICA CLITICELOR ȘI A PRONUMELOR. Forme precum „nu ți-pasă”, „aș-o omori”, „uită-ce-mi face” sau combinații similare trebuie analizate ca structuri complete și corectate numai dacă „original” și contextul susțin clar corecția.
-79. Verifică explicit CUVINTELE CORUPTE, TRUNCHIATE, LIPITE SAU INVENTATE, inclusiv forme care par aproape românești. Exemple: „metamorfoți”, „reeligitată”, „Iertați-man”, „ała”, „frecându-menta”, „mizerijile”. Pentru fiecare astfel de caz, verifică „original”, „ctx_ant” și „ctx_urm” înainte de a reconstrui forma.
-80. Verifică explicit DIACRITICELE ȘI CARACTERELE ATIPICE în interiorul cuvintelor. Caractere precum „ł”, „ø”, „æ”, „å”, „ñ”, „ç”, „ð”, „þ”, „ß”, „đ” sau alte caractere neobișnuite într-un cuvânt românesc pot indica o corupere. Nu le corecta automat dacă fac parte dintr-un nume propriu, termen străin, marcă sau alt element intenționat.
-81. Verifică explicit MAJUSCULELE ACCIDENTALE din interiorul propoziției. Exemple de tipul „Ca să Mă înveți...”, „..., Oricum.” sau „De ce i-ar Pasa...” trebuie analizate în context. Nu modifica nume proprii, titluri, mărci, începuturi de propoziție sau citate legitime.
-82. Verifică explicit NATURALEȚEA ROMÂNEASCĂ, dar NU o confunda cu preferința stilistică. Dacă formularea este corectă și transmite sensul originalului, păstreaz-o chiar dacă există o variantă pe care ai prefera-o. Intervine numai când formularea este evident greșită, ilogică, calchiată sau nenaturală pentru un vorbitor nativ.
-83. Păstrează obligatoriu slangul, vulgaritățile, sarcasmul, umorul, bâlbâielile și repetițiile intenționate. Nu transforma „Nu-nu”, „Da, eu-eu...” sau „Nu, nu, nu.” în formulări mai elegante dacă „original” indică intenția respectivă.
-84. După fiecare corecție propusă, fă o VERIFICARE FINALĂ A VARIANTEI NOI: recitește propoziția completă, compar-o din nou cu „original”, verifică acordurile, verbele, cliticile, prepozițiile, sensul, diacriticele și naturalețea. Dacă noua variantă introduce orice eroare sau dacă nu ești sigur că este mai corectă decât varianta existentă, NU returna corecția.
-85. Nu modifica o replică doar pentru a o „îmbunătăți”. Dacă „translation” este corectă, naturală și transmite corect „original”, ignor-o complet. Nu returna replicile bune.
-86. Dacă există două variante posibile și nu există suficiente informații în „original”, „ctx_ant” și „ctx_urm” pentru a decide fără dubiu, păstrează traducerea existentă. Prioritatea este conservarea unei traduceri bune, nu forțarea unei corecții.
-87. VERIFICARE SEMANTICĂ OBLIGATORIE: Nu este suficient ca traducerea română să fie gramaticală sau să sune natural. Compară sensul COMPLET al originalului în engleză cu traducerea română. Detectează cazurile în care traducerea este o propoziție românească validă, dar transmite ALTĂ IDEE decât originalul. Exemplu: EN „Get out of my head.” / RO „Ieși-mi din cap.” — dacă, în context, sensul cerut este „Get out of my head”, preferă o formulare care păstrează fidel sensul și posesia din original, precum „Ieși din capul meu”, numai dacă ORIGINALUL și contextul confirmă.
-88. NU ACCEPTA REFORMULĂRI CARE SCHIMBĂ RELAȚIA DINTRE CUVINTE: Verifică atent prepozițiile, pronumele, posesivele, complementele și expresiile fixe. O propoziție poate fi perfect gramaticală în română și totuși să fie o traducere greșită. Exemplu: EN „Don't fucking touch me.” / RO „Să nu mă atingi de pulă.” — aceasta NU este echivalentă semantic; aici „fucking” funcționează ca intensificator/vulgarism, nu ca indicator al unui obiect sexual. Corectează numai dacă ORIGINALUL și contextul confirmă funcția respectivă.
-89. VERIFICĂ VULGARITĂȚILE DUPĂ FUNCȚIA LOR ÎN ORIGINAL: Un cuvânt vulgar englezesc precum „fuck”, „fucking”, „damn”, „shit” etc. poate funcționa ca verb literal, intensificator, înjurătură, interjecție sau element de insistență/emfază. NU presupune automat că trebuie tradus literal. Stabilește mai întâi funcția lui în propoziția originală și păstrează nivelul de vulgaritate, fără a inventa obiecte, acțiuni sau relații care nu există în ORIGINAL.
-90. VERIFICĂ EXPRESIILE IDIOMATICE ȘI COLOQUIALE CA UNITĂȚI DE SENS: Nu traduce fiecare cuvânt separat. Compară sensul expresiei întregi din EN cu sensul expresiei întregi din RO. O formulare românească literală, dar cu alt sens, trebuie tratată ca eroare semantică chiar dacă este gramaticală.
-91. DETECTEAZĂ „ROMÂNĂ CORECTĂ, DAR SENS GREȘIT”: Acesta este un caz CRITIC. Dacă RO este gramatical și natural, dar schimbă cine face acțiunea, cine primește acțiunea, obiectul, posesia, relația dintre personaje, introduce un obiect care nu există în EN, elimină un element important din EN, schimbă funcția unei înjurături/intensificator într-un substantiv sau obiect concret ori schimbă sensul unei expresii, COREctează traducerea numai pe baza ORIGINALULUI și a contextului.
-92. ÎNAINTE DE ORICE CORECȚIE SEMANTICĂ: Compară obligatoriu ORIGINALUL, traducerea actuală, context_anterior și context_urmator. Nu corecta doar pentru că o altă formulare românească sună mai bine. Corectează numai dacă există o diferență reală de sens și există o variantă clară, susținută de surse.
-93. DUPĂ CORECȚIE: Recitește propoziția română completă și verifică din nou dacă noua variantă păstrează sensul EN, tonul, registrul și vulgaritatea atunci când există, fără să introducă cuvinte, obiecte, acțiuni sau idei inexistente în EN și fără să elimine informații importante. Dacă noua variantă nu este clar mai fidelă semantic, NU o returna.
-
-94. DETECTEAZĂ CALCURILE SINTACTICE ȘI IDIOMATICE CARE PAR GRAMATICALE, DAR NU SUNT ROMÂNĂ NATURALĂ.
-
-O traducere poate conține numai cuvinte românești corecte și totuși să fie formulată greșit deoarece structura originalului englezesc a fost copiată mecanic.
-
-Exemplu de tip de problemă:
-RO: „E un cuptor dracului aici.”
-Această formulare trebuie analizată în raport cu ORIGINALUL și contextul; exemplul NU este o corecție automată și nu trebuie modificat doar pentru că seamănă cu acest caz.
-
-Verifică dacă relația dintre substantiv, atribut, complement, intensificator și restul propoziției este una firească în română.
-Nu copia mecanic ordinea sau construcția din engleză. Dacă originalul folosește o expresie figurată, colocvială sau un intensificator, traducerea trebuie să redea FUNCȚIA și SENSUL expresiei în română, nu să traducă fiecare componentă separat.
-
-95. ACORDĂ ATENȚIE SPECIALĂ CONSTRUCȚIILOR „SUBSTANTIV + ÎNJURĂTURĂ/INTENSIFICATOR”.
-
-Forme precum „un X dracului”, „un X naibii”, „un X al naibii” sau alte combinații similare NU sunt automat corecte doar pentru că există în limba română.
-Verifică dacă expresia rezultată este realmente naturală în context și dacă reproduce sensul și funcția din original.
-
-96. NU CONFUNDA „CUVÂNT ROMÂNESC VALID” CU „CONSTRUCȚIE ROMÂNEASCĂ VALIDĂ”.
-
-Grammar Review trebuie să verifice simultan:
-- sensul fiecărui cuvânt;
-- relația dintre cuvinte;
-- funcția expresiei;
-- topica naturală în română;
-- sensul întregii propoziții;
-- echivalența cu originalul.
-
-Dacă toate cuvintele sunt corecte individual, dar combinația lor produce o formulare nenaturală, calchiată sau semantic greșită, COREctează propoziția.
-
-97. PENTRU EXPRESIILE COLOCVIALE/VULGARE, VERIFICĂ ÎNTÂI FUNCȚIA, APOI FORMA.
-
-Nu presupune că „fucking” = „dracului” în orice context, „damn” = „dracului” în orice context, „hell” = „iad” în orice context sau „fuck” = un substantiv/verb literal în orice context.
-Stabilește funcția expresiei în propoziția EN și caută echivalentul românesc natural pentru ACEA FUNCȚIE.
-
-
-
-98. REGULĂ DE CONSERVARE PRIORITARĂ — NU REPARA CE ESTE DEJA BUN.
-Scopul Grammar Review NU este să facă traducerea „mai frumoasă”, „mai elegantă” sau să aleagă formularea pe care tu ai prefera-o.
-Dacă „translation” este gramaticală, naturală suficient pentru un vorbitor nativ și transmite corect sensul din „original”, NU O MODIFICA.
-O diferență de preferință stilistică, sinonim, topică acceptabilă sau formulare alternativă NU este motiv de corecție.
-Dacă nu poți identifica o eroare concretă și demonstrabilă, păstrează varianta existentă.
-
-99. PRAG RIDICAT PENTRU CORECȚIE.
-Returnează o corecție numai dacă poți explica în mod clar ce este greșit în varianta actuală și de ce varianta nouă este mai corectă.
-Nu corecta pe baza unor formulări precum „ar suna mai bine”, „aș spune mai natural”, „poate ar fi mai potrivit” sau „prefer această variantă”.
-Dacă problema este discutabilă sau există mai multe variante corecte, NU CORECTA.
-
-100. NATURALEȚEA SE VERIFICĂ FĂRĂ SUPRA-CORRECTARE.
-Regulile 94–97 despre calcuri, intensificatori și construcții nefirești trebuie aplicate conservator.
-Nu presupune că o structură neobișnuită este greșită doar pentru că nu este formularea ta preferată.
-Pentru a modifica o construcție, trebuie să existe simultan:
-- o problemă reală de română sau o nepotrivire clară de sens;
-- o explicație susținută de ORIGINAL și context;
-- o variantă nouă clar mai corectă.
-Dacă lipsește oricare dintre acestea, păstrează traducerea actuală.
-
-101. NU GENERALIZA DIN EXEMPLE.
-Exemplele din regulile anterioare, inclusiv „E un cuptor dracului aici.”, „Ieși-mi din cap.” sau exemplele cu vulgarități, sunt doar cazuri de test și NU reprezintă tipare care trebuie reparate automat în toate replicile similare.
-Nu modifica o replică doar pentru că seamănă superficial cu un exemplu.
-Compară întotdeauna ORIGINALUL, traducerea actuală și contextul concret.
-
-102. O SINGURĂ EVALUARE COMPLETĂ, NU REPARAȚII ÎN CASCADĂ.
-Înainte de a propune o corecție, analizează întreaga replică și toate problemele posibile deodată.
-Alege o singură variantă finală care rezolvă problema identificată fără să introducă alte modificări inutile.
-Nu face „îmbunătățiri” secundare după ce problema principală a fost rezolvată.
-După formularea variantei finale, verific-o din nou ca pe o replică nouă.
-
-103. PĂSTREAZĂ REGISTRUL ȘI INTENȚIA EXISTENTE.
-Nu elimina vulgaritatea, slangul, sarcasmul, umorul, repetițiile intenționate sau stilul personajului doar pentru a obține o română mai formală.
-În același timp, nu introduce vulgaritate, intensitate, obiecte sau sensuri care nu există în ORIGINAL.
-Corectează numai ceea ce este efectiv greșit.
-
-104. REGULĂ FINALĂ ÎN CAZ DE DUBIU.
-Dacă după compararea ORIGINAL + translation + context_anterior_en + context_urmator_en + context_anterior_ro + context_urmator_ro nu există suficiente dovezi pentru o corecție sigură, NU returna nimic pentru acel ID.
-Este preferabil să rămână o formulare ușor imperfectă decât să fie înlocuită o traducere corectă cu o reformulare greșită.
-
-105. ORDINEA PRIORITĂȚILOR.
-Respectă această ordine strictă:
-1) fidelitatea față de ORIGINAL;
-2) corectitudinea gramaticală și semantică;
-3) naturalețea românească;
-4) stilul și preferința de formulare.
-O prioritate inferioară NU poate justifica modificarea unei variante corecte la o prioritate superioară.
-Regulile 98–110 au rol de protecție împotriva supra-corectării și prevalează atunci când există conflict cu o regulă anterioară.
-
-106. ANTI-HALUCINAȚIE SEMANTICĂ — NU INVENTA ELEMENTE CARE NU EXISTĂ ÎN ORIGINAL.
-Nu introduce în traducerea română etnii, categorii sociale, religii, obiecte, persoane, acțiuni sau alte informații care nu sunt susținute de EN și context. Dacă o vulgaritate, insultă sau expresie englezească este ambiguă, verifică funcția și sensul ei în EN înainte de a alege echivalentul românesc.
-
-107. PROTEJEAZĂ REGISTRUL ȘI INTENȚIA ORIGINALULUI.
-Nu înlocui o vulgaritate cu un eufemism inventat și nu transforma o expresie vulgară într-o referire la o etnie sau altă categorie socială doar pentru că aceasta pare o soluție locală. Păstrează registrul, tonul și intensitatea originalului atunci când există un echivalent românesc firesc.
-
-108. VULGARITĂȚILE TREBUIE INTERPRETATE DUPĂ FUNCȚIE.
-Dacă un termen precum "fuck/fucking", "shit", "damn", "hell" etc. funcționează ca verb, act sexual, intensificator, înjurătură sau interjecție, stabilește funcția din EN înainte de traducere. Nu inventa un alt verb, obiect sau acțiune doar pentru a evita vulgaritatea.
-
-109. VERIFICARE ANTI-HALUCINAȚIE ȘI RELAȚIILE ACȚIUNII.
-Nu introduce în traducerea română persoane, obiecte, etnii, categorii sociale, acțiuni sau relații care nu există în ORIGINAL. Verifică explicit cine face acțiunea, asupra cui se face și dacă acțiunea este reciprocă/reflexivă. Nu transforma accidental o construcție de tip „we + verb” într-o acțiune asupra unei persoane terțe și nu transforma un vulgarism într-o insultă socială/etnică sau într-un eufemism care schimbă sensul. Dacă traducerea existentă este fidelă, nu o modifica.
-
-110. CORECȚIE DOAR CU DOVADĂ.
-Dacă nu poți demonstra din EN + context că traducerea RO este greșită ca sens, gramatică, vocabular sau construcție, PĂSTREAZĂ traducerea existentă. Nu modifica doar pentru că o altă formulare ți se pare mai elegantă.
-
-111. VERIFICARE SEMANTICĂ A CONSTRUCȚIILOR CU PRONUME ȘI PREPOZIȚII.
-Nu verifica doar dacă fiecare cuvânt există în română. Compară relația exprimată în EN cu relația exprimată în RO: cine acționează, asupra cui, unde, de pe ce, către cine, cui aparține ceva și dacă acțiunea este reflexivă sau reciprocă. O schimbare aparent mică de prepoziție sau pronume poate schimba sensul. Dacă EN cere o relație clară și RO o schimbă, corectează întreaga construcție, nu doar cuvântul izolat.
-
-112. ACEEAȘI IDEE POATE FI GENERATĂ ÎN MAI MULTE FORME.
-Nu presupune că o eroare semantică va apărea mereu sub aceeași formulare românească. Detectează tipul construcției greșite și verifică sensul ei în raport cu EN, chiar dacă modelul a schimbat cuvintele, flexiunea sau topica. Exemplele „Ieși-mi din cap” și „Ia mâna după mine” sunt cazuri de test pentru verificarea sensului, NU tipare care trebuie aplicate orbește altor replici.
-
-113. REPARĂ CONSTRUCȚIA COMPLETĂ CÂND E NECESAR.
-Dacă eroarea este de sens sau de relație sintactică, nu face o înlocuire cosmetică a unui singur cuvânt. Reformează doar partea necesară astfel încât rezultatul final să fie simultan fidel EN, corect gramatical și natural în română. După corecție, verifică din nou întreaga propoziție.
-
-REGULĂ SPECIALĂ ÎMPOTRIVA PREFERINȚEI STILISTICE:
-Nu folosi faptul că „ai spune tu altfel” sau că o variantă „sună mai bine” ca dovadă de eroare. O formulare diferită, dar corectă și fidelă, trebuie păstrată.
-
-DATELE DE VERIFICAT:
-Fiecare obiect conține și context_anterior_en/context_urmator_en și context_anterior_ro/context_urmator_ro. Acestea sunt DOAR pentru înțelegerea sensului, acordului și continuității.
-Nu le traduce și nu le modifica. Returnează corecții DOAR pentru câmpul translation al ID-ului curent.
+DATE DE VERIFICAT:
+Fiecare obiect include id, original, translation, context_anterior_en, context_urmator_en, context_anterior_ro, context_urmator_ro și, uneori, avertisment_semantic. Contextul este doar pentru înțelegere; corectează numai replica curentă.
 ${JSON.stringify(payload, null, 2)}
 
-Returnează DOAR JSON valid în forma:
+Returnează DOAR JSON valid:
 [
   {"id": 123, "text": "traducerea corectată"}
 ]
-Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obiect.
-`;
+Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
 
         let lastJsonError = null;
 
@@ -3019,6 +2798,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
             item.text,
             formatSubtitleLine(currentText)
         );
+        finalText = applySourceGroundedSemanticFixes(item.text, finalText);
         finalText = applyLocalGrammarDeterministicFixes(finalText);
         const formattedFinalText = formatSubtitleLine(finalText);
 
@@ -3052,8 +2832,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
         console.log(`${c.yellow}⚠ ${finalSuspicious.length} replici suspecte rămân după Global Post-Check${c.reset}`);
         finalSuspicious.slice(0, 20).forEach(item => {
             const finalText = String(translatedById[String(item.id)] || '');
-            const missingTerms = getMissingExplicitAnatomicalTerms(item.text, finalText);
-            const note = missingTerms.length ? ` [DETALIU ANATOMIC PIERDUT: ${missingTerms.join(', ')}]` : '';
+            const fidelityIssues = getSourceFidelityIssues(item.text, finalText);
+            const note = fidelityIssues.length ? ` [FIDELITATE SEMANTICĂ INCOMPLETĂ: ${fidelityIssues.join('; ')}]` : '';
             console.log(`  ${c.red}❌ ${item.id}: ${finalText.slice(0, 120)}${note}${c.reset}`);
         });
     } else {
