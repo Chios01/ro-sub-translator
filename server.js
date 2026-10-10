@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.94-test.7.3',
+    version: '12.78.94-test.7.5',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1199,6 +1199,15 @@ For EVERY translated subtitle:
 - verify that no Cyrillic, Asian, Hindi or other non-Latin characters are used.
 
 Do NOT return the JSON until this final proofreading pass is complete.
+
+<CUE_ALIGNMENT_RULES>
+CUE ALIGNMENT IS ABSOLUTE AND MUST NEVER BE CHANGED:
+- Each input object ID represents one specific subtitle cue and must receive only the Romanian translation of that exact cue.
+- Never move words or a phrase from one cue to an adjacent cue. Never split one cue's translation across multiple IDs and never merge neighboring cues into one ID.
+- The context_anterior, context_urmator, context-before, context-after, and previous translated context are context only. They are not extra lines to translate and must never be copied into the current cue.
+- If the English sentence continues across cues, use context to translate the current cue faithfully, but keep its content assigned to its own ID. Do not finish the sentence by stealing or moving content that belongs to another ID.
+- Preserve the input cue sequence and IDs exactly. A response with the right words assigned to the wrong IDs is incorrect even if the Romanian sounds natural.
+</CUE_ALIGNMENT_RULES>
 </translation_master_rules>
 
 <few_shot_examples>
@@ -1262,6 +1271,7 @@ Tradu STRICT următoarele replici și returnează un ARRAY JSON cu exact câte u
 Nu modifica ID-urile și nu omite nicio replică.
 Câmpurile context_anterior și context_urmator sunt DOAR pentru înțelegerea replicii curente; NU le traduce și NU le include în răspuns.
 Folosește contextul pentru acord, pronume, continuitate, topică și sens, dar modifică DOAR câmpul text al ID-ului curent.
+REGULĂ CRITICĂ DE ALINIERE: fiecare ID corespunde exclusiv cadrului său original. Nu muta, nu împărți și nu combina conținut între ID-uri vecine. Dacă o propoziție continuă în cadrul următor, păstrează fiecare fragment la ID-ul lui. Contextul nu trebuie tradus și nici copiat în replica curentă.
 
 REPLICILE DE TRADUS:
 ${JSON.stringify(keysToTranslate, null, 2)}
@@ -1604,6 +1614,28 @@ function hasCorruptedSubtitleText(text, originalText) {
     return false;
 }
 
+function validatePayloadIds(parsed, expectedItems, stage) {
+    // Gemini must not return an ID outside the current batch or multiple objects for one ID.
+    // This catches structural mapping failures before their text can enter the final SRT.
+    // Missing IDs remain handled by the existing targeted-recovery logic.
+    if (!Array.isArray(parsed)) return;
+
+    const expected = new Set(expectedItems.map(item => String(item.id)));
+    const seen = new Set();
+
+    for (const entry of parsed) {
+        if (!entry || entry.id === undefined || entry.id === null) continue;
+        const id = String(entry.id);
+        if (!expected.has(id)) {
+            throw new Error(`[${stage}] ID neașteptat ${id}; răspunsul a amestecat calupurile.`);
+        }
+        if (seen.has(id)) {
+            throw new Error(`[${stage}] ID duplicat ${id}; răspunsul nu păstrează o mapare unu-la-unu.`);
+        }
+        seen.add(id);
+    }
+}
+
 function normalizeTranslationPayload(parsed) {
     if (Array.isArray(parsed)) {
         const dict = Object.create(null);
@@ -1652,6 +1684,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             // Grammar Review și apelurile de recuperare păstrează setarea implicită.
             const raw = await callGemini(prompt, keyState, { thinkingLevel: 'medium' });
             const parsed = JSON.parse(String(raw).trim());
+            validatePayloadIds(parsed, chunk, 'Traducere principală');
             const dict = normalizeTranslationPayload(parsed);
 
             const missingItems = chunk.filter(obj => dict[String(obj.id)] === undefined);
@@ -1674,6 +1707,7 @@ ${JSON.stringify(missingItems, null, 2)}
                 try {
                     const missingRaw = await callGemini(missingPrompt, keyState, { timeout: 20000 });
                     const missingJson = JSON.parse(String(missingRaw).trim());
+                    validatePayloadIds(missingJson, missingItems, 'Recuperare ID-uri lipsă');
                     const missingDict = normalizeTranslationPayload(missingJson);
                     for (const obj of missingItems) {
                         const value = missingDict[String(obj.id)];
@@ -2298,6 +2332,9 @@ Fiecare obiect conține și context_anterior_en/context_urmator_en și context_a
 Nu le traduce și nu le modifica. Returnează corecții DOAR pentru câmpul translation al ID-ului curent.
 ${JSON.stringify(payload, null, 2)}
 
+REGULĂ CRITICĂ DE ALINIERE PENTRU GRAMMAR REVIEW:
+Fiecare obiect din răspuns poate corecta DOAR ID-ul lui. Nu muta text sau sens între replici vecine, nu despărți o replică în două ID-uri, nu combina două replici și nu completa replica curentă cu text care aparține ID-ului următor/anterior. Contextul este numai pentru înțelegere. Dacă nu poți corecta replica păstrând strict această limită, nu returna acea corecție.
+
 Returnează DOAR JSON valid în forma:
 [
   {"id": 123, "text": "traducerea corectată"}
@@ -2342,6 +2379,7 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                     }
                 });
                 const parsed = safeJsonParse(raw);
+                validatePayloadIds(parsed, batch, 'Grammar Review');
                 const parsedDict = normalizeTranslationPayload(parsed);
 
                 checked += batch.length;
