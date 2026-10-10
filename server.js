@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.115',
+    version: '12.78.116',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1276,6 +1276,16 @@ TRANSLATION AND CONTEXT
 - Use correct Romanian grammar, spelling, punctuation, and diacritics (ă, â, î, ș, ț). Use complete real Romanian words; never truncate, merge, invent, or corrupt a word. Check pronouns, clitics, prepositions, conjugation, and agreement.
 - Convert ordinary imperial measurements to metric where natural and safe: feet to metres, miles to kilometres, pounds to kilograms, Fahrenheit to Celsius. Do not convert plot-critical or idiomatic measurements. Translate “lakh” as 100,000 and “crore” as 10 million when relevant.
 
+ROMANIAN LOCALIZATION EXAMPLES — GUIDANCE, NOT FIXED MAPPINGS
+- “my treat” can become „Fac eu cinste” or „Dau eu”, depending on what sounds natural in the scene; do not translate word by word.
+- “marry me” can be „Căsătorește-te cu mine”, while “Will you marry me?” is naturally „Vrei să te căsătorești cu mine?” Preserve the actual sentence form and intent.
+- For “babe”, “honey” and “baby”, choose a natural Romanian form of address from context (for example „iubire”, „dragă”, „iubi”, „puiule”). Do not use „puiule” automatically and do not make adult dialogue sound childish.
+- “Oh my God” may be „Doamne!”, „Doamne Dumnezeule!” or another natural equivalent depending on intensity and character. Translate the whole expression; do not delete it as a meaningless standalone “Oh”.
+- Translate a clause-initial “But” as „Dar”: “But fortunately…” → „Dar, din fericire…”. Never leave an ordinary conjunction untranslated.
+- Convert ordinary measurements with useful approximate equivalents when context allows: “six feet” → about „1,83 m”; “ten miles” → about „16 km”; “100 pounds” → about „45 kg”; “70°F” → about „21°C”. Preserve plot-critical values, jokes and idioms instead of converting blindly.
+- In an Indian-numbering context, “lakh” = 100.000 and “crore” = 10.000.000. Use Romanian thousands separators naturally (for example, 130,000 → 130.000) when rendering a number, without altering IDs, years or codes.
+- These are examples of natural localization, not mandatory one-to-one substitutions. Prefer the character's intention, the joke or idiom, and normal Romanian syntax over the example if context requires another phrasing.
+
 SUBTITLE FORMATTING
 - Keep each visible line at or below 43 characters whenever the wording allows. Use no more than TWO text lines per subtitle block.
 - Split at natural phrase boundaries, not arbitrary points; if necessary, rephrase concisely without losing meaning.
@@ -2215,8 +2225,8 @@ VERIFICĂ ÎN ORDINE
 2. Verifică relațiile gramaticale, nu doar prezența cuvintelor: obiect direct versus loc, prepoziții, pronume/clitice, posesie, negație, timp, persoană, gen și număr. De exemplu, pentru EN “the sound that dries my vagina”, „îmi usucă vaginul” păstrează relația de obiect direct; „mă usucă în vagin” schimbă sensul.
 3. Păstrează termenii expliciți și sensul direct când sursa îi folosește. Nu îi înlocui cu eufemisme și nu transforma intensificatorii/înjurăturile în obiecte, acțiuni sau insulte diferite.
 4. Păstrează singularul/pluralul și referentul. De exemplu, “a hat” nu trebuie tradus „căciuli”. Nu adăuga diminutive precum „căciuliță” dacă sursa nu exprimă micime, afecțiune sau diminutiv.
-5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase.
-6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
+5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase. La expresii idiomatice, verifică funcția în scenă, nu corespondența literală: “my treat” poate fi „Fac eu cinste”/„Dau eu”; “Oh my God” poate fi „Doamne”/„Doamne Dumnezeule”.
+6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul. Pentru “babe/honey/baby”, alege contextual între forme precum „iubire”, „dragă”, „iubi” sau „puiule”; nu aplica o mapare rigidă și nu adăuga alinturi dacă nu se potrivesc.
 7. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
 
 REGULĂ DE PRUDENȚĂ
