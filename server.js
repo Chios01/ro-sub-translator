@@ -83,7 +83,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.102',
+    version: '12.78.103',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2022,6 +2022,49 @@ const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
 const GRAMMAR_REVIEW_JSON_RETRY_LIMIT = 1;
 const GRAMMAR_REVIEW_JSON_SPLIT_MIN = 20;
 
+// ============================================================
+// PROTECȚIE ANTI-RESCRIERE — auditul trebuie să corecteze, nu să retraducă.
+// Respinge doar schimbările foarte ample (similaritate sub prag); corecțiile
+// normale de gramatică și de sens rămân eligibile.
+// ============================================================
+const MIN_AUDIT_CORRECTION_SIMILARITY = 0.48;
+
+function normalizedCorrectionSimilarity(originalText, candidateText) {
+    const normalize = value => String(value || '')
+        .replace(/<[^>]*>/g, '')
+        .normalize('NFC')
+        .toLocaleLowerCase('ro-RO')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const a = normalize(originalText);
+    const b = normalize(candidateText);
+    if (a === b) return 1;
+    if (!a || !b) return 0;
+
+    // Subtitrările sunt scurte; două rânduri DP evită alocarea unei matrice mari.
+    let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+        const current = [i];
+        for (let j = 1; j <= b.length; j++) {
+            const substitutionCost = a[i - 1] === b[j - 1] ? 0 : 1;
+            current[j] = Math.min(
+                current[j - 1] + 1,
+                previous[j] + 1,
+                previous[j - 1] + substitutionCost
+            );
+        }
+        previous = current;
+    }
+
+    return 1 - previous[b.length] / Math.max(a.length, b.length);
+}
+
+function hasSecondPersonAddressCue(text) {
+    // Unicode boundaries are necessary because JavaScript \b does not treat ș/ț/ă/î as word letters.
+    return /(?<![\p{L}])(?:you|your|you're|you've|you'll|you'd|yourself|yourselves|tu|te|tine|ți|ti|tău|tau|ta|tale|tăi|tai|voi|vă|va|dumneavoastră|dumneata|dumitale|dvs\.?|ești|esti|ai|vrei|poți|poti|faci|spui|știi|stii|sunteți|sunteti|aveți|aveti|doriți|doriti|vreți|vreti|faceți|faceti|spuneți|spuneti|ați|ati)(?![\p{L}])/iu.test(String(text || ''));
+}
+
 async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
     const contextItems = options.contextItems || items;
     const isTargetedReview = options.mode === 'targeted';
@@ -2042,13 +2085,20 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     }
 
     if (isCompactAudit) {
-        console.log(`\n${c.cyan}🧠 AUDIT AI COMPACT — GRAMATICĂ + FIDELITATE PE TOATE REPLICILE${c.reset}`);
+        console.log(`\n${c.cyan}🧠 AUDIT AI COMPACT CONTEXTUAL — GRAMATICĂ + FIDELITATE PE TOATE REPLICILE${c.reset}`);
     } else if (isTargetedReview) {
         console.log(`\n${c.cyan}🎯 VERIFICARE PUNCTUALĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
     } else {
         console.log(`\n${c.cyan}📝 VERIFICARE SUPLIMENTARĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
     }
     console.log(`   Verificate: ${candidates.length} replici`);
+    if (isCompactAudit) {
+        const addressContextCount = candidates.filter(item =>
+            hasSecondPersonAddressCue(item.text) ||
+            hasSecondPersonAddressCue(translatedById[String(item.id)] || '')
+        ).length;
+        console.log(`   Context bilingv pentru consecvența adresării: ${addressContextCount} replici`);
+    }
 
     const reviewBatchSize = isCompactAudit
         ? GRAMMAR_AUDIT_BATCH_SIZE
@@ -2058,16 +2108,36 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     let fixed = 0;
 
     const rateLimitRetryQueue = [];
+    const contextIndexById = new Map(contextItems.map((entry, index) => [String(entry.id), index]));
+    let rejectedAggressiveRewrites = 0;
 
     const processGrammarBatch = async (batch, batchIndex, label) => {
         let batchFixed = 0;
 
         const payload = batch.map(item => {
             if (isCompactAudit) {
+                const index = contextIndexById.get(String(item.id));
+                const previous = Number.isInteger(index) && index > 0 ? contextItems[index - 1] : null;
+                const next = Number.isInteger(index) && index >= 0 && index < contextItems.length - 1
+                    ? contextItems[index + 1]
+                    : null;
+                const currentTranslation = translatedById[String(item.id)] || '';
+                const useAddressContext = hasSecondPersonAddressCue(item.text) ||
+                    hasSecondPersonAddressCue(currentTranslation);
+                const compactContext = neighbour => neighbour ? {
+                    id: neighbour.id,
+                    en: String(neighbour.text || '').replace(/\s+/g, ' ').slice(0, 180),
+                    ro: String(translatedById[String(neighbour.id)] || '').replace(/\s+/g, ' ').slice(0, 180)
+                } : null;
+
                 return {
                     id: item.id,
                     original: item.text,
-                    translation: translatedById[String(item.id)]
+                    translation: currentTranslation,
+                    ...(useAddressContext ? {
+                        context_before: compactContext(previous),
+                        context_after: compactContext(next)
+                    } : {})
                 };
             }
 
@@ -2088,16 +2158,19 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
         });
 
         const prompt = isCompactAudit ? `
-Ești un corector profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Auditează TOATE înregistrările de mai jos, nu doar greșelile evidente de ortografie.
+Ești revizor profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Verifică fiecare înregistrare și propune doar corecții certe, nu o retraducere stilistică.
 
-Pentru fiecare ID, compară originalul englezesc cu traducerea română și verifică gramatica, acordul, formele verbale, pronumele/cliticele, prepozițiile, ortografia și diacriticele, construcția propoziției, expresiile idiomatice și fidelitatea sensului. Caută și formulări care folosesc cuvinte românești valide, dar formează o propoziție nenaturală sau transmit alt sens decât originalul. Liniile din același calup sunt în ordinea subtitrării și pot oferi context una alteia.
+PENTRU FIECARE ID compară sensul originalului cu româna și verifică explicit: gramatica propoziției, acordul, conjugarea, pronumele/cliticele, prepozițiile, vocabularul, ortografia, diacriticele, punctuația care schimbă sensul și naturalețea expresiei în română. O propoziție poate conține cuvinte corecte individual și totuși să fie greșită sintactic sau semantic.
 
-REGULI:
-- Returnează o corecție numai dacă există o eroare reală și poți susține varianta corectă din original și din contextul liniilor apropiate.
-- Dacă traducerea este corectă, naturală suficient și fidelă, nu o modifica doar pentru stil.
-- Păstrează registrul, slangul, vulgaritățile, sarcasmul, umorul, numele proprii și repetițiile/bâlbâielile intenționate.
-- Nu inventa persoane, obiecte, acțiuni sau relații care nu există în original. Corectează numai replica indicată de ID.
-- Dacă nu ești sigur, omite ID-ul. Nu returna explicații sau replici neschimbate.
+REGULI STRICTE:
+1. Dacă textul românesc este corect, fidel și firesc pentru dialog, păstrează-l EXACT. Nu-l schimba pentru că ai prefera sinonime, altă ordine a cuvintelor sau un stil mai literar.
+2. Fă editarea minimă necesară. Păstrează expresiile și structura existente ori de câte ori sunt corecte. Nu reformula toată replica pentru a repara o singură greșeală.
+3. Corectează calcurile din engleză și formulările care schimbă cine face acțiunea, cui i se adresează, asupra cui se acționează sau ce relație există între personaje. Verifică verbul împreună cu prepoziția și complementul, nu doar cuvintele izolate.
+4. Verifică persoana și registrul de adresare. Când englezescul „you” permite atât adresarea informală, cât și cea formală, folosește context_before/context_after pentru a păstra consecvent „tu/te/ți/tău/ești/ai” ori „dumneavoastră/vă/aveți/sunteți”, DAR numai dacă acel context pare să aparțină aceleiași conversații și aceleiași relații între interlocutori. Replicile vecine pot aparține altor personaje; nu presupune automat că sunt același vorbitor. Dacă registrul nu poate fi stabilit sigur, nu schimba adresarea existentă fără o dovadă clară din original.
+5. Verifică formele „niciun/nicio” versus „nici un/nici o” după sens și normă. Nu aplica o înlocuire oarbă acolo unde separarea are alt sens. Verifică inclusiv typo-uri subtile precum „acceași”, cuvinte deformate sau forme care par românești, dar nu se potrivesc sintactic.
+6. Păstrează slangul, vulgaritățile, sarcasmul, umorul, numele proprii, termenii ficționali și repetițiile/bâlbâielile intenționate. Nu transforma automat o expresie colocvială într-una formală.
+7. Contextul bilingv este doar ajutor pentru sens și adresare. Corectează DOAR replica asociată ID-ului curent; nu modifica vecinii.
+8. Dacă nu poți demonstra o eroare clară din original și context, omite acel ID. Este mai bine să păstrezi o formulare acceptabilă decât să introduci o regresie. Nu returna explicații sau replici neschimbate.
 
 DATE:
 ${JSON.stringify(payload, null, 2)}
@@ -2492,8 +2565,19 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
 
                 if (!candidate || candidate === current) continue;
 
-                // Filtrul suplimentar poate aplica doar o corecție care rămâne
-                // compatibilă cu verificările deja existente.
+                // La auditul complet protejăm textul deja existent împotriva rescrierilor ample.
+                // Dacă AI schimbă peste ~52% din caractere, schimbarea nu este aplicată fără
+                // un mecanism separat de justificare; corecțiile locale/gramaticale uzuale trec.
+                if (isCompactAudit) {
+                    const similarity = normalizedCorrectionSimilarity(current, candidate);
+                    if (similarity < MIN_AUDIT_CORRECTION_SIMILARITY) {
+                        rejectedAggressiveRewrites++;
+                        console.log(`${c.yellow}  ⚠ [Correction Guard] ID ${item.id} ignorat: reformulare prea amplă (${Math.round(similarity * 100)}% similaritate).${c.reset}`);
+                        continue;
+                    }
+                }
+
+                // Filtrul suplimentar nu acceptă traduceri devenite engleză sau text corupt.
                 if (hasUntranslatedEnglish(item.text, candidate) ||
                     hasCorruptedSubtitleText(candidate, item.text)) {
                     console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: noua variantă a devenit suspectă${c.reset}`);
@@ -2660,7 +2744,10 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
     }
 
     console.log(`${c.green}✔ [Grammar Review] Final: ${checked} verificate, ${fixed} corectate${c.reset}`);
-    return { checked, fixed };
+    if (rejectedAggressiveRewrites) {
+        console.log(`${c.cyan}ℹ [Correction Guard] ${rejectedAggressiveRewrites} reformulări ample respinse pentru a proteja formulările existente.${c.reset}`);
+    }
+    return { checked, fixed, rejectedAggressiveRewrites };
 }
 
 // ============================================================
@@ -2696,6 +2783,9 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\bsugist\b/gi, 'sugi'],
 
     // Corecții locale suplimentare cu încredere foarte mare, validate în QA.
+    // Exemple concrete din testul tt15398776: typo-ul „acceași” și expresia fixă „nicio șansă”.
+    [/(?<![\p{L}])acceași(?=$|[^\p{L}])/iu, 'aceeași'],
+    [/(?<![\p{L}])nici\s+o\s+șansă(?=$|[^\p{L}])/iu, 'nicio șansă'],
     [/\bdeciizi\b/gi, 'decizi'],
     [/\bco\s+cerul\b/gi, 'că cerul'],
     [/\bAlelea\b/gi, 'Alea'],
