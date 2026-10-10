@@ -83,7 +83,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.105',
+    version: '12.78.106',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1371,29 +1371,137 @@ ${JSON.stringify(keysToTranslate, null, 2)}
 // ============================================================
 
 function createKeyState(keys) {
-    return keys.map(key => ({ key, pausedUntil: 0, disabled: false, failures: 0, lastUsed: 0 }));
+    const states = keys.map(key => ({ key, pausedUntil: 0, disabled: false, failures: 0, lastUsed: 0 }));
+    // Referință comună pentru toate cererile. Permite un singur circuit-breaker
+    // și o coadă comună după HTTP 429, indiferent dacă cererea vine din traducere,
+    // recuperare sau auditul gramatical.
+    for (const state of states) state._keyStates = states;
+    return states;
 }
 
-function getGlobal429Until(keyStates) { return Number(keyStates._global429Until || 0); }
+function getGlobal429Until(keyStates) { return Number(keyStates?._global429Until || 0); }
+
 function register429(keyStates, cooldownMs) {
+    if (!Array.isArray(keyStates)) return;
     const now = Date.now();
-    const paused = keyStates.filter(s => !s.disabled && s.pausedUntil > now).length;
-    const active = keyStates.filter(s => !s.disabled).length;
-    if (active > 0 && paused >= Math.min(2, active)) {
-        keyStates._global429Until = Math.max(
-            getGlobal429Until(keyStates),
-            now + Math.min(30000, Math.max(15000, cooldownMs))
-        );
+    const previousUntil = getGlobal429Until(keyStates);
+
+    // Creștem backoff-ul numai când fereastra anterioară s-a încheiat.
+    // Erorile concurente din aceeași rafală nu trebuie să multiplice cooldown-ul.
+    if (previousUntil <= now) {
+        keyStates._global429Streak = Math.min(4, Number(keyStates._global429Streak || 0) + 1);
     }
+    const streak = Math.max(1, Number(keyStates._global429Streak || 1));
+    const exponentialBackoff = Math.min(90000, 15000 * Math.pow(2, Math.min(3, streak - 1)));
+    const effectiveCooldown = Math.max(
+        exponentialBackoff,
+        Math.min(180000, Math.max(10000, Number(cooldownMs) || 15000))
+    );
+
+    keyStates._global429Until = Math.max(previousUntil, now + effectiveCooldown);
+    keyStates._global429Recovery = true;
+    keyStates._recoverySuccesses = 0;
 }
 
 async function waitFor429Gate(keyStates) {
     while (true) {
         const waitMs = getGlobal429Until(keyStates) - Date.now();
         if (waitMs <= 0) return;
-        console.log(`${c.yellow}⏳ [429 Gate] Prea multe chei limitate. Aștept ${Math.ceil(waitMs / 1000)}s înainte de următoarea încercare.${c.reset}`);
+        console.log(`${c.yellow}⏳ [429 Gate] Limitare globală Gemini. Pauză coordonată ${Math.ceil(waitMs / 1000)}s; cererile nu vor fi relansate în paralel.${c.reset}`);
         await sleep(waitMs);
     }
+}
+
+// După 429, cererile noi sunt testate una câte una, cu spațiu între ele.
+// Două răspunsuri reușite consecutive sunt necesare înainte de a reveni la concurența normală.
+async function acquireGeminiRecoverySlot(keyStates) {
+    if (!Array.isArray(keyStates)) return null;
+
+    while (keyStates._global429Recovery) {
+        await waitFor429Gate(keyStates);
+        if (!keyStates._global429Recovery) return null;
+
+        const previous = keyStates._recoveryQueueTail || Promise.resolve();
+        let releaseTurn;
+        const currentTurn = new Promise(resolve => { releaseTurn = resolve; });
+        keyStates._recoveryQueueTail = previous.then(() => currentTurn);
+        await previous;
+
+        if (!keyStates._global429Recovery) {
+            releaseTurn();
+            return null;
+        }
+
+        await waitFor429Gate(keyStates);
+        if (!keyStates._global429Recovery) {
+            releaseTurn();
+            return null;
+        }
+
+        const spacingMs = (Number(keyStates._lastRecoveryRequestAt || 0) + 3000) - Date.now();
+        if (spacingMs > 0) await sleep(spacingMs);
+        // O altă cerere deja în zbor poate prelungi circuit-breaker-ul cât așteptăm.
+        await waitFor429Gate(keyStates);
+
+        if (!keyStates._global429Recovery) {
+            releaseTurn();
+            return null;
+        }
+
+        let released = false;
+        return {
+            release(success, rateLimited = false) {
+                if (released) return;
+                released = true;
+                keyStates._lastRecoveryRequestAt = Date.now();
+                if (success) {
+                    keyStates._recoverySuccesses = Number(keyStates._recoverySuccesses || 0) + 1;
+                    if (keyStates._recoverySuccesses >= 2) {
+                        keyStates._global429Recovery = false;
+                        keyStates._global429Streak = 0;
+                        keyStates._global429Until = 0;
+                        keyStates._recoverySuccesses = 0;
+                        console.log(`${c.green}✔ [429 Gate] Două cereri de probă reușite; revin la concurența normală.${c.reset}`);
+                    }
+                } else if (rateLimited) {
+                    keyStates._recoverySuccesses = 0;
+                }
+                releaseTurn();
+            }
+        };
+    }
+    return null;
+}
+
+function extractRetryAfterMs(error) {
+    const headers = error?.response?.headers || {};
+    const retryAfter = headers['retry-after'] ?? headers['Retry-After'];
+    if (retryAfter != null) {
+        const seconds = Number(retryAfter);
+        if (Number.isFinite(seconds) && seconds > 0) return Math.min(180000, seconds * 1000);
+        const dateMs = Date.parse(String(retryAfter)) - Date.now();
+        if (Number.isFinite(dateMs) && dateMs > 0) return Math.min(180000, dateMs);
+    }
+
+    const details = error?.response?.data?.error?.details;
+    if (Array.isArray(details)) {
+        const retryInfo = details.find(item => item && /RetryInfo/i.test(String(item['@type'] || '')) && item.retryDelay);
+        const delay = retryInfo?.retryDelay;
+        if (delay) {
+            const match = String(delay).match(/([0-9]+(?:\.[0-9]+)?)(ms|s|m)?/i);
+            if (match) {
+                const amount = Number(match[1]);
+                const unit = (match[2] || 's').toLowerCase();
+                const ms = amount * (unit === 'ms' ? 1 : unit === 'm' ? 60000 : 1000);
+                if (Number.isFinite(ms) && ms > 0) return Math.min(180000, Math.max(10000, ms));
+            }
+        }
+    }
+
+    const message = String(error?.response?.data?.error?.message || error?.message || '');
+    const match = message.match(/retry (?:in|after) ([0-9]+(?:\.[0-9]+)?)\s*s/i);
+    if (match) return Math.min(180000, Math.max(10000, Number(match[1]) * 1000));
+    return null;
 }
 
 async function getAvailableKey(keyStates) {
@@ -1441,7 +1549,13 @@ async function callGemini(prompt, keyState, options = {}) {
         }
     });
 
+    let recoveryPermit = null;
     try {
+        // Circuit-breaker-ul este aplicat chiar la trimiterea HTTP, nu doar înainte
+        // de alegerea cheii. Astfel cererile concurente aflate deja în coadă nu
+        // pot porni toate simultan după expirarea pauzei globale.
+        recoveryPermit = await acquireGeminiRecoverySlot(keyState?._keyStates);
+
         const generationConfig = {
             temperature: 0.0,
             responseMimeType: 'application/json'
@@ -1466,24 +1580,28 @@ async function callGemini(prompt, keyState, options = {}) {
         const raw = response.data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
         if (!raw.trim()) throw new Error('Gemini a returnat conținut gol.');
         keyState.failures = 0;
+        if (recoveryPermit) {
+            recoveryPermit.release(true, false);
+            recoveryPermit = null;
+        }
         return raw;
     } catch (error) {
         const status = error.response?.status;
         if (status === 401 || status === 403) {
             keyState.disabled = true;
+            if (recoveryPermit) { recoveryPermit.release(false, false); recoveryPermit = null; }
             throw new Error(`Cheie Gemini invalidă (${status}).`);
         }
         if (status === 429) {
-            // 429 este tratat ca limitare temporară. Cheia curentă intră
-            // în cooldown; dacă mai multe chei au fost limitate, activăm
-            // temporar poarta globală pentru a evita rotația frenetică.
-            const retryAfterHeader = error.response?.headers?.['retry-after'];
-            const retryAfterSec = Number(retryAfterHeader);
-            const cooldownMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
-                ? Math.min(120000, Math.max(10000, retryAfterSec * 1000))
-                : 15000;
+            // Un singur circuit-breaker pentru toate cheile și toate etapele.
+            // Respectăm Retry-After/RetryInfo dacă API-ul le trimite; în lipsa lor
+            // folosim backoff comun 15s → 30s → 60s → 90s.
+            const cooldownMs = extractRetryAfterMs(error) || 15000;
             keyState.pausedUntil = Date.now() + cooldownMs;
-            const retryError = new Error(`Rate limit 429. Aștept ${Math.ceil(cooldownMs / 1000)}s și reîncerc.`);
+            register429(keyState?._keyStates, cooldownMs);
+            if (recoveryPermit) { recoveryPermit.release(false, true); recoveryPermit = null; }
+            const apiDetail = String(error?.response?.data?.error?.message || 'API-ul nu a furnizat detalii despre limită.').slice(0, 350);
+            const retryError = new Error(`Rate limit 429. Circuit-breaker global activ (${Math.ceil(cooldownMs / 1000)}s minim; backoff coordonat). Detalii Gemini: ${apiDetail}`);
             retryError.isRateLimit429 = true;
             retryError.retryAfterMs = cooldownMs;
             throw retryError;
@@ -1495,8 +1613,10 @@ async function callGemini(prompt, keyState, options = {}) {
             const apiDetail = error.response?.data?.error?.message || error.message || 'eroare API necunoscută';
             const diagnosticError = new Error(`Gemini HTTP ${status}: ${String(apiDetail).slice(0, 500)}`);
             diagnosticError.status = status;
+            if (recoveryPermit) { recoveryPermit.release(false, false); recoveryPermit = null; }
             throw diagnosticError;
         }
+        if (recoveryPermit) { recoveryPermit.release(false, false); recoveryPermit = null; }
         throw error;
     }
 }
@@ -1740,13 +1860,16 @@ function normalizeTranslationPayload(parsed) {
     return Object.create(null);
 }
 
-async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0) {
+async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, maxKeyAttemptsOverride = null) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     let lastError = null;
 
-    // 429/503 sunt tranzitorii. Reîncercăm până la 8 ori, fără a împărți
-    // chunk-ul doar din cauza unui rate-limit temporar.
-    const maxKeyAttempts = 8;
+    // Încercări limitate; după rate-limit, circuit-breaker-ul coordonează
+    // pauza și cererile de probă. Un 429 eșuat NU trebuie să provoace o avalanșă
+    // de sub-calupuri, pentru că împărțirea nu rezolvă quota și multiplică request-urile.
+    const maxKeyAttempts = Number.isInteger(maxKeyAttemptsOverride) && maxKeyAttemptsOverride > 0
+        ? maxKeyAttemptsOverride
+        : 4;
     let attemptedKeys = new Set();
 
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
@@ -1796,6 +1919,7 @@ ${JSON.stringify(missingItems, null, 2)}
                         if (value !== undefined) dict[String(obj.id)] = value;
                     }
                 } catch (missingError) {
+                    if (missingError?.isRateLimit429) throw missingError;
                     console.log(`${c.yellow}  ⚠ [Gemini] Cererea punctuală a eșuat: ${missingError.message}${c.reset}`);
                 }
             }
@@ -1835,9 +1959,6 @@ ${JSON.stringify(missingItems, null, 2)}
         } catch (error) {
             lastError = error;
             const is429 = error.isRateLimit429 === true || error.message.includes('429');
-            if (is429 && keyState) {
-                register429(keyStates, Number(error.retryAfterMs) || 15000);
-            }
             const isTransient = is429 || /status code 5\d\d/.test(error.message);
             console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
 
@@ -1856,16 +1977,23 @@ ${JSON.stringify(missingItems, null, 2)}
         }
     }
 
+    const exhausted429 = lastError?.isRateLimit429 === true || /(?:rate limit|429)/i.test(String(lastError?.message || ''));
+    if (exhausted429) {
+        lastError.isDeferredRateLimit = true;
+        console.log(`${c.yellow}⏸ [Gemini] Calupul ${globalChunkIndex + 1} rămâne întreg și este amânat pentru coada de recuperare; nu îl împart din cauza HTTP 429.${c.reset}`);
+        throw lastError;
+    }
+
     if (chunk.length > 20 && depth < 2) {
-        console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în două părți imediat după eșec...${c.reset}`);
+        console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în două părți pentru a izola răspunsul invalid/incomplet...${c.reset}`);
 
         const middle = Math.floor(chunk.length / 2);
         const first = chunk.slice(0, middle);
         const second = chunk.slice(middle);
 
-        const firstResult = await processChunkWithRetry(first, allItems, chunkStart, chunkStart + middle, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth + 1);
+        const firstResult = await processChunkWithRetry(first, allItems, chunkStart, chunkStart + middle, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth + 1, maxKeyAttemptsOverride);
         const secondContext = firstResult.slice(-PREVIOUS_TRANSLATION_CONTEXT);
-        const secondResult = await processChunkWithRetry(second, allItems, chunkStart + middle, chunkEnd, secondContext, keyStates, globalChunkIndex, totalChunks, depth + 1);
+        const secondResult = await processChunkWithRetry(second, allItems, chunkStart + middle, chunkEnd, secondContext, keyStates, globalChunkIndex, totalChunks, depth + 1, maxKeyAttemptsOverride);
 
         return [...firstResult, ...secondResult];
     }
@@ -3375,6 +3503,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 
     const translatedById = Object.create(null);
     let previousTranslatedContext = [];
+    const deferredRateLimitedChunks = [];
 
     for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY_LIMIT) {
         const batch = chunks.slice(batchStart, batchStart + CONCURRENCY_LIMIT);
@@ -3386,26 +3515,90 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 
             if (localIndex > 0) await sleep(1500 * localIndex);
 
-            const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, globalIndex, chunks.length);
-            return { globalIndex, result };
+            try {
+                const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, globalIndex, chunks.length);
+                return { globalIndex, result };
+            } catch (error) {
+                if (error?.isDeferredRateLimit || error?.isRateLimit429) {
+                    deferredRateLimitedChunks.push({
+                        chunk,
+                        start,
+                        end,
+                        globalIndex,
+                        previousTranslatedContext: [...previousTranslatedContext]
+                    });
+                    console.log(`${c.yellow}⏸ [Gemini] Calupul ${globalIndex + 1}/${chunks.length} a fost pus în coada de recuperare; continuu cu rezultatele celorlalte calupuri.${c.reset}`);
+                    return { globalIndex, result: null, deferred: true };
+                }
+                throw error;
+            }
         });
 
         const results = await Promise.all(promises);
         results.sort((a, b) => a.globalIndex - b.globalIndex);
 
         for (const batchResult of results) {
+            if (!Array.isArray(batchResult.result)) continue;
             for (const item of batchResult.result) {
                 translatedById[String(item.id)] = item.text;
             }
         }
 
-        const lastResult = results[results.length - 1];
+        const successfulBatchResults = results.filter(item => Array.isArray(item.result));
+        const lastResult = successfulBatchResults[successfulBatchResults.length - 1];
         if (lastResult && lastResult.result) {
             previousTranslatedContext = lastResult.result.slice(-PREVIOUS_TRANSLATION_CONTEXT);
         }
     }
 
-    console.log(`\n${c.green}✔ Toate cele ${chunks.length} de calupuri finalizate!${c.reset}`);
+    // Dacă un calup a prins o fereastră de 429, nu abandonăm imediat tot filmul.
+    // Îl reîncercăm separat după ce s-au terminat celelalte calupuri, cu o singură
+    // cerere per fereastră de recuperare; dacă quota rămâne blocată, raportăm clar ID-urile.
+    let pendingRateLimitedChunks = deferredRateLimitedChunks.sort((a, b) => a.globalIndex - b.globalIndex);
+    for (let recoveryRound = 1; recoveryRound <= 2 && pendingRateLimitedChunks.length; recoveryRound++) {
+        console.log(`${c.cyan}🔁 [429 Recovery Queue] Runda ${recoveryRound}/2 pentru ${pendingRateLimitedChunks.length} calupuri amânate.${c.reset}`);
+        const stillPending = [];
+
+        for (const entry of pendingRateLimitedChunks) {
+            await waitFor429Gate(keyStates);
+            const contextStart = Math.max(0, entry.start - PREVIOUS_TRANSLATION_CONTEXT);
+            const retryContext = items.slice(contextStart, entry.start)
+                .map(item => ({ id: item.id, text: translatedById[String(item.id)] || '' }))
+                .filter(item => item.text);
+
+            try {
+                const result = await processChunkWithRetry(
+                    entry.chunk,
+                    items,
+                    entry.start,
+                    entry.end,
+                    retryContext.length ? retryContext : entry.previousTranslatedContext,
+                    keyStates,
+                    entry.globalIndex,
+                    chunks.length,
+                    0,
+                    1
+                );
+                for (const item of result) translatedById[String(item.id)] = item.text;
+                console.log(`${c.green}✔ [429 Recovery Queue] Calupul ${entry.globalIndex + 1}/${chunks.length} recuperat.${c.reset}`);
+            } catch (error) {
+                if (error?.isDeferredRateLimit || error?.isRateLimit429) {
+                    stillPending.push(entry);
+                    console.log(`${c.yellow}⚠ [429 Recovery Queue] Calupul ${entry.globalIndex + 1}/${chunks.length} rămâne în așteptare.${c.reset}`);
+                } else {
+                    throw error;
+                }
+            }
+        }
+        pendingRateLimitedChunks = stillPending;
+    }
+
+    if (pendingRateLimitedChunks.length) {
+        const failedIds = pendingRateLimitedChunks.flatMap(entry => entry.chunk.map(item => item.id));
+        throw new Error(`Gemini a menținut limitarea HTTP 429 după coada de recuperare. Nu pot finaliza în siguranță ${pendingRateLimitedChunks.length} calup(uri), ID-uri afectate: ${failedIds.slice(0, 30).join(', ')}${failedIds.length > 30 ? '…' : ''}. Verifică quota/limitele cheilor Gemini.`);
+    }
+
+    console.log(`\n${c.green}✔ Toate cele ${chunks.length} de calupuri finalizate sau recuperate din coada 429!${c.reset}`);
 
     // Detectează o eroare pe care verificarea ID-urilor prezente nu o vede:
     // aceeași traducere lungă returnată pentru trei sau mai multe replici-sursă diferite.
