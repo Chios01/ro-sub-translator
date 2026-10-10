@@ -78,7 +78,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.95',
+    version: '12.78.96',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -548,7 +548,7 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
 
-    clean = clean.replace(/<[iIbBuU]>\s*(?:ah|oh|uh|agh|aâ|aoleu|ă{1,}|mhm|îhî|ugh|argh|aah|oof|uf|um+|uhm+|erm+|a{2,})[!.,?…\s-]*\s*<\/[iIbBuU]>/gi, '');
+    clean = clean.replace(/<[iIbBuU]>\s*(?:ah|oh|uh|eh|er+|hm+|hmm+|agh|aâ|aoleu|ă{1,}|mhm|îhî|ugh|argh|aah|oof|uf|um+|uhm+|erm+|a{2,})[!.,?…\s-]*\s*<\/[iIbBuU]>/gi, '');
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
@@ -567,20 +567,60 @@ function cleanTextForJson(text) {
 // FORMAT LINE & DICTIONARY
 // ============================================================
 
+// Detectează replicile-sursă care conțin doar ezitări vocale. Folosit numai pentru
+// a nu reintroduce un „Păi...” / „Ei bine...” după ce filtrul a eliminat „Well, um...”.
+// Nu tratează „well” sau „so” singure drept ezitări, fiindcă pot avea sens propriu.
+const SOURCE_HESITATION_WORDS = new Set([
+    'uh', 'uhh', 'um', 'umm', 'ummm', 'uhm', 'uhmm', 'erm', 'er', 'eh',
+    'hmm', 'hm', 'mmm', 'ă', 'ăă', 'ăăă'
+]);
+
+function isSourceHesitationWord(word) {
+    return SOURCE_HESITATION_WORDS.has(word) ||
+        /^(?:ă+|uh+|um+|uhm+|erm+|er+|eh+|hm+|hmm+|mmm+)$/.test(word);
+}
+
+function isSourceHesitationOnly(text) {
+    const clean = String(text || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+        .toLocaleLowerCase('ro-RO');
+    const words = clean.match(/[a-zăâîșț]+/giu) || [];
+    if (!words.length || words.length > 4) return false;
+
+    const hasActualHesitation = words.some(isSourceHesitationWord);
+    if (!hasActualHesitation) return false;
+
+    // „well/so” sunt tolerate doar împreună cu o ezitare reală: „Well, um...”.
+    return words.every(word => isSourceHesitationWord(word) || word === 'well' || word === 'so');
+}
+
+function normalizeDuplicateSourceIds(items) {
+    const seen = new Set();
+    const hasDuplicates = items.some(item => {
+        const id = String(item.id);
+        if (seen.has(id)) return true;
+        seen.add(id);
+        return false;
+    });
+    if (hasDuplicates) items.forEach((item, index) => { item.id = index + 1; });
+    return hasDuplicates;
+}
+
 function deepCleanSubtitleText(text) {
     if (!text) return text;
     
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ă{1,}|mhm|îhî|ugh|argh|aah|oof|uf|um+|uhm+|erm+|a{2,}|shh|psst|sh)[!.,?…\s-]*\s*<\/[^>]+>$/gmi, '');
+    let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|eh|er+|hm+|hmm+|agh|aâ|aoleu|ă{1,}|mhm|îhî|ugh|argh|aah|oof|uf|um+|uhm+|erm+|a{2,}|shh|psst|sh)[!.,?…\s-]*\s*<\/[^>]+>$/gmi, '');
     // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație.
     // IMPORTANT: includem și punctul în delimitatori; altfel „ăă...” / „mhm...”
     // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
     // „ă{2,}” prinde și forme precum „ăăă...”, nu doar exact „ăă”.
     // Include ezitările observate în SRT: um/umm, erm, uhm și Aa?/aaa.
     // Nu eliminăm litera „a” singură, deoarece este un cuvânt valid în română.
-    const hesitationToken = '(?:ă{2,}|ă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu|um+|uhm+|erm+|a{2,})';
+    const hesitationToken = '(?:ă{2,}|ă|îhî|mhm|ah|oh|uh|eh|er+|hm+|hmm+|agh|aâ|aoleu|um+|uhm+|erm+|a{2,})';
 
     // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
     // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
@@ -597,6 +637,17 @@ function deepCleanSubtitleText(text) {
     // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
     // Elimină una sau mai multe repetări ale aceleiași litere: „Ț-ț-ținta” → „Ținta”.
     cleaned = cleaned.replace(/(^|[^\p{L}])([A-Za-zĂÂÎȘȚăâîșț])(?:[-–—]\2)+(?=[A-Za-zĂÂÎȘȚăâîșț])/giu, '$1$2');
+    // Elimină fragmentul întrerupt repetat înaintea cuvântului complet:
+    // „Ți-... Ținta” / „Țin—… Ținta” -> „Ținta”. Se aplică doar dacă
+    // următorul cuvânt începe exact cu fragmentul, pentru a evita ștergeri arbitrare.
+    cleaned = cleaned.replace(
+        /(^|[^\p{L}])([A-Za-zĂÂÎȘȚăâîșț]{1,3})[-–—](?:\.{2,}|…)+\s+([A-Za-zĂÂÎȘȚăâîșț]{2,})/giu,
+        (match, prefix, fragment, fullWord) => {
+            const fragmentLower = fragment.toLocaleLowerCase('ro-RO');
+            const fullLower = fullWord.toLocaleLowerCase('ro-RO');
+            return fullLower.startsWith(fragmentLower) ? prefix + fullWord : match;
+        }
+    );
 
     // Varianta foarte scurtă „E-E”, „A-A”, „M-M” etc.
     // Regex-ul de mai sus nu o prinde deoarece cere încă o literă după al doilea caracter.
@@ -614,7 +665,7 @@ function deepCleanSubtitleText(text) {
     // După eliminarea unei ezitări, repară majuscula de început de propoziție.
     cleaned = cleaned.replace(/(^|[.!?]\s+)([a-zăâîșț])/g, (m, prefix, letter) => prefix + letter.toUpperCase());
     
-    if (/^(?:ah|oh|uh|agh|aâ|aoleu|ă{1,}|mhm|îhî|ugh|argh|aah|oof|uf|um+|uhm+|erm+|a{2,})[!.?…]*$/gmi.test(cleaned)) return '';
+    if (/^(?:ah|oh|uh|eh|er+|hm+|hmm+|agh|aâ|aoleu|ă{1,}|mhm|îhî|ugh|argh|aah|oof|uf|um+|uhm+|erm+|a{2,})[!.?…]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
     cleaned = cleaned.replace(/\\+/g, ' ');
@@ -1503,7 +1554,7 @@ function isJunkOrInterjection(text) {
     // complet de verificările de traducere, ca să nu apară în loguri ca suspecți.
     if (/^[\s0-9\-–—._,;:!?…'"~^`´‚„“”‘’()\[\]{}|\\/♪♫♬♩#]+$/.test(clean)) return true;
 
-    if (/^(?:[-–—\s]*)(?:ah|oh|uh|agh|aâ|aoleu|ă{1,}|mhm|îhî|ugh|argh|aah|oof|uf|um+|uhm+|erm+|a{2,}|shh|psst|sh)[!.,?…\s-]*$/i.test(clean)) return true;
+    if (/^(?:[-–—\s]*)(?:ah|oh|uh|eh|er+|hm+|hmm+|agh|aâ|aoleu|ă{1,}|mhm|îhî|ugh|argh|aah|oof|uf|um+|uhm+|erm+|a{2,}|shh|psst|sh)[!.,?…\s-]*$/i.test(clean)) return true;
     return false;
 }
 
@@ -1780,7 +1831,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
         const suspicious = items.filter(item => {
             const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
             if (!originalClean) return false;
-            if (isJunkOrInterjection(item.text)) return false;
+            if (isJunkOrInterjection(item.text) || isSourceHesitationOnly(item.text)) return false;
 
             const translated = translatedById[String(item.id)];
             if (isOkOnlySubtitle(translated)) return false;
@@ -1898,7 +1949,7 @@ Returnează DOAR JSON valid în forma:
     const remaining = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
-        if (isJunkOrInterjection(item.text)) return false;
+        if (isJunkOrInterjection(item.text) || isSourceHesitationOnly(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
@@ -2726,7 +2777,7 @@ function runSemanticSpotCheck(items, translatedById) {
     for (const item of items) {
         const current = String(translatedById[String(item.id)] || '');
         if (!current.trim()) continue;
-        if (isJunkOrInterjection(item.text)) continue;
+        if (isJunkOrInterjection(item.text) || isSourceHesitationOnly(item.text)) continue;
 
         const reasons = detectSemanticSpotCheckReasons(current);
         if (reasons.length) flagged.push({ item, reasons });
@@ -2752,10 +2803,10 @@ async function recoverEmptyTranslationsAfterReview(items, translatedById, keySta
     const emptyTranslations = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
+        if (isSourceHesitationOnly(item.text)) return false;
 
-        // IMPORTANT: aici nu excludem interjecțiile. Dacă o replică originală
-        // precum "Oh", "Oof", "Uf", "Doamne!" a rămas goală după Grammar Review,
-        // trebuie recuperată la fel ca orice altă replică reală.
+        // Interjecțiile cu sens pot fi recuperate; replicile doar din ezitare nu trebuie
+        // să fie reumplute aici după ce filtrul le-a eliminat.
         const translated = translatedById[String(item.id)];
         const translatedClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
         return !translatedClean;
@@ -2794,13 +2845,15 @@ Returnează DOAR un ARRAY JSON valid în forma:
         for (const item of emptyTranslations) {
             const candidateRaw = recoveryDict[String(item.id)];
             const candidate = formatSubtitleLine(String(candidateRaw || ''));
+            const cleanedCandidate = formatSubtitleLine(deepCleanSubtitleText(candidate));
 
             if (
-                candidate &&
-                !hasUntranslatedEnglish(item.text, candidate) &&
-                !hasCorruptedSubtitleText(candidate, item.text)
+                !isSourceHesitationOnly(item.text) &&
+                cleanedCandidate &&
+                !hasUntranslatedEnglish(item.text, cleanedCandidate) &&
+                !hasCorruptedSubtitleText(cleanedCandidate, item.text)
             ) {
-                translatedById[String(item.id)] = candidate;
+                translatedById[String(item.id)] = cleanedCandidate;
                 recoveredCount++;
                 recoveredIds.push(String(item.id));
             } else {
@@ -2824,6 +2877,14 @@ Returnează DOAR un ARRAY JSON valid în forma:
 async function translateSrtWithGemini(srtText, apiKeys) {
     const items = parseSrt(srtText);
     if (!items.length) throw new Error('Nu s-au găsit subtitrări valide.');
+
+    // ID-urile SRT sunt doar etichete de cue; repetarea lor ar suprascrie textul
+    // în dicționarul intern. Renumerotăm toate cue-urile în ordinea sursei, păstrând
+    // textul și timpii, pentru o mapare deterministă.
+    const hasDuplicateSourceIds = normalizeDuplicateSourceIds(items);
+    if (hasDuplicateSourceIds) {
+        console.log(`${c.yellow}⚠ [ID Integrity] ID-uri duplicate în SRT-ul sursă; am renumerotat intern cele ${items.length} de replici pentru a evita suprascrierea traducerilor.${c.reset}`);
+    }
 
     const cleanKeys = Array.from(new Set(apiKeys.map(k => String(k).trim()).filter(Boolean)));
     if (!cleanKeys.length) throw new Error('Nu există chei Gemini valide.');
@@ -2868,7 +2929,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     const emptyTranslations = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
-        if (isJunkOrInterjection(item.text)) return false;
+        if (isJunkOrInterjection(item.text) || isSourceHesitationOnly(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
         const translatedClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
@@ -2905,13 +2966,15 @@ Returnează DOAR un ARRAY JSON valid în forma:
             for (const item of emptyTranslations) {
                 const candidateRaw = recoveryDict[String(item.id)];
                 const candidate = formatSubtitleLine(String(candidateRaw || ''));
+                const cleanedCandidate = formatSubtitleLine(deepCleanSubtitleText(candidate));
 
                 if (
-                    candidate &&
-                    !hasUntranslatedEnglish(item.text, candidate) &&
-                    !hasCorruptedSubtitleText(candidate, item.text)
+                    !isSourceHesitationOnly(item.text) &&
+                    cleanedCandidate &&
+                    !hasUntranslatedEnglish(item.text, cleanedCandidate) &&
+                    !hasCorruptedSubtitleText(cleanedCandidate, item.text)
                 ) {
-                    translatedById[String(item.id)] = candidate;
+                    translatedById[String(item.id)] = cleanedCandidate;
                     recoveredCount++;
                     recoveredIds.push(String(item.id));
                 } else {
@@ -2971,12 +3034,26 @@ Returnează DOAR un ARRAY JSON valid în forma:
     // în fișierul final. Sunt retrimise doar ID-urile goale, nu întregul fișier.
     await recoverEmptyTranslationsAfterReview(items, translatedById, keyStates);
 
+    // Filtru final de ezitări: o replică-sursă formată exclusiv din ezitare rămâne goală.
+    // Previne reintroducerea „Păi...” / „Ei bine...” de către Empty Recovery.
+    let suppressedFillerCues = 0;
+    for (const item of items) {
+        if (isSourceHesitationOnly(item.text)) {
+            translatedById[String(item.id)] = '';
+            suppressedFillerCues++;
+        }
+    }
+    if (suppressedFillerCues) {
+        console.log(`${c.cyan}ℹ [Hesitation Guard] ${suppressedFillerCues} replici formate doar din ezitare au rămas goale; nu au fost reintroduse ca text românesc de umplutură.${c.reset}`);
+    }
+
     // Ultima protecție: corecțiile mecanice certe trebuie aplicate DUPĂ Grammar Review.
     // Altfel, verificatorul LLM poate rescrie din nou o formă deja corectată și rezultatul
     // devine dependent de variația aleatorie a modelului. formatSubtitleLine() este
     // idempotent pentru aceste corecții și reaplică dicționarul determinist la final.
     for (const item of items) {
         const id = String(item.id);
+        if (isSourceHesitationOnly(item.text)) continue;
         const current = translatedById[id];
         if (current == null || String(current).trim() === '') continue;
 
@@ -2999,13 +3076,13 @@ Returnează DOAR un ARRAY JSON valid în forma:
         }
     }
 
-    console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate după Grammar Review.${c.reset}`);
+    console.log(`\n${c.cyan}🔒 Protecție finală: curățarea deterministă a fost reaplicată după recuperări.${c.reset}`);
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
-        if (isJunkOrInterjection(item.text)) return false;
+        if (isJunkOrInterjection(item.text) || isSourceHesitationOnly(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
@@ -3029,7 +3106,10 @@ Returnează DOAR un ARRAY JSON valid în forma:
     console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
 
     const output = items.map(item => {
-        const translated = translatedById[String(item.id)] || item.text;
+        const id = String(item.id);
+        const translated = isSourceHesitationOnly(item.text)
+            ? ''
+            : (translatedById[id] || item.text);
         return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
     }).join('\n');
 
