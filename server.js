@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.114',
+    version: '12.78.115',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -532,17 +532,136 @@ function isEffectivelyEmptySubtitleText(text) {
 }
 
 // ============================================================
-// CLEAN TEXT FOR JSON 
+// SUBSTUDIO-INSPIRED FILLER CLEANUP + VISIBLE SRT TEXT
 // ============================================================
+const SUBTITLE_FILLER_WORDS = new Set((
+  'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh ahhhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww owww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whooo whoooo whoooooo whoop whoops whup wooh woo-hoo-hoo wow yikes yoo yoo-hoo haha hehe ă ăă ăăă ăăăă îhî ptiu brr'
+).split(/\s+/));
+const SUBTITLE_FILLER_PATTERN = [...SUBTITLE_FILLER_WORDS].sort((a,b)=>b.length-a.length).map(w=>w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+
+function subtitleVisibleText(text) {
+  return String(text || '').replace(/<[^>]*>/g, '');
+}
+function subtitleVisibleLength(text) {
+  return subtitleVisibleText(text).length;
+}
+function isStandaloneFillerLine(text) {
+  const visible = subtitleVisibleText(text).replace(/^\s*[-–—]\s*/, '').replace(/[.,!?;:…'"()\[\]{}]/g, ' ').trim();
+  if (!visible) return false;
+  const words = visible.toLocaleLowerCase('ro-RO').split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.every(word => SUBTITLE_FILLER_WORDS.has(word));
+}
+function capitalizeFirstVisibleCharacter(text) {
+  return String(text || '').replace(/^(\s*(?:<[^>]+>\s*)*)([\p{Ll}])/u,
+    (m, prefix, letter) => prefix + letter.toLocaleUpperCase('ro-RO'));
+}
+function cleanSubtitleFillerText(input, { translated = false } = {}) {
+  if (input == null || input === '') return input;
+  const out = [];
+  const filler = SUBTITLE_FILLER_PATTERN;
+  for (const sourceLine of String(input).replace(/\r/g, '').split('\n')) {
+    if (!sourceLine.trim()) continue;
+    const mLine = sourceLine.match(/^(\s*(?:[-–—]\s*)?)([\s\S]*?)\s*$/);
+    const prefix = mLine ? mLine[1] : '';
+    let content = mLine ? mLine[2] : sourceLine.trim();
+    if (!content.trim() || isStandaloneFillerLine(content)) continue;
+
+    // Remove up to five leading fillers but preserve phrases like "Oh my God".
+    for (let i = 0; i < 5; i++) {
+      const m = content.match(new RegExp('^((?:<[^>]+>\\s*)*)(' + filler + ')(?:\\s*(</[a-z][^>]*>))?([,;:.!?…]+)?\\s+([\\s\\S]+)$', 'iu'));
+      if (!m) break;
+      const token = m[2].toLocaleLowerCase('ro-RO');
+      const rest = m[5].trimStart();
+      if (token === 'oh' && /^(?:(?:my|dear|good)\s+)?(?:god|lord|no|dear|boy)\b|^come on\b/i.test(rest)) break;
+      const keepOpen = m[3] ? '' : (m[1] || '');
+      const restText = /^[A-ZĂÂÎȘȚ]/u.test(m[2]) ? capitalizeFirstVisibleCharacter(rest) : rest;
+      content = keepOpen + restText;
+    }
+
+    // A hesitation inside a grammatical subject/verb link should not leave a comma:
+    // "I, uh, think" -> "I think". In other parenthetical cases keep the natural pause:
+    // "Well, uh, maybe" -> "Well, maybe".
+    const noCommaAfter = new Set(['i','you','he','she','it','we','they','eu','tu','el','ea','noi','voi','ei','ele','mă','te','se','vă','is','am','are','was','were','be','been','being','este','sunt','era','erau','fost','fiu','fie']);
+    content = content.replace(new RegExp('([\\p{L}]+),\\s*(?:' + filler + ')\\s*,\\s*([\\p{L}]+)', 'giu'),
+      (m, before, after) => noCommaAfter.has(before.toLocaleLowerCase('ro-RO')) ? `${before} ${after}` : `${before}, ${after}`);
+    content = content.replace(new RegExp(',\\s*(?:' + filler + ')\\s*,', 'giu'), ', ');
+    // Remove a trailing filler while preserving the punctuation already present:
+    // "I need it, uh." -> "I need it."; "I need it, uh..." -> "I need it...".
+    // SubStudio uses this strategy instead of inventing an ellipsis.
+    const trailingFiller = content.match(new RegExp('^([\\s\\S]+?)\\s*[,;:\\s]+\\s*(?:' + filler + ')\\s*([,;:.!?…]*)\\s*$', 'iu'));
+    if (trailingFiller && trailingFiller[1].trim()) {
+      content = trailingFiller[1].trimEnd() + trailingFiller[2];
+    }
+    content = content.replace(new RegExp('([.!?])\\s*(?:' + filler + ')[,;:]\\s+([\\p{L}])', 'giu'),
+      (m, punctuation, next) => punctuation + ' ' + next.toLocaleUpperCase('ro-RO'));
+    content = content.replace(new RegExp('([.!?])\\s*(?:' + filler + ')\\s*[.!?]', 'giu'), '$1');
+    if (translated) {
+      content = content.replace(/,\s*gen\s*,/giu, ', ');
+      content = content.replace(/,\s*gen\s*([.!?…]+)\s*$/iu, '$1');
+    }
+    content = content.replace(/\s{2,}/g, ' ').replace(/,\s*,+/g, ',')
+      .replace(/^\s*[,;:]\s*/g, '').replace(/\s+([,;:.!?…])/g, '$1').trim();
+    if (!content || /^[,;:.!?…'"\s-]+$/.test(subtitleVisibleText(content))) continue;
+    out.push(prefix + content);
+  }
+  return out.join('\n').trim();
+}
+function restoreSubtitleSourceFormatting(original, translated) {
+  const source = String(original || '').trim();
+  let result = String(translated || '').trim();
+  if (!source || !result) return result;
+  const notes = source.match(/[♪♫♬♩]/g) || [];
+  if (notes.length && !/[♪♫♬♩]/.test(result)) {
+    const start = source.match(/^\s*([♪♫♬♩])/);
+    const end = source.match(/([♪♫♬♩])\s*$/);
+    if (start && end) result = `${start[1]} ${result} ${end[1]}`;
+    else if (start) result = `${start[1]} ${result}`;
+    else if (end) result = `${result} ${end[1]}`;
+    else result = `${notes[0]} ${result}`;
+  }
+  if (/^<i>[\s\S]*<\/i>$/i.test(source) && !/^<i>[\s\S]*<\/i>$/i.test(result)) {
+    result = `<i>${result.replace(/<\/?i>/gi, '').trim()}</i>`;
+  }
+  return result;
+}
+function balanceSubtitleTagsAtSplit(left, right) {
+  const stack = [];
+  const re = /<\/?([a-z][a-z0-9:_-]*)\b[^>]*>/gi;
+  let m;
+  while ((m = re.exec(left))) {
+    const token=m[0], name=m[1].toLowerCase();
+    if (/^<\//.test(token)) {
+      for (let i=stack.length-1;i>=0;i--) if (stack[i].name===name) { stack.splice(i,1); break; }
+    } else if (!/\/\s*>$/.test(token) && !/^(?:br|hr|img|meta|link|wbr)$/i.test(name)) stack.push({name,open:token});
+  }
+  if (!stack.length) return [left,right];
+  return [left + stack.slice().reverse().map(t=>`</${t.name}>`).join(''), stack.map(t=>t.open).join('') + right];
+}
+function getSubtitleWhitespaceCandidates(markup) {
+  let visible=''; const candidates=[];
+  for (let i=0;i<markup.length;i++) {
+    if (markup[i]==='<') { const end=markup.indexOf('>',i+1); if (end!==-1) {i=end;continue;} }
+    if (/\s/.test(markup[i])) candidates.push({rawIndex:i,visibleIndex:visible.length});
+    visible+=markup[i];
+  }
+  const leading = visible.length - visible.trimStart().length;
+  const visibleTrimmed = visible.trim();
+  return {visible:visibleTrimmed,candidates:candidates.map(p=>({rawIndex:p.rawIndex,visibleIndex:p.visibleIndex-leading}))};
+}
+function splitMarkupAtVisibleWhitespace(markup, point) {
+  let left=markup.slice(0,point.rawIndex).trimEnd();
+  let right=markup.slice(point.rawIndex+1).trimStart();
+  return balanceSubtitleTagsAtSplit(left,right);
+}
 
 function cleanTextForJson(text) {
     if (!text) return text;
     let clean = text;
 
     clean = clean.replace(/\{[^}]+\}/g, '');
-    clean = clean.replace(/[♪♫♬♩#]/gi, '');
-    clean = clean.replace(/â™ª/gi, '');
-    clean = clean.replace(/â™«/gi, '');
+    // Preserve music-note cues and literal #; repair common UTF-8 mojibake.
+    clean = clean.replace(/â™ª/gi, '♪');
+    clean = clean.replace(/â™«/gi, '♫');
 
     clean = clean.replace(/<[iIbBuU]>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
@@ -560,20 +679,8 @@ function cleanTextForJson(text) {
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
 
-    // Like SubStudio, drop a subtitle block that consists only of a standalone
-    // filler sound. Do not drop multi-word expressions such as “Oh my God”.
-    const standaloneSourceFillers = new Set((
-        'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
-    ).split(/\s+/));
-    let lines = clean.split('\n').map(l => l.trim()).filter(Boolean).filter(line => {
-        const token = line.replace(/<[^>]+>/g, ' ')
-            .replace(/^[-–—]\s*/, '')
-            .replace(/[.,!?;:…]+$/g, '')
-            .trim()
-            .toLocaleLowerCase('ro-RO');
-        return !standaloneSourceFillers.has(token);
-    });
-    clean = lines.join('\n');
+    // Remove clear source hesitation/filler sounds while preserving meaningful phrases.
+    clean = cleanSubtitleFillerText(clean, { translated: false });
 
     if (!clean.trim()) return ' ';
     return clean.trim();
@@ -590,11 +697,12 @@ function deepCleanSubtitleText(text) {
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
     let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
+    cleaned = cleanSubtitleFillerText(cleaned, { translated: true });
     // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație.
     // IMPORTANT: includem și punctul în delimitatori; altfel „ăă...” / „mhm...”
     // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
     // „ă{2,}” prinde și forme precum „ăăă...”, nu doar exact „ăă”.
-    const hesitationToken = '(?:ă{1,}|îhî|mhm|a{1,}h{1,}|ahem|argh|aw+|ehm?|er+m?|gah|ha+|heh|hm+|hmph|huh|m+m+h?m?|oh+h?|ooh+|oops|ouch|ow|pff+t?|phew|psst|shh+|ugh|uh+m?|um+m?|whew|whoa|wow|yikes|aâ|aoleu)';
+    const hesitationToken = '(?:ă{1,}|îhî|mhm|a{1,}h{1,}|ahem|argh|aw+|ehm?|er+m?|gah|ha+|heh|hm+|hmph|huh|m+m+h?m?|ooh+|oops|ouch|ow|pff+t?|phew|psst|shh+|ugh|uh+m?|um+m?|whew|whoa|wow|yikes|aâ|aoleu)';
 
     // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
     // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
@@ -633,7 +741,8 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\\+/g, ' ');
     cleaned = cleaned.replace(/\b(nu|de|ce|pe|la)1\b/gi, '$1');
 
-    cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/]/g, '');
+    // Keep valid Unicode, HTML markup and music notes; remove only control characters.
+    cleaned = cleaned.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
     cleaned = cleaned.replace(/\s*\([^)]+\)$/g, '');
 
     if (!cleaned.trim()) return '';
@@ -697,49 +806,48 @@ function applyDeterministicSemanticFix(original, translation) {
 }
 
 function splitSubtitleIntoTwoLines(value, maxChars = 43) {
-    const text = String(value || '').replace(/\s+/g, ' ').trim();
-    if (!text) return [];
-    if (text.length <= maxChars) return [text];
+    // Normalize text whitespace without changing whitespace inside markup tags.
+    let rawText = '';
+    const parts = String(value || '').replace(/\r/g, '').match(/<[^>]*>|[^<]+|</g) || [];
+    for (const part of parts) {
+        rawText += (part.startsWith('<') && part.endsWith('>')) ? part : part.replace(/\s+/g, ' ');
+    }
+    rawText = rawText.trim();
+    if (!rawText) return [];
+    const parsed = getSubtitleWhitespaceCandidates(rawText);
+    const visible = parsed.visible;
+    if (!visible) return [];
+    if (visible.length <= maxChars) return [rawText];
 
     const candidates = [];
-    for (let i = 1; i < text.length - 1; i++) {
-        if (text[i] !== ' ') continue;
-        const left = text.slice(0, i).trim();
-        const right = text.slice(i + 1).trim();
-        if (!left || !right || left.length > maxChars || right.length > maxChars) continue;
-
-        const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
-        const rightFirstWord = (right.match(/^\S+/) || [''])[0].toLowerCase();
+    for (const point of parsed.candidates) {
+        const idx = point.visibleIndex;
+        if (idx <= 0 || idx >= visible.length - 1) continue;
+        const leftVisible = visible.slice(0, idx).trim();
+        const rightVisible = visible.slice(idx + 1).trim();
+        if (!leftVisible || !rightVisible || leftVisible.length > maxChars || rightVisible.length > maxChars) continue;
+        const leftLastWord = (leftVisible.match(/\S+$/) || [''])[0].toLowerCase();
+        const rightFirstWord = (rightVisible.match(/^\S+/) || [''])[0].toLowerCase();
         let penalty = 0;
         if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă)$/i.test(leftLastWord)) penalty += 8;
         if (/^(?:de|din|în|la|pe|pentru|și|să|cu|că|care|un|o)$/i.test(rightFirstWord)) penalty += 3;
-        if (/[.!?…,:;]$/.test(left)) penalty -= 4;
-        const balancePenalty = Math.abs(left.length - right.length) * 0.35;
-        candidates.push({ left, right, score: balancePenalty + penalty });
+        if (/[.!?…,:;]$/.test(leftVisible)) penalty -= 4;
+        candidates.push({point,score:Math.abs(leftVisible.length-rightVisible.length)*0.35+penalty});
     }
     if (candidates.length) {
-        candidates.sort((a, b) => a.score - b.score);
-        return [candidates[0].left, candidates[0].right];
+        candidates.sort((a,b)=>a.score-b.score);
+        return splitMarkupAtVisibleWhitespace(rawText,candidates[0].point);
     }
-
-    // If the complete text is longer than two 43-character lines, a strict
-    // 43/43 layout is mathematically impossible without rewriting or dropping
-    // words. Keep exactly two balanced lines and preserve the full translation.
-    const allBreaks = [];
-    for (let i = 1; i < text.length - 1; i++) {
-        if (text[i] !== ' ') continue;
-        const left = text.slice(0, i).trim();
-        const right = text.slice(i + 1).trim();
-        if (!left || !right) continue;
-        const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
-        const penalty = /^(?:a|al|ai|ale|cu|de|din|în|la|pe|pentru|prin|să|și|un|o|că|ca)$/i.test(leftLastWord) ? 8 : 0;
-        allBreaks.push({ left, right, score: Math.abs(left.length - right.length) + penalty });
-    }
-    if (allBreaks.length) {
-        allBreaks.sort((a, b) => a.score - b.score);
-        return [allBreaks[0].left, allBreaks[0].right];
-    }
-    return [text];
+    const allBreaks = parsed.candidates
+      .filter(p=>p.visibleIndex>0 && p.visibleIndex<visible.length-1)
+      .map(point=>{
+        const left=visible.slice(0,point.visibleIndex).trim(), right=visible.slice(point.visibleIndex+1).trim();
+        const last=(left.match(/\S+$/)||[''])[0].toLowerCase();
+        const penalty=/^(?:a|al|ai|ale|cu|de|din|în|la|pe|pentru|prin|să|și|un|o|că|ca)$/i.test(last)?8:0;
+        return {point,score:Math.abs(left.length-right.length)+penalty};
+      });
+    if (allBreaks.length) { allBreaks.sort((a,b)=>a.score-b.score); return splitMarkupAtVisibleWhitespace(rawText,allBreaks[0].point); }
+    return [rawText];
 }
 
 function formatSubtitleLayout(value) {
@@ -810,14 +918,15 @@ function formatSubtitleLayout(value) {
         return entries.map(emit).join('\n');
     }
 
-    if (entries.every(entry => entry.text.length <= 43)) {
+    if (entries.every(entry => subtitleVisibleLength(entry.text) <= 43)) {
         return entries.map(entry => entry.text).join('\n');
     }
     return splitSubtitleIntoTwoLines(entries.map(entry => entry.text).join(' '), 43).join('\n') || ' ';
 }
 
-function formatSubtitleLine(text) {
-    if (!text) return ' ';
+function formatSubtitleLine(text, originalText = '') {
+    if (!text) text = ' ';
+    if (originalText) text = restoreSubtitleSourceFormatting(originalText, text);
 
     text = deepCleanSubtitleText(text);
     if (!text.trim()) return ' ';
@@ -837,7 +946,7 @@ function formatSubtitleLine(text) {
     });
     text = text.replace(/(^|[\s])([Aa]dic)(?=[\s.,!?:;]|$)/gm, '$1$2ă');
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
-    text = text.replace(/<[^>]+>/g, '');
+    // Keep SRT HTML tags intact; visible-length handling ignores their width.
 
     // Corecții mecanice certe confirmate în verificările recente.
     // Sunt intenționat specifice pentru a evita corecții globale riscante.
@@ -1807,7 +1916,7 @@ ${JSON.stringify(missingItems, null, 2)}
 
             const results = chunk.map(obj => ({
                 id: obj.id,
-                text: formatSubtitleLine(dict[String(obj.id)])
+                text: formatSubtitleLine(dict[String(obj.id)], obj.text)
             }));
 
             const untranslatedItems = results.filter(result => {
@@ -1961,7 +2070,7 @@ Returnează DOAR JSON valid în forma:
                     const parsedDict = normalizeTranslationPayload(parsed);
                     const candidateRaw = parsedDict[String(item.id)];
 
-                    const candidate = formatSubtitleLine(String(candidateRaw || ''));
+                    const candidate = formatSubtitleLine(String(candidateRaw || ''), item.text);
 
                     if (
                         candidate &&
@@ -2168,8 +2277,8 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 const candidateRaw = parsedDict[id];
                 if (candidateRaw == null) continue;
 
-                const current = formatSubtitleLine(String(translatedById[id] || ''));
-                const candidate = formatSubtitleLine(String(candidateRaw || ''));
+                const current = formatSubtitleLine(String(translatedById[id] || ''), item.text);
+                const candidate = formatSubtitleLine(String(candidateRaw || ''), item.text);
 
                 if (!candidate || candidate === current) continue;
 
@@ -2450,7 +2559,7 @@ async function runLocalGrammarQualityPass(items, translatedById) {
 
         const fixed = applyLocalGrammarDeterministicFixes(current);
         if (fixed !== current) {
-            translatedById[id] = formatSubtitleLine(fixed);
+            translatedById[id] = formatSubtitleLine(fixed, item.text);
             autoFixed++;
             continue;
         }
@@ -2610,7 +2719,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
         for (const item of emptyTranslations) {
             const candidateRaw = recoveryDict[String(item.id)];
-            const candidate = formatSubtitleLine(String(candidateRaw || ''));
+            const candidate = formatSubtitleLine(String(candidateRaw || ''), item.text);
 
             if (
                 candidate &&
@@ -2722,7 +2831,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
             for (const item of emptyTranslations) {
                 const candidateRaw = recoveryDict[String(item.id)];
-                const candidate = formatSubtitleLine(String(candidateRaw || ''));
+                const candidate = formatSubtitleLine(String(candidateRaw || ''), item.text);
 
                 if (
                     candidate &&
@@ -2796,11 +2905,11 @@ Returnează DOAR un ARRAY JSON valid în forma:
         const currentText = String(current);
         let finalText = applyDeterministicSemanticFix(
             item.text,
-            formatSubtitleLine(currentText)
+            formatSubtitleLine(currentText, item.text)
         );
         finalText = applySourceGroundedSemanticFixes(item.text, finalText);
         finalText = applyLocalGrammarDeterministicFixes(finalText);
-        const formattedFinalText = formatSubtitleLine(finalText);
+        const formattedFinalText = formatSubtitleLine(finalText, item.text);
 
         if (String(formattedFinalText).trim()) {
             translatedById[id] = formattedFinalText;
