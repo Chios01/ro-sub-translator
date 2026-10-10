@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.93',
+    version: '12.78.108',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1906,6 +1906,143 @@ Returnează DOAR JSON valid în forma:
 // Rulează separat de mecanismul principal și aplică doar corecții certe.
 // ============================================================
 
+// ============================================================
+// QUALITY REGRESSION GUARD — conservative, keyed by subtitle ID
+// Rejects Grammar Review rewrites that look like text shifted from
+// another subtitle or a full retranslation rather than a correction.
+// ============================================================
+const QUALITY_STOP_WORDS = new Set([
+    'si','sau','iar','dar','ca','care','ce','cu','de','din','dupa','fara','in','la','langa','pe','pentru','prin','spre','sub','peste','un','o','unei','unui','niste','al','a','ai','ale','lui','ei','el','ea','ei','ele','eu','tu','voi','noi','va','v','mie','tie','ne','ma','te','se','s','mi','ti','i','le','ii','il','o','nu','da','ba','sa','ar','as','am','ati','au','este','sunt','era','erau','fost','fi','fie','fiind','asta','aceasta','acesta','acestea','acestia','acei','acele','aici','acolo','mai','foarte','tot','toata','toate','toți','toti','toata','doar','deja','inca','cand','unde','cum','cat','cati','cate','atunci','acum','nici','nimic','cine','cineva','orice','oricine','imi','iti','isi','asupra','dintre','intre','pana','dupa','spre','oh','ah','hmm'
+]);
+
+function qualityNormalizeText(text) {
+    return String(text || '')
+        .replace(/<[^>]*>/g, ' ')
+        .toLocaleLowerCase('ro-RO')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/ş/g, 's').replace(/ţ/g, 't')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim().replace(/\s+/g, ' ');
+}
+
+function qualityTokens(text) {
+    return qualityNormalizeText(text).split(' ').filter(token =>
+        token.length >= 3 && !QUALITY_STOP_WORDS.has(token)
+    );
+}
+
+function qualityTokenSimilarity(left, right) {
+    const a = new Set(qualityTokens(left));
+    const b = new Set(qualityTokens(right));
+    if (!a.size && !b.size) return qualityNormalizeText(left) === qualityNormalizeText(right) ? 1 : 0;
+    if (!a.size || !b.size) return 0;
+    let intersection = 0;
+    for (const token of a) if (b.has(token)) intersection++;
+    return intersection / (a.size + b.size - intersection);
+}
+
+function qualityLevenshteinSimilarity(left, right) {
+    const a = qualityNormalizeText(left).replace(/\s/g, '');
+    const b = qualityNormalizeText(right).replace(/\s/g, '');
+    if (!a && !b) return 1;
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    if (Math.max(a.length, b.length) > 500) return 0;
+    let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+    for (let i = 1; i <= a.length; i++) {
+        const current = [i];
+        for (let j = 1; j <= b.length; j++) {
+            current[j] = Math.min(
+                current[j - 1] + 1,
+                previous[j] + 1,
+                previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+            );
+        }
+        previous = current;
+    }
+    return 1 - previous[b.length] / Math.max(a.length, b.length);
+}
+
+function qualityLineSimilarity(left, right) {
+    return Math.max(qualityTokenSimilarity(left, right), qualityLevenshteinSimilarity(left, right));
+}
+
+function validateGrammarCorrectionAssociation(item, current, candidate, contextItems, translatedById) {
+    const currentText = String(current || '').trim();
+    const candidateText = String(candidate || '').trim();
+    if (!candidateText || !currentText) {
+        return { ok: false, reason: 'text gol sau absent', similarity: 0 };
+    }
+    if (qualityNormalizeText(currentText) === qualityNormalizeText(candidateText)) {
+        return { ok: true, reason: 'diferență doar de formatare', similarity: 1 };
+    }
+
+    const currentTokens = qualityTokens(currentText);
+    const candidateTokens = qualityTokens(candidateText);
+    const tokenSimilarity = qualityTokenSimilarity(currentText, candidateText);
+    const charSimilarity = qualityLevenshteinSimilarity(currentText, candidateText);
+    const maximumLength = Math.max(currentText.length, 1);
+    const lengthRatio = candidateText.length / maximumLength;
+
+    // Grammar Review must not silently become full retranslation. A large semantic
+    // rewrite is handled by the main targeted-translation pipeline, not this pass.
+    if (currentTokens.length >= 2 && candidateTokens.length >= 2 &&
+        tokenSimilarity < 0.18 && charSimilarity < 0.58) {
+        return {
+            ok: false,
+            reason: `similaritate prea mică cu replica curentă (token=${Math.round(tokenSimilarity * 100)}%, text=${Math.round(charSimilarity * 100)}%)`,
+            similarity: Math.max(tokenSimilarity, charSimilarity)
+        };
+    }
+
+    if (currentTokens.length >= 3 && candidateTokens.length < 2 && currentText.length >= 18) {
+        return { ok: false, reason: 'corecția a eliminat aproape tot conținutul lexical al replicii', similarity: tokenSimilarity };
+    }
+
+    if (currentTokens.length >= 3 && candidateTokens.length >= 3 &&
+        (lengthRatio > 2.8 || lengthRatio < 0.32) && tokenSimilarity < 0.45) {
+        return { ok: false, reason: `lungime suspectă pentru o corecție (${Math.round(lengthRatio * 100)}% din lungimea inițială)`, similarity: tokenSimilarity };
+    }
+
+    const sourceNorm = qualityNormalizeText(item?.text || '');
+    const candidateNorm = qualityNormalizeText(candidateText);
+    const context = Array.isArray(contextItems) ? contextItems : [];
+    let bestOther = { id: null, similarity: 0, exact: false, sourceSame: false };
+
+    for (const other of context) {
+        const otherId = String(other.id);
+        if (otherId === String(item.id)) continue;
+        const otherText = String(translatedById[otherId] || '').trim();
+        if (!otherText) continue;
+        const otherNorm = qualityNormalizeText(otherText);
+        if (qualityTokens(otherText).length < 3 || qualityTokens(candidateText).length < 3) continue;
+        const otherSourceNorm = qualityNormalizeText(other.text || '');
+        const sourceSame = !!sourceNorm && sourceNorm === otherSourceNorm;
+        const exact = candidateNorm.length >= 18 && candidateNorm === otherNorm;
+        // Comparăm cu token-uri aici (ieftin); edit-distance-ul este calculat doar
+        // pentru perechea current/candidate de mai sus, nu pentru toate cele 3395 de replici.
+        const similarity = qualityTokenSimilarity(candidateText, otherText);
+        if (sourceSame) continue; // repeated original dialogue may legitimately repeat in RO
+        if ((exact || similarity > bestOther.similarity) && (exact || similarity >= 0.72)) {
+            bestOther = { id: otherId, similarity, exact, sourceSame };
+        }
+    }
+
+    if (bestOther.id !== null && (
+        bestOther.exact ||
+        (bestOther.similarity >= 0.82 && bestOther.similarity >= Math.max(tokenSimilarity, charSimilarity) + 0.18)
+    )) {
+        return {
+            ok: false,
+            reason: `textul seamănă mai mult cu traducerea ID ${bestOther.id}; posibilă deplasare între replici`,
+            similarity: bestOther.similarity
+        };
+    }
+
+    return { ok: true, reason: 'asociere plauzibilă cu replica', similarity: Math.max(tokenSimilarity, charSimilarity) };
+}
+
 const GRAMMAR_REVIEW_BATCH_SIZE = 120;
 const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
 const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
@@ -2350,8 +2487,18 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
 
                 if (!candidate || candidate === current) continue;
 
-                // Filtrul suplimentar poate aplica doar o corecție care rămâne
-                // compatibilă cu verificările deja existente.
+                // Guard nou, conservator: Grammar Review nu poate muta accidental
+                // textul altei replici pe ID-ul curent și nu poate face o retraducere
+                // completă mascată drept corecție gramaticală.
+                const associationCheck = validateGrammarCorrectionAssociation(
+                    item, current, candidate, contextItems, translatedById
+                );
+                if (!associationCheck.ok) {
+                    console.log(`${c.yellow}  ⚠ [Quality Guard] ID ${item.id} ignorat: ${associationCheck.reason}.${c.reset}`);
+                    continue;
+                }
+
+                // Păstrăm verificările existente de engleză/corupere după guard-ul de asociere.
                 if (hasUntranslatedEnglish(item.text, candidate) ||
                     hasCorruptedSubtitleText(candidate, item.text)) {
                     console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: noua variantă a devenit suspectă${c.reset}`);
@@ -3008,12 +3155,33 @@ Returnează DOAR un ARRAY JSON valid în forma:
     console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide${c.reset}`);
     console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
 
-    const output = items.map(item => {
-        const translated = translatedById[String(item.id)] || item.text;
-        return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
-    }).join('\n');
+    const output = buildSrtById(items, translatedById);
+    return output;
+}
 
-    return output.trim() + '\n';
+// ============================================================
+// SRT SERIALIZER WITH ID/TIMECODE INVARIANTS
+// ============================================================
+function buildSrtById(items, translatedById) {
+    const seen = new Set();
+    const blocks = [];
+    for (const item of items) {
+        const id = String(item.id);
+        if (seen.has(id)) throw new Error(`Quality Guard: ID duplicat la serializare: ${id}`);
+        seen.add(id);
+        if (!/^\d{2}:\d{2}:\d{2},\d{3}$/.test(String(item.start)) ||
+            !/^\d{2}:\d{2}:\d{2},\d{3}$/.test(String(item.end))) {
+            throw new Error(`Quality Guard: timecode invalid pentru ID ${id}`);
+        }
+        // Important: o valoare explicit goală (ezitare suprimată) se păstrează goală.
+        // Doar ID-urile complet absente din map folosesc textul original ca fallback.
+        const hasMappedValue = Object.prototype.hasOwnProperty.call(translatedById, id);
+        const translated = hasMappedValue
+            ? String(translatedById[id] == null ? '' : translatedById[id])
+            : String(item.text || '');
+        blocks.push(`${item.id}\n${item.start} --> ${item.end}\n${translated}\n`);
+    }
+    return blocks.join('\n').trimEnd() + '\n';
 }
 
 // ============================================================
@@ -3347,7 +3515,110 @@ app.get('/health', (req, res) => {
     res.json({ ok: true, service: 'RO Sub Translator', model: MODEL_NAME, version: manifest.version });
 });
 
+function runQualitySelfTests() {
+    const assert = require('assert');
+    const fixturePath = path.join(__dirname, 'tests', 'fixtures', 'v93-reference.srt');
+    assert.ok(fs.existsSync(fixturePath), `Lipsește fixture-ul de referință: ${fixturePath}`);
+    const fixtureText = fs.readFileSync(fixturePath, 'utf8');
+    const fixtureItems = parseSrt(fixtureText);
+    assert.strictEqual(fixtureItems.length, 3395, 'Fixture-ul v93 trebuie să aibă 3395 de replici parse-abile');
+    assert.strictEqual(new Set(fixtureItems.map(item => String(item.id))).size, fixtureItems.length, 'Fixture-ul v93 are ID-uri duplicate');
+    assert.strictEqual(fixtureItems[0].id, 1, 'Primul ID trebuie să fie 1');
+    assert.strictEqual(fixtureItems[fixtureItems.length - 1].id, 3395, 'Ultimul ID trebuie să fie 3395');
+
+    const passthrough = Object.create(null);
+    for (const item of fixtureItems) passthrough[String(item.id)] = item.text;
+    const roundTrip = buildSrtById(fixtureItems, passthrough);
+    const roundTripItems = parseSrt(roundTrip);
+    assert.strictEqual(roundTripItems.length, fixtureItems.length, 'Round-trip-ul a pierdut replici');
+    for (let i = 0; i < fixtureItems.length; i++) {
+        assert.strictEqual(roundTripItems[i].id, fixtureItems[i].id, `ID deplasat la index ${i}`);
+        assert.strictEqual(roundTripItems[i].start, fixtureItems[i].start, `Start timecode schimbat la ID ${fixtureItems[i].id}`);
+        assert.strictEqual(roundTripItems[i].end, fixtureItems[i].end, `End timecode schimbat la ID ${fixtureItems[i].id}`);
+    }
+
+    const safeItem = { id: 2242, text: 'Let us set fire to the atmosphere.' };
+    const safeCheck = validateGrammarCorrectionAssociation(
+        safeItem, 'Să dăm foc atmosferei.', 'Să dăm foc la atmosferă.', [safeItem], { '2242': 'Să dăm foc atmosferei.' }
+    );
+    assert.strictEqual(safeCheck.ok, true, 'Guard-ul trebuie să permită o corecție gramaticală cu sens păstrat');
+
+    const driftItem = { id: 1358, text: 'Then we need to move.' };
+    const driftContext = [driftItem, { id: 1359, text: 'There is no evidence of a spy.' }];
+    const driftCheck = validateGrammarCorrectionAssociation(
+        driftItem,
+        'Atunci trebuie să ne mișcăm.',
+        'Nicio dovadă nu arată că ar fi vreo spion la Los Alamos.',
+        driftContext,
+        { '1358': 'Atunci trebuie să ne mișcăm.', '1359': 'Nu există dovezi despre un spion.' }
+    );
+    assert.strictEqual(driftCheck.ok, false, 'Guard-ul nu a respins traducerea fără legătură pentru ID 1358');
+
+    const knownDrifts = [
+        { id: 699, source: 'And? I did not join the Party.', current: 'Și? N-am intrat în Partid.', candidate: 'Plin de comuniști.' },
+        { id: 3156, source: 'And at Los Alamos,', current: 'Iar la Los Alamos,', candidate: 'A profitat de naivitatea oamenilor de știință' },
+        { id: 3301, source: 'For the security apparatus of this country,', current: 'Pentru aparatul de securitate al acestei țări,', candidate: 'Împreună cu disprețul' },
+        { id: 935, source: 'There will have to be a school, stores, a church.', current: 'Va fi nevoie de o școală, magazine, o biserică.', candidate: 'De ce?' }
+    ];
+    for (const testCase of knownDrifts) {
+        const testItem = { id: testCase.id, text: testCase.source };
+        const check = validateGrammarCorrectionAssociation(
+            testItem, testCase.current, testCase.candidate, [testItem], { [String(testCase.id)]: testCase.current }
+        );
+        assert.strictEqual(check.ok, false, `Guard-ul nu a respins drift-ul cunoscut la ID ${testCase.id}`);
+    }
+
+    const duplicateA = { id: 100, text: 'We will meet at the office tomorrow.' };
+    const duplicateB = { id: 101, text: 'Did you visit the doctor?' };
+    const duplicateCheck = validateGrammarCorrectionAssociation(
+        duplicateA, 'Mergem mâine la birou.', 'Ne vedem mâine la birou.', [duplicateA, duplicateB],
+        { '100': 'Mergem mâine la birou.', '101': 'Ne vedem mâine la birou.' }
+    );
+    assert.strictEqual(duplicateCheck.ok, false, 'Guard-ul nu a respins textul mutat de la alt ID');
+
+    const emptyFixture = buildSrtById([
+        { id: 1, start: '00:00:01,000', end: '00:00:02,000', text: 'uh' },
+        { id: 2, start: '00:00:02,000', end: '00:00:03,000', text: 'hello' }
+    ], { '1': '', '2': 'Salut.' });
+    assert.ok(/1\n00:00:01,000 --> 00:00:02,000\n{2,}2\n/.test(emptyFixture), 'Serializatorul nu a păstrat o traducere goală explicită');
+
+    let duplicateThrown = false;
+    try {
+        buildSrtById([
+            { id: 1, start: '00:00:01,000', end: '00:00:02,000', text: 'a' },
+            { id: 1, start: '00:00:02,000', end: '00:00:03,000', text: 'b' }
+        ], { '1': 'a' });
+    } catch (_) { duplicateThrown = true; }
+    assert.ok(duplicateThrown, 'Serializatorul trebuie să respingă ID-urile duplicate');
+
+    // Micro-benchmark realist pentru costul guard-ului pe întregul context de 3395 de linii.
+    const benchStart = Date.now();
+    const benchCount = 40;
+    for (let i = 1000; i < 1000 + benchCount; i++) {
+        const item = fixtureItems[i];
+        const current = passthrough[String(item.id)];
+        validateGrammarCorrectionAssociation(
+            item, current, `${current} verificare`, fixtureItems, passthrough
+        );
+    }
+    const guardBenchmarkMs = Date.now() - benchStart;
+    assert.ok(guardBenchmarkMs < 15000, `Guard-ul a fost prea lent pe 40 de verificări: ${guardBenchmarkMs} ms`);
+
+    console.log('QUALITY SELF-TESTS: PASS');
+    console.log('PASS: 3395 IDs + timecode round-trip');
+    console.log('PASS: typo/grammar correction remains allowed');
+    console.log('PASS: unrelated line reassignment rejected');
+    console.log('PASS: candidate matching another ID rejected');
+    console.log('PASS: explicit empty subtitle preserved');
+    console.log('PASS: duplicate IDs rejected');
+    console.log(`PASS: guard performance ${benchCount} x 3395-context checks in ${guardBenchmarkMs} ms`);
+}
+
 const PORT = Number(process.env.PORT) || 7000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
-});
+if (process.env.RUN_QUALITY_SELF_TESTS === '1') {
+    runQualitySelfTests();
+} else {
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
+    });
+}
