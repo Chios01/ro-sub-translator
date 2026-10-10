@@ -29,10 +29,14 @@ const BROWSER_USER_AGENT =
 const CHUNK_SIZE = 165;
 const CONCURRENCY_LIMIT = 3;
 
-// Verificarea AI completă rămâne oprită pentru a nu dubla timpul traducerii.
-// Verificarea AI PUNCTUALĂ rămâne activă pentru replicile suspecte detectate local.
+// Verificarea AI clasică, cu prompt foarte lung, rămâne oprită.
+// În locul ei rulăm un audit compact pe TOATE replicile traduse, în calupuri
+// mai mici și cu concurență limitată. Astfel nu depindem exclusiv de regex-uri.
 const ENABLE_FULL_GRAMMAR_REVIEW = false;
-const ENABLE_TARGETED_GRAMMAR_REVIEW = true;
+const ENABLE_TARGETED_GRAMMAR_REVIEW = false;
+const ENABLE_COMPACT_GRAMMAR_AUDIT = true;
+const GRAMMAR_AUDIT_BATCH_SIZE = 100;
+const GRAMMAR_AUDIT_CONCURRENCY = 3;
 
 const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
@@ -79,7 +83,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.101',
+    version: '12.78.102',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2021,6 +2025,7 @@ const GRAMMAR_REVIEW_JSON_SPLIT_MIN = 20;
 async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
     const contextItems = options.contextItems || items;
     const isTargetedReview = options.mode === 'targeted';
+    const isCompactAudit = options.mode === 'audit';
 
     const candidates = items.filter(item => {
         const original = String(item.text || '').replace(/<[^>]+>/g, '').trim();
@@ -2036,16 +2041,18 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
         return { checked: 0, fixed: 0 };
     }
 
-    if (isTargetedReview) {
+    if (isCompactAudit) {
+        console.log(`\n${c.cyan}🧠 AUDIT AI COMPACT — GRAMATICĂ + FIDELITATE PE TOATE REPLICILE${c.reset}`);
+    } else if (isTargetedReview) {
         console.log(`\n${c.cyan}🎯 VERIFICARE PUNCTUALĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
     } else {
         console.log(`\n${c.cyan}📝 VERIFICARE SUPLIMENTARĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
     }
     console.log(`   Verificate: ${candidates.length} replici`);
 
-    const reviewBatchSize = isTargetedReview
-        ? GRAMMAR_TARGETED_REVIEW_BATCH_SIZE
-        : GRAMMAR_REVIEW_BATCH_SIZE;
+    const reviewBatchSize = isCompactAudit
+        ? GRAMMAR_AUDIT_BATCH_SIZE
+        : (isTargetedReview ? GRAMMAR_TARGETED_REVIEW_BATCH_SIZE : GRAMMAR_REVIEW_BATCH_SIZE);
     const batches = chunkArray(candidates, reviewBatchSize);
     let checked = 0;
     let fixed = 0;
@@ -2053,9 +2060,17 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     const rateLimitRetryQueue = [];
 
     const processGrammarBatch = async (batch, batchIndex, label) => {
-        const batchFixedBefore = fixed;
+        let batchFixed = 0;
 
         const payload = batch.map(item => {
+            if (isCompactAudit) {
+                return {
+                    id: item.id,
+                    original: item.text,
+                    translation: translatedById[String(item.id)]
+                };
+            }
+
             const index = contextItems.findIndex(x => String(x.id) === String(item.id));
             const previous = index > 0 ? contextItems[index - 1] : null;
             const next = index >= 0 && index < contextItems.length - 1 ? contextItems[index + 1] : null;
@@ -2072,7 +2087,23 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
             };
         });
 
-        const prompt = `
+        const prompt = isCompactAudit ? `
+Ești un corector profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Auditează TOATE înregistrările de mai jos, nu doar greșelile evidente de ortografie.
+
+Pentru fiecare ID, compară originalul englezesc cu traducerea română și verifică gramatica, acordul, formele verbale, pronumele/cliticele, prepozițiile, ortografia și diacriticele, construcția propoziției, expresiile idiomatice și fidelitatea sensului. Caută și formulări care folosesc cuvinte românești valide, dar formează o propoziție nenaturală sau transmit alt sens decât originalul. Liniile din același calup sunt în ordinea subtitrării și pot oferi context una alteia.
+
+REGULI:
+- Returnează o corecție numai dacă există o eroare reală și poți susține varianta corectă din original și din contextul liniilor apropiate.
+- Dacă traducerea este corectă, naturală suficient și fidelă, nu o modifica doar pentru stil.
+- Păstrează registrul, slangul, vulgaritățile, sarcasmul, umorul, numele proprii și repetițiile/bâlbâielile intenționate.
+- Nu inventa persoane, obiecte, acțiuni sau relații care nu există în original. Corectează numai replica indicată de ID.
+- Dacă nu ești sigur, omite ID-ul. Nu returna explicații sau replici neschimbate.
+
+DATE:
+${JSON.stringify(payload, null, 2)}
+
+Returnează DOAR un array JSON valid de forma [{"id":123,"text":"varianta română corectată"}]. Dacă nu există nicio corecție clară, returnează [].
+` : `
 Ești un corector profesionist de subtitrări ENGLEZĂ → ROMÂNĂ.
 
 Aceasta este o VERIFICARE SUPLIMENTARĂ, independentă de traducerea principală.
@@ -2410,6 +2441,7 @@ Returnează DOAR JSON valid în forma:
 Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obiect.
 `;
 
+
         let lastJsonError = null;
 
         // JSON-ul Gemini poate fi invalid ocazional chiar dacă promptul cere
@@ -2470,13 +2502,13 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
 
                 translatedById[id] = candidate;
                 fixed++;
+                batchFixed++;
                 }
 
                 // IMPORTANT: dacă răspunsul JSON a fost valid și am procesat calupul,
                 // calupul este REUȘIT. Nu lăsăm bucla de retry să cadă ulterior în
                 // fallback-ul „eroare necunoscută” și să dubleze contorul checked.
-                const batchFixed = fixed - batchFixedBefore;
-                console.log(`${c.green}✔ [Grammar Review] Calup ${batchIndex + 1}/${batches.length}: ${batchFixed} corectate${c.reset}`);
+                console.log(`${c.green}✔ [Grammar Review] ${label}: ${batchFixed} corectate${c.reset}`);
                 return { success: true, is429: false };
             } catch (error) {
                 lastJsonError = error;
@@ -2572,18 +2604,35 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
         return { success: false, is429: false };
     };
 
-    // Prima trecere: dacă un calup primește 429, nu îl abandonăm definitiv.
-    // Îl punem la coadă și îl reîncercăm după ce terminăm toate calupurile normale.
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        const batch = batches[batchIndex];
-        const result = await processGrammarBatch(
-            batch,
-            batchIndex,
-            `Calup ${batchIndex + 1}/${batches.length}`
-        );
-
-        if (result.is429) {
-            rateLimitRetryQueue.push({ batch, batchIndex });
+    // Auditul compact folosește concurență limitată, la fel ca traducerea principală.
+    // Modurile vechi păstrează ordinea secvențială.
+    if (isCompactAudit) {
+        let nextBatchIndex = 0;
+        const workerCount = Math.max(1, Math.min(GRAMMAR_AUDIT_CONCURRENCY, batches.length));
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+            while (true) {
+                const batchIndex = nextBatchIndex++;
+                if (batchIndex >= batches.length) return;
+                const batch = batches[batchIndex];
+                const result = await processGrammarBatch(
+                    batch,
+                    batchIndex,
+                    `Audit ${batchIndex + 1}/${batches.length}`
+                );
+                if (result.is429) rateLimitRetryQueue.push({ batch, batchIndex });
+            }
+        }));
+    } else {
+        // Prima trecere: dacă un calup primește 429, nu îl abandonăm definitiv.
+        // Îl punem la coadă și îl reîncercăm după ce terminăm toate calupurile normale.
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+            const batch = batches[batchIndex];
+            const result = await processGrammarBatch(
+                batch,
+                batchIndex,
+                `Calup ${batchIndex + 1}/${batches.length}`
+            );
+            if (result.is429) rateLimitRetryQueue.push({ batch, batchIndex });
         }
     }
 
@@ -3187,11 +3236,17 @@ Returnează DOAR un ARRAY JSON valid în forma:
         console.log(`${c.yellow}⏭ Grammar Review complet omis pentru a evita reverificarea tuturor replicilor; verificarea punctuală rămâne separată.${c.reset}`);
     }
 
-    // Corecții deterministe și detectarea locală a replicilor care merită o analiză AI.
-    // Acest pas nu face cereri Gemini.
+    // Corecții deterministe locale, înaintea controlului AI.
     const microGrammar = await runLocalGrammarQualityPass(items, translatedById);
 
-    if (ENABLE_TARGETED_GRAMMAR_REVIEW) {
+    if (ENABLE_COMPACT_GRAMMAR_AUDIT) {
+        // Audităm toate replicile cu text; nu așteptăm ca regex-urile locale
+        // să recunoască dinainte o eroare gramaticală sau semantică.
+        await grammarTranslationReview(items, translatedById, keyStates, {
+            mode: 'audit',
+            contextItems: items
+        });
+    } else if (ENABLE_TARGETED_GRAMMAR_REVIEW) {
         const semanticSpotCheckItems = runSemanticSpotCheck(items, translatedById);
 
         // Combinăm toate semnalele într-o singură listă, ca fiecare replică să fie trimisă
@@ -3221,7 +3276,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
             console.log(`${c.green}✔ [Grammar Review punctual] Nicio replică nu a fost marcată de verificările locale.${c.reset}`);
         }
     } else {
-        console.log(`${c.cyan}ℹ Verificarea AI punctuală este dezactivată explicit; corecțiile locale deterministe rămân active.${c.reset}`);
+        console.log(`${c.cyan}ℹ Auditul AI gramatical este dezactivat explicit; rămân active corecțiile locale deterministe.${c.reset}`);
     }
 
     // Recuperarea finală pentru eventualele traduceri goale, indiferent dacă Grammar Review este activat.
