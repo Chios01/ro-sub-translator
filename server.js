@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.111',
+    version: '12.78.112',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -574,7 +574,7 @@ function deepCleanSubtitleText(text) {
     // IMPORTANT: includem și punctul în delimitatori; altfel „ăă...” / „mhm...”
     // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
     // „ă{2,}” prinde și forme precum „ăăă...”, nu doar exact „ăă”.
-    const hesitationToken = '(?:ă{2,}|ă|îhî|mhm|ah|oh|uh|agh|aâ|aoleu)';
+    const hesitationToken = '(?:ă{1,}|îhî|mhm|a{1,}h{1,}|ahem|argh|aw+|ehm?|er+m?|gah|ha+|heh|hm+|hmph|huh|m+m+h?m?|oh+h?|ooh+|oops|ouch|ow|pff+t?|phew|psst|shh+|ugh|uh+m?|um+m?|whew|whoa|wow|yikes|aâ|aoleu)';
 
     // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
     // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
@@ -676,84 +676,148 @@ function applyDeterministicSemanticFix(original, translation) {
     return text;
 }
 
+function splitSubtitleIntoTwoLines(value, maxChars = 43) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return [];
+    if (text.length <= maxChars) return [text];
+
+    const candidates = [];
+    for (let i = 1; i < text.length - 1; i++) {
+        if (text[i] !== ' ') continue;
+        const left = text.slice(0, i).trim();
+        const right = text.slice(i + 1).trim();
+        if (!left || !right || left.length > maxChars || right.length > maxChars) continue;
+
+        const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
+        const rightFirstWord = (right.match(/^\S+/) || [''])[0].toLowerCase();
+        let penalty = 0;
+        if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă)$/i.test(leftLastWord)) penalty += 8;
+        if (/^(?:de|din|în|la|pe|pentru|și|să|cu|că|care|un|o)$/i.test(rightFirstWord)) penalty += 3;
+        if (/[.!?…,:;]$/.test(left)) penalty -= 4;
+        const balancePenalty = Math.abs(left.length - right.length) * 0.35;
+        candidates.push({ left, right, score: balancePenalty + penalty });
+    }
+    if (candidates.length) {
+        candidates.sort((a, b) => a.score - b.score);
+        return [candidates[0].left, candidates[0].right];
+    }
+
+    // If the complete text is longer than two 43-character lines, a strict
+    // 43/43 layout is mathematically impossible without rewriting or dropping
+    // words. Keep exactly two balanced lines and preserve the full translation.
+    const allBreaks = [];
+    for (let i = 1; i < text.length - 1; i++) {
+        if (text[i] !== ' ') continue;
+        const left = text.slice(0, i).trim();
+        const right = text.slice(i + 1).trim();
+        if (!left || !right) continue;
+        const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
+        const penalty = /^(?:a|al|ai|ale|cu|de|din|în|la|pe|pentru|prin|să|și|un|o|că|ca)$/i.test(leftLastWord) ? 8 : 0;
+        allBreaks.push({ left, right, score: Math.abs(left.length - right.length) + penalty });
+    }
+    if (allBreaks.length) {
+        allBreaks.sort((a, b) => a.score - b.score);
+        return [allBreaks[0].left, allBreaks[0].right];
+    }
+    return [text];
+}
+
+function formatSubtitleLayout(value) {
+    const rawLines = String(value || '')
+        .replace(/\r/g, '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
+    if (!rawLines.length) return ' ';
+
+    let entries = [];
+    for (const raw of rawLines) {
+        // Split inline two-speaker dialogue even when the first speaker already
+        // has a leading dash. A separator after completed sentence punctuation
+        // is required so ordinary hyphenated prose is not split accidentally.
+        const prefixedDoubleDialogue = raw.match(/^\s*[-–—]\s*(.+?[.!?…])\s+[-–—]\s*(.+)$/);
+        if (prefixedDoubleDialogue) {
+            entries.push({ text: prefixedDoubleDialogue[1].trim(), dialogue: true });
+            entries.push({ text: prefixedDoubleDialogue[2].trim(), dialogue: true });
+            continue;
+        }
+        const inlineDialogue = raw.match(/^\s*(.+?[.!?…])\s+[-–—]\s+(.+)$/);
+        if (inlineDialogue) {
+            entries.push({ text: inlineDialogue[1].trim(), dialogue: true });
+            entries.push({ text: inlineDialogue[2].trim(), dialogue: true });
+            continue;
+        }
+
+        // Preserve a speaker marker if present. Normalize it to "- " and use
+        // a capital letter after the dash, as required by SubStudio formatting.
+        const marked = raw.match(/^[-–—]+\s*(.*?)\s*$/);
+        if (marked && marked[1]) {
+            entries.push({ text: marked[1].trim(), dialogue: true });
+            continue;
+        }
+        entries.push({ text: raw, dialogue: false });
+    }
+
+    // If the model produces more than two lines, keep the complete content and
+    // compact the overflow into the second line instead of silently truncating it.
+    if (entries.length > 2) {
+        const first = entries[0];
+        const remainder = entries.slice(1).map(entry => entry.dialogue ? `- ${entry.text}` : entry.text).join(' ');
+        entries = [first, { text: remainder, dialogue: false }];
+    }
+
+    const capFirst = value => String(value || '').replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
+    const emit = entry => entry.dialogue ? `- ${capFirst(entry.text)}` : entry.text;
+
+    if (entries.length === 1) {
+        const entry = entries[0];
+        if (entry.dialogue) {
+            const parts = splitSubtitleIntoTwoLines(entry.text, 41);
+            if (parts.length === 2) return `- ${capFirst(parts[0])}\n${parts[1]}`;
+            return `- ${capFirst(parts[0])}`;
+        }
+        return splitSubtitleIntoTwoLines(entry.text, 43).join('\n') || ' ';
+    }
+
+    // Two explicit speaker lines must stay two speaker lines; never remove the
+    // dashes or wrap them into extra lines. The translation prompt asks the model
+    // to rephrase overly long dialogue before returning it.
+    if (entries.length === 2 && entries.every(entry => entry.dialogue)) {
+        return entries.map(emit).join('\n');
+    }
+
+    if (entries.length === 2 && entries.some(entry => entry.dialogue)) {
+        return entries.map(emit).join('\n');
+    }
+
+    if (entries.every(entry => entry.text.length <= 43)) {
+        return entries.map(entry => entry.text).join('\n');
+    }
+    return splitSubtitleIntoTwoLines(entries.map(entry => entry.text).join(' '), 43).join('\n') || ' ';
+}
+
 function formatSubtitleLine(text) {
     if (!text) return ' ';
-    
+
     text = deepCleanSubtitleText(text);
     if (!text.trim()) return ' ';
 
     let lowerText = text.toLowerCase();
-    
+
     if (lowerText.includes('înțeles') && lowerText.includes('hei') && lowerText.includes('când')) {
-        return 'Am înțeles. Hei, când ai o secundă...';
+        return formatSubtitleLayout('Am înțeles. Hei, când ai o secundă...');
     }
-    
+
     if ((lowerText.includes('holba') || lowerText.includes('uita') || lowerText.includes('ochii') || lowerText.includes('holbezi') || lowerText.includes('oprește-te') || lowerText.includes('termină')) && (/\bsân(i|ii)?\b/.test(lowerText) || lowerText.includes('țâțe') || lowerText.includes('decolteu') || lowerText.includes('tăiței') || lowerText.includes('piept'))) {
-        return 'Nu te mai holba la sânii mei.';
+        return formatSubtitleLayout('Nu te mai holba la sânii mei.');
     }
-    
+
     text = text.replace(/(^|[\s])([cCsS])(?=[\s.,!?:;]|$)/gm, function(match, spatiu, litera) {
         return spatiu + litera + 'ă';
     });
-    
     text = text.replace(/(^|[\s])([Aa]dic)(?=[\s.,!?:;]|$)/gm, '$1$2ă');
-
     text = text.replace(/ţ/g, 'ț').replace(/Ţ/g, 'Ț').replace(/ş/g, 'ș').replace(/Ş/g, 'Ș');
     text = text.replace(/<[^>]+>/g, '');
-
-    // Elimină marcatorii de dialog de la începutul replicilor.
-    // Liniuțele din interiorul cuvintelor sau al propozițiilor rămân neschimbate.
-    text = text.replace(/^\s*[-–—]+\s*/gm, '');
-    
-    let rawLines = text.split('\n').map(l => l.trim()).filter(Boolean);
-    let expandedLines = [];
-    
-    rawLines.forEach(l => {
-        let doubleDialogMatch = l.match(/^[-–—]?\s*(.+?[.!?])\s*[-–—]\s*(.+)$/);
-        
-        if (doubleDialogMatch) {
-            expandedLines.push(doubleDialogMatch[1].trim());
-            expandedLines.push(doubleDialogMatch[2].trim());
-        } else if (l.includes(' - ') && !l.startsWith('-')) {
-            let parts = l.split(' - ');
-            expandedLines.push(parts[0].trim());
-            expandedLines.push(parts[1].trim());
-        } else {
-            expandedLines.push(l);
-        }
-    });
-
-    let wrappedLines = [];
-    for (let line of expandedLines) {
-        if (line.length > 50) {
-            let mid = Math.floor(line.length / 2);
-            let leftSpace = line.lastIndexOf(' ', mid);
-            let rightSpace = line.indexOf(' ', mid);
-            let splitIndex = (leftSpace !== -1 && rightSpace !== -1) ? 
-                ((mid - leftSpace) <= (rightSpace - mid) ? leftSpace : rightSpace) : 
-                Math.max(leftSpace, rightSpace);
-            
-            if (splitIndex !== -1) {
-                wrappedLines.push(line.substring(0, splitIndex).trim());
-                wrappedLines.push(line.substring(splitIndex + 1).trim());
-            } else {
-                wrappedLines.push(line);
-            }
-        } else {
-            wrappedLines.push(line);
-        }
-    }
-
-    // Ultima protecție: nicio linie de subtitrare nu începe cu marcator de dialog.
-    wrappedLines = wrappedLines
-        .map(line => line.replace(/^\s*[-–—]+\s*/, '').trim())
-        .filter(Boolean);
-
-    if (wrappedLines.length > 2) {
-        text = wrappedLines.slice(0, 2).join('\n');
-    } else {
-        text = wrappedLines.join('\n');
-    }
 
     // Corecții mecanice certe confirmate în verificările recente.
     // Sunt intenționat specifice pentru a evita corecții globale riscante.
@@ -1052,7 +1116,7 @@ function formatSubtitleLine(text) {
         text = text.replace(dictionar[i][0], dictionar[i][1]);
     }
 
-    return text;
+    return formatSubtitleLayout(text);
 }
 
 // ============================================================
@@ -1060,48 +1124,58 @@ function formatSubtitleLine(text) {
 // ============================================================
 
 const MASTER_TRANSLATION_PROMPT = `
-ROLE AND GOAL
-You are a professional English-to-Romanian cinematic subtitle translator and localizer. Translate every supplied subtitle into natural, fluent, contemporary Romanian suitable for professionally localized films and TV series. Translate the meaning, intention, and character voice—not English word order.
+MISSION
+You are a professional English-to-Romanian film and TV subtitle localizer. Translate ALL supplied subtitle texts into natural, modern, vivid Romanian—the kind of dialogue Romanian viewers hear in contemporary films. Localize the meaning and cultural intent, not the English word order.
 
-TRANSLATION PRIORITIES
-1. MEANING FIRST. Preserve who does what to whom, negation, tense, possession, relationships, references, intent, and emotional tone. Do not invent details, omit meaningful information, or change the speaker's intention. If a sentence is grammatical but means something different from the source, it is wrong.
-2. NATURAL ROMANIAN. Prefer concise, idiomatic Romanian that a native speaker would actually say. Adapt idioms, jokes, sarcasm, and wordplay to their intended meaning in context rather than translating word-for-word. Avoid stiff, literal, excessively formal, or awkward constructions.
-3. ROMANIAN REGISTER. Preserve the original level of familiarity, politeness, slang, affection, hostility, profanity, irony, and humor. Do not censor genuine profanity, but do not make ordinary dialogue more vulgar than the source. Do not decide between „tu” and „dumneavoastră” from English “you” alone; use the relationship and scene context.
-4. CORRECT LANGUAGE. Use standard Romanian grammar, spelling, agreement, conjugation, clitics, pronouns, prepositions, and diacritics: ă, â, î, ș, ț. Use real, complete words. Never return invented, truncated, accidentally joined/split, or corrupted Romanian forms. Check especially forms such as „să-mi”, „să-ți”, „să-i”, „ți-am”, „mi-ai”, „ne-am”, „v-ați” and „n-avem”.
-5. CONTEXT. Use neighboring subtitles to determine meaning, who is speaking, grammatical gender, pronoun references, tone, and continuity. A subtitle may be a fragment of a longer sentence, so interpret it in the context of the complete thought. However, context is for understanding—not permission to rewrite other entries.
-6. STRICT 1:1 ID ALIGNMENT — CRITICAL. Return exactly one translation for every input ID, under the same unchanged ID. Never move text from one ID to another, combine separate subtitle entries, omit an ID, or compensate for one translation by leaving a different ID empty. If a sentence continues in the next subtitle, translate only the words belonging to the current ID. Do not add words that occur only in the next ID.
+OUTPUT FORMAT — CRITICAL
+- Return ONLY a valid JSON array. No markdown, code fences, comments, or explanation.
+- Return exactly one object for each supplied ID, in the original order, with exactly these fields: {"id": integer, "text": "Romanian translation"}.
+- Keep every original ID unchanged. Do not add IDs, omit IDs, duplicate IDs, merge subtitle entries, or move text to a neighboring ID.
+- The input schema used by this addon is "id" + "text". Do not return SubStudio's "index" schema.
 
-ALIGNMENT EXAMPLE
-Input: [{"id":10,"text":"I thought you were going to..."},{"id":11,"text":"tell her the truth."}]
-Correct: [{"id":10,"text":"Credeam că o să..."},{"id":11,"text":"îi spui adevărul."}]
-Incorrect: putting the entire sentence under ID 10 and leaving ID 11 empty.
+MEANING, CONTEXT, AND LOCALIZATION
+- Translate every sentence, phrase, and expression into Romanian. Do not leave ordinary English fragments untranslated. Only preserve proper names, titles, brands, established abbreviations, or expressions intentionally spoken in another language.
+- Preserve the full meaning: who does what to whom, negation, tense, possession, relationships, pronouns, references, intent, humor, and emotional tone. Do not invent or omit information.
+- Use neighboring subtitles to understand the complete thought, speaker, addressee, gender, references, jokes, and continuity. Treat the source lines within a single ID as one subtitle block; translate all of them under that same ID.
+- A sentence may continue across multiple IDs. Understand it as a whole, but translate only the words belonging to the current ID. Never shift words to an adjacent ID.
+- Adapt idioms, sarcasm, jokes, wordplay, slang, and colloquial expressions to natural Romanian equivalents with the same intended meaning. Do not translate word by word when that would sound awkward or mean something different.
+- Use natural contemporary spoken Romanian, not stiff, literal, overly formal, timid, or childlike phrasing. Prefer the expression a Romanian speaker would actually use in that scene.
+- Preserve the character's actual level of vulgarity, bluntness, affection, hostility, informality, or politeness. Do not censor, sanitize, soften, or make direct adult dialogue sound childish. Do not add stronger vulgarity than the source either.
+- When the English explicitly names a body part or uses a direct sexual/anatomical term, translate that term directly and accurately. Do NOT replace it with vague euphemisms such as „jos”, „acolo” or „locul meu” when the source explicitly names the body part. Keep the same referent and degree of explicitness as the original.
+- Do not add diminutives or cutesy forms (for example endings such as „-iță”, „-ică”, „-uleț”) unless the source expresses a diminutive, smallness, tenderness, or affection. Preserve the source's singular/plural, gender, number, and exact referent. Do not turn a singular object into a plural one or make a term more childish.
+- Choose terms of endearment according to the scene and relationship. Do not translate “babe”, “honey”, or “baby” mechanically to the same Romanian word every time.
+- At the beginning of a sentence or clause, translate “But” as „Dar”; do not leave it in English.
+- Translate exclamations according to their actual function when they form a meaningful expression. For example, “Oh my God” can become „Doamne!” or „Doamne Dumnezeule!” depending on context.
+- When an ordinary real-world quantity is expressed in imperial units and conversion is natural for Romanian viewers, use an appropriate metric equivalent (1 ft ≈ 0.30 m; 1 mile ≈ 1.6 km; 1 lb ≈ 0.45 kg; convert Fahrenheit to Celsius). Do not convert names, idioms, plot-critical technical measurements, or values where conversion may mislead. Translate “lakh” as one hundred thousand and “crore” as ten million when relevant.
+- Use natural Romanian number formatting, including a dot for thousands where appropriate (130,000 → 130.000), without changing the numeric value.
 
-ROMANIAN LOCALIZATION GUIDANCE
-- Use all Romanian diacritics correctly.
-- “But” at the beginning of a sentence or clause normally becomes „Dar”, not “But”. Translate every ordinary English word or phrase; only proper names, brands, established titles, abbreviations, and intentionally foreign expressions may remain unchanged.
-- Choose affectionate terms such as “babe”, “honey”, or “baby” according to the relationship and scene; options can include „iubire”, „dragă”, „iubi” or „puiule”, but do not apply one mechanically in every situation.
-- Localize common idioms by sense: “my treat” → „Fac eu cinste.”; “Give me a break.” → „Hai, lasă-mă.”; “You’re pulling my leg.” → „Mă iei peste picior.”; “We’re in a pickle.” → „Suntem într-o încurcătură.”
-- Translate exclamations by their function. “Oh my God” may be „Doamne!”, „Doamne Dumnezeule!” or another natural Romanian expression according to intensity and context.
-- When an imperial measurement is clearly an ordinary real-world quantity and converting it is natural for Romanian viewers, use an appropriate metric equivalent without changing the intended scale. Do not convert names, fixed expressions, plot-critical technical measurements, or values where conversion could mislead. Translate number expressions such as “lakh” and “crore” into their meaning where relevant.
-- Use natural Romanian number formatting; do not change the underlying numeric value.
+ROMANIAN LANGUAGE QUALITY
+- Use correct standard Romanian grammar, spelling, conjugation, pronouns, clitics, prepositions, agreement, punctuation, and the diacritics ă, â, î, ș, ț.
+- Output only real, complete Romanian words. Never invent, truncate, merge, split, or corrupt words. Check for missing or extra letters, malformed clitics, wrong verb forms, agreement errors, misplaced diacritics, and accidental English leftovers.
+- Pay special attention to forms such as „să-mi”, „să-ți”, „să-i”, „să-și”, „ți-am”, „mi-ai”, „ne-am”, „v-ați”, „n-avem”.
+- Preserve real profanity when the source uses it. Translate what the vulgar word is doing in the sentence: a literal sexual act, a body part, an insult, an intensifier, or an exclamation. Do not translate “fucking”, “damn”, “shit”, or “hell” mechanically into the same Romanian word in every context.
+- Use only Romanian Latin script and correct Romanian characters. Preserve intentional names and foreign terms, but do not leave ordinary English dialogue untranslated.
+- Do not provide multiple alternatives. Choose one natural Romanian translation.
 
-HESITATIONS AND INTERJECTIONS
-- Remove meaningless hesitation/filler sounds such as „ă”, „ăă”, „ăăă”, “uh”, “um”, or “mhm” when they merely delay speech, including when embedded in a meaningful sentence. Repair the punctuation so the Romanian sentence remains natural.
-- Remove obvious one-letter stutters such as “I-I”, “E-E” or “M-m” only when they are accidental speech disfluencies.
-- Do NOT automatically delete every interjection. Preserve or translate reactions that carry meaning—surprise, pain, agreement, doubt, disgust, excitement, or a deliberate emotional beat. For example, “Wow!”, “Oops!”, “Ouch!” or “Oh?” may need a natural Romanian equivalent depending on context.
-- Remove non-dialogue sound labels when they are merely metadata rather than spoken dialogue.
+SUBTITLE FORMATTING — FOLLOW STRICTLY
+- Each visible line must be at most 43 characters whenever the wording allows it.
+- Use at most TWO text lines in a subtitle block. If a line is too long, split it at a natural phrase boundary using a line break (\\n); if the text still does not fit, rephrase more concisely without losing meaning.
+- Keep the translation readable on screen. Prefer balanced, logical line breaks rather than splitting at an arbitrary midpoint or separating a short preposition/article from the phrase it belongs to.
+- If a sentence continues onto the second visual line, start that continuation with a lowercase letter unless it is a proper name or the source starts a new sentence.
+- If one subtitle block contains two speakers, keep both speakers under the SAME ID and put them on separate lines. Format dialogue lines with a dash followed by one space and a capitalized first word: „- Bună.” then „- Ce faci?” Do not move either speaker into a neighboring subtitle entry.
+- If a source block contains multiple source lines, translate all of its content as one unit under the same ID; rewrap within that block, without dropping text.
+- Do not leave more than two text lines. Merge/rephrase excess source lines into no more than two readable lines while preserving all meaningful content.
+- Do not use unescaped double quotes inside JSON text values. Use Romanian quotation marks or single quotation marks when dialogue quotes are necessary.
 
-FORMATTING AND OUTPUT
-- Return ONLY a valid JSON array; no markdown, code fences, comments, or explanations.
-- Each object must have exactly the fields "id" and "text". The "id" must be the original integer ID. Return exactly one object per input ID, in the original order.
-- Do not return context fields, add IDs, remove IDs, change IDs, or provide alternative translations.
-- Keep each subtitle concise and readable. Use no more than two text lines per subtitle. If a single subtitle contains two speakers, place their dialogue on separate lines within the same ID; do not move either speaker to a neighboring ID. Do not add dialogue dashes at the beginning of lines.
-- Use Romanian Latin script and standard Romanian spelling.
-- Do not use unescaped double quotation marks inside a JSON text value. Rephrase or use Romanian typographic/single quotes when appropriate to keep the JSON valid.
-- Preserve intentional names and terms; do not invent or hallucinate a translation for uncertain proper names.
+INTERJECTION AND FILLER CLEANUP — REMOVE FROM SUBTITLES
+Remove standalone filler sounds and interjections from the translated subtitle entirely, including: Aaah, Aah, Ah, Ahem, Ahh, Argh, Aw, Aww, Eh, Ehm, Er, Erm, Err, Gah, Ha, Heh, Hm, Hmm, Hmmm, Hmph, Huh, Mm, Mmm, Mhm, Oh, Ohh, Ooh, Oops, Ouch, Ow, Pff, Pfft, Phew, Psst, Sh, Shh, Shhh, Ugh, Uh, Uhh, Uhm, Um, Umm, Whew, Whoa, Wow, Yikes, plus Romanian hesitation forms such as „ă”, „ăă”, „ăăă”, „îhî” and „mhm”.
+- Remove non-dialogue sound labels and standalone grunts or cries when they are only subtitle noise, not meaningful spoken dialogue.
+- Remove meaningless hesitation sounds from inside an otherwise meaningful sentence too, and repair the punctuation so the Romanian sentence remains natural.
+- Do not leave empty dash markers or empty text lines after cleaning.
+- Meaningful multi-word expressions must still be translated by meaning; do not delete an entire sentence just because it starts with an interjection.
 
-FINAL SILENT REVIEW
-Before returning the JSON, check line by line that the meaning matches the English source, the Romanian is natural and grammatically correct, every word is complete and spelled correctly, the diacritics are correct, fillers were removed only when meaningless, and every input ID remains aligned with its own translation. Correct genuine errors, but do not rewrite an already-good line merely because another wording is possible.
+FINAL MANDATORY REVIEW
+Before returning the JSON, silently proofread every translation against the English source and available context. Check the complete meaning, Romanian naturalness, adult/colloquial register, grammatical agreement, full spelling and diacritics, untranslatable fragments, line lengths, line count, dialogue formatting, filler cleanup, and strict one-to-one ID alignment. Fix genuine errors, but do not change the meaning or invent content.
 `;
 
 // ============================================================
@@ -1868,6 +1942,9 @@ REGULI CRITICE:
 1. Dacă traducerea este corectă și naturală, NU O MODIFICA.
 2. Dacă există orice dubiu că o schimbare ar putea modifica sensul, păstrează traducerea actuală.
 3. Nu schimba slangul, vulgaritățile, expresiile colocviale, sarcasmul, umorul sau stilul personajului dacă sunt inteligibile și corecte.
+3a. Păstrează registrul adult și direct al ORIGINALULUI. Dacă sursa numește explicit un organ sau un termen sexual/anatomic, NU îl înlocui cu un eufemism vag precum „jos” sau „acolo”. Păstrează sensul și gradul de explicitate al sursei.
+3b. Nu adăuga diminutive sau forme copilărești care nu sunt susținute de ORIGINAL. Verifică singularul/pluralul, genul și referentul; nu transforma arbitrar un termen singular în plural sau într-un diminutiv.
+3c. Nu face dialogul mai cuminte, mai formal sau mai copilăresc decât sursa. Păstrează vulgaritatea și umorul adult atunci când există în ORIGINAL, fără să le intensifici.
 4. NU elimina și NU modifica repetiții intenționate sau bâlbâieli de dialog, de exemplu „Nu-nu”, „Da, eu-eu...”, „Nu, nu, nu.”.
 5. Nu modifica nume proprii, titluri, mărci, locuri sau termeni ficționali doar pentru că par neobișnuiți.
 6. Nu transforma o formulare colocvială corectă într-una literară.
@@ -1917,7 +1994,8 @@ Aceste exemple trebuie folosite pentru a detecta CATEGORIILE de eroare: semantic
 34. Repară numai când există o variantă românească clară, susținută de ORIGINAL și context. Dacă sunt posibile mai multe variante plauzibile și nu există certitudine, păstrează traducerea actuală.
 35. Păstrează sensul original, registrul, vulgaritățile, slangul, umorul și intenția replicii.
 36. Nu adăuga informații și nu elimina informații.
-37. Păstrează exact formatul de subtitrare și eventualele line-break-uri relevante.
+37. Păstrează formatul de subtitrare: maximum 2 rânduri, ideal maximum 43 de caractere pe rând; dacă block-ul are doi vorbitori, păstrează-i pe rânduri separate cu formatul „- Text”. Nu muta textul între ID-uri.
+37a. Pentru o împărțire vizuală în două rânduri a aceleiași propoziții, preferă un punct natural de rupere; al doilea rând începe cu literă mică dacă propoziția continuă, cu excepția numelor proprii sau a unei propoziții noi.
 38. Nu introduce engleză în traducere și nu introduce caractere non-latine.
 39. Dacă nu ești 100% sigur că există o eroare, PĂSTREAZĂ traducerea actuală.
 
