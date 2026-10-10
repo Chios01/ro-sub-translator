@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.94-test.7.2',
+    version: '12.78.94-test.7.3',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1648,7 +1648,9 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks}...${c.reset}`);
 
-            const raw = await callGemini(prompt, keyState);
+            // Test controlat: raționare MEDIUM numai pentru calupurile traducerii principale.
+            // Grammar Review și apelurile de recuperare păstrează setarea implicită.
+            const raw = await callGemini(prompt, keyState, { thinkingLevel: 'medium' });
             const parsed = JSON.parse(String(raw).trim());
             const dict = normalizeTranslationPayload(parsed);
 
@@ -2323,9 +2325,7 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                     : prompt;
                 const raw = await callGemini(requestPrompt, keyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
-                    // Test controlat: raționare MEDIUM numai pentru Grammar Review.
-                    // Traducerea principală și celelalte apeluri Gemini rămân neschimbate.
-                    thinkingLevel: 'medium',
+                    // Grammar Review păstrează setarea implicită de raționament.
                     responseSchema: {
                         type: 'ARRAY',
                         minItems: 0,
