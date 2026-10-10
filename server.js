@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.94-test.7.1',
+    version: '12.78.94-test.7.2',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2323,9 +2323,9 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                     : prompt;
                 const raw = await callGemini(requestPrompt, keyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
-                    // Test controlat: raționare HIGH numai pentru Grammar Review.
+                    // Test controlat: raționare MEDIUM numai pentru Grammar Review.
                     // Traducerea principală și celelalte apeluri Gemini rămân neschimbate.
-                    thinkingLevel: 'high',
+                    thinkingLevel: 'medium',
                     responseSchema: {
                         type: 'ARRAY',
                         minItems: 0,
