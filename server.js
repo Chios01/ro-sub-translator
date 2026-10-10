@@ -29,9 +29,10 @@ const BROWSER_USER_AGENT =
 const CHUNK_SIZE = 165;
 const CONCURRENCY_LIMIT = 3;
 
-// Dezactivat explicit: Grammar Review AI nu mai reprocesează toate replicile.
-// Pentru reactivare controlată, schimbă valoarea în true și redeployează.
-const ENABLE_GRAMMAR_REVIEW = false;
+// Verificarea AI completă rămâne oprită pentru a nu dubla timpul traducerii.
+// Verificarea AI PUNCTUALĂ rămâne activă pentru replicile suspecte detectate local.
+const ENABLE_FULL_GRAMMAR_REVIEW = false;
+const ENABLE_TARGETED_GRAMMAR_REVIEW = true;
 
 const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
@@ -78,7 +79,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.99',
+    version: '12.78.101',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -591,8 +592,9 @@ function isSourceHesitationOnly(text) {
     const hasActualHesitation = words.some(isSourceHesitationWord);
     if (!hasActualHesitation) return false;
 
-    // „well/so” sunt tolerate doar împreună cu o ezitare reală: „Well, um...”.
-    return words.every(word => isSourceHesitationWord(word) || word === 'well' || word === 'so');
+    // „Well, um...” / „So, um...” nu sunt ezitare pură: „Well/So” poartă
+    // sens de legătură („Păi/Deci”) și trebuie păstrat după eliminarea lui „um”.
+    return words.every(isSourceHesitationWord);
 }
 
 function normalizeDuplicateSourceIds(items) {
@@ -636,6 +638,22 @@ function deepCleanSubtitleText(text) {
 
     // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
     // Elimină una sau mai multe repetări ale aceleiași litere: „Ț-ț-ținta” → „Ținta”.
+    // Corecție pentru bâlbâiala observată în numele propriu:
+    // „Oh-ppenheimer” / „O-ppenheimer” -> „Oppenheimer”.
+    cleaned = cleaned.replace(/\bO[h]?[-–—]ppenheimer\b/giu, 'Oppenheimer');
+
+    // Elimină repetarea completă a aceluiași cuvânt compus: „vor-vor” -> „vor”,
+    // „N-am-n-am” -> „N-am”. Formele normale „n-am” și „re-educare” rămân intacte.
+    cleaned = cleaned.replace(
+        /\b([\p{L}]+(?:-[\p{L}]+)?)\s*[-–—]\s*\1\b/giu,
+        '$1'
+    );
+
+    // Greșeală de tastare observată în subtitrarea de test.
+    cleaned = cleaned.replace(/\bpuncrele\b/giu, match =>
+        /^[P]/.test(match) ? 'Punctele' : 'punctele'
+    );
+
     cleaned = cleaned.replace(/(^|[^\p{L}])([A-Za-zĂÂÎȘȚăâîșț])(?:[-–—]\2)+(?=[A-Za-zĂÂÎȘȚăâîșț])/giu, '$1$2');
     // Elimină fragmentul întrerupt repetat înaintea cuvântului complet:
     // „Ți-... Ținta” / „Țin—… Ținta” -> „Ținta”. Se aplică doar dacă
@@ -1674,6 +1692,11 @@ function hasCorruptedSubtitleText(text, originalText) {
     if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) return true;
     if (/[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF]/.test(s)) return true;
 
+    // Semnal pentru formularea defectuoasă observată în SRT-ul tt15398776.
+    // Nu o rescriem automat; o trimitem spre targeted retry.
+    if (/(?:^|[^\p{L}])orăleană(?:$|[^\p{L}])/iu.test(s) &&
+        /(?:^|[^\p{L}])inutil[ăa](?:$|[^\p{L}])/iu.test(s)) return true;
+
     return false;
 }
 
@@ -1987,6 +2010,8 @@ Returnează DOAR JSON valid în forma:
 // ============================================================
 
 const GRAMMAR_REVIEW_BATCH_SIZE = 120;
+// Calupuri mai mici pentru verificarea punctuală: scad tokenii/request și riscul de timeout.
+const GRAMMAR_TARGETED_REVIEW_BATCH_SIZE = 35;
 const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
 const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
 const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
@@ -2018,7 +2043,10 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     }
     console.log(`   Verificate: ${candidates.length} replici`);
 
-    const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
+    const reviewBatchSize = isTargetedReview
+        ? GRAMMAR_TARGETED_REVIEW_BATCH_SIZE
+        : GRAMMAR_REVIEW_BATCH_SIZE;
+    const batches = chunkArray(candidates, reviewBatchSize);
     let checked = 0;
     let fixed = 0;
 
@@ -2039,7 +2067,8 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
                 context_anterior_en: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
                 context_urmator_en: next ? `[${next.id}] ${next.text}` : '(niciunul)',
                 context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
-                context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)'
+                context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)',
+                semnale_locale: options.reasonsById?.[String(item.id)] || []
             };
         });
 
@@ -2370,7 +2399,8 @@ Nu folosi faptul că „ai spune tu altfel” sau că o variantă „sună mai b
 
 DATELE DE VERIFICAT:
 Fiecare obiect conține și context_anterior_en/context_urmator_en și context_anterior_ro/context_urmator_ro. Acestea sunt DOAR pentru înțelegerea sensului, acordului și continuității.
-Nu le traduce și nu le modifica. Returnează corecții DOAR pentru câmpul translation al ID-ului curent.
+Câmpul semnale_locale conține motivele pentru care verificările automate au marcat replica. Folosește-le ca indicii de verificat, NU ca dovadă automată că traducerea este greșită. Compară obligatoriu originalul și contextul înainte de a corecta.
+Nu traduce și nu modifica textele de context. Returnează corecții DOAR pentru câmpul translation al ID-ului curent.
 ${JSON.stringify(payload, null, 2)}
 
 Returnează DOAR JSON valid în forma:
@@ -2733,7 +2763,8 @@ async function runLocalGrammarQualityPass(items, translatedById) {
 
     return {
         autoFixed,
-        flaggedItems: flagged.map(entry => entry.item)
+        flaggedItems: flagged.map(entry => entry.item),
+        flaggedDetails: flagged.map(entry => ({ item: entry.item, reasons: entry.reasons }))
     };
 }
 
@@ -2889,6 +2920,141 @@ Returnează DOAR un ARRAY JSON valid în forma:
 }
 
 // ============================================================
+// DETECTARE ȘI RECUPERARE PENTRU TRADUCERI REPETATE PE ID-URI DIFERITE
+// ============================================================
+
+function normalizeRepeatedTranslationCheckText(text) {
+    return String(text || '')
+        .replace(/<[^>]+>/g, ' ')
+        .normalize('NFKC')
+        .toLocaleLowerCase('ro-RO')
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function findSuspiciousRepeatedTranslationRuns(items, translatedById) {
+    const runs = [];
+    let i = 0;
+
+    while (i < items.length) {
+        const first = items[i];
+        const firstNorm = normalizeRepeatedTranslationCheckText(translatedById[String(first.id)]);
+        const words = firstNorm ? firstNorm.split(' ') : [];
+
+        // Ignorăm răspunsurile scurte și interjecțiile repetate, precum „Da.” sau „Nu.”.
+        if (firstNorm.length < 28 || words.length < 5) {
+            i++;
+            continue;
+        }
+
+        let j = i + 1;
+        while (
+            j < items.length &&
+            normalizeRepeatedTranslationCheckText(translatedById[String(items[j].id)]) === firstNorm
+        ) {
+            j++;
+        }
+
+        if (j - i >= 3) {
+            const sourceNorms = items.slice(i, j).map(item =>
+                normalizeRepeatedTranslationCheckText(item.text)
+            );
+            const uniqueSources = new Set(sourceNorms.filter(Boolean));
+            const substantialSources = sourceNorms.every(source => source.length >= 8);
+
+            // Trei+ traduceri lungi identice pentru trei+ replici-sursă distincte
+            // sunt un semnal de repetare/asociere greșită, nu o simplă repetiție de „Da/Nu”.
+            if (uniqueSources.size >= 3 && substantialSources) {
+                runs.push(items.slice(i, j));
+            }
+        }
+
+        i = Math.max(i + 1, j);
+    }
+
+    return runs;
+}
+
+async function repairSuspiciousRepeatedTranslationRuns(items, translatedById, keyStates) {
+    const runs = findSuspiciousRepeatedTranslationRuns(items, translatedById);
+    if (!runs.length) {
+        console.log(`${c.green}✔ [Mapping Check] Nicio secvență de 3+ traduceri lungi identice pe replici-sursă distincte.${c.reset}`);
+        return 0;
+    }
+
+    let repaired = 0;
+
+    for (const run of runs) {
+        const ids = run.map(item => String(item.id));
+        console.log(`${c.yellow}⚠ [Mapping Check] Posibil text repetat pe ID-uri distincte (${ids.join(', ')}); retranslatare punctuală.${c.reset}`);
+
+        const prompt = `
+${MASTER_TRANSLATION_PROMPT}
+
+VERIFICARE PUNCTUALĂ A ASOCIERII ID–TEXT.
+În rezultatul precedent, mai multe replici-sursă distincte au primit accidental aceeași traducere românească.
+Tradu fiecare replică independent, strict după textul ei original. Nu copia aceeași propoziție între ID-uri diferite doar pentru că sunt alăturate.
+Păstrează toate ID-urile exact; nu combina replicile, nu muta textul între ID-uri și nu omite nimic.
+
+REPLICI:
+${JSON.stringify(run.map(item => ({
+            id: item.id,
+            text: item.text,
+            traducere_anterioara: translatedById[String(item.id)] || ''
+        })), null, 2)}
+
+Returnează DOAR un ARRAY JSON valid:
+[
+  {"id": 123, "text": "traducerea română"}
+]
+`;
+
+        try {
+            const keyState = await getAvailableKey(keyStates);
+            const raw = await callGemini(prompt, keyState, { timeout: 30000 });
+            const parsed = safeJsonParse(raw);
+            const dict = normalizeTranslationPayload(parsed);
+
+            const candidates = run.map(item => {
+                const rawCandidate = dict[String(item.id)];
+                if (rawCandidate === undefined || rawCandidate === null) {
+                    throw new Error(`Lipsește ID-ul ${item.id} la verificarea ID–text.`);
+                }
+
+                const candidate = formatSubtitleLine(String(rawCandidate));
+                const cleaned = formatSubtitleLine(deepCleanSubtitleText(candidate));
+                if (!cleaned.trim()) {
+                    throw new Error(`Traducerea pentru ID ${item.id} a rămas goală.`);
+                }
+                if (hasUntranslatedEnglish(item.text, cleaned) || hasCorruptedSubtitleText(cleaned, item.text)) {
+                    throw new Error(`Traducerea pentru ID ${item.id} a rămas suspectă.`);
+                }
+
+                return { item, text: cleaned };
+            });
+
+            const distinct = new Set(candidates.map(candidate =>
+                normalizeRepeatedTranslationCheckText(candidate.text)
+            ));
+            if (distinct.size < 2) {
+                throw new Error('Răspunsul nou repetă aceeași traducere pe toate ID-urile.');
+            }
+
+            for (const candidate of candidates) {
+                translatedById[String(candidate.item.id)] = candidate.text;
+            }
+            repaired += candidates.length;
+            console.log(`${c.green}✔ [Mapping Check] Retraduse și revalidate ID-urile ${ids.join(', ')}.${c.reset}`);
+        } catch (error) {
+            console.log(`${c.yellow}⚠ [Mapping Check] Nu am putut confirma corectarea pentru ID-urile ${ids.join(', ')}: ${error.message}.${c.reset}`);
+        }
+    }
+
+    return repaired;
+}
+
+// ============================================================
 // MOTORUL PRINCIPAL DE TRADUCERE SRT
 // ============================================================
 
@@ -2943,6 +3109,10 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     }
 
     console.log(`\n${c.green}✔ Toate cele ${chunks.length} de calupuri finalizate!${c.reset}`);
+
+    // Detectează o eroare pe care verificarea ID-urilor prezente nu o vede:
+    // aceeași traducere lungă returnată pentru trei sau mai multe replici-sursă diferite.
+    await repairSuspiciousRepeatedTranslationRuns(items, translatedById, keyStates);
 
     const emptyTranslations = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
@@ -3011,28 +3181,33 @@ Returnează DOAR un ARRAY JSON valid în forma:
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
 
-    if (ENABLE_GRAMMAR_REVIEW) {
+    if (ENABLE_FULL_GRAMMAR_REVIEW) {
         await grammarTranslationReview(items, translatedById, keyStates);
     } else {
-        console.log(`${c.yellow}⏭ Grammar Review AI dezactivat: sar peste verificarea completă a replicilor.${c.reset}`);
+        console.log(`${c.yellow}⏭ Grammar Review complet omis pentru a evita reverificarea tuturor replicilor; verificarea punctuală rămâne separată.${c.reset}`);
     }
 
-    // Păstrăm trecerea locală, fără cereri AI: aplică doar corecțiile deterministe
-    // deja existente. Semnalele de gramatică nu declanșează revizuire AI cât timp
-    // ENABLE_GRAMMAR_REVIEW este false.
+    // Corecții deterministe și detectarea locală a replicilor care merită o analiză AI.
+    // Acest pas nu face cereri Gemini.
     const microGrammar = await runLocalGrammarQualityPass(items, translatedById);
 
-    if (ENABLE_GRAMMAR_REVIEW) {
+    if (ENABLE_TARGETED_GRAMMAR_REVIEW) {
         const semanticSpotCheckItems = runSemanticSpotCheck(items, translatedById);
 
-        // Când Grammar Review este activat, combinăm semnalele într-o singură
-        // verificare AI punctuală; implicit, această ramură nu se execută.
+        // Combinăm toate semnalele într-o singură listă, ca fiecare replică să fie trimisă
+        // cel mult o dată la verificarea AI punctuală. Păstrăm motivul detectării pentru AI.
         const targetedReviewMap = new Map();
-        for (const item of microGrammar.flaggedItems) {
-            targetedReviewMap.set(String(item.id), item);
+        const targetedReasonsById = Object.create(null);
+        for (const entry of microGrammar.flaggedDetails) {
+            const id = String(entry.item.id);
+            targetedReviewMap.set(id, entry.item);
+            targetedReasonsById[id] = [...entry.reasons];
         }
         for (const item of semanticSpotCheckItems) {
-            targetedReviewMap.set(String(item.id), item);
+            const id = String(item.id);
+            targetedReviewMap.set(id, item);
+            const semanticReasons = detectSemanticSpotCheckReasons(translatedById[id] || '');
+            targetedReasonsById[id] = [...new Set([...(targetedReasonsById[id] || []), ...semanticReasons])];
         }
 
         if (targetedReviewMap.size) {
@@ -3040,11 +3215,13 @@ Returnează DOAR un ARRAY JSON valid în forma:
                 [...targetedReviewMap.values()],
                 translatedById,
                 keyStates,
-                { mode: 'targeted', contextItems: items }
+                { mode: 'targeted', contextItems: items, reasonsById: targetedReasonsById }
             );
+        } else {
+            console.log(`${c.green}✔ [Grammar Review punctual] Nicio replică nu a fost marcată de verificările locale.${c.reset}`);
         }
     } else {
-        console.log(`${c.cyan}ℹ Corecțiile locale deterministe rămân active; nu se trimit cereri AI de Grammar Review.${c.reset}`);
+        console.log(`${c.cyan}ℹ Verificarea AI punctuală este dezactivată explicit; corecțiile locale deterministe rămân active.${c.reset}`);
     }
 
     // Recuperarea finală pentru eventualele traduceri goale, indiferent dacă Grammar Review este activat.
@@ -3097,7 +3274,14 @@ Returnează DOAR un ARRAY JSON valid în forma:
     console.log(`\n${c.cyan}🔒 Protecție finală: curățarea deterministă a fost reaplicată după recuperări.${c.reset}`);
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
+    const finalRepeatedRuns = findSuspiciousRepeatedTranslationRuns(items, translatedById);
+    const finalRepeatedIds = new Set(finalRepeatedRuns.flatMap(run => run.map(item => String(item.id))));
+    if (finalRepeatedIds.size) {
+        console.log(`${c.yellow}⚠ [Mapping Check] Repetări lungi încă suspecte după toate corecțiile (ID: ${[...finalRepeatedIds].join(', ')}).${c.reset}`);
+    }
+
     const finalSuspicious = items.filter(item => {
+        if (finalRepeatedIds.has(String(item.id))) return true;
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
         if (isJunkOrInterjection(item.text) || isSourceHesitationOnly(item.text)) return false;
@@ -3120,7 +3304,10 @@ Returnează DOAR un ARRAY JSON valid în forma:
         console.log(`${c.green}✔ 0 replici suspecte${c.reset}`);
     }
 
-    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide${c.reset}`);
+    const suppressedHesitationCues = items.filter(item => isSourceHesitationOnly(item.text)).length;
+    const nonEmptyTranslations = items.filter(item => String(translatedById[String(item.id)] || '').trim()).length;
+    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} ID-uri fără probleme detectabile${c.reset}`);
+    console.log(`${c.cyan}ℹ Traduceri cu text: ${nonEmptyTranslations}/${items.length}; replici-sursă de ezitare suprimate: ${suppressedHesitationCues}.${c.reset}`);
     console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
 
     const output = items.map(item => {
