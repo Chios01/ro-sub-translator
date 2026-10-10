@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.108',
+    version: '12.78.109',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1926,6 +1926,17 @@ function qualityNormalizeText(text) {
         .trim().replace(/\s+/g, ' ');
 }
 
+function qualityAddressComparableText(text) {
+    // Maschează numai formele de adresare, pentru ca un candidat care corectează
+    // „tu/te/ta” în „dumneavoastră/vă” să nu fie tratat automat ca o traducere fără legătură.
+    let value = String(text || '')
+        .replace(/(?<![\p{L}])(?:vă\s+rog|va\s+rog|te\s+rog)(?![\p{L}])/giu, ' ADDR_FORMULA ')
+        .replace(/(?<![\p{L}])(?:dumneavoastră|dumneavoastra|dumneata|dvs\.?|vă)(?![\p{L}])/giu, ' ADDR ')
+        .replace(/(?<![\p{L}])(?:tu|tine|te|ți|ti|tău|tau|ta|tale|tăi|tai)(?![\p{L}])/giu, ' ADDR ')
+        .replace(/(?<![\p{L}])(?:erați|erati|erai|sunteți|sunteti|ești|esti|aveți|aveti|ai|ați|ati|doriți|doriti|vrei|știți|stiti|știi|stii|puteți|puteti|poți|poti|credeți|credeti|crezi|faceți|faceti|faci|spuneți|spuneti|spui)(?![\p{L}])/giu, ' ADDR_VERB ');
+    return qualityNormalizeText(value);
+}
+
 function qualityTokens(text) {
     return qualityNormalizeText(text).split(' ').filter(token =>
         token.length >= 3 && !QUALITY_STOP_WORDS.has(token)
@@ -1982,13 +1993,17 @@ function validateGrammarCorrectionAssociation(item, current, candidate, contextI
     const candidateTokens = qualityTokens(candidateText);
     const tokenSimilarity = qualityTokenSimilarity(currentText, candidateText);
     const charSimilarity = qualityLevenshteinSimilarity(currentText, candidateText);
+    const addressSimilarity = qualityTokenSimilarity(
+        qualityAddressComparableText(currentText),
+        qualityAddressComparableText(candidateText)
+    );
     const maximumLength = Math.max(currentText.length, 1);
     const lengthRatio = candidateText.length / maximumLength;
 
     // Grammar Review must not silently become full retranslation. A large semantic
     // rewrite is handled by the main targeted-translation pipeline, not this pass.
     if (currentTokens.length >= 2 && candidateTokens.length >= 2 &&
-        tokenSimilarity < 0.18 && charSimilarity < 0.58) {
+        tokenSimilarity < 0.18 && charSimilarity < 0.58 && addressSimilarity < 0.68) {
         return {
             ok: false,
             reason: `similaritate prea mică cu replica curentă (token=${Math.round(tokenSimilarity * 100)}%, text=${Math.round(charSimilarity * 100)}%)`,
@@ -2001,7 +2016,7 @@ function validateGrammarCorrectionAssociation(item, current, candidate, contextI
     }
 
     if (currentTokens.length >= 3 && candidateTokens.length >= 3 &&
-        (lengthRatio > 2.8 || lengthRatio < 0.32) && tokenSimilarity < 0.45) {
+        (lengthRatio > 2.8 || lengthRatio < 0.32) && tokenSimilarity < 0.45 && addressSimilarity < 0.68) {
         return { ok: false, reason: `lungime suspectă pentru o corecție (${Math.round(lengthRatio * 100)}% din lungimea inițială)`, similarity: tokenSimilarity };
     }
 
@@ -2040,8 +2055,19 @@ function validateGrammarCorrectionAssociation(item, current, candidate, contextI
         };
     }
 
-    return { ok: true, reason: 'asociere plauzibilă cu replica', similarity: Math.max(tokenSimilarity, charSimilarity) };
+    return { ok: true, reason: 'asociere plauzibilă cu replica', similarity: Math.max(tokenSimilarity, charSimilarity, addressSimilarity) };
 }
+
+// PRIORITĂȚI SUPLIMENTARE PENTRU AUDITUL GRAMATICAL (v12.78.109).
+// Se aplică numai Grammar Review; motorul traducerii principale rămâne neschimbat.
+const GRAMMAR_REVIEW_PRIORITY_RULES = `
+PRIORITĂȚI OBLIGATORII ALE AUDITULUI — citește înainte de a propune orice corecție:
+A. REGISTRUL DE ADRESARE (tu vs. dumneavoastră): compară traducerea cu replicile vecine în engleză și română. Dacă același schimb de replici folosește consecvent „dumneavoastră/vă/sunteți/aveți/ați” și vocative formale („domnule/doamnă”), nu schimba izolată replica în „tu/te/ți/tău/ta” fără dovadă clară că interlocutorul sau registrul s-a schimbat. Aplică aceeași regulă și invers. Englezescul „you”, singur, NU dovedește nici registrul formal, nici pe cel informal. Nu uniformiza mecanic conversații între personaje diferite.
+B. EXPRESII IDIOMATICE: verifică expresia din ORIGINAL, nu doar cuvintele. Păstrează echivalentul consacrat în română dacă transmite sensul originalului; nu înlocui o expresie românească naturală cu un calc literal stângaci. De exemplu, „Pandora's box” se redă „cutia Pandorei”, nu „cutia cu viermi”. Pentru alte expresii, alege echivalentul numai după sensul și contextul englezesc.
+C. CORECȚII, NU REFORMULĂRI: nu schimba sinonime, ordinea firească a cuvintelor sau punctuația doar din preferință. Propune text nou numai dacă poți identifica precis eroarea actuală (gramatică, ortografie, sens, registru sau calc) și noua variantă o repară fără informații inventate.
+D. FRAGMENTE ÎNTRE SUBTITRĂRI: dacă propoziția continuă în ID-ul anterior/următor, verifică fraza împreună, dar modifică numai ID-ul curent. Nu completa fragmentul cu informația din alt ID și nu muta textul între ID-uri.
+E. CONTROL FINAL AL FIECĂREI CORECȚII: recitește originalul EN, noul RO și contextul. Verifică rolurile personajelor, persoana verbală, forma de adresare, idiomul, acordurile și sensul. Dacă nu există o eroare clară și o corecție sigură, nu returna acel ID.
+`;
 
 const GRAMMAR_REVIEW_BATCH_SIZE = 120;
 const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
@@ -2107,6 +2133,7 @@ Aceasta este o VERIFICARE SUPLIMENTARĂ, independentă de traducerea principală
 NU retraduce automat și NU rescrie replicile pentru stil.
 Scopul este să identifici și să corectezi DOAR greșelile CLARE de gramatică, ortografie sau traducere care fac replica română incorectă, coruptă sau evident lipsită de sens.
 
+${GRAMMAR_REVIEW_PRIORITY_RULES}
 REGULI CRITICE:
 1. Dacă traducerea este corectă și naturală, NU O MODIFICA.
 2. Dacă există orice dubiu că o schimbare ar putea modifica sensul, păstrează traducerea actuală.
@@ -2694,7 +2721,13 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\binnascuta\b/gi, 'înnăscută'],
     [/\binnascut\b/gi, 'înnăscut'],
     [/\binnascuti\b/gi, 'înnăscuți'],
-    [/(?<![\p{L}])ți-a\s+pasat\b/iu, 'ți-a păsat']
+    [/(?<![\p{L}])ți-a\s+pasat\b/iu, 'ți-a păsat'],
+    // Ortografie stabilă: „acceași” este o deformare a lui „aceeași”.
+    [/\bacceași\b/giu, 'aceeași'],
+    // „factă” nu este forma substantivului românesc „fapt”; corectăm numai
+    // construcția clar invalidă „o factă” și cazul exact „O factă”.
+    [/\bO factă\b/g, 'Un fapt'],
+    [/\bo factă\b/g, 'un fapt']
 ];
 
 function applyLocalGrammarDeterministicFixes(text) {
@@ -3543,6 +3576,22 @@ function runQualitySelfTests() {
     );
     assert.strictEqual(safeCheck.ok, true, 'Guard-ul trebuie să permită o corecție gramaticală cu sens păstrat');
 
+    assert.strictEqual(applyLocalGrammarDeterministicFixes('Am pus acceași întrebare.'), 'Am pus aceeași întrebare.', 'Corecția sigură acceași → aceeași nu funcționează');
+    const registerItem = { id: 130, text: 'For you and your wife.' };
+    const registerCheck = validateGrammarCorrectionAssociation(
+        registerItem,
+        'Pentru tine și soția ta.',
+        'Pentru dumneavoastră și soția dumneavoastră.',
+        [registerItem],
+        { '130': 'Pentru tine și soția ta.' }
+    );
+    assert.strictEqual(registerCheck.ok, true, 'Guard-ul a blocat o corecție de adresare cu aceeași structură');
+    assert.ok(qualityTokenSimilarity(qualityAddressComparableText('Pentru tine și soția ta.'), qualityAddressComparableText('Pentru dumneavoastră și soția dumneavoastră.')) > 0.95, 'Normalizarea de registru nu a păstrat structura propoziției');
+
+    assert.ok(GRAMMAR_REVIEW_PRIORITY_RULES.includes('REGISTRUL DE ADRESARE'), 'Lipsește instrucțiunea explicită tu/dumneavoastră');
+    assert.ok(GRAMMAR_REVIEW_PRIORITY_RULES.includes('cutia Pandorei'), 'Lipsește verificarea expresiilor idiomatice');
+    assert.ok(GRAMMAR_REVIEW_PRIORITY_RULES.includes('Englezescul „you”, singur'), 'Auditul nu avertizează să nu deducă registrul doar din you');
+
     const driftItem = { id: 1358, text: 'Then we need to move.' };
     const driftContext = [driftItem, { id: 1359, text: 'There is no evidence of a spy.' }];
     const driftCheck = validateGrammarCorrectionAssociation(
@@ -3607,6 +3656,10 @@ function runQualitySelfTests() {
     console.log('QUALITY SELF-TESTS: PASS');
     console.log('PASS: 3395 IDs + timecode round-trip');
     console.log('PASS: typo/grammar correction remains allowed');
+    console.log('PASS: contextual register correction permitted');
+    console.log('PASS: explicit address-register and idiom rules included');
+    console.log('PASS: address-register and idiom priorities present in Grammar Review prompt');
+    console.log('PASS: safe deterministic spelling correction acceași → aceeași');
     console.log('PASS: unrelated line reassignment rejected');
     console.log('PASS: candidate matching another ID rejected');
     console.log('PASS: explicit empty subtitle preserved');
