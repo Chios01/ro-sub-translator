@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.112',
+    version: '12.78.113',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -551,6 +551,10 @@ function cleanTextForJson(text) {
     clean = clean.replace(/\[[^\]]*?\]/g, '');
     clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughter)[^)]*?\)/gi, '');
     clean = clean.replace(/\([^)]*?\)/g, '');
+
+    // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
+    // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
+    clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
     clean = lines.join('\n');
@@ -1569,6 +1573,59 @@ function hasCorruptedSubtitleText(text, originalText) {
     return false;
 }
 
+// ============================================================
+// SOURCE-TERM FIDELITY GUARD — TERMENI ANATOMICI EXPLICIȚI
+// Adaugă o verificare conservatoare când sursa numește direct un organ.
+// Nu înlocuiește formularea automat; doar declanșează o reverificare țintită
+// și împiedică Grammar Review să accepte o rescriere care pierde termenul.
+// ============================================================
+const EXPLICIT_ANATOMICAL_TERM_GUARDS = [
+    {
+        label: 'vagina',
+        source: /\bvagina(?:s)?\b/i,
+        target: /vagin[\p{L}-]*/iu
+    },
+    {
+        label: 'vulva',
+        source: /\bvulva(?:s)?\b/i,
+        target: /vulv[\p{L}-]*/iu
+    },
+    {
+        label: 'clitoris',
+        source: /\bclitoris\b|\bclitoral\b/i,
+        target: /clitor[\p{L}-]*/iu
+    },
+    {
+        label: 'penis',
+        source: /\bpenis(?:es)?\b/i,
+        target: /(?:^|[^\p{L}])(?:penis[\p{L}-]*|pul(?:ă|a|ii|ile|e|ului))(?=$|[^\p{L}])/iu
+    },
+    {
+        label: 'breasts/boobs/tits',
+        source: /\bbreasts?\b|\bboobs?\b|\btits?\b/i,
+        target: /(?:^|[^\p{L}])(?:sân(?:ul|ului|i|ii|ilor)?|țâț[\p{L}-]*|tâț[\p{L}-]*)(?=$|[^\p{L}])/iu
+    },
+    {
+        label: 'nipples',
+        source: /\bnipples?\b/i,
+        target: /sfârc[\p{L}-]*|mamel[\p{L}-]*/iu
+    }
+];
+
+function getMissingExplicitAnatomicalTerms(original, translation) {
+    const sourceText = String(original || '').replace(/<[^>]+>/g, ' ');
+    const translatedText = String(translation || '').replace(/<[^>]+>/g, ' ');
+    if (!sourceText.trim() || !translatedText.trim()) return [];
+
+    return EXPLICIT_ANATOMICAL_TERM_GUARDS
+        .filter(rule => rule.source.test(sourceText) && !rule.target.test(translatedText))
+        .map(rule => rule.label);
+}
+
+function hasLostExplicitSourceTerm(original, translation) {
+    return getMissingExplicitAnatomicalTerms(original, translation).length > 0;
+}
+
 function normalizeTranslationPayload(parsed) {
     if (Array.isArray(parsed)) {
         const dict = Object.create(null);
@@ -1667,7 +1724,7 @@ ${JSON.stringify(missingItems, null, 2)}
                 // sau este doar un marker tehnic (—, -, ..., punctuație etc.).
                 // Acestea sunt gestionate separat de Empty Recovery / validarea finală.
                 if (!translatedClean || isJunkOrInterjection(result.text)) return false;
-                return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original);
+                return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original) || hasLostExplicitSourceTerm(original, result.text);
             });
 
             if (untranslatedItems.length > 0) {
@@ -1746,7 +1803,8 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
             if (!transClean) return true;
 
             return hasUntranslatedEnglish(item.text, translated) ||
-                hasCorruptedSubtitleText(translated, item.text);
+                hasCorruptedSubtitleText(translated, item.text) ||
+                hasLostExplicitSourceTerm(item.text, translated);
         });
 
         console.log(`\n${c.cyan}🔍 POST-CHECK GLOBAL — pass ${pass}/${maxPasses}${c.reset}`);
@@ -1771,12 +1829,19 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
                 try {
                     const keyState = await getAvailableKey(keyStates);
                     const current = translatedById[String(item.id)] || '';
+                    const missingExplicitTerms = getMissingExplicitAnatomicalTerms(item.text, current);
+                    const explicitTermInstruction = missingExplicitTerms.length
+                        ? `
+PROBLEMĂ SEMANTICĂ DETECTATĂ: ORIGINALUL numește explicit ${missingExplicitTerms.join(', ')}. Traducerea actuală pierde acest referent. Păstrează termenul anatomic într-un echivalent românesc direct și natural; nu-l înlocui cu „jos”, „acolo” sau o formulare vagă.
+`
+                        : '';
 
                     const singlePrompt = `
 ${MASTER_TRANSLATION_PROMPT}
 
 ACESTA ESTE UN RETRY FINAL, PUNCTUAL.
-Linia a fost detectată ca netradusă sau coruptă. Ignoră traducerea anterioară dacă este greșită și produce o traducere română completă.
+Linia a fost detectată ca netradusă, coruptă sau posibil lipsită de un detaliu semantic. Ignoră traducerea anterioară dacă este greșită și produce o traducere română completă.
+${explicitTermInstruction}
 
 ID:
 "${item.id}"
@@ -1805,7 +1870,8 @@ Returnează DOAR JSON valid în forma:
                     if (
                         candidate &&
                         !hasUntranslatedEnglish(item.text, candidate) &&
-                        !hasCorruptedSubtitleText(candidate, item.text)
+                        !hasCorruptedSubtitleText(candidate, item.text) &&
+                        !hasLostExplicitSourceTerm(item.text, candidate)
                     ) {
                         translatedById[String(item.id)] = candidate;
                         fixed = true;
@@ -1841,7 +1907,8 @@ Returnează DOAR JSON valid în forma:
             if (!transClean) return true;
 
             return hasUntranslatedEnglish(item.text, translated) ||
-                hasCorruptedSubtitleText(translated, item.text);
+                hasCorruptedSubtitleText(translated, item.text) ||
+                hasLostExplicitSourceTerm(item.text, translated);
         });
 
         if (remaining.length === 0) {
@@ -1863,7 +1930,8 @@ Returnează DOAR JSON valid în forma:
         if (!transClean) return true;
 
         return hasUntranslatedEnglish(item.text, translated) ||
-            hasCorruptedSubtitleText(translated, item.text);
+            hasCorruptedSubtitleText(translated, item.text) ||
+            hasLostExplicitSourceTerm(item.text, translated);
     });
 
     return { fixed: totalFixed, remaining };
@@ -1927,7 +1995,10 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
                 context_anterior_en: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
                 context_urmator_en: next ? `[${next.id}] ${next.text}` : '(niciunul)',
                 context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
-                context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)'
+                context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)',
+                avertisment_semantic: getMissingExplicitAnatomicalTerms(item.text, translatedById[String(item.id)] || '').length
+                    ? `Originalul conține ${getMissingExplicitAnatomicalTerms(item.text, translatedById[String(item.id)] || '').join(', ')}, dar traducerea nu păstrează termenul explicit.`
+                    : ''
             };
         });
 
@@ -1945,6 +2016,7 @@ REGULI CRITICE:
 3a. Păstrează registrul adult și direct al ORIGINALULUI. Dacă sursa numește explicit un organ sau un termen sexual/anatomic, NU îl înlocui cu un eufemism vag precum „jos” sau „acolo”. Păstrează sensul și gradul de explicitate al sursei.
 3b. Nu adăuga diminutive sau forme copilărești care nu sunt susținute de ORIGINAL. Verifică singularul/pluralul, genul și referentul; nu transforma arbitrar un termen singular în plural sau într-un diminutiv.
 3c. Nu face dialogul mai cuminte, mai formal sau mai copilăresc decât sursa. Păstrează vulgaritatea și umorul adult atunci când există în ORIGINAL, fără să le intensifici.
+3d. Dacă valoarea câmpului „avertisment_semantic” NU este goală, tratează-l ca pe un posibil detaliu semantic omis, nu ca pe o preferință stilistică. Dacă originalul numește explicit un organ anatomic, păstrează un echivalent românesc direct; nu-l înlocui cu „jos”, „acolo” sau alt eufemism vag. Corectează formularea în întregime, păstrând sensul și registrul.
 4. NU elimina și NU modifica repetiții intenționate sau bâlbâieli de dialog, de exemplu „Nu-nu”, „Da, eu-eu...”, „Nu, nu, nu.”.
 5. Nu modifica nume proprii, titluri, mărci, locuri sau termeni ficționali doar pentru că par neobișnuiți.
 6. Nu transforma o formulare colocvială corectă într-una literară.
@@ -2325,7 +2397,8 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                 // Filtrul suplimentar poate aplica doar o corecție care rămâne
                 // compatibilă cu verificările deja existente.
                 if (hasUntranslatedEnglish(item.text, candidate) ||
-                    hasCorruptedSubtitleText(candidate, item.text)) {
+                    hasCorruptedSubtitleText(candidate, item.text) ||
+                    hasLostExplicitSourceTerm(item.text, candidate)) {
                     console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: noua variantă a devenit suspectă${c.reset}`);
                     continue;
                 }
@@ -2604,6 +2677,10 @@ async function runLocalGrammarQualityPass(items, translatedById) {
         }
 
         const reasons = detectLocalGrammarReviewReasons(current);
+        const missingExplicitTerms = getMissingExplicitAnatomicalTerms(item.text, current);
+        if (missingExplicitTerms.length) {
+            reasons.push(`detaliu anatomic explicit pierdut din original: ${missingExplicitTerms.join(', ')}`);
+        }
         if (reasons.length) {
             flagged.push({
                 item,
@@ -2759,7 +2836,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
             if (
                 candidate &&
                 !hasUntranslatedEnglish(item.text, candidate) &&
-                !hasCorruptedSubtitleText(candidate, item.text)
+                !hasCorruptedSubtitleText(candidate, item.text) &&
+                !hasLostExplicitSourceTerm(item.text, candidate)
             ) {
                 translatedById[String(item.id)] = candidate;
                 recoveredCount++;
@@ -2870,7 +2948,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
                 if (
                     candidate &&
                     !hasUntranslatedEnglish(item.text, candidate) &&
-                    !hasCorruptedSubtitleText(candidate, item.text)
+                    !hasCorruptedSubtitleText(candidate, item.text) &&
+                    !hasLostExplicitSourceTerm(item.text, candidate)
                 ) {
                     translatedById[String(item.id)] = candidate;
                     recoveredCount++;
@@ -2965,13 +3044,17 @@ Returnează DOAR un ARRAY JSON valid în forma:
         if (!transClean) return true;
 
         return hasUntranslatedEnglish(item.text, translated) ||
-            hasCorruptedSubtitleText(translated, item.text);
+            hasCorruptedSubtitleText(translated, item.text) ||
+            hasLostExplicitSourceTerm(item.text, translated);
     });
 
     if (finalSuspicious.length > 0) {
         console.log(`${c.yellow}⚠ ${finalSuspicious.length} replici suspecte rămân după Global Post-Check${c.reset}`);
         finalSuspicious.slice(0, 20).forEach(item => {
-            console.log(`  ${c.red}❌ ${item.id}: ${String(translatedById[String(item.id)] || '').slice(0, 120)}${c.reset}`);
+            const finalText = String(translatedById[String(item.id)] || '');
+            const missingTerms = getMissingExplicitAnatomicalTerms(item.text, finalText);
+            const note = missingTerms.length ? ` [DETALIU ANATOMIC PIERDUT: ${missingTerms.join(', ')}]` : '';
+            console.log(`  ${c.red}❌ ${item.id}: ${finalText.slice(0, 120)}${note}${c.reset}`);
         });
     } else {
         console.log(`${c.green}✔ 0 replici suspecte${c.reset}`);
