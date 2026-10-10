@@ -29,6 +29,10 @@ const BROWSER_USER_AGENT =
 const CHUNK_SIZE = 165;
 const CONCURRENCY_LIMIT = 3;
 
+// Dezactivat explicit: Grammar Review AI nu mai reprocesează toate replicile.
+// Pentru reactivare controlată, schimbă valoarea în true și redeployează.
+const ENABLE_GRAMMAR_REVIEW = false;
+
 const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
 const PREVIOUS_TRANSLATION_CONTEXT = 8;
@@ -74,7 +78,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.93',
+    version: '12.78.94',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2737,7 +2741,7 @@ function runSemanticSpotCheck(items, translatedById) {
 // RECUPERARE DUPĂ GRAMMAR REVIEW — TRADUCERI DEVENITE GOALE
 // ============================================================
 
-async function recoverEmptyTranslationsAfterGrammarReview(items, translatedById, keyStates) {
+async function recoverEmptyTranslationsAfterReview(items, translatedById, keyStates) {
     const emptyTranslations = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
@@ -2752,7 +2756,7 @@ async function recoverEmptyTranslationsAfterGrammarReview(items, translatedById,
 
     if (!emptyTranslations.length) return { detected: 0, recovered: 0 };
 
-    console.log(`${c.yellow}⚠ [Post-Grammar Empty Recovery] ${emptyTranslations.length} traduceri goale detectate. Le retraduc punctual...${c.reset}`);
+    console.log(`${c.yellow}⚠ [Final Empty Recovery] ${emptyTranslations.length} traduceri goale detectate. Le retraduc punctual...${c.reset}`);
 
     const recoveryPrompt = `
 ${MASTER_TRANSLATION_PROMPT}
@@ -2797,12 +2801,12 @@ Returnează DOAR un ARRAY JSON valid în forma:
             }
         }
     } catch (error) {
-        console.log(`${c.yellow}⚠ [Post-Grammar Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
+        console.log(`${c.yellow}⚠ [Final Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
     }
 
     const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
     const failedSuffix = failedIds.length ? `; nereparate: ${failedIds.join(', ')}` : '';
-    console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Post-Grammar Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
+    console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Final Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
     return { detected: emptyTranslations.length, recovered: recoveredCount };
 }
 
@@ -2919,37 +2923,46 @@ Returnează DOAR un ARRAY JSON valid în forma:
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
 
-    await grammarTranslationReview(items, translatedById, keyStates);
+    if (ENABLE_GRAMMAR_REVIEW) {
+        await grammarTranslationReview(items, translatedById, keyStates);
+    } else {
+        console.log(`${c.yellow}⏭ Grammar Review AI dezactivat: sar peste verificarea completă a replicilor.${c.reset}`);
+    }
 
-    // Strat local foarte ieftin: repară doar typo-uri cu încredere mare și
-    // selectează replicile care merită încă o verificare AI punctuală.
+    // Păstrăm trecerea locală, fără cereri AI: aplică doar corecțiile deterministe
+    // deja existente. Semnalele de gramatică nu declanșează revizuire AI cât timp
+    // ENABLE_GRAMMAR_REVIEW este false.
     const microGrammar = await runLocalGrammarQualityPass(items, translatedById);
-    const semanticSpotCheckItems = runSemanticSpotCheck(items, translatedById);
 
-    // Combinăm Micro-Grammar + Semantic Spot Check într-o singură verificare AI
-    // punctuală. Astfel, dacă nu există semnale puternice, nu există niciun request
-    // suplimentar; dacă există, toate sunt trimise într-o singură trecere țintită.
-    const targetedReviewMap = new Map();
-    for (const item of microGrammar.flaggedItems) {
-        targetedReviewMap.set(String(item.id), item);
-    }
-    for (const item of semanticSpotCheckItems) {
-        targetedReviewMap.set(String(item.id), item);
+    if (ENABLE_GRAMMAR_REVIEW) {
+        const semanticSpotCheckItems = runSemanticSpotCheck(items, translatedById);
+
+        // Când Grammar Review este activat, combinăm semnalele într-o singură
+        // verificare AI punctuală; implicit, această ramură nu se execută.
+        const targetedReviewMap = new Map();
+        for (const item of microGrammar.flaggedItems) {
+            targetedReviewMap.set(String(item.id), item);
+        }
+        for (const item of semanticSpotCheckItems) {
+            targetedReviewMap.set(String(item.id), item);
+        }
+
+        if (targetedReviewMap.size) {
+            await grammarTranslationReview(
+                [...targetedReviewMap.values()],
+                translatedById,
+                keyStates,
+                { mode: 'targeted', contextItems: items }
+            );
+        }
+    } else {
+        console.log(`${c.cyan}ℹ Corecțiile locale deterministe rămân active; nu se trimit cereri AI de Grammar Review.${c.reset}`);
     }
 
-    if (targetedReviewMap.size) {
-        await grammarTranslationReview(
-            [...targetedReviewMap.values()],
-            translatedById,
-            keyStates,
-            { mode: 'targeted', contextItems: items }
-        );
-    }
-
-    // Ultima recuperare după TOATE trecerile Grammar Review.
+    // Recuperarea finală pentru eventualele traduceri goale, indiferent dacă Grammar Review este activat.
     // Astfel, o corecție punctuală care a produs accidental un text gol nu mai ajunge
     // în fișierul final. Sunt retrimise doar ID-urile goale, nu întregul fișier.
-    await recoverEmptyTranslationsAfterGrammarReview(items, translatedById, keyStates);
+    await recoverEmptyTranslationsAfterReview(items, translatedById, keyStates);
 
     // Ultima protecție: corecțiile mecanice certe trebuie aplicate DUPĂ Grammar Review.
     // Altfel, verificatorul LLM poate rescrie din nou o formă deja corectată și rezultatul
