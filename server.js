@@ -35,7 +35,7 @@ const CONCURRENCY_LIMIT = 3;
 const ENABLE_FULL_GRAMMAR_REVIEW = false;
 const ENABLE_TARGETED_GRAMMAR_REVIEW = false;
 const ENABLE_COMPACT_GRAMMAR_AUDIT = true;
-const GRAMMAR_AUDIT_BATCH_SIZE = 100;
+const GRAMMAR_AUDIT_BATCH_SIZE = 60;
 const GRAMMAR_AUDIT_CONCURRENCY = 3;
 
 const CONTEXT_LINES_BEFORE = 12;
@@ -83,7 +83,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.104',
+    version: '12.78.105',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1424,7 +1424,10 @@ async function getAvailableKey(keyStates) {
 async function callGemini(prompt, keyState, options = {}) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
     const timeout = Number.isInteger(options.timeout) ? options.timeout : 120000;
-    const responseSchema = options.responseSchema || {
+    // `false` dezactivează schema constrânsă pentru auditul compact.
+    // În v104, schema extinsă cu issue_type/confidence/reason a produs HTTP 400
+    // pentru cererile de audit. Păstrăm JSON mode și validarea locală a rezultatului.
+    const responseSchema = options.responseSchema === false ? null : (options.responseSchema || {
         type: 'ARRAY',
         minItems: 1,
         items: {
@@ -1436,18 +1439,20 @@ async function callGemini(prompt, keyState, options = {}) {
             required: ['id', 'text'],
             propertyOrdering: ['id', 'text']
         }
-    };
+    });
 
     try {
+        const generationConfig = {
+            temperature: 0.0,
+            responseMimeType: 'application/json'
+        };
+        if (responseSchema) generationConfig.responseSchema = responseSchema;
+
         const response = await axios.post(
             endpoint,
             {
                 contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                    temperature: 0.0,
-                    responseMimeType: 'application/json',
-                    responseSchema
-                },
+                generationConfig,
                 safetySettings: [
                     { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
                     { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -1482,6 +1487,15 @@ async function callGemini(prompt, keyState, options = {}) {
             retryError.isRateLimit429 = true;
             retryError.retryAfterMs = cooldownMs;
             throw retryError;
+        }
+        // Include mesajul detaliat al API-ului în log pentru erorile 4xx/5xx.
+        // Axios afișează de obicei doar „Request failed with status code 400”,
+        // ceea ce ascunde cauza reală (schema, parametru sau cerere invalidă).
+        if (status) {
+            const apiDetail = error.response?.data?.error?.message || error.message || 'eroare API necunoscută';
+            const diagnosticError = new Error(`Gemini HTTP ${status}: ${String(apiDetail).slice(0, 500)}`);
+            diagnosticError.status = status;
+            throw diagnosticError;
         }
         throw error;
     }
@@ -2622,7 +2636,10 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                     : prompt;
                 const raw = await callGemini(requestPrompt, keyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
-                    responseSchema: {
+                    // În audit, JSON mode + prompt explicit, fără responseSchema extins.
+                    // Toate proprietățile cerute sunt validate de parser/guard local;
+                    // schema extinsă a produs HTTP 400 în rularea v104.
+                    responseSchema: isCompactAudit ? false : {
                         type: 'ARRAY',
                         minItems: 0,
                         maxItems: batch.length,
@@ -2630,19 +2647,10 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                             type: 'OBJECT',
                             properties: {
                                 id: { type: 'INTEGER' },
-                                text: { type: 'STRING' },
-                                ...(isCompactAudit ? {
-                                    issue_type: { type: 'STRING' },
-                                    confidence: { type: 'INTEGER' },
-                                    reason: { type: 'STRING' }
-                                } : {})
+                                text: { type: 'STRING' }
                             },
-                            required: isCompactAudit
-                                ? ['id', 'text', 'issue_type', 'confidence', 'reason']
-                                : ['id', 'text'],
-                            propertyOrdering: isCompactAudit
-                                ? ['id', 'text', 'issue_type', 'confidence', 'reason']
-                                : ['id', 'text']
+                            required: ['id', 'text'],
+                            propertyOrdering: ['id', 'text']
                         }
                     }
                 });
