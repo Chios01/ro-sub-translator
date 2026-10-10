@@ -78,7 +78,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.97',
+    version: '12.78.99',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -572,16 +572,16 @@ function cleanTextForJson(text) {
 // Nu tratează „well” sau „so” singure drept ezitări, fiindcă pot avea sens propriu.
 const SOURCE_HESITATION_WORDS = new Set([
     'uh', 'uhh', 'um', 'umm', 'ummm', 'uhm', 'uhmm', 'erm', 'er', 'eh',
-    'hmm', 'hm', 'mmm', 'aa', 'aaa', 'aaaa', 'aah', 'ă', 'ăă', 'ăăă'
+    'hmm', 'hm', 'mmm', 'ă', 'ăă', 'ăăă'
 ]);
 
 function isSourceHesitationWord(word) {
     return SOURCE_HESITATION_WORDS.has(word) ||
-        /^(?:ă+|a{2,}|uh+|um+|uhm+|erm+|er+|eh+|hm+|hmm+|mmm+|aah+)$/.test(word);
+        /^(?:ă+|uh+|um+|uhm+|erm+|er+|eh+|hm+|hmm+|mmm+)$/.test(word);
 }
 
 function isSourceHesitationOnly(text) {
-    const clean = String(text || '').normalize('NFC')
+    const clean = String(text || '')
         .replace(/<[^>]+>/g, ' ')
         .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
         .toLocaleLowerCase('ro-RO');
@@ -634,28 +634,34 @@ function deepCleanSubtitleText(text) {
         '$1'
     ).trim();
 
-    // Elimină „A, și...” / „A. Oricum...” când A este un rest de ezitare,
-    // dar păstrează „a” în toate construcțiile românești normale.
-    cleaned = cleaned.replace(
-        /(^|[\r\n])\s*A[.,!?…]\s*(?=(?:și|dar|deci|apoi|în|despre|oricum|atunci)(?![\p{L}]))/giu,
-        '$1'
-    );
-    cleaned = cleaned.replace(/^([\s]*)([a-zăâîșț])/u, (m, space, letter) => space + letter.toLocaleUpperCase('ro-RO'));
-
     // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
     // Elimină una sau mai multe repetări ale aceleiași litere: „Ț-ț-ținta” → „Ținta”.
     cleaned = cleaned.replace(/(^|[^\p{L}])([A-Za-zĂÂÎȘȚăâîșț])(?:[-–—]\2)+(?=[A-Za-zĂÂÎȘȚăâîșț])/giu, '$1$2');
-    // Elimină un fragment de bâlbâială urmat de cuvântul complet:
-    // „Ți-ținta” / „Ți-... Ținta” / „Țin—… Ținta” -> „Ținta”.
-    // Corectează doar când cuvântul complet începe exact cu fragmentul, iar
-    // cuvântul este semnificativ mai lung; compusele normale precum „mi-ar” rămân.
+    // Elimină fragmentul întrerupt repetat înaintea cuvântului complet:
+    // „Ți-... Ținta” / „Țin—… Ținta” -> „Ținta”. Se aplică doar dacă
+    // următorul cuvânt începe exact cu fragmentul, pentru a evita ștergeri arbitrare.
     cleaned = cleaned.replace(
-        /(^|[^\p{L}])([A-Za-zĂÂÎȘȚăâîșț]{1,3})[-–—](?:(?:\.{2,}|…)+\s*)?([A-Za-zĂÂÎȘȚăâîșț]{3,})/giu,
+        /(^|[^\p{L}])([A-Za-zĂÂÎȘȚăâîșț]{1,3})[-–—](?:\.{2,}|…)+\s+([A-Za-zĂÂÎȘȚăâîșț]{2,})/giu,
         (match, prefix, fragment, fullWord) => {
             const fragmentLower = fragment.toLocaleLowerCase('ro-RO');
             const fullLower = fullWord.toLocaleLowerCase('ro-RO');
-            if (fullLower.startsWith(fragmentLower) && fullLower.length >= fragmentLower.length + 2) {
-                return prefix + fullWord;
+            return fullLower.startsWith(fragmentLower) ? prefix + fullWord : match;
+        }
+    );
+
+    // Corectează și bâlbâiala fără elipsă: „Ți-ținta” -> „ținta”.
+    // Regula se aplică numai când cuvântul după cratimă începe cu fragmentul,
+    // evitând forme legitime precum „re-educare”.
+    cleaned = cleaned.replace(
+        /(^|[^\p{L}])([A-Za-zĂÂÎȘȚăâîșț]{1,3})[-–—]([A-Za-zĂÂÎȘȚăâîșț]{2,})/giu,
+        (match, prefix, fragment, fullWord) => {
+            const fragmentLower = fragment.toLocaleLowerCase('ro-RO');
+            const fullLower = fullWord.toLocaleLowerCase('ro-RO');
+            if (fullLower.startsWith(fragmentLower) && fullLower !== fragmentLower) {
+                const restoredWord = /^[A-ZĂÂÎȘȚ]/.test(fragment) && /^[a-zăâîșț]/.test(fullWord)
+                    ? fullWord.charAt(0).toLocaleUpperCase('ro-RO') + fullWord.slice(1)
+                    : fullWord;
+                return prefix + restoredWord;
             }
             return match;
         }
@@ -828,12 +834,6 @@ function formatSubtitleLine(text) {
     // Corecții mecanice certe confirmate în verificările recente.
     // Sunt intenționat specifice pentru a evita corecții globale riscante.
     const dictionar = [
-        // Corecții confirmate din SRT-uri recente; limite Unicode pentru diacritice.
-        [/(?<![\p{L}])găură(?![\p{L}])/giu, match => /^[G]/.test(match) ? 'Gaură' : 'gaură'],
-        [/(?<![\p{L}])esți(?![\p{L}])/giu, match => /^[E]/.test(match) ? 'Ești' : 'ești'],
-        [/\bztice\b/gi, match => /^[Z]/.test(match) ? 'Zice' : 'zice'],
-        [/\bcum1\b/gi, match => /^[C]/.test(match) ? 'Cum' : 'cum'],
-        [/(?<![\p{L}])ume(?=\s+mi-a fost menționat)/giu, match => /^[U]/.test(match) ? 'Nume' : 'nume'],
         // Forme generate variabil de model pentru aceeași construcție semantică.
         // Sunt limitate la expresii confirmate ca greșite în acest proiect.
         [/\b(?:Iași|Iasi|Ieși|Iesi)[- ]mi din cap\b/gi, 'Ieși din capul meu'],
