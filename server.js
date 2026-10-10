@@ -83,7 +83,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.103',
+    version: '12.78.104',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2065,6 +2065,89 @@ function hasSecondPersonAddressCue(text) {
     return /(?<![\p{L}])(?:you|your|you're|you've|you'll|you'd|yourself|yourselves|tu|te|tine|ți|ti|tău|tau|ta|tale|tăi|tai|voi|vă|va|dumneavoastră|dumneata|dumitale|dvs\.?|ești|esti|ai|vrei|poți|poti|faci|spui|știi|stii|sunteți|sunteti|aveți|aveti|doriți|doriti|vreți|vreti|faceți|faceti|spuneți|spuneti|ați|ati)(?![\p{L}])/iu.test(String(text || ''));
 }
 
+const ACCEPTED_AUDIT_ISSUE_TYPES = /(?:grammar|gramatic|syntax|sintax|semantic|semantic|meaning|fidel|translation|traduc|corrupt|corup|continuity|continuit|duplicate|duplic|spelling|orthograph|ortograf|agreement|acord|conjugat|typo|clitic|pronoun|pronume|preposition|prepoz|word.?order|ordine|address|register|adresare)/i;
+
+function hasHighConfidenceAuditProof(proof) {
+    if (!proof || typeof proof !== 'object') return false;
+    const confidence = Number(proof.confidence);
+    const issueType = String(proof.issue_type || '').trim();
+    const reason = String(proof.reason || '').replace(/\s+/g, ' ').trim();
+    return Number.isFinite(confidence) && confidence >= 90 &&
+        ACCEPTED_AUDIT_ISSUE_TYPES.test(issueType) && reason.length >= 24;
+}
+
+function hasStrongRepairSignal(text) {
+    const clean = String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!clean) return true;
+    if (/[\uFFFD\u0000-\u0008\u000B\u000C\u000E-\u001F\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF]/u.test(clean)) return true;
+    // Semnale de corupere/gramatică puternică: cuvânt alăturat repetat,
+    // prepoziții/conectori dublați sau majuscule nejustificate în interiorul frazei.
+    if (/(?<![\p{L}])([\p{L}]{3,})\s+\1(?![\p{L}])/iu.test(clean)) return true;
+    if (/(?<![\p{L}])(?:de|la|cu|pe|în|din|că|să|și)\s+(?:de|la|cu|pe|în|din|că|să|și)(?![\p{L}])/iu.test(clean)) return true;
+    if (/[\p{Ll}][,;:]?\s+[A-ZĂÂÎȘȚ][\p{Ll}]{2,}\s+[A-ZĂÂÎȘȚ][\p{Ll}]{2,}/u.test(clean)) return true;
+    if (/\b(?:\p{L}{1,3}\.\.\.\p{L}{1,3}|\p{L}{1,3}[-–]\p{L}{1,3})\b/iu.test(clean)) return true;
+    return false;
+}
+
+const BOUNDARY_STOPWORDS = new Set([
+    'a','ai','al','ale','am','au','că','ca','ce','cu','de','din','e','ea','ei','el','era','este','eu',
+    'i','îi','în','la','le','li','lui','mai','mă','mi','ne','ni','nu','o','or','pe','să','sa','și','si',
+    'te','ți','ti','tu','un','una','unei','unui','vă','va','voi','your','you','the','a','an','and','are',
+    'as','at','be','but','by','for','from','he','her','his','i','if','in','is','it','me','my','of','on',
+    'or','our','she','so','that','to','we','with'
+]);
+
+function boundaryOverlap(leftText, rightText) {
+    const words = value => String(value || '')
+        .normalize('NFC').toLocaleLowerCase('ro-RO')
+        .match(/[\p{L}\p{N}]+/gu) || [];
+    const left = words(leftText);
+    const right = words(rightText);
+    const max = Math.min(5, left.length, right.length);
+    for (let size = max; size >= 1; size--) {
+        const suffix = left.slice(-size);
+        const prefix = right.slice(0, size);
+        if (suffix.every((word, index) => word === prefix[index]) &&
+            suffix.some(word => word.length >= 4 && !BOUNDARY_STOPWORDS.has(word))) {
+            return suffix;
+        }
+    }
+    return [];
+}
+
+function createsUnexpectedBoundaryEcho(item, candidate, current, contextItems, contextIndexById, translations) {
+    const index = contextIndexById.get(String(item.id));
+    if (!Number.isInteger(index) || index < 0) return null;
+    const previous = index > 0 ? contextItems[index - 1] : null;
+    const next = index < contextItems.length - 1 ? contextItems[index + 1] : null;
+    const currentEnglish = String(item.text || '');
+    const readTranslation = id => translations instanceof Map
+        ? translations.get(String(id))
+        : translations[String(id)];
+
+    if (previous) {
+        const previousRo = String(readTranslation(previous.id) || '');
+        const currentOldOverlap = boundaryOverlap(previousRo, current);
+        const candidateOverlap = boundaryOverlap(previousRo, candidate);
+        const englishOverlap = boundaryOverlap(previous.text, currentEnglish);
+        if (candidateOverlap.length > currentOldOverlap.length &&
+            candidateOverlap.length > englishOverlap.length) {
+            return { side: 'după replica anterioară', words: candidateOverlap.join(' ') };
+        }
+    }
+    if (next) {
+        const nextRo = String(readTranslation(next.id) || '');
+        const currentOldOverlap = boundaryOverlap(current, nextRo);
+        const candidateOverlap = boundaryOverlap(candidate, nextRo);
+        const englishOverlap = boundaryOverlap(currentEnglish, next.text);
+        if (candidateOverlap.length > currentOldOverlap.length &&
+            candidateOverlap.length > englishOverlap.length) {
+            return { side: 'înaintea replicii următoare', words: candidateOverlap.join(' ') };
+        }
+    }
+    return null;
+}
+
 async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
     const contextItems = options.contextItems || items;
     const isTargetedReview = options.mode === 'targeted';
@@ -2093,11 +2176,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     }
     console.log(`   Verificate: ${candidates.length} replici`);
     if (isCompactAudit) {
-        const addressContextCount = candidates.filter(item =>
-            hasSecondPersonAddressCue(item.text) ||
-            hasSecondPersonAddressCue(translatedById[String(item.id)] || '')
-        ).length;
-        console.log(`   Context bilingv pentru consecvența adresării: ${addressContextCount} replici`);
+        console.log(`   Context bilingv pentru adresare, propoziții fragmentate și dubluri între replici: ${candidates.length} replici`);
     }
 
     const reviewBatchSize = isCompactAudit
@@ -2109,7 +2188,14 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
 
     const rateLimitRetryQueue = [];
     const contextIndexById = new Map(contextItems.map((entry, index) => [String(entry.id), index]));
+    // Snapshot-ul împiedică auditul concurent să schimbe contextul altei cereri în curs.
+    const baselineTranslations = new Map(contextItems.map(entry => [
+        String(entry.id), String(translatedById[String(entry.id)] || '')
+    ]));
     let rejectedAggressiveRewrites = 0;
+    let rejectedBoundaryEchoes = 0;
+    let acceptedLargeRepairs = 0;
+    const acceptedLargeRepairIds = new Set();
 
     const processGrammarBatch = async (batch, batchIndex, label) => {
         let batchFixed = 0;
@@ -2121,23 +2207,21 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
                 const next = Number.isInteger(index) && index >= 0 && index < contextItems.length - 1
                     ? contextItems[index + 1]
                     : null;
-                const currentTranslation = translatedById[String(item.id)] || '';
-                const useAddressContext = hasSecondPersonAddressCue(item.text) ||
-                    hasSecondPersonAddressCue(currentTranslation);
+                const currentTranslation = baselineTranslations.get(String(item.id)) || '';
                 const compactContext = neighbour => neighbour ? {
                     id: neighbour.id,
-                    en: String(neighbour.text || '').replace(/\s+/g, ' ').slice(0, 180),
-                    ro: String(translatedById[String(neighbour.id)] || '').replace(/\s+/g, ' ').slice(0, 180)
+                    en: String(neighbour.text || '').replace(/\s+/g, ' ').slice(0, 130),
+                    ro: String(baselineTranslations.get(String(neighbour.id)) || '').replace(/\s+/g, ' ').slice(0, 130)
                 } : null;
 
+                // Contextul vecin se trimite pentru toate liniile, nu doar când există „you/tu”.
+                // E necesar pentru a identifica propoziții fragmentate și cuvinte dublate la granița ID-urilor.
                 return {
                     id: item.id,
                     original: item.text,
                     translation: currentTranslation,
-                    ...(useAddressContext ? {
-                        context_before: compactContext(previous),
-                        context_after: compactContext(next)
-                    } : {})
+                    context_before: compactContext(previous),
+                    context_after: compactContext(next)
                 };
             }
 
@@ -2170,12 +2254,15 @@ REGULI STRICTE:
 5. Verifică formele „niciun/nicio” versus „nici un/nici o” după sens și normă. Nu aplica o înlocuire oarbă acolo unde separarea are alt sens. Verifică inclusiv typo-uri subtile precum „acceași”, cuvinte deformate sau forme care par românești, dar nu se potrivesc sintactic.
 6. Păstrează slangul, vulgaritățile, sarcasmul, umorul, numele proprii, termenii ficționali și repetițiile/bâlbâielile intenționate. Nu transforma automat o expresie colocvială într-una formală.
 7. Contextul bilingv este doar ajutor pentru sens și adresare. Corectează DOAR replica asociată ID-ului curent; nu modifica vecinii.
-8. Dacă nu poți demonstra o eroare clară din original și context, omite acel ID. Este mai bine să păstrezi o formulare acceptabilă decât să introduci o regresie. Nu returna explicații sau replici neschimbate.
+8. Dacă nu poți demonstra o eroare clară din original și context, omite acel ID. Este mai bine să păstrezi o formulare acceptabilă decât să introduci o regresie.
+9. Folosește context_before/context_after pentru a identifica propoziții care continuă între subtitrări, începuturi/terminații rupte și cuvinte sau expresii repetate accidental la limita a două ID-uri. Dacă două replici românești se repetă, verifică dacă ORIGINALUL englezesc repetă aceeași idee; dacă nu, repară numai ID-ul curent când acesta este locul potrivit pentru corecție.
+10. Pentru fiecare corecție, returnează și issue_type, confidence (număr întreg 0–100) și reason. reason trebuie să indice concret eroarea din varianta actuală și dovada din ORIGINAL/context pentru corecție. Nu folosi „sună mai bine” sau preferința stilistică drept motiv. confidence trebuie să reflecte certitudinea reală, nu să fie automat 100.
+11. Dacă soluția necesită o reformulare amplă pentru că varianta curentă este coruptă sau semantic greșită, nu o abandona doar fiindcă seamănă puțin cu textul inițial: oferă o justificare concretă și fidelă ORIGINALULUI. Dacă nu există dovadă clară, omite ID-ul.
 
 DATE:
 ${JSON.stringify(payload, null, 2)}
 
-Returnează DOAR un array JSON valid de forma [{"id":123,"text":"varianta română corectată"}]. Dacă nu există nicio corecție clară, returnează [].
+Returnează DOAR un array JSON valid. Pentru fiecare corecție folosește forma [{"id":123,"text":"varianta română corectată","issue_type":"grammar|semantic|corruption|continuity|spelling|other","confidence":95,"reason":"motiv concret și scurt bazat pe original/context"}]. Dacă nu există nicio corecție clară, returnează [].
 ` : `
 Ești un corector profesionist de subtitrări ENGLEZĂ → ROMÂNĂ.
 
@@ -2520,7 +2607,7 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
         // JSON-ul Gemini poate fi invalid ocazional chiar dacă promptul cere
         // explicit JSON valid. Nu abandonăm calupul la prima eroare: facem
         // un retry punctual pe același calup, iar dacă răspunsul rămâne invalid
-        // îl împărțim automat în două. Astfel păstrăm 120 ca dimensiune normală
+        // îl împărțim automat în două. Astfel păstrăm dimensiunea configurată ca dimensiune normală
         // și nu pierdem verificări doar din cauza unei ghilimele/virgule stricate.
         for (let jsonAttempt = 0; jsonAttempt <= GRAMMAR_REVIEW_JSON_RETRY_LIMIT; jsonAttempt++) {
             try {
@@ -2531,7 +2618,7 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
 
                 const keyState = await getAvailableKey(keyStates);
                 const requestPrompt = jsonAttempt > 0
-                    ? `${prompt}\n\nRETRY TEHNIC: Returnează DOAR JSON valid, fără markdown sau explicații. Format exact: [{\"id\":123,\"text\":\"...\"}]. Pentru nicio corecție returnează exact []. Nu modifica ID-urile. Escapă toate ghilimelele interne din text.`
+                    ? `${prompt}\n\nRETRY TEHNIC: Returnează DOAR JSON valid, fără markdown sau explicații. ${isCompactAudit ? 'Pentru fiecare corecție include obligatoriu id, text, issue_type, confidence și reason.' : 'Format exact: [{\"id\":123,\"text\":\"...\"}].'} Pentru nicio corecție returnează exact []. Nu modifica ID-urile. Escapă toate ghilimelele interne din text.`
                     : prompt;
                 const raw = await callGemini(requestPrompt, keyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
@@ -2543,15 +2630,30 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
                             type: 'OBJECT',
                             properties: {
                                 id: { type: 'INTEGER' },
-                                text: { type: 'STRING' }
+                                text: { type: 'STRING' },
+                                ...(isCompactAudit ? {
+                                    issue_type: { type: 'STRING' },
+                                    confidence: { type: 'INTEGER' },
+                                    reason: { type: 'STRING' }
+                                } : {})
                             },
-                            required: ['id', 'text'],
-                            propertyOrdering: ['id', 'text']
+                            required: isCompactAudit
+                                ? ['id', 'text', 'issue_type', 'confidence', 'reason']
+                                : ['id', 'text'],
+                            propertyOrdering: isCompactAudit
+                                ? ['id', 'text', 'issue_type', 'confidence', 'reason']
+                                : ['id', 'text']
                         }
                     }
                 });
                 const parsed = safeJsonParse(raw);
                 const parsedDict = normalizeTranslationPayload(parsed);
+                const auditProofById = new Map();
+                if (isCompactAudit && Array.isArray(parsed)) {
+                    for (const row of parsed) {
+                        if (row && row.id !== undefined) auditProofById.set(String(row.id), row);
+                    }
+                }
 
                 checked += batch.length;
 
@@ -2565,15 +2667,36 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
 
                 if (!candidate || candidate === current) continue;
 
-                // La auditul complet protejăm textul deja existent împotriva rescrierilor ample.
-                // Dacă AI schimbă peste ~52% din caractere, schimbarea nu este aplicată fără
-                // un mecanism separat de justificare; corecțiile locale/gramaticale uzuale trec.
                 if (isCompactAudit) {
                     const similarity = normalizedCorrectionSimilarity(current, candidate);
-                    if (similarity < MIN_AUDIT_CORRECTION_SIMILARITY) {
-                        rejectedAggressiveRewrites++;
-                        console.log(`${c.yellow}  ⚠ [Correction Guard] ID ${item.id} ignorat: reformulare prea amplă (${Math.round(similarity * 100)}% similaritate).${c.reset}`);
+                    const proof = auditProofById.get(id);
+                    const hasProof = hasHighConfidenceAuditProof(proof);
+                    const strongSignal = hasStrongRepairSignal(current) || hasCorruptedSubtitleText(current, item.text);
+                    const boundaryEcho = createsUnexpectedBoundaryEcho(
+                        item, candidate, current, contextItems, contextIndexById, baselineTranslations
+                    );
+
+                    // Nu lăsăm auditul să introducă o repetiție la granița a două ID-uri
+                    // dacă engleza nu o susține și varianta anterioară nu avea duplicarea.
+                    if (boundaryEcho) {
+                        rejectedBoundaryEchoes++;
+                        console.log(`${c.yellow}  ⚠ [Continuity Guard] ID ${item.id} ignorat: creează dublura „${boundaryEcho.words}” ${boundaryEcho.side}.${c.reset}`);
                         continue;
+                    }
+
+                    // Similaritatea este doar un semnal, nu verdictul final. Schimbările ample
+                    // se acceptă dacă AI furnizează tipul erorii, o justificare concretă și
+                    // încredere >=90. Sub 12% cerem suplimentar un semnal puternic de corupere.
+                    if (similarity < MIN_AUDIT_CORRECTION_SIMILARITY) {
+                        const proofAllowsLargeRepair = hasProof && (similarity >= 0.12 || strongSignal);
+                        if (!proofAllowsLargeRepair) {
+                            rejectedAggressiveRewrites++;
+                            console.log(`${c.yellow}  ⚠ [Correction Guard] ID ${item.id} ignorat: reformulare prea amplă (${Math.round(similarity * 100)}% similaritate), justificare insuficientă sau semnal de eroare slab.${c.reset}`);
+                            continue;
+                        }
+                        acceptedLargeRepairs++;
+                        acceptedLargeRepairIds.add(id);
+                        console.log(`${c.cyan}  ↳ [Correction Guard] ID ${item.id}: reformulare amplă acceptată (${Math.round(similarity * 100)}%); motiv=${String(proof.issue_type)}, încredere=${Number(proof.confidence)}.${c.reset}`);
                     }
                 }
 
@@ -2743,11 +2866,38 @@ Pentru ID-urile fără o eroare clară și demonstrabilă, NU returna niciun obi
         console.log(`${c.yellow}⚠ [Grammar Review] ${rateLimitRetryQueue.length} calupuri au rămas neverificate după cele 2 reîncercări 429.${c.reset}`);
     }
 
+    // Control final asupra rezultatului combinat: corecțiile din calupuri concurente
+    // pot interacționa între ele. Revertim doar linia care a introdus o dublură nouă.
+    if (isCompactAudit) {
+        for (const item of candidates) {
+            const id = String(item.id);
+            const originalTranslation = baselineTranslations.get(id) || '';
+            const finalTranslation = String(translatedById[id] || '');
+            if (!finalTranslation || finalTranslation === originalTranslation) continue;
+            const newEcho = createsUnexpectedBoundaryEcho(
+                item, finalTranslation, originalTranslation, contextItems, contextIndexById, translatedById
+            );
+            if (newEcho) {
+                translatedById[id] = originalTranslation;
+                fixed = Math.max(0, fixed - 1);
+                if (acceptedLargeRepairIds.delete(id)) acceptedLargeRepairs = Math.max(0, acceptedLargeRepairs - 1);
+                rejectedBoundaryEchoes++;
+                console.log(`${c.yellow}  ⚠ [Continuity Guard] ID ${id} readus la varianta anterioară: corecțiile cumulate au creat dublura „${newEcho.words}” ${newEcho.side}.${c.reset}`);
+            }
+        }
+    }
+
     console.log(`${c.green}✔ [Grammar Review] Final: ${checked} verificate, ${fixed} corectate${c.reset}`);
     if (rejectedAggressiveRewrites) {
-        console.log(`${c.cyan}ℹ [Correction Guard] ${rejectedAggressiveRewrites} reformulări ample respinse pentru a proteja formulările existente.${c.reset}`);
+        console.log(`${c.cyan}ℹ [Correction Guard] ${rejectedAggressiveRewrites} reformulări ample respinse: justificare insuficientă sau text inițial fără semnal suficient de eroare.${c.reset}`);
     }
-    return { checked, fixed, rejectedAggressiveRewrites };
+    if (acceptedLargeRepairs) {
+        console.log(`${c.green}✔ [Correction Guard] ${acceptedLargeRepairs} reformulări ample acceptate pe baza justificării AI și a verificărilor de siguranță.${c.reset}`);
+    }
+    if (rejectedBoundaryEchoes) {
+        console.log(`${c.cyan}ℹ [Continuity Guard] ${rejectedBoundaryEchoes} corecții respinse deoarece ar fi introdus dubluri între replici.${c.reset}`);
+    }
+    return { checked, fixed, rejectedAggressiveRewrites, acceptedLargeRepairs, rejectedBoundaryEchoes };
 }
 
 // ============================================================
