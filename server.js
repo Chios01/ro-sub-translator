@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.94-test.7.5',
+    version: '12.78.94-test.7.6',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1614,26 +1614,56 @@ function hasCorruptedSubtitleText(text, originalText) {
     return false;
 }
 
-function validatePayloadIds(parsed, expectedItems, stage) {
-    // Gemini must not return an ID outside the current batch or multiple objects for one ID.
-    // This catches structural mapping failures before their text can enter the final SRT.
-    // Missing IDs remain handled by the existing targeted-recovery logic.
-    if (!Array.isArray(parsed)) return;
+function validatePayloadIds(parsed, expectedItems, stage, allowedTrailingContext = []) {
+    // Verifică ID-urile înainte ca traducerile să ajungă în SRT.
+    // Uneori Gemini include la final una dintre replicile date explicit drept
+    // context_urmator/context dupa. O acceptăm numai dacă TOATE ID-urile cerute
+    // apar primele, exact în ordinea sursei, iar obiectele suplimentare de la
+    // final corespund exact contextului permis. Orice ID străin intercalat,
+    // secvență deplasată sau duplicat rămâne eroare.
+    if (!Array.isArray(parsed)) return parsed;
 
-    const expected = new Set(expectedItems.map(item => String(item.id)));
+    const expectedIds = expectedItems.map(item => String(item.id));
+    const expected = new Set(expectedIds);
     const seen = new Set();
 
     for (const entry of parsed) {
         if (!entry || entry.id === undefined || entry.id === null) continue;
         const id = String(entry.id);
-        if (!expected.has(id)) {
-            throw new Error(`[${stage}] ID neașteptat ${id}; răspunsul a amestecat calupurile.`);
-        }
         if (seen.has(id)) {
             throw new Error(`[${stage}] ID duplicat ${id}; răspunsul nu păstrează o mapare unu-la-unu.`);
         }
         seen.add(id);
     }
+
+    const unexpected = parsed.filter(entry =>
+        entry && entry.id !== undefined && entry.id !== null && !expected.has(String(entry.id))
+    );
+
+    if (unexpected.length === 0) return parsed;
+
+    // Filtrăm exclusiv context suplimentar aflat DUPĂ toate replicile solicitate.
+    // Nu acceptăm lipsuri, reordonări sau ID-uri străine în interiorul răspunsului.
+    const hasExactExpectedPrefix = parsed.length >= expectedIds.length &&
+        expectedIds.every((id, index) => {
+            const entry = parsed[index];
+            return entry && entry.id !== undefined && entry.id !== null && String(entry.id) === id;
+        });
+
+    const extras = hasExactExpectedPrefix ? parsed.slice(expectedIds.length) : [];
+    const allowedIds = allowedTrailingContext.map(item => String(item.id));
+    const extrasAreAllowedContext = extras.length > 0 &&
+        extras.length <= allowedIds.length &&
+        extras.every((entry, index) => entry && entry.id !== undefined && entry.id !== null &&
+            String(entry.id) === allowedIds[index]);
+
+    if (hasExactExpectedPrefix && extrasAreAllowedContext) {
+        console.log(`${c.yellow}⚠ [${stage}] Ignor ${extras.length} ID(uri) suplimentar(e) de context de la final; cele ${expectedIds.length} ID-uri cerute sunt intacte.${c.reset}`);
+        return parsed.slice(0, expectedIds.length);
+    }
+
+    const id = String(unexpected[0].id);
+    throw new Error(`[${stage}] ID neașteptat ${id}; răspunsul nu corespunde strict calupului solicitat.`);
 }
 
 function normalizeTranslationPayload(parsed) {
@@ -1684,8 +1714,9 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             // Grammar Review și apelurile de recuperare păstrează setarea implicită.
             const raw = await callGemini(prompt, keyState, { thinkingLevel: 'medium' });
             const parsed = JSON.parse(String(raw).trim());
-            validatePayloadIds(parsed, chunk, 'Traducere principală');
-            const dict = normalizeTranslationPayload(parsed);
+            const trailingContext = allItems.slice(chunkEnd, Math.min(allItems.length, chunkEnd + CONTEXT_LINES_AFTER));
+            const validatedParsed = validatePayloadIds(parsed, chunk, 'Traducere principală', trailingContext);
+            const dict = normalizeTranslationPayload(validatedParsed);
 
             const missingItems = chunk.filter(obj => dict[String(obj.id)] === undefined);
             if (missingItems.length > 12) {
@@ -1707,8 +1738,8 @@ ${JSON.stringify(missingItems, null, 2)}
                 try {
                     const missingRaw = await callGemini(missingPrompt, keyState, { timeout: 20000 });
                     const missingJson = JSON.parse(String(missingRaw).trim());
-                    validatePayloadIds(missingJson, missingItems, 'Recuperare ID-uri lipsă');
-                    const missingDict = normalizeTranslationPayload(missingJson);
+                    const validatedMissingJson = validatePayloadIds(missingJson, missingItems, 'Recuperare ID-uri lipsă');
+                    const missingDict = normalizeTranslationPayload(validatedMissingJson);
                     for (const obj of missingItems) {
                         const value = missingDict[String(obj.id)];
                         if (value !== undefined) dict[String(obj.id)] = value;
