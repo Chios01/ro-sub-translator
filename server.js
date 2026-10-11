@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.124',
+    version: '12.78.125',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2044,6 +2044,8 @@ const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
 const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
 const GRAMMAR_REVIEW_JSON_RETRY_LIMIT = 1;
 const GRAMMAR_REVIEW_JSON_SPLIT_MIN = 20;
+// Pauză comună înaintea rundelor 429 pentru a evita reluarea imediată a calupurilor limitate.
+const GRAMMAR_REVIEW_429_BACKOFF_MS = [5000, 12000];
 
 async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
     const contextItems = options.contextItems || items;
@@ -2071,9 +2073,12 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     console.log(`   Verificate: ${candidates.length} replici`);
 
     const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
-    let checked = 0;
     let fixed = 0;
 
+    // Numărăm ID-uri unice verificate cu răspuns JSON valid, nu încercări.
+    // Astfel, reluările și împărțirea calupurilor nu dublează contorul.
+    const verifiedIds = new Set();
+    const failureReasons = new Map();
     const rateLimitRetryQueue = [];
 
     const processGrammarBatch = async (batch, batchIndex, label) => {
@@ -2161,8 +2166,6 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 const parsed = safeJsonParse(raw);
                 const parsedDict = normalizeTranslationPayload(parsed);
 
-                checked += batch.length;
-
                 for (const item of batch) {
                     const id = String(item.id);
                 const candidateRaw = parsedDict[id];
@@ -2186,9 +2189,16 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 fixed++;
                 }
 
-                // IMPORTANT: dacă răspunsul JSON a fost valid și am procesat calupul,
-                // calupul este REUȘIT. Nu lăsăm bucla de retry să cadă ulterior în
-                // fallback-ul „eroare necunoscută” și să dubleze contorul checked.
+                // Răspunsul JSON valid confirmă verificarea fiecărui ID din acest calup,
+                // inclusiv când modelul nu propune nicio corecție.
+                for (const item of batch) {
+                    const id = String(item.id);
+                    verifiedIds.add(id);
+                    failureReasons.delete(id);
+                }
+
+                // IMPORTANT: succesul este înregistrat o singură dată per ID unic, chiar
+                // dacă un calup a fost împărțit sau reluat după o eroare 429.
                 const batchFixed = fixed - batchFixedBefore;
                 console.log(`${c.green}✔ [Grammar Review] Calup ${batchIndex + 1}/${batches.length}: ${batchFixed} corectate${c.reset}`);
                 return { success: true, is429: false };
@@ -2228,12 +2238,19 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                         };
                     }
 
-                    // 429 este trimis mai departe către coada existentă.
+                    // Punem în coada 429 DOAR calupul care a eșuat efectiv. Dacă acesta
+                    // provine dintr-un calup împărțit, nu reîncercăm și subcalupurile reușite.
                     if (is429) {
+                        for (const item of batch) failureReasons.set(String(item.id), '429');
+                        const stableLabel = String(label || '')
+                            .replace(/^Reîncercare 429 — /, '')
+                            .replace(/ \(runda [12]\/2\)$/, '');
+                        rateLimitRetryQueue.push({ batch, batchIndex, label: stableLabel });
                         return { success: false, is429: true };
                     }
 
-                    // Timeout pe calup mic: păstrăm comportamentul existent.
+                    // Timeout pe calup mic: rămâne neverificat și va fi raportat explicit.
+                    for (const item of batch) failureReasons.set(String(item.id), 'timeout');
                     console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} a expirat și nu mai poate fi împărțit.${c.reset}`);
                     return { success: false, is429: false };
                 }
@@ -2276,6 +2293,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     };
                 }
 
+                for (const item of batch) failureReasons.set(String(item.id), 'error');
                 console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat: ${message || 'eroare necunoscută'}${c.reset}`);
                 return { success: false, is429: false };
             }
@@ -2286,46 +2304,64 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
         return { success: false, is429: false };
     };
 
-    // Prima trecere: dacă un calup primește 429, nu îl abandonăm definitiv.
-    // Îl punem la coadă și îl reîncercăm după ce terminăm toate calupurile normale.
+    // Prima trecere: calupurile care primesc 429 sunt adăugate direct în coadă
+    // de processGrammarBatch. Astfel, după un split reîncercăm numai partea eșuată.
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
-        const result = await processGrammarBatch(
+        await processGrammarBatch(
             batch,
             batchIndex,
             `Calup ${batchIndex + 1}/${batches.length}`
         );
-
-        if (result.is429) {
-            rateLimitRetryQueue.push({ batch, batchIndex });
-        }
     }
 
-    // Maximum 2 reîncercări suplimentare DOAR pentru calupurile care au eșuat cu 429.
-    // Nu modificăm aici logica 429 a traducerii principale sau a altor etape.
+    // Maximum două reîncercări suplimentare. Pauza înainte de fiecare rundă reduce
+    // presiunea imediată asupra API-ului; getAvailableKey respectă și cooldown-ul fiecărei chei.
     for (let retryRound = 1; retryRound <= 2 && rateLimitRetryQueue.length; retryRound++) {
+        const backoffMs = GRAMMAR_REVIEW_429_BACKOFF_MS[retryRound - 1];
+        console.log(`${c.cyan}⏳ [Grammar Review] Aștept ${Math.ceil(backoffMs / 1000)}s înainte de runda 429 ${retryRound}/2.${c.reset}`);
+        await sleep(backoffMs);
+
         const pending = rateLimitRetryQueue.splice(0);
         console.log(`${c.cyan}🔄 [Grammar Review] Reîncerc 429: ${pending.length} calupuri (runda ${retryRound}/2)...${c.reset}`);
 
         for (const queued of pending) {
-            const result = await processGrammarBatch(
+            await processGrammarBatch(
                 queued.batch,
                 queued.batchIndex,
-                `Reîncercare 429 — Calup ${queued.batchIndex + 1}/${batches.length} (runda ${retryRound}/2)`
+                `Reîncercare 429 — ${queued.label || `Calup ${queued.batchIndex + 1}/${batches.length}`} (runda ${retryRound}/2)`
             );
-
-            if (result.is429 && retryRound < 2) {
-                rateLimitRetryQueue.push(queued);
-            }
         }
     }
 
+    // Orice ID care nu a avut un răspuns valid rămâne neverificat; nu îl numărăm
+    // ca succes doar pentru că traducerea principală a reușit.
+    const checked = verifiedIds.size;
+    const unverifiedItems = candidates.filter(item => !verifiedIds.has(String(item.id)));
+
     if (rateLimitRetryQueue.length) {
-        console.log(`${c.yellow}⚠ [Grammar Review] ${rateLimitRetryQueue.length} calupuri au rămas neverificate după cele 2 reîncercări 429.${c.reset}`);
+        console.log(`${c.yellow}⚠ [Grammar Review] ${rateLimitRetryQueue.length} calupuri au rămas limitate de 429 după cele 2 reîncercări.${c.reset}`);
     }
 
-    console.log(`${c.green}✔ [Grammar Review] Final: ${checked} verificate, ${fixed} corectate${c.reset}`);
-    return { checked, fixed };
+    if (unverifiedItems.length) {
+        const counts = { '429': 0, timeout: 0, error: 0, other: 0 };
+        for (const item of unverifiedItems) {
+            const reason = failureReasons.get(String(item.id)) || 'other';
+            counts[reason] = (counts[reason] || 0) + 1;
+        }
+        const sampleIds = unverifiedItems.slice(0, 20).map(item => item.id).join(', ');
+        console.log(`${c.yellow}⚠ [Grammar Review] Acoperire incompletă: ${checked}/${candidates.length} verificate; ${unverifiedItems.length} neverificate (429: ${counts['429']}, timeout: ${counts.timeout}, alte erori: ${counts.error + counts.other}).${c.reset}`);
+        console.log(`${c.yellow}⚠ [Grammar Review] ID-uri neverificate${unverifiedItems.length > 20 ? ' (primele 20)' : ''}: ${sampleIds}${c.reset}`);
+    } else {
+        console.log(`${c.green}✔ [Grammar Review] Acoperire completă: toate cele ${candidates.length} replici eligibile au fost verificate.${c.reset}`);
+    }
+
+    if (unverifiedItems.length) {
+        console.log(`${c.yellow}⚠ [Grammar Review] Final: ${checked}/${candidates.length} verificate, ${fixed} corectate; ${unverifiedItems.length} neverificate${c.reset}`);
+    } else {
+        console.log(`${c.green}✔ [Grammar Review] Final: ${checked}/${candidates.length} verificate, ${fixed} corectate${c.reset}`);
+    }
+    return { checked, fixed, unverified: unverifiedItems.length };
 }
 
 // ============================================================
