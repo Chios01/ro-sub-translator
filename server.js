@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.118',
+    version: '12.78.114',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -535,113 +535,37 @@ function isEffectivelyEmptySubtitleText(text) {
 // CLEAN TEXT FOR JSON 
 // ============================================================
 
-const SUBSTUDIO_SOURCE_INTERJECTIONS = new Set((
-    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh ahhhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww owww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whooo whoooo whoooooo whoop whoops whup wooh woo-hoo-hoo wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
-).split(/\s+/));
-const SUBSTUDIO_TARGET_INTERJECTIONS = new Set([
-    ...SUBSTUDIO_SOURCE_INTERJECTIONS,
-    'ăă', 'ăăă', 'ăăăă', 'ăăăăă', 'îhî', 'ptiu', 'brr'
-]);
-
-function cleanInterjectionsSubStudio(text, isTranslated = false) {
-    if (!text || !String(text).trim()) return String(text || '');
-    const dictionary = isTranslated ? SUBSTUDIO_TARGET_INTERJECTIONS : SUBSTUDIO_SOURCE_INTERJECTIONS;
-    const wordPattern = '[A-Za-zăâîșțĂÂÎȘȚÀ-žА-я\\-]+';
-    const alternative = [...dictionary].sort((a, b) => b.length - a.length).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-    const lines = String(text).split(/\n/);
-    const output = [];
-
-    for (let line of lines) {
-        let cleaned = line.trim();
-        if (!cleaned) continue;
-        let isDialogue = false;
-        if (/^-\s*/.test(cleaned)) {
-            isDialogue = true;
-            cleaned = cleaned.replace(/^-\s*/, '').trim();
-        } else if (/^(?:-|[-.!?])$/.test(cleaned)) {
-            continue;
-        }
-        if (!cleaned) continue;
-        const wordCheck = cleaned.replace(/[.!?,;:…\s]+$/g, '').trim();
-        if (!wordCheck) continue;
-        const onlyWords = wordCheck.split(/[,;.!?\s…]+/).filter(Boolean);
-        if (onlyWords.length && onlyWords.every(w => dictionary.has(w.toLowerCase()))) continue;
-
-        // SubStudio-style: strip up to five leading filler tokens, but not words embedded in a phrase.
-        for (let i = 0; i < 5; i++) {
-            const match = cleaned.match(new RegExp('^(' + wordPattern + ')\\s*[,!.;:\\s]+\\s*(.+)$', 'iu'));
-            if (!match || !dictionary.has(match[1].toLowerCase())) break;
-            const rest = match[2].trim();
-            if (!rest) break;
-            // Do not strip the opening "Oh" from established expressions like "Oh, my God".
-            if (/^oh$/iu.test(match[1]) && /^my\s+(?:god|goodness|gosh)\b/iu.test(rest)) break;
-            cleaned = /^[A-ZÀ-Ü]/.test(match[1])
-                ? rest.charAt(0).toLocaleUpperCase('ro-RO') + rest.slice(1)
-                : rest;
-        }
-
-        // Remove up to three trailing filler tokens, preserving existing punctuation.
-        for (let i = 0; i < 3; i++) {
-            const match = cleaned.match(new RegExp('^(.+?)\\s*[,;:\\s]+(' + wordPattern + ')\\s*([,;:.!?…]*)\\s*$', 'iu'));
-            if (!match || !dictionary.has(match[2].toLowerCase())) break;
-            cleaned = match[1].trim() + (match[3] || '');
-        }
-
-        const alt = '(?:' + alternative + ')';
-        cleaned = cleaned.replace(new RegExp(',\\s*' + alt + '\\s*([.!?…]+)', 'giu'), '$1');
-        cleaned = cleaned.replace(new RegExp(',\\s*' + alt + '\\s*,', 'giu'), ', ');
-        if (isTranslated) {
-            cleaned = cleaned.replace(/,\s*gen\s*,/giu, ', ');
-            cleaned = cleaned.replace(/,\s*gen\s*([.!?…]+)$/giu, '$1');
-        }
-        cleaned = cleaned.replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').trim();
-        cleaned = cleaned.replace(new RegExp('([.!?])\\s+' + alt + '\\s*[,\\s]+\\s*(.)', 'giu'), (_m, p, next) => p + ' ' + next.toLocaleUpperCase('ro-RO'));
-        cleaned = cleaned.replace(new RegExp('([.!?])\\s*' + alt + '\\s*([.!?])', 'giu'), '$1');
-        cleaned = cleaned.trim();
-        const finalCheck = cleaned.replace(/[.!?,;:…\s]+$/g, '').trim();
-        if (!finalCheck) continue;
-        output.push(isDialogue ? '- ' + cleaned : cleaned);
-    }
-
-    if (output.length === 1 && output[0].startsWith('- ')) output[0] = output[0].slice(2).trim();
-    return output.join('\n').trim();
-}
-
-function applySubStudioSourceCleanup(text) {
-    let clean = String(text || '');
-    // Remove ASS override tags, hearing-impaired cues, and HTML styling before sending text to Gemini.
-    clean = clean.replace(/\{[^}]+\}/g, '');
-    clean = clean.replace(/\[[\s\S]*?\]/g, ' ');
-    clean = clean.replace(/\([^)]*?(?:râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughs|laughing|laughter|laugh|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|chuckles|pant|groan|sigh|chuckle|whisper)[^)]*?\)/giu, ' ');
-    clean = clean.replace(/<[^>]*>/g, ' ');
-    clean = clean.replace(/â™ª/giu, '').replace(/â™«/giu, '');
-
-    // Remove all-caps speaker labels like MARIA: while preserving a dialogue dash.
-    clean = clean.replace(/(^|\n)(\s*-?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,28}:\s*/g, '$1$2');
-
-    // Split inline dialogue and normalize double-dash conventions like SubStudio.
-    clean = clean.replace(/([.!?"])\s*(-\s*\S)/g, '$1\n$2');
-    clean = clean.replace(/^\s*--+\s*/gm, '');
-    clean = clean.replace(/--+/g, '...');
-
-    // Preserve musical notes (♪) so they can be restored after formatting; remove only corrupt encodings.
-    clean = cleanInterjectionsSubStudio(clean, false);
-    clean = clean.replace(/[ \t]{2,}/g, ' ').replace(/\n{2,}/g, '\n').trim();
-    return clean || ' ';
-}
-
 function cleanTextForJson(text) {
     if (!text) return text;
-    let clean = String(text);
+    let clean = text;
 
-    // SubStudio-style preprocessing; keep actual musical-note markers for output restoration.
-    clean = applySubStudioSourceCleanup(clean);
+    clean = clean.replace(/\{[^}]+\}/g, '');
+    clean = clean.replace(/[♪♫♬♩#]/gi, '');
+    clean = clean.replace(/â™ª/gi, '');
+    clean = clean.replace(/â™«/gi, '');
 
-    // Retain the project's existing conservative standalone filler filter as a final safeguard.
+    clean = clean.replace(/<[iIbBuU]>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
+    clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
+
+    clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
+    clean = clean.replace(/\[[^\]]*?\]/g, '');
+    clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughs|laughing|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|chuckles|pant|groan|sigh|chuckle|whisper)[^)]*?\)/gi, '');
+    // Nu eliminăm parantezele în mod global: pot conține dialog real (de ex. (I mean)).
+    // Sunt eliminate doar parantezele care conțin indicații sonore, mai sus.
+
+    // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
+    // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
+    clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
+
+    // Normalize spacing left behind after removed sound labels.
+    clean = clean.replace(/[ \t]{2,}/g, ' ');
+
+    // Like SubStudio, drop a subtitle block that consists only of a standalone
+    // filler sound. Do not drop multi-word expressions such as “Oh my God”.
     const standaloneSourceFillers = new Set((
-        'aa aaaa aaa aaaaah aaaah aaah aah agh ah a-ha aha ahem ahh ahhh argh aw aww awww eh ehh ehhh ehm er erm err gah ha hahaha heh hm hmm hmmm hmph hoo huh mh mhm mm mmhmm mm-hmm mmm mwah oh ohh oo ooh oops ops ouch ow pf pff pfft phew psst sh shh uf ugh uh uhm um umm whew whoa wow yikes haha hehe ă ăă ăăă îhî ptiu brr'
+        'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
     ).split(/\s+/));
-    const lines = clean.split('\n').map(l => l.trim()).filter(Boolean).filter(line => {
+    let lines = clean.split('\n').map(l => l.trim()).filter(Boolean).filter(line => {
         const token = line.replace(/<[^>]+>/g, ' ')
             .replace(/^[-–—]\s*/, '')
             .replace(/[.,!?;:…]+$/g, '')
@@ -649,8 +573,10 @@ function cleanTextForJson(text) {
             .toLocaleLowerCase('ro-RO');
         return !standaloneSourceFillers.has(token);
     });
-    clean = lines.join('\n').trim();
-    return clean || ' ';
+    clean = lines.join('\n');
+
+    if (!clean.trim()) return ' ';
+    return clean.trim();
 }
 
 // ============================================================
@@ -890,70 +816,9 @@ function formatSubtitleLayout(value) {
     return splitSubtitleIntoTwoLines(entries.map(entry => entry.text).join(' '), 43).join('\n') || ' ';
 }
 
-function applySubStudioPostProcessing(text) {
-    let output = String(text || '').trim();
-    if (!output) return output;
-    // Mirror SubStudio's output pass: split inline dialogue, normalize dash punctuation,
-    // then let the existing formatter rebalance to at most two visible lines.
-    output = output.replace(/([.!?"])\s*(-\s*\S)/g, '$1\n$2');
-    output = output.replace(/^\s*--+\s*/gm, '');
-    output = output.replace(/--+/g, '...');
-    output = output.replace(/\.{4,}/g, '...');
-    output = output.replace(/^\s*-\s*-\s*/gm, '- ');
-    output = output.replace(/\n{2,}/g, '\n').trim();
-
-    // SubStudio-style dialog normalization: a two-speaker block needs dashes
-    // on both lines; an orphan dash on a single line is removed.
-    const lines = output.split('\n');
-    const visible = line => String(line || '').replace(/<[^>]+>/g, '').trim();
-    const dashAtStart = line => /^-\s*/.test(visible(line));
-    if (lines.length === 2) {
-        const firstHasDash = dashAtStart(lines[0]);
-        const secondHasDash = dashAtStart(lines[1]);
-        if (secondHasDash && !firstHasDash && visible(lines[0])) {
-            lines[0] = '- ' + lines[0].trim();
-        } else if (firstHasDash && !secondHasDash) {
-            lines[0] = lines[0].replace(/^(<[^>]+>)*-\s*/, '$1');
-        }
-    } else if (lines.length === 1) {
-        lines[0] = lines[0].replace(/^(<[^>]+>)*-\s*/, '$1');
-    }
-    return lines.join('\n').trim();
-}
-
-function restoreSubStudioSourceFormatting(originalText, translatedText) {
-    const original = String(originalText || '').trim();
-    let output = String(translatedText || '').trim();
-    if (!output) return output;
-    const sourceWithoutTags = original.replace(/<[^>]*>/g, '').trim();
-
-    // SubStudio restores block-level music markers if Gemini drops them.
-    if (sourceWithoutTags.includes('♪') && !output.includes('♪')) {
-        const startsWithNote = /^♪/.test(sourceWithoutTags);
-        const endsWithNote = /♪$/.test(sourceWithoutTags);
-        if (startsWithNote && endsWithNote) output = `♪ ${output} ♪`;
-        else if (startsWithNote) output = `♪ ${output}`;
-        else if (endsWithNote) output = `${output} ♪`;
-    }
-
-    // Restore block-level italics when the original block was entirely italicized.
-    const sourceIsBlockItalic = /^<i\b[^>]*>[\s\S]*<\/i>$/i.test(original);
-    if (sourceIsBlockItalic && !/^<i\b[^>]*>[\s\S]*<\/i>$/i.test(output)) {
-        output = output.replace(/<\/?i\b[^>]*>/gi, '');
-        output = `<i>${output}</i>`;
-    }
-
-    output = output.replace(/<i>\s*♪/g, '♪ <i>').replace(/♪<\/i>/g, '</i> ♪');
-    output = output.replace(/\s+♪$/g, ' ♪').replace(/^♪\s+/g, '♪ ');
-    output = output.replace(/♪\s+♪/g, '♪');
-    output = output.replace(/<i>\s+/g, '<i>').replace(/\s+<\/i>/g, '</i>');
-    return output;
-}
-
 function formatSubtitleLine(text) {
     if (!text) return ' ';
 
-    text = applySubStudioPostProcessing(text);
     text = deepCleanSubtitleText(text);
     if (!text.trim()) return ' ';
 
@@ -1279,42 +1144,43 @@ function formatSubtitleLine(text) {
 // ============================================================
 
 const MASTER_TRANSLATION_PROMPT = `MISSION
-Translate every supplied English subtitle block into natural, modern spoken Romanian for films and TV. Localize meaning and intent instead of copying English word order. Write dialogue that sounds like a real Romanian speaker and fits the character and scene.
+Translate every supplied English subtitle block into natural, modern spoken Romanian for films and TV. Localize the intended meaning and tone; do not copy English word order when it sounds unnatural in Romanian.
 
-OUTPUT FORMAT — CRITICAL
-- Return ONLY a valid JSON array. No markdown, code fences, comments, or explanations.
-- Return exactly one object for every supplied ID, in the same order, with exactly these fields: {"id": integer, "text": "Romanian translation"}.
-- Preserve every ID exactly. Never omit, duplicate, invent, merge, or move text to a neighboring ID.
-- Context fields are for understanding only. Translate only the text belonging to each current ID.
+OUTPUT — CRITICAL
+- Return ONLY a valid JSON array, with exactly one object for every supplied ID, in the original order.
+- Every object must have exactly these fields: {"id": integer, "text": "Romanian translation"}.
+- Preserve IDs exactly. Never omit, duplicate, invent, merge, or move content to a neighboring ID.
+- Do not return markdown, code fences, comments, or explanations.
 
-TRANSLATION, CONTEXT AND NATURALNESS
-- Translate every meaningful phrase, fragment, joke, idiom, slang expression and line into Romanian. Do not leave ordinary English dialogue untranslated. Preserve names, places, titles and technical terms that genuinely belong in the original.
-- Use neighboring source lines and Romanian context only to understand the scene, speaker, references, grammar, jokes and continuity. If a sentence continues across IDs, understand the full thought but translate each fragment under its original ID. Do not combine or shift fragments.
-- Preserve who does what to whom, direct object versus location, possession, negation, tense, person, gender, grammatical number, relationships, humor, sarcasm and emotional intent.
-- Use contemporary, idiomatic spoken Romanian. Avoid literal calques, English word order, stiff/formal phrasing, awkward machine-translation wording and childish or overly sweet phrasing not present in the source.
-- Preserve the original level of intimacy, informality, vulgarity, hostility and directness. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
-- Translate profanity by its function in context: an intensifier, insult, sexual reference or literal action may require different Romanian wording. Preserve the force of the original naturally.
-- Choose forms of address and terms of endearment from context, including the person addressed, their gender, relationship and tone. Do not mechanically translate “babe”, “honey” or “baby” with one fixed Romanian word. Examples such as “iubire”, “dragă”, “iubi”, “dragule” or “iubito” are context-dependent, not mandatory substitutions.
-- Examples of idiomatic Romanian choices: “my treat” → “fac eu cinste”; “marry me” → “căsătorește-te cu mine”; “Oh my God” → “Doamne Dumnezeule”. Treat these as examples, not fixed replacements; preserve the exact speech act and context.
-- Translate “But” as “Dar” when it starts a clause; never leave ordinary sentence-initial “But” untranslated.
-- Use correct Romanian diacritics: ă, â, î, ș, ț. Check agreement, pronouns, clitics, prepositions, conjugation and complete word forms. Never truncate, merge, invent or corrupt a word.
-- Preserve singular/plural and avoid adding diminutives without a cue. For example, “a hat” is one item, not “căciuli”; “căciuliță” is appropriate only when smallness, affection or a diminutive is supported by context.
-- Convert ordinary imperial units to metric for Romanian audiences when natural and safe: square feet to m², feet to metres, miles to kilometres, pounds to kilograms, Fahrenheit to Celsius. Do not convert plot-critical or idiomatic measurements. “Lakh” means 100,000; “crore” means 10 million when relevant. Use Romanian number formatting (e.g. 130,000 → 130.000).
+TRANSLATION AND CONTEXT
+- Translate every meaningful sentence, phrase, joke, idiom, slang expression, and fragment into Romanian. Preserve names and established foreign expressions only when they genuinely belong in the source.
+- Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
+- If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
+- Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
+- Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
+- Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
+- When the source explicitly names an anatomical or sexual term, use an accurate Romanian equivalent. Do not replace it with vague euphemisms such as „jos” or „acolo”. Preserve the grammatical relationship too: for example, “the sound that dries my vagina” means „sunetul care-mi usucă vaginul”, not „sunetul care mă usucă în vagin”.
+- Preserve singular/plural, gender, and the identity of the object. A singular source noun such as “a hat” must not become plural „căciuli”. Do not add diminutives such as „căciuliță” unless smallness, affection, or a diminutive is actually expressed by the source.
+- Translate idioms and profanity by their function in context, not by mechanically matching each English word. For example, “fucking” may be an intensifier, an insult, or a literal verb; choose the Romanian equivalent for that function.
+- Choose terms of endearment according to the relationship and context; do not translate “babe”, “honey”, or “baby” mechanically every time.
+- Translate “But” as „Dar” when it begins a clause. Do not leave ordinary English dialogue untranslated.
+- Use correct Romanian grammar, spelling, punctuation, and diacritics (ă, â, î, ș, ț). Use complete real Romanian words; never truncate, merge, invent, or corrupt a word. Check pronouns, clitics, prepositions, conjugation, and agreement.
+- Convert ordinary imperial measurements to metric where natural and safe: feet to metres, miles to kilometres, pounds to kilograms, Fahrenheit to Celsius. Do not convert plot-critical or idiomatic measurements. Translate “lakh” as 100,000 and “crore” as 10 million when relevant.
 
 SUBTITLE FORMATTING
-- Keep each visible line at or below 43 characters whenever possible, and never use more than TWO text lines per block.
-- Split at natural phrase boundaries. If needed, rephrase briefly without losing meaning or useful tone; never delete meaning just to fit.
-- When a sentence continues on the second visual line, start it lowercase unless a proper noun or new sentence requires otherwise.
-- If two speakers share one source block, keep both under the SAME ID on separate lines; use “- ” and a capitalized first word for each speaker. Never move a speaker to another ID.
-- Keep meaningful music/italics markers when present. The output processor restores block-level italics and music markers from the original when the model omits them.
+- Keep each visible line at or below 43 characters whenever the wording allows. Use no more than TWO text lines per subtitle block.
+- Split at natural phrase boundaries, not arbitrary points; if necessary, rephrase concisely without losing meaning.
+- If the thought continues on the second visual line, start that line lowercase unless a proper noun or new sentence requires otherwise.
+- If two speakers share one source block, keep both under the SAME ID on separate lines, each with “- ” and a capitalized first word. Never move a speaker to another ID.
+- Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
-INTERJECTIONS AND HEARING-IMPAIRED TEXT
-- Remove standalone filler sounds/meaningless hesitation tokens such as “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Wow”, “Oops”, “Ouch”, “ă”, “ăă” and “mhm”. Remove embedded interjections only when they are filler, then repair punctuation and capitalization.
-- Do not delete a meaningful expression just because it begins with an interjection; translate its intended meaning. Examples like “Oh my God” are expressions, not empty lines.
-- Non-dialogue bracketed sound labels, standalone grunts and all-caps speaker labels are removed before translation when they are subtitle noise, not meaningful dialogue. Keep actual spoken words.
+INTERJECTIONS AND FILLERS
+- Remove standalone filler sounds and meaningless hesitation tokens (including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Wow”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”) from the subtitle.
+- Remove an embedded filler when it is only hesitation, then repair punctuation and capitalization. Do not delete a meaningful multi-word expression simply because it begins with an interjection; translate the expression by meaning.
+- Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise, not meaningful spoken dialogue.
 
-FINAL SELF-CHECK
-Before returning JSON, quickly proofread every translation against its source and context: meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural and gender, register, explicitness, spelling, diacritics, punctuation, line lengths, dialogue formatting, filler cleanup and one-to-one ID alignment. Correct clear mistakes without adding or deleting meaning. Every meaningful source line must have a usable Romanian result.
+FINAL CHECK
+Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, dialogue format, filler cleanup, and one-to-one ID alignment. Correct clear errors without adding or deleting meaning.
 `;
 
 // ============================================================
@@ -1711,7 +1577,8 @@ function hasCorruptedSubtitleText(text, originalText) {
 // ============================================================
 // SOURCE-TERM FIDELITY GUARD — TERMENI ANATOMICI EXPLICIȚI
 // Adaugă o verificare conservatoare când sursa numește direct un organ.
-// Nu înlocuiește formularea automat; declanșează o reverificare țintită când este necesar.
+// Nu înlocuiește formularea automat; doar declanșează o reverificare țintită
+// și împiedică Grammar Review să accepte o rescriere care pierde termenul.
 // ============================================================
 const EXPLICIT_ANATOMICAL_TERM_GUARDS = [
     {
@@ -1918,7 +1785,7 @@ Returnează STRICT un ARRAY JSON valid pentru TOATE liniile de mai jos. Nu omite
 ]
 
 LINIILE LIPSĂ:
-${JSON.stringify(missingItems.map(item => ({ id: item.id, text: item.text })), null, 2)}
+${JSON.stringify(missingItems, null, 2)}
 `;
                 try {
                     const missingRaw = await callGemini(missingPrompt, keyState, { timeout: 20000 });
@@ -2166,6 +2033,607 @@ Returnează DOAR JSON valid în forma:
     return { fixed: totalFixed, remaining };
 }
 
+// ============================================================
+// FILTRU SUPLIMENTAR — GRAMATICĂ + CALITATEA TRADUCERII
+// Rulează separat de mecanismul principal și aplică doar corecții certe.
+// ============================================================
+
+const GRAMMAR_REVIEW_BATCH_SIZE = 120;
+const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
+const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
+const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
+const GRAMMAR_REVIEW_JSON_RETRY_LIMIT = 1;
+const GRAMMAR_REVIEW_JSON_SPLIT_MIN = 20;
+
+async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
+    const contextItems = options.contextItems || items;
+    const isTargetedReview = options.mode === 'targeted';
+
+    const candidates = items.filter(item => {
+        const original = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        const translated = String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim();
+        if (!original || !translated) return false;
+        if (isJunkOrInterjection(item.text)) return false;
+        if (isOkOnlySubtitle(translated)) return false;
+        return true;
+    });
+
+    if (!candidates.length) {
+        console.log(`${c.green}✔ [Grammar Review] Nu există replici eligibile pentru verificare.${c.reset}`);
+        return { checked: 0, fixed: 0 };
+    }
+
+    if (isTargetedReview) {
+        console.log(`\n${c.cyan}🎯 VERIFICARE PUNCTUALĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
+    } else {
+        console.log(`\n${c.cyan}📝 VERIFICARE SUPLIMENTARĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
+    }
+    console.log(`   Verificate: ${candidates.length} replici`);
+
+    const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
+    let checked = 0;
+    let fixed = 0;
+
+    const rateLimitRetryQueue = [];
+
+    const processGrammarBatch = async (batch, batchIndex, label) => {
+        const batchFixedBefore = fixed;
+
+        const payload = batch.map(item => {
+            const index = contextItems.findIndex(x => String(x.id) === String(item.id));
+            const previous = index > 0 ? contextItems[index - 1] : null;
+            const next = index >= 0 && index < contextItems.length - 1 ? contextItems[index + 1] : null;
+
+            return {
+                id: item.id,
+                original: item.text,
+                translation: translatedById[String(item.id)],
+                context_anterior_en: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
+                context_urmator_en: next ? `[${next.id}] ${next.text}` : '(niciunul)',
+                context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
+                context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)',
+                avertisment_semantic: getSourceFidelityIssues(item.text, translatedById[String(item.id)] || '').join('; ')
+            };
+        });
+
+        const prompt = `Ești un editor profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Revizuiești traducerea existentă, nu o retraducești automat.
+
+SCOP
+Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică.
+
+VERIFICĂ ÎN ORDINE
+1. Compară ORIGINALUL, traducerea și contextul imediat înainte/după. Verifică sensul complet, expresiile idiomatice, cine face acțiunea și cine/ce o primește.
+2. Verifică relațiile gramaticale, nu doar prezența cuvintelor: obiect direct versus loc, prepoziții, pronume/clitice, posesie, negație, timp, persoană, gen și număr. De exemplu, pentru EN “the sound that dries my vagina”, „îmi usucă vaginul” păstrează relația de obiect direct; „mă usucă în vagin” schimbă sensul.
+3. Păstrează termenii expliciți și sensul direct când sursa îi folosește. Nu îi înlocui cu eufemisme și nu transforma intensificatorii/înjurăturile în obiecte, acțiuni sau insulte diferite.
+4. Păstrează singularul/pluralul și referentul. De exemplu, “a hat” nu trebuie tradus „căciuli”. Nu adăuga diminutive precum „căciuliță” dacă sursa nu exprimă micime, afecțiune sau diminutiv.
+5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase.
+6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
+7. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
+
+REGULĂ DE PRUDENȚĂ
+Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
+
+DATE DE VERIFICAT:
+Fiecare obiect include id, original, translation, context_anterior_en, context_urmator_en, context_anterior_ro, context_urmator_ro și, uneori, avertisment_semantic. Contextul este doar pentru înțelegere; corectează numai replica curentă.
+${JSON.stringify(payload, null, 2)}
+
+Returnează DOAR JSON valid:
+[
+  {"id": 123, "text": "traducerea corectată"}
+]
+Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
+
+        let lastJsonError = null;
+
+        // JSON-ul Gemini poate fi invalid ocazional chiar dacă promptul cere
+        // explicit JSON valid. Nu abandonăm calupul la prima eroare: facem
+        // un retry punctual pe același calup, iar dacă răspunsul rămâne invalid
+        // îl împărțim automat în două. Astfel păstrăm 120 ca dimensiune normală
+        // și nu pierdem verificări doar din cauza unei ghilimele/virgule stricate.
+        for (let jsonAttempt = 0; jsonAttempt <= GRAMMAR_REVIEW_JSON_RETRY_LIMIT; jsonAttempt++) {
+            try {
+                if (jsonAttempt > 0) {
+                    console.log(`${c.yellow}↻ [Grammar Review] JSON invalid la ${batch.length} replici; retry ${jsonAttempt}/${GRAMMAR_REVIEW_JSON_RETRY_LIMIT}...${c.reset}`);
+                    await sleep(GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS);
+                }
+
+                const keyState = await getAvailableKey(keyStates);
+                const requestPrompt = jsonAttempt > 0
+                    ? `${prompt}\n\nRETRY TEHNIC: Returnează DOAR JSON valid, fără markdown sau explicații. Format exact: [{\"id\":123,\"text\":\"...\"}]. Pentru nicio corecție returnează exact []. Nu modifica ID-urile. Escapă toate ghilimelele interne din text.`
+                    : prompt;
+                const raw = await callGemini(requestPrompt, keyState, {
+                    timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
+                    responseSchema: {
+                        type: 'ARRAY',
+                        minItems: 0,
+                        maxItems: batch.length,
+                        items: {
+                            type: 'OBJECT',
+                            properties: {
+                                id: { type: 'INTEGER' },
+                                text: { type: 'STRING' }
+                            },
+                            required: ['id', 'text'],
+                            propertyOrdering: ['id', 'text']
+                        }
+                    }
+                });
+                const parsed = safeJsonParse(raw);
+                const parsedDict = normalizeTranslationPayload(parsed);
+
+                checked += batch.length;
+
+                for (const item of batch) {
+                    const id = String(item.id);
+                const candidateRaw = parsedDict[id];
+                if (candidateRaw == null) continue;
+
+                const current = formatSubtitleLine(String(translatedById[id] || ''));
+                const candidate = formatSubtitleLine(String(candidateRaw || ''));
+
+                if (!candidate || candidate === current) continue;
+
+                // Filtrul suplimentar poate aplica doar o corecție care rămâne
+                // compatibilă cu verificările deja existente.
+                if (hasUntranslatedEnglish(item.text, candidate) ||
+                    hasCorruptedSubtitleText(candidate, item.text) ||
+                    hasLostExplicitSourceTerm(item.text, candidate)) {
+                    console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: noua variantă a devenit suspectă${c.reset}`);
+                    continue;
+                }
+
+                translatedById[id] = candidate;
+                fixed++;
+                }
+
+                // IMPORTANT: dacă răspunsul JSON a fost valid și am procesat calupul,
+                // calupul este REUȘIT. Nu lăsăm bucla de retry să cadă ulterior în
+                // fallback-ul „eroare necunoscută” și să dubleze contorul checked.
+                const batchFixed = fixed - batchFixedBefore;
+                console.log(`${c.green}✔ [Grammar Review] Calup ${batchIndex + 1}/${batches.length}: ${batchFixed} corectate${c.reset}`);
+                return { success: true, is429: false };
+            } catch (error) {
+                lastJsonError = error;
+                const message = String(error?.message || '');
+                const is429 = error?.isRateLimit429 === true || /429/.test(message);
+                const isTimeout = error?.code === 'ECONNABORTED' ||
+                    error?.code === 'ETIMEDOUT' ||
+                    /timeout|timed out/i.test(message);
+
+                // 429 și timeout-ul au propriul mecanism de retry/split.
+                // Nu le tratăm ca eroare JSON.
+                if (is429 || isTimeout) {
+                    if (isTimeout && batch.length > 20) {
+                        const middle = Math.ceil(batch.length / 2);
+                        const left = batch.slice(0, middle);
+                        const right = batch.slice(middle);
+
+                        console.log(`${c.yellow}⚠ [Grammar Review] Timeout la ${batch.length} replici; împart calupul în ${left.length}+${right.length} și reîncerc...${c.reset}`);
+                        await sleep(GRAMMAR_REVIEW_TIMEOUT_RETRY_MS);
+
+                        const leftResult = await processGrammarBatch(
+                            left,
+                            batchIndex,
+                            `${label} — partea 1/${2}`
+                        );
+                        const rightResult = await processGrammarBatch(
+                            right,
+                            batchIndex,
+                            `${label} — partea 2/${2}`
+                        );
+
+                        return {
+                            success: leftResult.success && rightResult.success,
+                            is429: leftResult.is429 || rightResult.is429
+                        };
+                    }
+
+                    // 429 este trimis mai departe către coada existentă.
+                    if (is429) {
+                        return { success: false, is429: true };
+                    }
+
+                    // Timeout pe calup mic: păstrăm comportamentul existent.
+                    console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} a expirat și nu mai poate fi împărțit.${c.reset}`);
+                    return { success: false, is429: false };
+                }
+
+                const isJsonError = /JSON Parse failed|Unexpected token|Unexpected end of JSON|Expected ',' or '}'|Expected property name/i.test(message);
+
+                // Prima eroare JSON/conținut gol: retry pe același calup, cu prompt
+                // explicit de reparare. Nu împărțim încă pentru a păstra viteza normală.
+                if ((isJsonError || /conținut gol|empty content/i.test(message)) &&
+                    jsonAttempt < GRAMMAR_REVIEW_JSON_RETRY_LIMIT) {
+                    lastJsonError = error;
+                    continue;
+                }
+
+                // Dacă am ajuns aici după un retry JSON eșuat, NU mai abandonăm
+                // calupul indiferent dacă a doua eroare a fost JSON, răspuns gol sau
+                // o eroare neașteptată. Îl împărțim pentru a izola replica problematică.
+                if (batch.length > GRAMMAR_REVIEW_JSON_SPLIT_MIN &&
+                    (isJsonError || jsonAttempt > 0 || /conținut gol|empty content/i.test(message))) {
+                    const middle = Math.ceil(batch.length / 2);
+                    const left = batch.slice(0, middle);
+                    const right = batch.slice(middle);
+
+                    console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batch.length} nu a putut fi returnat ca JSON; împart în ${left.length}+${right.length} și reîncerc separat...${c.reset}`);
+
+                    const leftResult = await processGrammarBatch(
+                        left,
+                        batchIndex,
+                        `${label} — JSON split 1/${2}`
+                    );
+                    const rightResult = await processGrammarBatch(
+                        right,
+                        batchIndex,
+                        `${label} — JSON split 2/${2}`
+                    );
+
+                    return {
+                        success: leftResult.success && rightResult.success,
+                        is429: leftResult.is429 || rightResult.is429
+                    };
+                }
+
+                console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} nu a putut fi verificat: ${message || 'eroare necunoscută'}${c.reset}`);
+                return { success: false, is429: false };
+            }
+        }
+
+        // Protecție teoretică; bucla de mai sus fie returnează, fie reia retry-ul.
+        console.log(`${c.yellow}⚠ [Grammar Review] Calupul ${batchIndex + 1} a eșuat: ${lastJsonError?.message || 'eroare necunoscută'}${c.reset}`);
+        return { success: false, is429: false };
+    };
+
+    // Prima trecere: dacă un calup primește 429, nu îl abandonăm definitiv.
+    // Îl punem la coadă și îl reîncercăm după ce terminăm toate calupurile normale.
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        const result = await processGrammarBatch(
+            batch,
+            batchIndex,
+            `Calup ${batchIndex + 1}/${batches.length}`
+        );
+
+        if (result.is429) {
+            rateLimitRetryQueue.push({ batch, batchIndex });
+        }
+    }
+
+    // Maximum 2 reîncercări suplimentare DOAR pentru calupurile care au eșuat cu 429.
+    // Nu modificăm aici logica 429 a traducerii principale sau a altor etape.
+    for (let retryRound = 1; retryRound <= 2 && rateLimitRetryQueue.length; retryRound++) {
+        const pending = rateLimitRetryQueue.splice(0);
+        console.log(`${c.cyan}🔄 [Grammar Review] Reîncerc 429: ${pending.length} calupuri (runda ${retryRound}/2)...${c.reset}`);
+
+        for (const queued of pending) {
+            const result = await processGrammarBatch(
+                queued.batch,
+                queued.batchIndex,
+                `Reîncercare 429 — Calup ${queued.batchIndex + 1}/${batches.length} (runda ${retryRound}/2)`
+            );
+
+            if (result.is429 && retryRound < 2) {
+                rateLimitRetryQueue.push(queued);
+            }
+        }
+    }
+
+    if (rateLimitRetryQueue.length) {
+        console.log(`${c.yellow}⚠ [Grammar Review] ${rateLimitRetryQueue.length} calupuri au rămas neverificate după cele 2 reîncercări 429.${c.reset}`);
+    }
+
+    console.log(`${c.green}✔ [Grammar Review] Final: ${checked} verificate, ${fixed} corectate${c.reset}`);
+    return { checked, fixed };
+}
+
+// ============================================================
+// MICRO-CHECK LOCAL — ORTOGRAFIE + GRAMATICĂ EVIDENTĂ
+// Nu folosește Gemini. Aplică doar corecții cu încredere foarte mare
+// și marchează restul pentru o verificare punctuală.
+// ============================================================
+
+const LOCAL_GRAMMAR_FIXES = [
+    // Greșeli reale observate în verificări manuale ale subtitrărilor.
+    [/\brenumererațiile\b/gi, 'remunerațiile'],
+    [/\brenumererație\b/gi, 'remunerație'],
+    [/\brenumererația\b/gi, 'remunerația'],
+    [/\brenumererației\b/gi, 'remunerației'],
+    [/\brenumererațiilor\b/gi, 'remunerațiilor'],
+    [/\brenumererați\b/gi, 'remunerați'],
+    [/\brenumererate\b/gi, 'remunerate'],
+    [/\brenumerată\b/gi, 'remunerată'],
+    [/\brenumerat\b/gi, 'remunerat'],
+    [/\brenumerare\b/gi, 'remunerare'],
+    [/\brenumerarea\b/gi, 'remunerarea'],
+    [/\brenumerării\b/gi, 'remunerării'],
+    [/\brenumerările\b/gi, 'remunerările'],
+    [/\brenumerațiile\b/gi, 'remunerațiile'],
+    [/\brenumerație\b/gi, 'remunerație'],
+    [/\brenumerația\b/gi, 'remunerația'],
+    [/\brenumerației\b/gi, 'remunerației'],
+    [/\brenumerațiilor\b/gi, 'remunerațiilor'],
+    [/\brenumerați\b/gi, 'remunerați'],
+    [/\brenumerate\b/gi, 'remunerate'],
+    [/\brenumerată\b/gi, 'remunerată'],
+    [/\brenumerat\b/gi, 'remunerat'],
+    [/\bsugist\b/gi, 'sugi'],
+
+    // Corecții locale suplimentare cu încredere foarte mare, validate în QA.
+    [/\bdeciizi\b/gi, 'decizi'],
+    [/\bco\s+cerul\b/gi, 'că cerul'],
+    [/\bAlelea\b/gi, 'Alea'],
+    [/\bn-mai\b/gi, 'nu mai'],
+    [/\bBine,,/gi, 'Bine,'],
+    [/\bpropria\s+noastre\b/gi, 'propria noastră'],
+    [/\binnascute\b/gi, 'înnăscute'],
+    [/\binnascuta\b/gi, 'înnăscută'],
+    [/\binnascut\b/gi, 'înnăscut'],
+    [/\binnascuti\b/gi, 'înnăscuți'],
+    [/(?<![\p{L}])ți-a\s+pasat\b/iu, 'ți-a păsat']
+];
+
+function applyLocalGrammarDeterministicFixes(text) {
+    let result = String(text || '');
+    for (const [pattern, replacement] of LOCAL_GRAMMAR_FIXES) {
+        result = result.replace(pattern, match => {
+            if (match === match.toUpperCase()) return replacement.toUpperCase();
+            if (match[0] === match[0].toUpperCase()) {
+                return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+            }
+            return replacement;
+        });
+    }
+    return result;
+}
+
+function detectLocalGrammarReviewReasons(text) {
+    const clean = String(text || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!clean) return [];
+
+    const reasons = [];
+
+    // Repetiție imediată de cuvânt: nu o corectăm automat, deoarece poate fi
+    // o bâlbâială/replică intenționată; o lăsăm Grammar Review să decidă.
+    // Limitele sunt Unicode-aware pentru a nu confunda prefixe precum
+    // „de” din „deștept” sau „cu” din „cuțitul” cu duplicate reale.
+    const duplicate = clean.match(/(?<![\p{L}])([\p{L}]{2,})\s+\1(?![\p{L}-])/iu);
+    const intentionalRepeatWords = new Set(['nu', 'da', 'mă', 'te', 'eu', 'tu', 'ha', 'haha', 'hei']);
+    if (duplicate && !intentionalRepeatWords.has(String(duplicate[1]).toLowerCase())) {
+        reasons.push(`cuvânt repetat: „${duplicate[0]}”`);
+    }
+
+    // Construcții de clitic evident suspecte, pe care Grammar Review deja știe
+    // să le analizeze, dar care merită o verificare punctuală atunci când apar.
+    if (/\baș-o\b/i.test(clean)) reasons.push('clitic suspect „aș-o”');
+    if (/\bnu\s+ți-pasă\b/i.test(clean)) reasons.push('clitic suspect „nu ți-pasă”');
+    if (/\buită-ce-mi\b/i.test(clean)) reasons.push('clitic suspect „uită-ce-mi”');
+    if (/(?:^|\s)(?:să|sa)\s+mi\s+facă\b/i.test(clean)) reasons.push('clitic suspect „să mi facă”');
+
+    // Calcuri/construcții observate în QA manual. Sunt DOAR semnale: nu sunt
+    // modificate automat fără comparație cu originalul și contextul.
+    if (/(?:^|[^\p{L}])(?:însuși|insusi|insuşi)\s+semnalele(?:$|[^\p{L}])/iu.test(clean)) reasons.push('acord suspect „însuși semnalele”');
+    if (/\bnici\s+mai\s+mult\s+decât\s+este\s+el\b/i.test(clean)) reasons.push('construcție comparativă suspectă');
+
+    // Detectare țintită pentru cuvinte englezești de conținut care pot rămâne
+    // integrate într-o propoziție românească și pot scăpa detectorului global.
+    // Lista este intenționat scurtă și conservatoare pentru a evita nume proprii
+    // sau împrumuturi uzuale din română.
+    const highConfidenceEnglish = new Set([
+        'upheaval', 'innate', 'indictment', 'disregard', 'however', 'although',
+        'meanwhile', 'witness', 'threat', 'helpless', 'sudden', 'footage',
+        'outcome', 'warning', 'breach', 'device', 'evidence'
+    ]);
+    const englishIntegrated = clean.match(/[A-Za-z]+/g) || [];
+    const englishHits = englishIntegrated.filter(word => highConfidenceEnglish.has(word.toLowerCase()));
+    for (const word of [...new Set(englishHits.map(w => w.toLowerCase()))]) {
+        reasons.push(`cuvânt englezesc integrat „${word}”`);
+    }
+
+    return reasons;
+}
+
+async function runLocalGrammarQualityPass(items, translatedById) {
+    let autoFixed = 0;
+    const flagged = [];
+
+    for (const item of items) {
+        const id = String(item.id);
+        const current = String(translatedById[id] || '');
+        if (!current.trim()) continue;
+        if (isJunkOrInterjection(item.text)) continue;
+
+        const fixed = applyLocalGrammarDeterministicFixes(current);
+        if (fixed !== current) {
+            translatedById[id] = formatSubtitleLine(fixed);
+            autoFixed++;
+            continue;
+        }
+
+        const reasons = detectLocalGrammarReviewReasons(current);
+        const missingExplicitTerms = getMissingExplicitAnatomicalTerms(item.text, current);
+        if (missingExplicitTerms.length) {
+            reasons.push(`detaliu anatomic explicit pierdut din original: ${missingExplicitTerms.join(', ')}`);
+        }
+        if (reasons.length) {
+            flagged.push({
+                item,
+                reasons
+            });
+        }
+    }
+
+    console.log(`${c.green}✔ [Micro-Grammar] ${autoFixed} corecții locale certe aplicate.${c.reset}`);
+
+    if (flagged.length) {
+        console.log(`${c.yellow}⚠ [Micro-Grammar] ${flagged.length} replici marcate pentru verificare punctuală.${c.reset}`);
+        flagged.slice(0, 20).forEach(entry => {
+            console.log(`  ${c.yellow}• ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
+        });
+    } else {
+        console.log(`${c.green}✔ [Micro-Grammar] Nicio replică nu necesită verificare punctuală.${c.reset}`);
+    }
+
+    return {
+        autoFixed,
+        flaggedItems: flagged.map(entry => entry.item)
+    };
+}
+
+// ============================================================
+// SEMANTIC SPOT CHECK — SEMNALE PUTERNICE DE TRADUCERE CORUPTĂ
+// Nu încearcă să evalueze stilul. Marchează doar construcții care sunt
+// suficient de suspecte încât merită o singură verificare AI punctuală.
+// Se combină cu Micro-Grammar în același request pentru a nu adăuga
+// o trecere Gemini separată.
+// ============================================================
+
+function detectSemanticSpotCheckReasons(text) {
+    const clean = String(text || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!clean) return [];
+
+    const reasons = [];
+
+    // Construcție clar suspectă: româna standard cere „în fața cui/câtor...”,
+    // nu „în fața a cine/câți...”. Verificăm doar formele cu risc foarte mare.
+    if (/(?<![\p{L}])în\s+fața\s+a\s+(?:cine|câți|câte)(?=$|[^\p{L}])/iu.test(clean)) {
+        reasons.push('construcție foarte suspectă „în fața a cine/câți...”');
+    }
+
+    // „De câți oameni a fost nevoie” este construcția firească. Dacă lipsește
+    // prepoziția „de”, trimitem replica la verificare punctuală.
+    if (/\b(?:câți|câte)\s+(?:\p{L}+\s+){0,5}a\s+fost\s+nevoie\b/iu.test(clean) &&
+        !/\bde\s+(?:câți|câte)\s+(?:\p{L}+\s+){0,5}a\s+fost\s+nevoie\b/iu.test(clean)) {
+        reasons.push('posibilă lipsă a prepoziției „de” în construcția „a fost nevoie”');
+    }
+
+    // Concatenări fără spațiu observate în QA. Sunt foarte specifice și
+    // nu modifică automat textul; doar declanșează verificarea punctuală.
+    if (/\b(?:unimpact|unregizor|unregizoare|unactor|oameniiși)\b/iu.test(clean)) {
+        reasons.push('posibilă concatenare accidentală de cuvinte');
+    }
+
+    // „am învățat-o Biblia” / „ai învățat-o cartea” sunt semnale foarte puternice
+    // de structură coruptă; nu marcăm construcții cu „pe” (care pot fi valide).
+    if (/\b(?:am|ai|a|au|ați|aveam|aveai|avea)\s+învățat-o\s+(?!pe\b)\p{L}{2,}\b/iu.test(clean)) {
+        reasons.push('structură suspectă după „învățat-o”');
+    }
+
+    // Cazul observat în QA: „ce și tu și eu avem nevoie să...”
+    // Este suficient de specific pentru a evita false positive-uri.
+    if (/\b(?:ce|ceea\s+ce)\s+și\s+tu\s+și\s+eu\s+avem\s+nevoie\s+să\b/iu.test(clean)) {
+        reasons.push('construcție semantică suspectă „și tu și eu avem nevoie...”');
+    }
+
+    return reasons;
+}
+
+function runSemanticSpotCheck(items, translatedById) {
+    const flagged = [];
+
+    for (const item of items) {
+        const current = String(translatedById[String(item.id)] || '');
+        if (!current.trim()) continue;
+        if (isJunkOrInterjection(item.text)) continue;
+
+        const reasons = detectSemanticSpotCheckReasons(current);
+        if (reasons.length) flagged.push({ item, reasons });
+    }
+
+    if (flagged.length) {
+        console.log(`${c.yellow}⚠ [Semantic Spot Check] ${flagged.length} replici marcate pentru verificare punctuală.${c.reset}`);
+        flagged.slice(0, 20).forEach(entry => {
+            console.log(`  ${c.yellow}• ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
+        });
+    } else {
+        console.log(`${c.green}✔ [Semantic Spot Check] Nicio replică nu necesită verificare punctuală.${c.reset}`);
+    }
+
+    return flagged.map(entry => entry.item);
+}
+
+// ============================================================
+// RECUPERARE DUPĂ GRAMMAR REVIEW — TRADUCERI DEVENITE GOALE
+// ============================================================
+
+async function recoverEmptyTranslationsAfterGrammarReview(items, translatedById, keyStates) {
+    const emptyTranslations = items.filter(item => {
+        const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        if (!originalClean) return false;
+
+        // IMPORTANT: aici nu excludem interjecțiile. Dacă o replică originală
+        // precum "Oh", "Oof", "Uf", "Doamne!" a rămas goală după Grammar Review,
+        // trebuie recuperată la fel ca orice altă replică reală.
+        const translated = translatedById[String(item.id)];
+        const translatedClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
+        return !translatedClean;
+    });
+
+    if (!emptyTranslations.length) return { detected: 0, recovered: 0 };
+
+    console.log(`${c.yellow}⚠ [Post-Grammar Empty Recovery] ${emptyTranslations.length} traduceri goale detectate. Le retraduc punctual...${c.reset}`);
+
+    const recoveryPrompt = `
+${MASTER_TRANSLATION_PROMPT}
+
+RECOVERY DUPĂ VERIFICAREA GRAMATICALĂ — TRADUCERI GOALE.
+Următoarele replici au text original, dar traducerea rezultată după Grammar Review este goală.
+Tradu TOATE liniile de mai jos în română naturală. Nu omite niciun ID.
+Nu returna text gol.
+
+${JSON.stringify(emptyTranslations.map(item => ({ id: item.id, text: item.text })), null, 2)}
+
+Returnează DOAR un ARRAY JSON valid în forma:
+[
+  {"id": 123, "text": "traducerea română"}
+]
+`;
+
+    let recoveredCount = 0;
+    const recoveredIds = [];
+    const failedIds = [];
+
+    try {
+        const recoveryKey = await getAvailableKey(keyStates);
+        const recoveryRaw = await callGemini(recoveryPrompt, recoveryKey, { timeout: 20000 });
+        const recoveryJson = safeJsonParse(recoveryRaw);
+        const recoveryDict = normalizeTranslationPayload(recoveryJson);
+
+        for (const item of emptyTranslations) {
+            const candidateRaw = recoveryDict[String(item.id)];
+            const candidate = formatSubtitleLine(String(candidateRaw || ''));
+
+            if (
+                candidate &&
+                !hasUntranslatedEnglish(item.text, candidate) &&
+                !hasCorruptedSubtitleText(candidate, item.text) &&
+                !hasLostExplicitSourceTerm(item.text, candidate)
+            ) {
+                translatedById[String(item.id)] = candidate;
+                recoveredCount++;
+                recoveredIds.push(String(item.id));
+            } else {
+                failedIds.push(String(item.id));
+            }
+        }
+    } catch (error) {
+        console.log(`${c.yellow}⚠ [Post-Grammar Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
+    }
+
+    const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
+    const failedSuffix = failedIds.length ? `; nereparate: ${failedIds.join(', ')}` : '';
+    console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Post-Grammar Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
+    return { detected: emptyTranslations.length, recovered: recoveredCount };
+}
 
 // ============================================================
 // MOTORUL PRINCIPAL DE TRADUCERE SRT
@@ -2281,12 +2749,42 @@ Returnează DOAR un ARRAY JSON valid în forma:
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
 
-    // V117 experimental: fără etapă AI de revizie gramaticală/stilistică.
-    // Păstrăm validarea structurală, retry-urile pentru traduceri suspecte și
-    // prelucrarea deterministă în stil SubStudio, evitând rescrierea automată
-    // a formulărilor care au ieșit deja bine în traducerea principală.
+    await grammarTranslationReview(items, translatedById, keyStates);
 
-    // Corecțiile mecanice certe rămân doar ca post-procesare locală; nu fac cereri Gemini.
+    // Strat local foarte ieftin: repară doar typo-uri cu încredere mare și
+    // selectează replicile care merită încă o verificare AI punctuală.
+    const microGrammar = await runLocalGrammarQualityPass(items, translatedById);
+    const semanticSpotCheckItems = runSemanticSpotCheck(items, translatedById);
+
+    // Combinăm Micro-Grammar + Semantic Spot Check într-o singură verificare AI
+    // punctuală. Astfel, dacă nu există semnale puternice, nu există niciun request
+    // suplimentar; dacă există, toate sunt trimise într-o singură trecere țintită.
+    const targetedReviewMap = new Map();
+    for (const item of microGrammar.flaggedItems) {
+        targetedReviewMap.set(String(item.id), item);
+    }
+    for (const item of semanticSpotCheckItems) {
+        targetedReviewMap.set(String(item.id), item);
+    }
+
+    if (targetedReviewMap.size) {
+        await grammarTranslationReview(
+            [...targetedReviewMap.values()],
+            translatedById,
+            keyStates,
+            { mode: 'targeted', contextItems: items }
+        );
+    }
+
+    // Ultima recuperare după TOATE trecerile Grammar Review.
+    // Astfel, o corecție punctuală care a produs accidental un text gol nu mai ajunge
+    // în fișierul final. Sunt retrimise doar ID-urile goale, nu întregul fișier.
+    await recoverEmptyTranslationsAfterGrammarReview(items, translatedById, keyStates);
+
+    // Ultima protecție: corecțiile mecanice certe trebuie aplicate DUPĂ Grammar Review.
+    // Altfel, verificatorul LLM poate rescrie din nou o formă deja corectată și rezultatul
+    // devine dependent de variația aleatorie a modelului. formatSubtitleLine() este
+    // idempotent pentru aceste corecții și reaplică dicționarul determinist la final.
     for (const item of items) {
         const id = String(item.id);
         const current = translatedById[id];
@@ -2301,6 +2799,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
             formatSubtitleLine(currentText)
         );
         finalText = applySourceGroundedSemanticFixes(item.text, finalText);
+        finalText = applyLocalGrammarDeterministicFixes(finalText);
         const formattedFinalText = formatSubtitleLine(finalText);
 
         if (String(formattedFinalText).trim()) {
@@ -2311,7 +2810,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
         }
     }
 
-    console.log(`\n${c.cyan}🔒 Post-procesare locală SubStudio-style: formatare și corecții deterministe integrate în formatter aplicate.${c.reset}`);
+    console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate după Grammar Review.${c.reset}`);
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
@@ -2342,13 +2841,11 @@ Returnează DOAR un ARRAY JSON valid în forma:
     }
 
     console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide${c.reset}`);
-    console.log(`${c.green}✔ Verificarea finală executată după validarea și recuperarea țintită.${c.reset}`);
+    console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
 
     const output = items.map(item => {
         const translated = translatedById[String(item.id)] || item.text;
-        const formatted = formatSubtitleLine(applySubStudioPostProcessing(translated));
-        const restored = restoreSubStudioSourceFormatting(item.originalText || '', formatted);
-        return `${item.id}\n${item.start} --> ${item.end}\n${restored}\n`;
+        return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
     }).join('\n');
 
     return output.trim() + '\n';
@@ -2667,7 +3164,7 @@ function parseSrt(srt) {
 
         if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) continue;
 
-        result.push({ id, start: match[1], end: match[2], text, originalText: rawText });
+        result.push({ id, start: match[1], end: match[2], text });
     }
 
     return result;
