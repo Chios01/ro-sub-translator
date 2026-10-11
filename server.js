@@ -37,29 +37,6 @@ const MODEL_NAME =
     process.env.GEMINI_MODEL ||
     'gemini-3.5-flash-lite';
 
-// Grammar Review is an independent source-grounded check using a distinct model
-// by default. Override it explicitly only when required by the API account/quota.
-const DEFAULT_REVIEW_MODEL = /^gemini-3\.8-flash$/i.test(String(MODEL_NAME))
-    ? 'gemini-3.6-flash'
-    : 'gemini-3.8-flash';
-const REVIEW_MODEL_NAME = process.env.GEMINI_REVIEW_MODEL || DEFAULT_REVIEW_MODEL;
-
-const VALID_THINKING_LEVELS = new Set(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']);
-function normalizeThinkingLevel(value, fallback = 'HIGH') {
-    const normalized = String(value || fallback).trim().toUpperCase();
-    return VALID_THINKING_LEVELS.has(normalized) ? normalized : fallback;
-}
-const GEMINI_THINKING_LEVEL = normalizeThinkingLevel(process.env.GEMINI_THINKING_LEVEL, 'HIGH');
-const GEMINI_REVIEW_THINKING_LEVEL = normalizeThinkingLevel(
-    process.env.GEMINI_REVIEW_THINKING_LEVEL,
-    'HIGH'
-);
-const parsedSeed = process.env.GEMINI_SEED === undefined || String(process.env.GEMINI_SEED).trim() === ''
-    ? 42
-    : Number(process.env.GEMINI_SEED);
-const GEMINI_SEED = Number.isSafeInteger(parsedSeed) ? parsedSeed : 42;
-const loggedModelVersions = new Set();
-
 // ============================================================
 // CONSOLE COLORS
 // ============================================================
@@ -97,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.121',
+    version: '12.78.114',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -567,7 +544,7 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
 
-    clean = clean.replace(/<[iIbBuU]>\s*(?:uh+|um+|e+r+m?|ă{1,})[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
+    clean = clean.replace(/<[iIbBuU]>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
@@ -576,19 +553,17 @@ function cleanTextForJson(text) {
     // Nu eliminăm parantezele în mod global: pot conține dialog real (de ex. (I mean)).
     // Sunt eliminate doar parantezele care conțin indicații sonore, mai sus.
 
-    // Curățăm etichetele de vorbitor cu majuscule înainte de traducere.
+    // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
 
-    // Eliminăm un bloc alcătuit doar dintr-un sunet de ezitare izolat.
-    // Păstrăm expresiile cu mai multe cuvinte, precum “Oh my God”.
-    // Eliminăm doar ezitări non-lexicale și râsete scrise ca sunete izolate.
-    // Reacțiile cu sens (Oh, Wow, Oops, Ouch, Mhm, Uh-oh etc.) rămân pentru traducere.
+    // Like SubStudio, drop a subtitle block that consists only of a standalone
+    // filler sound. Do not drop multi-word expressions such as “Oh my God”.
     const standaloneSourceFillers = new Set((
-        'uh uhh uhhh um umm ummm erm er err errr ă ăă ăăă haha hahaha hehe hehehe'
+        'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
     ).split(/\s+/));
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean).filter(line => {
         const token = line.replace(/<[^>]+>/g, ' ')
@@ -614,12 +589,12 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    let cleaned = text.replace(/^<[^>]+>\s*(?:uh+|um+|e+r+m?|ă{1,})[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
+    let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
     // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație.
     // IMPORTANT: includem și punctul în delimitatori; altfel „ăă...” / „mhm...”
     // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
     // „ă{2,}” prinde și forme precum „ăăă...”, nu doar exact „ăă”.
-    const hesitationToken = '(?:ă{1,}|uh+|um+|e+r+m?)';
+    const hesitationToken = '(?:ă{1,}|îhî|mhm|a{1,}h{1,}|ahem|argh|aw+|ehm?|er+m?|gah|ha+|heh|hm+|hmph|huh|m+m+h?m?|oh+h?|ooh+|oops|ouch|ow|pff+t?|phew|psst|shh+|ugh|uh+m?|um+m?|whew|whoa|wow|yikes|aâ|aoleu)';
 
     // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
     // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
@@ -652,7 +627,7 @@ function deepCleanSubtitleText(text) {
     // După eliminarea unei ezitări, repară majuscula de început de propoziție.
     cleaned = cleaned.replace(/(^|[.!?]\s+)([a-zăâîșț])/g, (m, prefix, letter) => prefix + letter.toUpperCase());
     
-    if (/^(?:uh+|um+|e+r+m?|ă+)[!.…]*$/gmi.test(cleaned)) return '';
+    if (/^(ah|oh|uh|agh|aâ|aoleu|ăă|ugh|argh|aah|oof|uf)[!.]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
     cleaned = cleaned.replace(/\\+/g, ' ');
@@ -794,7 +769,7 @@ function formatSubtitleLayout(value) {
         }
 
         // Preserve a speaker marker if present. Normalize it to "- " and use
-        // a capital letter after the dash for consistent subtitle formatting.
+        // a capital letter after the dash, as required by SubStudio formatting.
         const marked = raw.match(/^[-–—]+\s*(.*?)\s*$/);
         if (marked && marked[1]) {
             entries.push({ text: marked[1].trim(), dialogue: true });
@@ -1190,7 +1165,6 @@ TRANSLATION AND CONTEXT
 - Choose terms of endearment according to the relationship and context; do not translate “babe”, “honey”, or “baby” mechanically every time.
 - Translate “But” as „Dar” when it begins a clause. Do not leave ordinary English dialogue untranslated.
 - Use correct Romanian grammar, spelling, punctuation, and diacritics (ă, â, î, ș, ț). Use complete real Romanian words; never truncate, merge, invent, or corrupt a word. Check pronouns, clitics, prepositions, conjugation, and agreement.
-- Do not replace an ordinary, contextually clear word with a rare, archaic, technical, or phonetically similar word whose meaning does not fit the source. Each important Romanian word must be justified by the English line and context; when an unusual word seems unrelated, choose a common, precise contemporary equivalent.
 - Convert ordinary imperial measurements to metric where natural and safe: feet to metres, miles to kilometres, pounds to kilograms, Fahrenheit to Celsius. Do not convert plot-critical or idiomatic measurements. Translate “lakh” as 100,000 and “crore” as 10 million when relevant.
 
 SUBTITLE FORMATTING
@@ -1201,10 +1175,9 @@ SUBTITLE FORMATTING
 - Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
 INTERJECTIONS AND FILLERS
-- Remove only non-lexical hesitation that adds no meaning, such as “uh”, “um”, “erm” and Romanian “ă/ăă”. Clean repeated hesitation stutters, then repair punctuation and capitalization.
-- Preserve and translate meaningful standalone reactions when they express surprise, pain, realization, agreement, warning, or emotion. Do NOT remove “Oh”, “Ah”, “Wow”, “Oops”, “Ouch”, “Whoa”, “Yikes”, “Mhm”, “Uh-huh”, “Uh-oh” or “Aha” by default; translate/localize them naturally for the scene.
-- Do not delete an embedded meaningful reaction just because it is short or begins a sentence. Remove a filler only when it is genuinely non-lexical hesitation, not when it changes the intent or tone.
-- Remove non-dialogue sound labels and standalone grunts/laughter only when they are subtitle noise rather than meaningful spoken dialogue.
+- Remove standalone filler sounds and meaningless hesitation tokens (including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Wow”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”) from the subtitle.
+- Remove an embedded filler when it is only hesitation, then repair punctuation and capitalization. Do not delete a meaningful multi-word expression simply because it begins with an interjection; translate the expression by meaning.
+- Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise, not meaningful spoken dialogue.
 
 FINAL CHECK
 Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, dialogue format, filler cleanup, and one-to-one ID alignment. Correct clear errors without adding or deleting meaning.
@@ -1317,12 +1290,7 @@ async function getAvailableKey(keyStates) {
 }
 
 async function callGemini(prompt, keyState, options = {}) {
-    const modelName = options.modelName || MODEL_NAME;
-    const thinkingLevel = normalizeThinkingLevel(
-        options.thinkingLevel,
-        modelName === REVIEW_MODEL_NAME ? GEMINI_REVIEW_THINKING_LEVEL : GEMINI_THINKING_LEVEL
-    );
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
     const timeout = Number.isInteger(options.timeout) ? options.timeout : 120000;
     const responseSchema = options.responseSchema || {
         type: 'ARRAY',
@@ -1338,15 +1306,15 @@ async function callGemini(prompt, keyState, options = {}) {
         }
     };
 
-    // Seed fix pentru reducerea variațiilor între rulări identice; nu garantează determinism absolut.
-    // Nu setăm temperature/topP/topK: sunt ignorate/depreciate pentru modelele Gemini 3 actuale.
+    // SubStudio folosește nivelul de gândire MEDIUM pentru motoarele Gemini 3.
+    // Gemini 3.5 Flash-Lite îl suportă; parametrul temperature este omis deoarece
+    // documentația Gemini 3.5 îl marchează drept depreciat/ignorat pentru aceste modele.
     const generationConfig = {
         responseMimeType: 'application/json',
-        responseSchema,
-        seed: GEMINI_SEED
+        responseSchema
     };
-    if (/^gemini-3(?:\.|-)/i.test(String(modelName))) {
-        generationConfig.thinkingConfig = { thinkingLevel };
+    if (/^gemini-3(?:\.|-)/i.test(String(MODEL_NAME))) {
+        generationConfig.thinkingConfig = { thinkingLevel: 'MEDIUM' };
     }
 
     try {
@@ -1367,14 +1335,6 @@ async function callGemini(prompt, keyState, options = {}) {
 
         const raw = response.data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
         if (!raw.trim()) throw new Error('Gemini a returnat conținut gol.');
-
-        const resolvedModelVersion = String(response.data?.modelVersion || response.data?.model || '').trim();
-        const modelLogKey = `${modelName}|${resolvedModelVersion || 'version-not-reported'}`;
-        if (!loggedModelVersions.has(modelLogKey)) {
-            loggedModelVersions.add(modelLogKey);
-            console.log(`${c.cyan}[Gemini] Model solicitat: ${modelName}; versiune API: ${resolvedModelVersion || 'neprecizată'}; thinking: ${/^gemini-3(?:\.|-)/i.test(String(modelName)) ? thinkingLevel : 'nespecificat'}; seed: ${GEMINI_SEED}${c.reset}`);
-        }
-
         keyState.failures = 0;
         return raw;
     } catch (error) {
@@ -1509,7 +1469,7 @@ function isJunkOrInterjection(text) {
     // complet de verificările de traducere, ca să nu apară în loguri ca suspecți.
     if (/^[\s0-9\-–—._,;:!?…'"~^`´‚„“”‘’()\[\]{}|\\/♪♫♬♩#]+$/.test(clean)) return true;
 
-    if (/^(?:[-–—\s]*)(?:uh+|um+|e+r+m?|ă+)[!.,?\s-]*$/i.test(clean)) return true;
+    if (/^(?:[-–—\s]*)(ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*$/i.test(clean)) return true;
     return false;
 }
 
@@ -2147,10 +2107,8 @@ VERIFICĂ ÎN ORDINE
 3. Păstrează termenii expliciți și sensul direct când sursa îi folosește. Nu îi înlocui cu eufemisme și nu transforma intensificatorii/înjurăturile în obiecte, acțiuni sau insulte diferite.
 4. Păstrează singularul/pluralul și referentul. De exemplu, “a hat” nu trebuie tradus „căciuli”. Nu adăuga diminutive precum „căciuliță” dacă sursa nu exprimă micime, afecțiune sau diminutiv.
 5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase.
-6. Verifică separat alegerea lexicală: un cuvânt poate exista în română, dar poate fi complet nepotrivit în context. Dacă apare un termen rar, arhaic, tehnic sau asemănător doar fonetic cu ce pare să spună sursa, verifică sensul lui față de original. Înlocuiește-l cu un echivalent românesc actual și obișnuit numai când originalul și contextul susțin clar acea corectură; păstrează termenii rari când scena chiar îi cere.
-7. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
-8. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
-9. Păstrează reacțiile cu sens precum „Oh”, „Ah”, „Wow”, „Oops”, „Ouch”, „Mhm”, „Uh-oh” și „Aha”. Elimină numai ezitările fără sens („uh”, „um”, „erm”, „ă/ăă”); nu șterge o reacție care exprimă durere, surpriză, acord sau recunoaștere.
+6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
+7. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
 
 REGULĂ DE PRUDENȚĂ
 Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
@@ -2185,8 +2143,6 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     : prompt;
                 const raw = await callGemini(requestPrompt, keyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
-                    modelName: REVIEW_MODEL_NAME,
-                    thinkingLevel: GEMINI_REVIEW_THINKING_LEVEL,
                     responseSchema: {
                         type: 'ARRAY',
                         minItems: 0,
@@ -3223,24 +3179,10 @@ function sleep(ms) {
 }
 
 app.get('/health', (req, res) => {
-    res.json({
-        ok: true,
-        service: 'RO Sub Translator',
-        model: MODEL_NAME,
-        reviewModel: REVIEW_MODEL_NAME,
-        thinkingLevel: GEMINI_THINKING_LEVEL,
-        reviewThinkingLevel: GEMINI_REVIEW_THINKING_LEVEL,
-        seed: GEMINI_SEED,
-        version: manifest.version
-    });
+    res.json({ ok: true, service: 'RO Sub Translator', model: MODEL_NAME, version: manifest.version });
 });
 
 const PORT = Number(process.env.PORT) || 7000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
-    console.log(`${c.cyan}[Gemini config] Traducere: ${MODEL_NAME} | thinking=${GEMINI_THINKING_LEVEL}; seed=${GEMINI_SEED}${c.reset}`);
-    console.log(`${c.cyan}[Gemini config] Verificare independentă: ${REVIEW_MODEL_NAME} | thinking=${GEMINI_REVIEW_THINKING_LEVEL}${c.reset}`);
-    if (String(MODEL_NAME).toLowerCase() === String(REVIEW_MODEL_NAME).toLowerCase()) {
-        console.log(`${c.yellow}[Gemini config] ATENȚIE: modelul de verificare este identic cu modelul de traducere.${c.reset}`);
-    }
 });
