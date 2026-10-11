@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.117',
+    version: '12.78.118',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2166,19 +2166,6 @@ Returnează DOAR JSON valid în forma:
     return { fixed: totalFixed, remaining };
 }
 
-function applyDeterministicSubtitleFixes(text) {
-    let result = String(text || '');
-    for (const [pattern, replacement] of DETERMINISTIC_SUBTITLE_FIXES) {
-        result = result.replace(pattern, match => {
-            if (match === match.toUpperCase()) return replacement.toUpperCase();
-            if (match[0] === match[0].toUpperCase()) {
-                return replacement.charAt(0).toUpperCase() + replacement.slice(1);
-            }
-            return replacement;
-        });
-    }
-    return result;
-}
 
 // ============================================================
 // MOTORUL PRINCIPAL DE TRADUCERE SRT
@@ -2314,7 +2301,6 @@ Returnează DOAR un ARRAY JSON valid în forma:
             formatSubtitleLine(currentText)
         );
         finalText = applySourceGroundedSemanticFixes(item.text, finalText);
-        finalText = applyDeterministicSubtitleFixes(finalText);
         const formattedFinalText = formatSubtitleLine(finalText);
 
         if (String(formattedFinalText).trim()) {
@@ -2325,7 +2311,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
         }
     }
 
-    console.log(`\n${c.cyan}🔒 Post-procesare locală SubStudio-style: formatare și corecții deterministe aplicate.${c.reset}`);
+    console.log(`\n${c.cyan}🔒 Post-procesare locală SubStudio-style: formatare și corecții deterministe integrate în formatter aplicate.${c.reset}`);
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
