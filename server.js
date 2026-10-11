@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.124',
+    version: '12.78.126',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1306,14 +1306,15 @@ async function callGemini(prompt, keyState, options = {}) {
         }
     };
 
-    // Folosim nivelul de gândire MEDIUM pentru modelele Gemini 3.
-    // Gemini 3.5 Flash-Lite îl suportă; parametrul temperature este omis deoarece
-    // documentația modelului îl marchează drept depreciat sau ignorat.
+    // Pentru apelurile Gemini 3, MEDIUM rămâne comportamentul implicit al proiectului.
+    // Etapele care trebuie să folosească nivelul implicit al modelului pot seta
+    // options.omitThinkingLevel=true (folosit pentru Grammar Review).
+    // Parametrul temperature este omis deoarece poate fi depreciat sau ignorat.
     const generationConfig = {
         responseMimeType: 'application/json',
         responseSchema
     };
-    if (/^gemini-3(?:\.|-)/i.test(String(MODEL_NAME))) {
+    if (!options.omitThinkingLevel && /^gemini-3(?:\.|-)/i.test(String(MODEL_NAME))) {
         generationConfig.thinkingConfig = { thinkingLevel: 'MEDIUM' };
     }
 
@@ -2071,7 +2072,9 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     console.log(`   Verificate: ${candidates.length} replici`);
 
     const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
-    let checked = 0;
+    // Numărăm ID-uri unice doar după ce răspunsul calupului a fost procesat complet.
+    // Astfel, reîncercările și calupurile împărțite nu pot umfla artificial acoperirea.
+    const checkedIds = new Set();
     let fixed = 0;
 
     const rateLimitRetryQueue = [];
@@ -2143,6 +2146,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     : prompt;
                 const raw = await callGemini(requestPrompt, keyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
+                    omitThinkingLevel: true,
                     responseSchema: {
                         type: 'ARRAY',
                         minItems: 0,
@@ -2160,8 +2164,6 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 });
                 const parsed = safeJsonParse(raw);
                 const parsedDict = normalizeTranslationPayload(parsed);
-
-                checked += batch.length;
 
                 for (const item of batch) {
                     const id = String(item.id);
@@ -2186,9 +2188,13 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 fixed++;
                 }
 
+                // Un ID intră în numărătoare numai după procesarea completă a calupului.
+                // Set-ul elimină dublurile dacă un calup a fost reluat sau împărțit.
+                for (const item of batch) checkedIds.add(String(item.id));
+
                 // IMPORTANT: dacă răspunsul JSON a fost valid și am procesat calupul,
                 // calupul este REUȘIT. Nu lăsăm bucla de retry să cadă ulterior în
-                // fallback-ul „eroare necunoscută” și să dubleze contorul checked.
+                // fallback-ul „eroare necunoscută” și să dubleze contorul verificărilor.
                 const batchFixed = fixed - batchFixedBefore;
                 console.log(`${c.green}✔ [Grammar Review] Calup ${batchIndex + 1}/${batches.length}: ${batchFixed} corectate${c.reset}`);
                 return { success: true, is429: false };
@@ -2286,18 +2292,29 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
         return { success: false, is429: false };
     };
 
-    // Prima trecere: dacă un calup primește 429, nu îl abandonăm definitiv.
-    // Îl punem la coadă și îl reîncercăm după ce terminăm toate calupurile normale.
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        const batch = batches[batchIndex];
-        const result = await processGrammarBatch(
-            batch,
-            batchIndex,
-            `Calup ${batchIndex + 1}/${batches.length}`
-        );
+    // Prima trecere: procesăm cel mult 3 calupuri în paralel pentru a reduce
+    // timpul total. Retry-urile pentru 429 rămân în coada secvențială de mai jos.
+    // Fiecare calup își păstrează propriile protecții JSON/timeout și acoperire.
+    const grammarConcurrency = Math.max(1, Math.min(CONCURRENCY_LIMIT, batches.length));
+    for (let batchStart = 0; batchStart < batches.length; batchStart += grammarConcurrency) {
+        const group = batches.slice(batchStart, batchStart + grammarConcurrency);
+        const results = await Promise.all(group.map(async (batch, offset) => {
+            const batchIndex = batchStart + offset;
+            // Păstrăm distanțarea de 1,5 s folosită și la traducerea principală,
+            // reducând riscul ca toate cererile din grup să lovească simultan API-ul.
+            if (offset > 0) await sleep(1500 * offset);
+            const result = await processGrammarBatch(
+                batch,
+                batchIndex,
+                `Calup ${batchIndex + 1}/${batches.length}`
+            );
+            return { batch, batchIndex, result };
+        }));
 
-        if (result.is429) {
-            rateLimitRetryQueue.push({ batch, batchIndex });
+        for (const entry of results) {
+            if (entry.result.is429) {
+                rateLimitRetryQueue.push({ batch: entry.batch, batchIndex: entry.batchIndex });
+            }
         }
     }
 
@@ -2320,12 +2337,23 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
         }
     }
 
-    if (rateLimitRetryQueue.length) {
-        console.log(`${c.yellow}⚠ [Grammar Review] ${rateLimitRetryQueue.length} calupuri au rămas neverificate după cele 2 reîncercări 429.${c.reset}`);
-    }
+    // Raportăm acoperirea reală după TOATE încercările, nu doar dacă o coadă
+    // internă a rămas populată. În runda finală, calupurile care primesc din nou 429
+    // sunt scoase din coada de retry; ID-urile lor rămân însă absente din checkedIds.
+    const uncheckedItems = candidates.filter(item => !checkedIds.has(String(item.id)));
+    const uncheckedIds = [...new Set(uncheckedItems.map(item => String(item.id)))];
+    const checked = checkedIds.size;
+    const eligibleCount = new Set(candidates.map(item => String(item.id))).size;
 
-    console.log(`${c.green}✔ [Grammar Review] Final: ${checked} verificate, ${fixed} corectate${c.reset}`);
-    return { checked, fixed };
+    if (uncheckedIds.length) {
+        console.log(`${c.yellow}⚠ [Grammar Review] Acoperire incompletă: ${uncheckedIds.length}/${eligibleCount} replici eligibile au rămas neverificate după retry-uri.${c.reset}`);
+        const preview = uncheckedIds.slice(0, 30);
+        console.log(`${c.yellow}   ID-uri neverificate: ${preview.join(', ')}${uncheckedIds.length > preview.length ? ` ... și încă ${uncheckedIds.length - preview.length}` : ''}${c.reset}`);
+        console.log(`${c.yellow}⚠ [Grammar Review] Final: ${checked}/${eligibleCount} verificate cu succes, ${fixed} corectate, ${uncheckedIds.length} neverificate.${c.reset}`);
+    } else {
+        console.log(`${c.green}✔ [Grammar Review] Final: ${checked}/${eligibleCount} verificate cu succes, ${fixed} corectate; acoperire completă.${c.reset}`);
+    }
+    return { checked, fixed, unchecked: uncheckedIds.length, eligible: eligibleCount };
 }
 
 // ============================================================
