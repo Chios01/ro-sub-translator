@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.114',
+    version: '12.78.115',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -553,15 +553,15 @@ function cleanTextForJson(text) {
     // Nu eliminăm parantezele în mod global: pot conține dialog real (de ex. (I mean)).
     // Sunt eliminate doar parantezele care conțin indicații sonore, mai sus.
 
-    // Curățăm etichetele de vorbitor cu majuscule înainte de traducere.
-    // Aplicăm regula strict la începutul unei linii și numai înainte de două puncte.
+    // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
+    // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
 
-    // Eliminăm blocurile care conțin numai un sunet de umplutură.
-    // Nu eliminăm expresiile cu mai multe cuvinte, precum “Oh my God”.
+    // Like SubStudio, drop a subtitle block that consists only of a standalone
+    // filler sound. Do not drop multi-word expressions such as “Oh my God”.
     const standaloneSourceFillers = new Set((
         'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
     ).split(/\s+/));
@@ -768,8 +768,8 @@ function formatSubtitleLayout(value) {
             continue;
         }
 
-        // Păstrăm marcajul vorbitorului, dacă există, și îl normalizăm la "- ".
-        // Textul de după cratimă începe cu majusculă pentru o formatare consecventă.
+        // Preserve a speaker marker if present. Normalize it to "- " and use
+        // a capital letter after the dash, as required by SubStudio formatting.
         const marked = raw.match(/^[-–—]+\s*(.*?)\s*$/);
         if (marked && marked[1]) {
             entries.push({ text: marked[1].trim(), dialogue: true });
@@ -1247,12 +1247,35 @@ function register429(keyStates, cooldownMs) {
     const now = Date.now();
     const paused = keyStates.filter(s => !s.disabled && s.pausedUntil > now).length;
     const active = keyStates.filter(s => !s.disabled).length;
+    const normalizedCooldownMs = Math.min(120000, Math.max(10000, Number(cooldownMs) || 15000));
+
+    // Când mai multe chei primesc 429, suspendăm temporar întregul flux.
+    // Poarta globală respectă același cooldown ca cheia, până la limita
+    // folosită de callGemini, în loc să taie orice Retry-After la 30 secunde.
     if (active > 0 && paused >= Math.min(2, active)) {
         keyStates._global429Until = Math.max(
             getGlobal429Until(keyStates),
-            now + Math.min(30000, Math.max(15000, cooldownMs))
+            now + normalizedCooldownMs
         );
     }
+}
+
+function parseRetryAfterMs(retryAfterHeader) {
+    const now = Date.now();
+    const raw = String(retryAfterHeader ?? '').trim();
+    if (raw) {
+        const seconds = Number(raw);
+        if (Number.isFinite(seconds) && seconds > 0) {
+            return Math.min(120000, Math.max(10000, Math.ceil(seconds * 1000)));
+        }
+
+        // Retry-After poate fi fie număr de secunde, fie dată HTTP.
+        const retryAt = Date.parse(raw);
+        if (Number.isFinite(retryAt) && retryAt > now) {
+            return Math.min(120000, Math.max(10000, retryAt - now));
+        }
+    }
+    return 15000;
 }
 
 async function waitFor429Gate(keyStates) {
@@ -1306,15 +1329,21 @@ async function callGemini(prompt, keyState, options = {}) {
         }
     };
 
-    // Folosim nivelul de gândire MEDIUM pentru modelele Gemini 3.
+    // SubStudio folosește nivelul de gândire MEDIUM pentru motoarele Gemini 3.
     // Gemini 3.5 Flash-Lite îl suportă; parametrul temperature este omis deoarece
-    // documentația modelului îl marchează drept depreciat sau ignorat.
+    // documentația Gemini 3.5 îl marchează drept depreciat/ignorat pentru aceste modele.
     const generationConfig = {
         responseMimeType: 'application/json',
         responseSchema
     };
-    if (/^gemini-3(?:\.|-)/i.test(String(MODEL_NAME))) {
-        generationConfig.thinkingConfig = { thinkingLevel: 'MEDIUM' };
+    // Implicit, păstrăm MEDIUM pentru apelurile normale (în special traducere).
+    // O etapă poate trece thinkingLevel: null pentru a lăsa modelul să folosească
+    // nivelul implicit. Grammar Review folosește această excepție.
+    const thinkingLevel = Object.prototype.hasOwnProperty.call(options, 'thinkingLevel')
+        ? options.thinkingLevel
+        : 'MEDIUM';
+    if (/^gemini-3(?:\.|-)/i.test(String(MODEL_NAME)) && typeof thinkingLevel === 'string' && thinkingLevel) {
+        generationConfig.thinkingConfig = { thinkingLevel };
     }
 
     try {
@@ -1348,10 +1377,7 @@ async function callGemini(prompt, keyState, options = {}) {
             // în cooldown; dacă mai multe chei au fost limitate, activăm
             // temporar poarta globală pentru a evita rotația frenetică.
             const retryAfterHeader = error.response?.headers?.['retry-after'];
-            const retryAfterSec = Number(retryAfterHeader);
-            const cooldownMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
-                ? Math.min(120000, Math.max(10000, retryAfterSec * 1000))
-                : 15000;
+            const cooldownMs = parseRetryAfterMs(retryAfterHeader);
             keyState.pausedUntil = Date.now() + cooldownMs;
             const retryError = new Error(`Rate limit 429. Aștept ${Math.ceil(cooldownMs / 1000)}s și reîncerc.`);
             retryError.isRateLimit429 = true;
@@ -2071,10 +2097,11 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     console.log(`   Verificate: ${candidates.length} replici`);
 
     const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
-    let checked = 0;
     let fixed = 0;
+    const verifiedIds = new Set();
 
     const rateLimitRetryQueue = [];
+    const rateLimitFailedQueue = [];
 
     const processGrammarBatch = async (batch, batchIndex, label) => {
         const batchFixedBefore = fixed;
@@ -2143,6 +2170,9 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     : prompt;
                 const raw = await callGemini(requestPrompt, keyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
+                    // Grammar Review lasă thinkingConfig nedefinit pentru ca modelul
+                    // să folosească nivelul implicit; traducerea rămâne MEDIUM.
+                    thinkingLevel: null,
                     responseSchema: {
                         type: 'ARRAY',
                         minItems: 0,
@@ -2161,7 +2191,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 const parsed = safeJsonParse(raw);
                 const parsedDict = normalizeTranslationPayload(parsed);
 
-                checked += batch.length;
+                for (const checkedItem of batch) verifiedIds.add(String(checkedItem.id));
 
                 for (const item of batch) {
                     const id = String(item.id);
@@ -2228,8 +2258,10 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                         };
                     }
 
-                    // 429 este trimis mai departe către coada existentă.
+                    // Grammar Review trebuie să activeze aceeași poartă globală
+                    // folosită de traducerea principală, nu doar pauza cheii curente.
                     if (is429) {
+                        register429(keyStates, Number(error?.retryAfterMs) || 15000);
                         return { success: false, is429: true };
                     }
 
@@ -2314,17 +2346,36 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 `Reîncercare 429 — Calup ${queued.batchIndex + 1}/${batches.length} (runda ${retryRound}/2)`
             );
 
-            if (result.is429 && retryRound < 2) {
-                rateLimitRetryQueue.push(queued);
+            if (result.is429) {
+                if (retryRound < 2) {
+                    rateLimitRetryQueue.push(queued);
+                } else {
+                    // Nu pierdem evidența eșecurilor din ultima rundă.
+                    rateLimitFailedQueue.push(queued);
+                }
             }
         }
     }
 
-    if (rateLimitRetryQueue.length) {
-        console.log(`${c.yellow}⚠ [Grammar Review] ${rateLimitRetryQueue.length} calupuri au rămas neverificate după cele 2 reîncercări 429.${c.reset}`);
+    const unverifiedItems = candidates.filter(item => !verifiedIds.has(String(item.id)));
+    const unverifiedIdSet = new Set(unverifiedItems.map(item => String(item.id)));
+    const unresolved429Ids = [...new Set(
+        rateLimitFailedQueue.flatMap(queued => queued.batch.map(item => String(item.id)))
+    )].filter(id => unverifiedIdSet.has(id));
+
+    if (unresolved429Ids.length) {
+        console.log(`${c.yellow}⚠ [Grammar Review] 429 nerecuperate: ${unresolved429Ids.length} ID-uri rămase neverificate după cele 2 reîncercări suplimentare.${c.reset}`);
+        console.log(`${c.yellow}   ID-uri: ${unresolved429Ids.slice(0, 30).join(', ')}${unresolved429Ids.length > 30 ? ` ... și încă ${unresolved429Ids.length - 30}` : ''}${c.reset}`);
     }
 
-    console.log(`${c.green}✔ [Grammar Review] Final: ${checked} verificate, ${fixed} corectate${c.reset}`);
+    if (unverifiedItems.length) {
+        const unverifiedIds = unverifiedItems.map(item => String(item.id));
+        console.log(`${c.yellow}⚠ [Grammar Review] Acoperire incompletă: ${unverifiedItems.length}/${candidates.length} replici eligibile au rămas neverificate.${c.reset}`);
+        console.log(`${c.yellow}   ID-uri neverificate: ${unverifiedIds.slice(0, 30).join(', ')}${unverifiedIds.length > 30 ? ` ... și încă ${unverifiedIds.length - 30}` : ''}${c.reset}`);
+    }
+
+    const checked = verifiedIds.size;
+    console.log(`${unverifiedItems.length ? c.yellow : c.green}✔ [Grammar Review] Final: ${checked}/${candidates.length} verificate, ${fixed} corectate${unverifiedItems.length ? `, ${unverifiedItems.length} neverificate` : ''}${c.reset}`);
     return { checked, fixed };
 }
 
