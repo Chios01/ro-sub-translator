@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.126',
+    version: '12.78.127',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1513,6 +1513,9 @@ function hasUntranslatedEnglish(original, translated) {
     const romanianSignals = /\b(?:și|să|se|este|sunt|era|erau|nu|da|că|ca|cu|de|din|în|pe|la|un|o|eu|tu|el|ea|noi|voi|ei|ele|mai|foarte|pentru|dar|sau|care|ce|cine|cum|unde|când|aici|acolo|trebuie|poate|fost|avea|am|ai|are|au|mă|te|îl|îi|mi|ți|lor|lui|mea|ta|tău|meu)\b/i;
 
     if (originalNorm === translatedNorm) {
+        // „as” este un cuvânt englezesc, dar în formula arabă transliterată
+        // „Wa alaykum as-salam” face parte din salut, nu indică text englezesc netradus.
+        if (/^wa\s+alaykum\s+as-salam[.!?…]*$/i.test(originalNorm)) return false;
         if (namedTitle && !romanianSignals.test(transClean) && tw.length <= 8) return false;
         const strong = tw.filter(w => strongEnglish.has(w)).length;
         const markers = tw.filter(w => englishMarkers.has(w)).length;
@@ -2127,6 +2130,7 @@ Returnează DOAR JSON valid:
 Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
 
         let lastJsonError = null;
+        let activeKeyState = null;
 
         // JSON-ul Gemini poate fi invalid ocazional chiar dacă promptul cere
         // explicit JSON valid. Nu abandonăm calupul la prima eroare: facem
@@ -2140,11 +2144,11 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     await sleep(GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS);
                 }
 
-                const keyState = await getAvailableKey(keyStates);
+                activeKeyState = await getAvailableKey(keyStates);
                 const requestPrompt = jsonAttempt > 0
                     ? `${prompt}\n\nRETRY TEHNIC: Returnează DOAR JSON valid, fără markdown sau explicații. Format exact: [{\"id\":123,\"text\":\"...\"}]. Pentru nicio corecție returnează exact []. Nu modifica ID-urile. Escapă toate ghilimelele interne din text.`
                     : prompt;
-                const raw = await callGemini(requestPrompt, keyState, {
+                const raw = await callGemini(requestPrompt, activeKeyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
                     omitThinkingLevel: true,
                     responseSchema: {
@@ -2234,8 +2238,13 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                         };
                     }
 
-                    // 429 este trimis mai departe către coada existentă.
+                    // Grammar Review trebuie să folosească aceeași poartă globală
+                    // de rate-limit ca traducerea principală. În v126, cheia era pusă
+                    // în pauză de callGemini, dar coada Grammar nu înregistra 429-ul;
+                    // astfel încerca imediat alte chei și epuiza toate încercările.
                     if (is429) {
+                        const cooldownMs = Number(error?.retryAfterMs) || 15000;
+                        if (activeKeyState) register429(keyStates, cooldownMs);
                         return { success: false, is429: true };
                     }
 
@@ -2292,17 +2301,19 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
         return { success: false, is429: false };
     };
 
-    // Prima trecere: procesăm cel mult 3 calupuri în paralel pentru a reduce
-    // timpul total. Retry-urile pentru 429 rămân în coada secvențială de mai jos.
-    // Fiecare calup își păstrează propriile protecții JSON/timeout și acoperire.
-    const grammarConcurrency = Math.max(1, Math.min(CONCURRENCY_LIMIT, batches.length));
+    // Prima trecere: maximum 2 calupuri Grammar în paralel. Acest nivel păstrează
+    // o parte importantă din câștigul de timp, dar reduce presiunea pe limita Gemini
+    // după traducerea principală și post-check-urile care au rulat deja.
+    // Retry-urile pentru 429 rămân secvențiale și folosesc poarta globală.
+    const GRAMMAR_REVIEW_CONCURRENCY = 2;
+    const GRAMMAR_REVIEW_START_STAGGER_MS = 2200;
+    const grammarConcurrency = Math.max(1, Math.min(GRAMMAR_REVIEW_CONCURRENCY, batches.length));
     for (let batchStart = 0; batchStart < batches.length; batchStart += grammarConcurrency) {
         const group = batches.slice(batchStart, batchStart + grammarConcurrency);
         const results = await Promise.all(group.map(async (batch, offset) => {
             const batchIndex = batchStart + offset;
-            // Păstrăm distanțarea de 1,5 s folosită și la traducerea principală,
-            // reducând riscul ca toate cererile din grup să lovească simultan API-ul.
-            if (offset > 0) await sleep(1500 * offset);
+            // Distanțăm cererile Grammar pentru a nu lovi limita RPM simultan.
+            if (offset > 0) await sleep(GRAMMAR_REVIEW_START_STAGGER_MS * offset);
             const result = await processGrammarBatch(
                 batch,
                 batchIndex,
@@ -2318,9 +2329,11 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
         }
     }
 
-    // Maximum 2 reîncercări suplimentare DOAR pentru calupurile care au eșuat cu 429.
-    // Nu modificăm aici logica 429 a traducerii principale sau a altor etape.
-    for (let retryRound = 1; retryRound <= 2 && rateLimitRetryQueue.length; retryRound++) {
+    // Maximum 3 reîncercări suplimentare DOAR pentru calupurile care au eșuat cu 429.
+    // Fiecare încercare așteaptă cooldown-ul în getAvailableKey/429 Gate.
+    // Nu modificăm aici logica de retry a traducerii principale.
+    const GRAMMAR_REVIEW_429_MAX_RETRIES = 3;
+    for (let retryRound = 1; retryRound <= GRAMMAR_REVIEW_429_MAX_RETRIES && rateLimitRetryQueue.length; retryRound++) {
         const pending = rateLimitRetryQueue.splice(0);
         console.log(`${c.cyan}🔄 [Grammar Review] Reîncerc 429: ${pending.length} calupuri (runda ${retryRound}/2)...${c.reset}`);
 
@@ -2328,10 +2341,10 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
             const result = await processGrammarBatch(
                 queued.batch,
                 queued.batchIndex,
-                `Reîncercare 429 — Calup ${queued.batchIndex + 1}/${batches.length} (runda ${retryRound}/2)`
+                `Reîncercare 429 — Calup ${queued.batchIndex + 1}/${batches.length} (runda ${retryRound}/${GRAMMAR_REVIEW_429_MAX_RETRIES})`
             );
 
-            if (result.is429 && retryRound < 2) {
+            if (result.is429 && retryRound < GRAMMAR_REVIEW_429_MAX_RETRIES) {
                 rateLimitRetryQueue.push(queued);
             }
         }
