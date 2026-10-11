@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.114',
+    version: '12.78.119',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2044,6 +2044,53 @@ const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
 const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
 const GRAMMAR_REVIEW_JSON_RETRY_LIMIT = 1;
 const GRAMMAR_REVIEW_JSON_SPLIT_MIN = 20;
+// Grammar folosește aceeași rotație de chei și poarta globală 429 ca traducerea.
+// Concurența este limitată la limita principală (3), nu nelimitată.
+const GRAMMAR_REVIEW_KEY_RETRY_LIMIT = 8;
+const GRAMMAR_REVIEW_BATCH_RETRY_ROUNDS = 1;
+const GRAMMAR_REVIEW_CONCURRENCY = CONCURRENCY_LIMIT;
+
+async function callGrammarGeminiWithKeyRotation(prompt, keyStates, options = {}, label = 'Grammar Review') {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= GRAMMAR_REVIEW_KEY_RETRY_LIMIT; attempt++) {
+        let keyState = null;
+        try {
+            // Cheia se alege pentru fiecare apel/reîncercare; o cheie limitată
+            // nu blochează folosirea altor chei disponibile.
+            keyState = await getAvailableKey(keyStates);
+            return await callGemini(prompt, keyState, options);
+        } catch (error) {
+            lastError = error;
+            const message = String(error?.message || '');
+            const is429 = error?.isRateLimit429 === true || /\b429\b|Rate limit/i.test(message);
+            const isTransientServerError = /status code 5\d\d|\b503\b|temporarily unavailable/i.test(message);
+
+            if (is429 && keyState) {
+                register429(keyStates, Number(error.retryAfterMs) || 15000);
+            }
+
+            if ((!is429 && !isTransientServerError) || attempt >= GRAMMAR_REVIEW_KEY_RETRY_LIMIT) {
+                throw error;
+            }
+
+            if (is429) {
+                console.log(`${c.yellow}↻ [${label}] 429 la încercarea ${attempt}/${GRAMMAR_REVIEW_KEY_RETRY_LIMIT}; rotesc cheia și reîncerc.${c.reset}`);
+                // getAvailableKey alege altă cheie dacă e disponibilă sau respectă
+                // cooldown-ul/poarta globală dacă toate cheile sunt limitate.
+                continue;
+            }
+
+            const baseMs = 5000;
+            const backoffMs = Math.min(120000, baseMs * Math.pow(2, attempt - 1));
+            const jitterMs = Math.floor(Math.random() * 1500);
+            console.log(`${c.yellow}↻ [${label}] Eroare temporară (${message}); reîncerc în ${Math.ceil((backoffMs + jitterMs) / 1000)}s (${attempt}/${GRAMMAR_REVIEW_KEY_RETRY_LIMIT}).${c.reset}`);
+            await sleep(backoffMs + jitterMs);
+        }
+    }
+
+    throw lastError || new Error('Grammar Review: toate încercările API au eșuat.');
+}
 
 async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
     const contextItems = options.contextItems || items;
@@ -2071,13 +2118,19 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     console.log(`   Verificate: ${candidates.length} replici`);
 
     const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
-    let checked = 0;
-    let fixed = 0;
+    const checkedIds = new Set();
+    const fixedIds = new Set();
 
-    const rateLimitRetryQueue = [];
+    // Contextul tuturor calupurilor este înghețat la începutul rundei.
+    // Astfel, concurența nu face ca un calup să vadă aleatoriu corecturile altuia.
+    const reviewTranslationSnapshot = Object.create(null);
+    for (const item of contextItems) {
+        const id = String(item.id);
+        reviewTranslationSnapshot[id] = String(translatedById[id] || '');
+    }
 
     const processGrammarBatch = async (batch, batchIndex, label) => {
-        const batchFixedBefore = fixed;
+        let batchFixedThisCall = 0;
 
         const payload = batch.map(item => {
             const index = contextItems.findIndex(x => String(x.id) === String(item.id));
@@ -2087,12 +2140,12 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
             return {
                 id: item.id,
                 original: item.text,
-                translation: translatedById[String(item.id)],
+                translation: reviewTranslationSnapshot[String(item.id)] || '',
                 context_anterior_en: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
                 context_urmator_en: next ? `[${next.id}] ${next.text}` : '(niciunul)',
-                context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
-                context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)',
-                avertisment_semantic: getSourceFidelityIssues(item.text, translatedById[String(item.id)] || '').join('; ')
+                context_anterior_ro: previous ? `[${previous.id}] ${reviewTranslationSnapshot[String(previous.id)] || ''}` : '(niciunul)',
+                context_urmator_ro: next ? `[${next.id}] ${reviewTranslationSnapshot[String(next.id)] || ''}` : '(niciunul)',
+                avertisment_semantic: getSourceFidelityIssues(item.text, reviewTranslationSnapshot[String(item.id)] || '').join('; ')
             };
         });
 
@@ -2137,11 +2190,10 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     await sleep(GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS);
                 }
 
-                const keyState = await getAvailableKey(keyStates);
                 const requestPrompt = jsonAttempt > 0
                     ? `${prompt}\n\nRETRY TEHNIC: Returnează DOAR JSON valid, fără markdown sau explicații. Format exact: [{\"id\":123,\"text\":\"...\"}]. Pentru nicio corecție returnează exact []. Nu modifica ID-urile. Escapă toate ghilimelele interne din text.`
                     : prompt;
-                const raw = await callGemini(requestPrompt, keyState, {
+                const raw = await callGrammarGeminiWithKeyRotation(requestPrompt, keyStates, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
                     responseSchema: {
                         type: 'ARRAY',
@@ -2157,11 +2209,11 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                             propertyOrdering: ['id', 'text']
                         }
                     }
-                });
+                }, `Grammar Review — calup ${batchIndex + 1}`);
                 const parsed = safeJsonParse(raw);
                 const parsedDict = normalizeTranslationPayload(parsed);
 
-                checked += batch.length;
+                for (const checkedItem of batch) checkedIds.add(String(checkedItem.id));
 
                 for (const item of batch) {
                     const id = String(item.id);
@@ -2183,13 +2235,12 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 }
 
                 translatedById[id] = candidate;
-                fixed++;
+                fixedIds.add(id);
+                batchFixedThisCall++;
                 }
 
-                // IMPORTANT: dacă răspunsul JSON a fost valid și am procesat calupul,
-                // calupul este REUȘIT. Nu lăsăm bucla de retry să cadă ulterior în
-                // fallback-ul „eroare necunoscută” și să dubleze contorul checked.
-                const batchFixed = fixed - batchFixedBefore;
+                // Contoarele sunt bazate pe ID-uri unice și rămân corecte în paralel.
+                const batchFixed = batchFixedThisCall;
                 console.log(`${c.green}✔ [Grammar Review] Calup ${batchIndex + 1}/${batches.length}: ${batchFixed} corectate${c.reset}`);
                 return { success: true, is429: false };
             } catch (error) {
@@ -2228,9 +2279,11 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                         };
                     }
 
-                    // 429 este trimis mai departe către coada existentă.
+                    // callGrammarGeminiWithKeyRotation a încercat deja rotația și
+                    // retry-urile API. Dacă toate au eșuat, marcăm calupul pentru
+                    // o singură reîncercare controlată a schedulerului.
                     if (is429) {
-                        return { success: false, is429: true };
+                        return { success: false, is429: true, retryable: true };
                     }
 
                     // Timeout pe calup mic: păstrăm comportamentul existent.
@@ -2286,46 +2339,65 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
         return { success: false, is429: false };
     };
 
-    // Prima trecere: dacă un calup primește 429, nu îl abandonăm definitiv.
-    // Îl punem la coadă și îl reîncercăm după ce terminăm toate calupurile normale.
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        const batch = batches[batchIndex];
-        const result = await processGrammarBatch(
-            batch,
-            batchIndex,
-            `Calup ${batchIndex + 1}/${batches.length}`
-        );
+    // Scheduler cu concurență limitată la 3 calupuri. Fiecare calup folosește
+    // rotația comună a cheilor; erorile nu opresc lucrătorii și nu pierdem alte rezultate.
+    const runBatchPool = async (jobs, roundLabel) => {
+        const results = new Array(jobs.length);
+        let nextJob = 0;
+        const workerCount = Math.min(GRAMMAR_REVIEW_CONCURRENCY, jobs.length);
 
-        if (result.is429) {
-            rateLimitRetryQueue.push({ batch, batchIndex });
-        }
-    }
-
-    // Maximum 2 reîncercări suplimentare DOAR pentru calupurile care au eșuat cu 429.
-    // Nu modificăm aici logica 429 a traducerii principale sau a altor etape.
-    for (let retryRound = 1; retryRound <= 2 && rateLimitRetryQueue.length; retryRound++) {
-        const pending = rateLimitRetryQueue.splice(0);
-        console.log(`${c.cyan}🔄 [Grammar Review] Reîncerc 429: ${pending.length} calupuri (runda ${retryRound}/2)...${c.reset}`);
-
-        for (const queued of pending) {
-            const result = await processGrammarBatch(
-                queued.batch,
-                queued.batchIndex,
-                `Reîncercare 429 — Calup ${queued.batchIndex + 1}/${batches.length} (runda ${retryRound}/2)`
-            );
-
-            if (result.is429 && retryRound < 2) {
-                rateLimitRetryQueue.push(queued);
+        const worker = async () => {
+            while (true) {
+                const jobPosition = nextJob++;
+                if (jobPosition >= jobs.length) return;
+                const job = jobs[jobPosition];
+                const label = roundLabel
+                    ? `${roundLabel} — calup ${job.batchIndex + 1}/${batches.length}`
+                    : `Calup ${job.batchIndex + 1}/${batches.length}`;
+                try {
+                    results[jobPosition] = await processGrammarBatch(job.batch, job.batchIndex, label);
+                } catch (error) {
+                    console.log(`${c.yellow}⚠ [Grammar Review] Eroare neașteptată la calupul ${job.batchIndex + 1}: ${error.message || error}${c.reset}`);
+                    results[jobPosition] = { success: false, is429: false, retryable: true };
+                }
             }
+        };
+
+        await Promise.all(Array.from({ length: workerCount }, () => worker()));
+        return results;
+    };
+
+    let pendingJobs = batches.map((batch, batchIndex) => ({ batch, batchIndex }));
+    let round = 0;
+    let lastResults = [];
+
+    while (pendingJobs.length && round <= GRAMMAR_REVIEW_BATCH_RETRY_ROUNDS) {
+        if (round > 0) {
+            console.log(`${c.cyan}🔄 [Grammar Review] Reîncerc calupuri nereușite: ${pendingJobs.length} (runda ${round}/${GRAMMAR_REVIEW_BATCH_RETRY_ROUNDS})...${c.reset}`);
         }
+
+        lastResults = await runBatchPool(pendingJobs, round === 0 ? '' : `Reîncercare ${round}`);
+        const failedJobs = [];
+        for (let i = 0; i < lastResults.length; i++) {
+            if (!lastResults[i]?.success) failedJobs.push(pendingJobs[i]);
+        }
+
+        pendingJobs = failedJobs;
+        if (!pendingJobs.length) break;
+        round++;
     }
 
-    if (rateLimitRetryQueue.length) {
-        console.log(`${c.yellow}⚠ [Grammar Review] ${rateLimitRetryQueue.length} calupuri au rămas neverificate după cele 2 reîncercări 429.${c.reset}`);
+    const uncheckedIds = candidates
+        .map(item => String(item.id))
+        .filter(id => !checkedIds.has(id));
+    if (uncheckedIds.length) {
+        console.log(`${c.yellow}⚠ [Grammar Review] ${uncheckedIds.length} replici au rămas neverificate după retry-uri. ID-uri: ${uncheckedIds.slice(0, 30).join(', ')}${uncheckedIds.length > 30 ? ', …' : ''}${c.reset}`);
     }
 
-    console.log(`${c.green}✔ [Grammar Review] Final: ${checked} verificate, ${fixed} corectate${c.reset}`);
-    return { checked, fixed };
+    const checked = checkedIds.size;
+    const fixed = fixedIds.size;
+    console.log(`${c.green}✔ [Grammar Review] Final: ${checked}/${candidates.length} verificate, ${fixed} replici corectate${c.reset}`);
+    return { checked, fixed, unchecked: uncheckedIds.length };
 }
 
 // ============================================================
