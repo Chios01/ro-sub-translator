@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.114',
+    version: '12.78.120',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -553,15 +553,15 @@ function cleanTextForJson(text) {
     // Nu eliminăm parantezele în mod global: pot conține dialog real (de ex. (I mean)).
     // Sunt eliminate doar parantezele care conțin indicații sonore, mai sus.
 
-    // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
+    // Curățăm etichetele de vorbitor cu majuscule înainte de traducere.
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
 
-    // Like SubStudio, drop a subtitle block that consists only of a standalone
-    // filler sound. Do not drop multi-word expressions such as “Oh my God”.
+    // Eliminăm un bloc alcătuit doar dintr-un sunet de ezitare izolat.
+    // Păstrăm expresiile cu mai multe cuvinte, precum “Oh my God”.
     const standaloneSourceFillers = new Set((
         'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
     ).split(/\s+/));
@@ -769,7 +769,7 @@ function formatSubtitleLayout(value) {
         }
 
         // Preserve a speaker marker if present. Normalize it to "- " and use
-        // a capital letter after the dash, as required by SubStudio formatting.
+        // a capital letter after the dash for consistent subtitle formatting.
         const marked = raw.match(/^[-–—]+\s*(.*?)\s*$/);
         if (marked && marked[1]) {
             entries.push({ text: marked[1].trim(), dialogue: true });
@@ -1165,6 +1165,7 @@ TRANSLATION AND CONTEXT
 - Choose terms of endearment according to the relationship and context; do not translate “babe”, “honey”, or “baby” mechanically every time.
 - Translate “But” as „Dar” when it begins a clause. Do not leave ordinary English dialogue untranslated.
 - Use correct Romanian grammar, spelling, punctuation, and diacritics (ă, â, î, ș, ț). Use complete real Romanian words; never truncate, merge, invent, or corrupt a word. Check pronouns, clitics, prepositions, conjugation, and agreement.
+- Do not replace an ordinary, contextually clear word with a rare, archaic, technical, or phonetically similar word whose meaning does not fit the source. Each important Romanian word must be justified by the English line and context; when an unusual word seems unrelated, choose a common, precise contemporary equivalent.
 - Convert ordinary imperial measurements to metric where natural and safe: feet to metres, miles to kilometres, pounds to kilograms, Fahrenheit to Celsius. Do not convert plot-critical or idiomatic measurements. Translate “lakh” as 100,000 and “crore” as 10 million when relevant.
 
 SUBTITLE FORMATTING
@@ -1306,9 +1307,8 @@ async function callGemini(prompt, keyState, options = {}) {
         }
     };
 
-    // SubStudio folosește nivelul de gândire MEDIUM pentru motoarele Gemini 3.
-    // Gemini 3.5 Flash-Lite îl suportă; parametrul temperature este omis deoarece
-    // documentația Gemini 3.5 îl marchează drept depreciat/ignorat pentru aceste modele.
+    // Pentru modelele Gemini 3 compatibile folosim nivelul de gândire MEDIUM.
+    // Parametrul temperature este omis deoarece este depreciat/ignorat pentru modelul implicit.
     const generationConfig = {
         responseMimeType: 'application/json',
         responseSchema
@@ -2107,8 +2107,9 @@ VERIFICĂ ÎN ORDINE
 3. Păstrează termenii expliciți și sensul direct când sursa îi folosește. Nu îi înlocui cu eufemisme și nu transforma intensificatorii/înjurăturile în obiecte, acțiuni sau insulte diferite.
 4. Păstrează singularul/pluralul și referentul. De exemplu, “a hat” nu trebuie tradus „căciuli”. Nu adăuga diminutive precum „căciuliță” dacă sursa nu exprimă micime, afecțiune sau diminutiv.
 5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase.
-6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
-7. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
+6. Verifică separat alegerea lexicală: un cuvânt poate exista în română, dar poate fi complet nepotrivit în context. Dacă apare un termen rar, arhaic, tehnic sau asemănător doar fonetic cu ce pare să spună sursa, verifică sensul lui față de original. Înlocuiește-l cu un echivalent românesc actual și obișnuit numai când originalul și contextul susțin clar acea corectură; păstrează termenii rari când scena chiar îi cere.
+7. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
+8. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
 
 REGULĂ DE PRUDENȚĂ
 Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
