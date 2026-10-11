@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.115',
+    version: '12.78.117',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2522,12 +2522,12 @@ async function runLocalGrammarQualityPass(items, translatedById) {
     console.log(`${c.green}✔ [Micro-Grammar] ${autoFixed} corecții locale certe aplicate.${c.reset}`);
 
     if (flagged.length) {
-        console.log(`${c.yellow}⚠ [Micro-Grammar] ${flagged.length} replici marcate pentru verificare punctuală.${c.reset}`);
+        console.log(`${c.yellow}⚠ [Micro-Grammar] ${flagged.length} replici cu semnale locale detectate.${c.reset}`);
         flagged.slice(0, 20).forEach(entry => {
             console.log(`  ${c.yellow}• ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
         });
     } else {
-        console.log(`${c.green}✔ [Micro-Grammar] Nicio replică nu necesită verificare punctuală.${c.reset}`);
+        console.log(`${c.green}✔ [Micro-Grammar] Nicio problemă locală detectată.${c.reset}`);
     }
 
     return {
@@ -2601,7 +2601,7 @@ function runSemanticSpotCheck(items, translatedById) {
     }
 
     if (flagged.length) {
-        console.log(`${c.yellow}⚠ [Semantic Spot Check] ${flagged.length} replici marcate pentru verificare punctuală.${c.reset}`);
+        console.log(`${c.yellow}⚠ [Semantic Spot Check] ${flagged.length} replici cu semnale semantice detectate.${c.reset}`);
         flagged.slice(0, 20).forEach(entry => {
             console.log(`  ${c.yellow}• ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
         });
@@ -2613,17 +2613,17 @@ function runSemanticSpotCheck(items, translatedById) {
 }
 
 // ============================================================
-// RECUPERARE DUPĂ GRAMMAR REVIEW — TRADUCERI DEVENITE GOALE
+// RECUPERARE FINALĂ — TRADUCERI DEVENITE GOALE
 // ============================================================
 
-async function recoverEmptyTranslationsAfterGrammarReview(items, translatedById, keyStates) {
+async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
     const emptyTranslations = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
 
         // IMPORTANT: aici nu excludem interjecțiile. Dacă o replică originală
-        // precum "Oh", "Oof", "Uf", "Doamne!" a rămas goală după Grammar Review,
-        // trebuie recuperată la fel ca orice altă replică reală.
+        // precum "Oh", "Oof", "Uf", "Doamne!" a rămas goală, trebuie recuperată
+        // la fel ca orice altă replică reală.
         const translated = translatedById[String(item.id)];
         const translatedClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
         return !translatedClean;
@@ -2631,13 +2631,13 @@ async function recoverEmptyTranslationsAfterGrammarReview(items, translatedById,
 
     if (!emptyTranslations.length) return { detected: 0, recovered: 0 };
 
-    console.log(`${c.yellow}⚠ [Post-Grammar Empty Recovery] ${emptyTranslations.length} traduceri goale detectate. Le retraduc punctual...${c.reset}`);
+    console.log(`${c.yellow}⚠ [Final Empty Recovery] ${emptyTranslations.length} traduceri goale detectate. Le retraduc punctual...${c.reset}`);
 
     const recoveryPrompt = `
 ${MASTER_TRANSLATION_PROMPT}
 
-RECOVERY DUPĂ VERIFICAREA GRAMATICALĂ — TRADUCERI GOALE.
-Următoarele replici au text original, dar traducerea rezultată după Grammar Review este goală.
+RECUPERARE FINALĂ PENTRU TRADUCERI GOALE.
+Următoarele replici au text original, dar traducerea existentă este goală.
 Tradu TOATE liniile de mai jos în română naturală. Nu omite niciun ID.
 Nu returna text gol.
 
@@ -2677,12 +2677,12 @@ Returnează DOAR un ARRAY JSON valid în forma:
             }
         }
     } catch (error) {
-        console.log(`${c.yellow}⚠ [Post-Grammar Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
+        console.log(`${c.yellow}⚠ [Final Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
     }
 
     const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
     const failedSuffix = failedIds.length ? `; nereparate: ${failedIds.join(', ')}` : '';
-    console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Post-Grammar Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
+    console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Final Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
     return { detected: emptyTranslations.length, recovered: recoveredCount };
 }
 
@@ -2800,42 +2800,18 @@ Returnează DOAR un ARRAY JSON valid în forma:
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
 
-    await grammarTranslationReview(items, translatedById, keyStates);
+    // Etapa AI Grammar Review nu este apelată în această versiune de comparație.
+    // Păstrăm verificările locale deterministe și detectoarele existente, fără o a doua
+    // rescriere AI care poate schimba sensul unor replici deja traduse.
+    await runLocalGrammarQualityPass(items, translatedById);
+    runSemanticSpotCheck(items, translatedById);
 
-    // Strat local foarte ieftin: repară doar typo-uri cu încredere mare și
-    // selectează replicile care merită încă o verificare AI punctuală.
-    const microGrammar = await runLocalGrammarQualityPass(items, translatedById);
-    const semanticSpotCheckItems = runSemanticSpotCheck(items, translatedById);
+    // Recuperare finală independentă de Grammar Review pentru eventuale traduceri goale.
+    await recoverEmptyTranslationsFinal(items, translatedById, keyStates);
 
-    // Combinăm Micro-Grammar + Semantic Spot Check într-o singură verificare AI
-    // punctuală. Astfel, dacă nu există semnale puternice, nu există niciun request
-    // suplimentar; dacă există, toate sunt trimise într-o singură trecere țintită.
-    const targetedReviewMap = new Map();
-    for (const item of microGrammar.flaggedItems) {
-        targetedReviewMap.set(String(item.id), item);
-    }
-    for (const item of semanticSpotCheckItems) {
-        targetedReviewMap.set(String(item.id), item);
-    }
-
-    if (targetedReviewMap.size) {
-        await grammarTranslationReview(
-            [...targetedReviewMap.values()],
-            translatedById,
-            keyStates,
-            { mode: 'targeted', contextItems: items }
-        );
-    }
-
-    // Ultima recuperare după TOATE trecerile Grammar Review.
-    // Astfel, o corecție punctuală care a produs accidental un text gol nu mai ajunge
-    // în fișierul final. Sunt retrimise doar ID-urile goale, nu întregul fișier.
-    await recoverEmptyTranslationsAfterGrammarReview(items, translatedById, keyStates);
-
-    // Ultima protecție: corecțiile mecanice certe trebuie aplicate DUPĂ Grammar Review.
-    // Altfel, verificatorul LLM poate rescrie din nou o formă deja corectată și rezultatul
-    // devine dependent de variația aleatorie a modelului. formatSubtitleLine() este
-    // idempotent pentru aceste corecții și reaplică dicționarul determinist la final.
+    // Ultima protecție: corecțiile mecanice certe se reaplică înainte de export.
+    // formatSubtitleLine() este idempotent pentru aceste corecții și reaplică
+    // dicționarul determinist la final.
     for (const item of items) {
         const id = String(item.id);
         const current = translatedById[id];
@@ -2861,7 +2837,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
         }
     }
 
-    console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate după Grammar Review.${c.reset}`);
+    console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate.${c.reset}`);
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
     const finalSuspicious = items.filter(item => {
