@@ -553,15 +553,15 @@ function cleanTextForJson(text) {
     // Nu eliminăm parantezele în mod global: pot conține dialog real (de ex. (I mean)).
     // Sunt eliminate doar parantezele care conțin indicații sonore, mai sus.
 
-    // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
-    // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
+    // Curățăm etichetele de vorbitor cu majuscule înainte de traducere.
+    // Aplicăm regula strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
 
-    // Like SubStudio, drop a subtitle block that consists only of a standalone
-    // filler sound. Do not drop multi-word expressions such as “Oh my God”.
+    // Eliminăm blocurile care conțin numai un sunet de umplutură.
+    // Nu eliminăm expresiile cu mai multe cuvinte, precum “Oh my God”.
     const standaloneSourceFillers = new Set((
         'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
     ).split(/\s+/));
@@ -768,8 +768,8 @@ function formatSubtitleLayout(value) {
             continue;
         }
 
-        // Preserve a speaker marker if present. Normalize it to "- " and use
-        // a capital letter after the dash, as required by SubStudio formatting.
+        // Păstrăm marcajul vorbitorului, dacă există, și îl normalizăm la "- ".
+        // Textul de după cratimă începe cu majusculă pentru o formatare consecventă.
         const marked = raw.match(/^[-–—]+\s*(.*?)\s*$/);
         if (marked && marked[1]) {
             entries.push({ text: marked[1].trim(), dialogue: true });
@@ -1306,9 +1306,9 @@ async function callGemini(prompt, keyState, options = {}) {
         }
     };
 
-    // SubStudio folosește nivelul de gândire MEDIUM pentru motoarele Gemini 3.
+    // Folosim nivelul de gândire MEDIUM pentru modelele Gemini 3.
     // Gemini 3.5 Flash-Lite îl suportă; parametrul temperature este omis deoarece
-    // documentația Gemini 3.5 îl marchează drept depreciat/ignorat pentru aceste modele.
+    // documentația modelului îl marchează drept depreciat sau ignorat.
     const generationConfig = {
         responseMimeType: 'application/json',
         responseSchema
