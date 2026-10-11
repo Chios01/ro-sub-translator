@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.116',
+    version: '12.78.115',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2074,9 +2074,6 @@ const GRAMMAR_REVIEW_JSON_SPLIT_MIN = 20;
 async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
     const contextItems = options.contextItems || items;
     const isTargetedReview = options.mode === 'targeted';
-    const diagnosticStage = isTargetedReview ? 'targeted' : 'main';
-    const diagnosticJobId = String(options.jobId || 'unknown');
-    const diagnosticStats = { proposals: 0, accepted: 0, rejectedSuspect: 0, unchanged: 0, empty: 0 };
 
     const candidates = items.filter(item => {
         const original = String(item.text || '').replace(/<[^>]+>/g, '').trim();
@@ -2098,7 +2095,6 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
         console.log(`\n${c.cyan}📝 VERIFICARE SUPLIMENTARĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
     }
     console.log(`   Verificate: ${candidates.length} replici`);
-    console.log(`[Grammar Diagnostic][${diagnosticJobId}] STAGE_BEGIN ${JSON.stringify({ stage: diagnosticStage, eligible: candidates.length, note: 'Fiecare CHANGE conține sursa, textul de dinainte și propunerea acceptată de Grammar Review.' })}`);
 
     const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
     let fixed = 0;
@@ -2199,46 +2195,25 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
 
                 for (const item of batch) {
                     const id = String(item.id);
-                    const candidateRaw = parsedDict[id];
-                    if (candidateRaw == null) continue;
-                    diagnosticStats.proposals++;
+                const candidateRaw = parsedDict[id];
+                if (candidateRaw == null) continue;
 
-                    const beforeRaw = String(translatedById[id] || '');
-                    const current = formatSubtitleLine(beforeRaw);
-                    const candidate = formatSubtitleLine(String(candidateRaw || ''));
+                const current = formatSubtitleLine(String(translatedById[id] || ''));
+                const candidate = formatSubtitleLine(String(candidateRaw || ''));
 
-                    if (!candidate) {
-                        diagnosticStats.empty++;
-                        continue;
-                    }
-                    if (candidate === current) {
-                        diagnosticStats.unchanged++;
-                        continue;
-                    }
+                if (!candidate || candidate === current) continue;
 
-                    // Filtrul suplimentar poate aplica doar o corecție care rămâne
-                    // compatibilă cu verificările deja existente.
-                    const rejectionReasons = [];
-                    // Keep the same short-circuit order as the production guard.
-                    if (hasUntranslatedEnglish(item.text, candidate)) {
-                        rejectionReasons.push('untranslated_english');
-                    } else if (hasCorruptedSubtitleText(candidate, item.text)) {
-                        rejectionReasons.push('corrupted_subtitle');
-                    } else if (hasLostExplicitSourceTerm(item.text, candidate)) {
-                        rejectionReasons.push('lost_explicit_source_term');
-                    }
+                // Filtrul suplimentar poate aplica doar o corecție care rămâne
+                // compatibilă cu verificările deja existente.
+                if (hasUntranslatedEnglish(item.text, candidate) ||
+                    hasCorruptedSubtitleText(candidate, item.text) ||
+                    hasLostExplicitSourceTerm(item.text, candidate)) {
+                    console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: noua variantă a devenit suspectă${c.reset}`);
+                    continue;
+                }
 
-                    if (rejectionReasons.length) {
-                        diagnosticStats.rejectedSuspect++;
-                        console.log(`[Grammar Diagnostic][${diagnosticJobId}] REJECTED ${JSON.stringify({ stage: diagnosticStage, id: item.id, source: item.text, before: beforeRaw, proposed: candidate, reasons: rejectionReasons })}`);
-                        console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: noua variantă a devenit suspectă${c.reset}`);
-                        continue;
-                    }
-
-                    translatedById[id] = candidate;
-                    fixed++;
-                    diagnosticStats.accepted++;
-                    console.log(`[Grammar Diagnostic][${diagnosticJobId}] CHANGE ${JSON.stringify({ stage: diagnosticStage, id: item.id, source: item.text, before: beforeRaw, after: candidate })}`);
+                translatedById[id] = candidate;
+                fixed++;
                 }
 
                 // IMPORTANT: dacă răspunsul JSON a fost valid și am procesat calupul,
@@ -2400,9 +2375,8 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
     }
 
     const checked = verifiedIds.size;
-    console.log(`[Grammar Diagnostic][${diagnosticJobId}] STAGE_SUMMARY ${JSON.stringify({ stage: diagnosticStage, eligible: candidates.length, checked, proposalsReturned: diagnosticStats.proposals, acceptedChanges: diagnosticStats.accepted, rejectedAsSuspect: diagnosticStats.rejectedSuspect, unchangedProposals: diagnosticStats.unchanged, emptyProposals: diagnosticStats.empty, unverified: unverifiedItems.length })}`);
     console.log(`${unverifiedItems.length ? c.yellow : c.green}✔ [Grammar Review] Final: ${checked}/${candidates.length} verificate, ${fixed} corectate${unverifiedItems.length ? `, ${unverifiedItems.length} neverificate` : ''}${c.reset}`);
-    return { checked, fixed, diagnostic: diagnosticStats };
+    return { checked, fixed };
 }
 
 // ============================================================
@@ -2716,7 +2690,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
 // MOTORUL PRINCIPAL DE TRADUCERE SRT
 // ============================================================
 
-async function translateSrtWithGemini(srtText, apiKeys, diagnosticJobId = 'unknown') {
+async function translateSrtWithGemini(srtText, apiKeys) {
     const items = parseSrt(srtText);
     if (!items.length) throw new Error('Nu s-au găsit subtitrări valide.');
 
@@ -2826,19 +2800,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
 
-    // Snapshot exact înainte de Grammar Review: folosit doar pentru diagnostic.
-    // Nu modifică traducerile și permite compararea rezultatului final cu baza.
-    const diagnosticBeforeGrammar = Object.create(null);
-    for (const item of items) {
-        diagnosticBeforeGrammar[String(item.id)] = String(translatedById[String(item.id)] || '');
-    }
-    console.log(`[Grammar Diagnostic][${diagnosticJobId}] RUN_BEGIN ${JSON.stringify({ lines: items.length, eligibleBeforeGrammar: items.filter(item => {
-        const original = String(item.text || '').replace(/<[^>]+>/g, '').trim();
-        const translated = String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim();
-        return !!original && !!translated && !isJunkOrInterjection(item.text) && !isOkOnlySubtitle(translated);
-    }).length, snapshot: 'after global post-check; before primary Grammar Review' })}`);
-
-    await grammarTranslationReview(items, translatedById, keyStates, { jobId: diagnosticJobId });
+    await grammarTranslationReview(items, translatedById, keyStates);
 
     // Strat local foarte ieftin: repară doar typo-uri cu încredere mare și
     // selectează replicile care merită încă o verificare AI punctuală.
@@ -2861,7 +2823,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
             [...targetedReviewMap.values()],
             translatedById,
             keyStates,
-            { mode: 'targeted', contextItems: items, jobId: diagnosticJobId }
+            { mode: 'targeted', contextItems: items }
         );
     }
 
@@ -2931,20 +2893,6 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
     console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide${c.reset}`);
     console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
-
-    // Raport FINAL_DIFF: diferența dintre textul exact de dinaintea Grammar Review
-    // și textul final. Poate include și etapele ulterioare (Micro-Grammar/formatter),
-    // de aceea este etichetată separat de CHANGE-urile directe ale Grammar Review.
-    let finalDiffCount = 0;
-    for (const item of items) {
-        const id = String(item.id);
-        const before = diagnosticBeforeGrammar[id] ?? '';
-        const after = String(translatedById[id] || item.text || '');
-        if (before === after) continue;
-        finalDiffCount++;
-        console.log(`[Grammar Diagnostic][${diagnosticJobId}] FINAL_DIFF ${JSON.stringify({ id: item.id, source: item.text, beforeGrammar: before, final: after })}`);
-    }
-    console.log(`[Grammar Diagnostic][${diagnosticJobId}] RUN_SUMMARY ${JSON.stringify({ lines: items.length, finalDiffCount, note: 'FINAL_DIFF măsoară diferența față de snapshotul de dinainte de Grammar Review și include eventuale etape ulterioare.' })}`);
 
     const output = items.map(item => {
         const translated = translatedById[String(item.id)] || item.text;
@@ -3182,7 +3130,7 @@ app.get('/:configData/translate', async (req, res) => {
                 console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
                 console.log(`${c.cyan}==================================================\n${c.reset}`);
                 
-                return await translateSrtWithGemini(String(srtRes.data || ''), userKeys, imdbId);
+                return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
             })();
             
             memoryCache[cacheKey] = processPromise;
