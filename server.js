@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.127',
+    version: '12.78.129',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1250,7 +1250,7 @@ function register429(keyStates, cooldownMs) {
     if (active > 0 && paused >= Math.min(2, active)) {
         keyStates._global429Until = Math.max(
             getGlobal429Until(keyStates),
-            now + Math.min(30000, Math.max(15000, cooldownMs))
+            now + Math.min(120000, Math.max(20000, cooldownMs))
         );
     }
 }
@@ -1351,8 +1351,8 @@ async function callGemini(prompt, keyState, options = {}) {
             const retryAfterHeader = error.response?.headers?.['retry-after'];
             const retryAfterSec = Number(retryAfterHeader);
             const cooldownMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
-                ? Math.min(120000, Math.max(10000, retryAfterSec * 1000))
-                : 15000;
+                ? Math.min(120000, Math.max(20000, retryAfterSec * 1000))
+                : 20000;
             keyState.pausedUntil = Date.now() + cooldownMs;
             const retryError = new Error(`Rate limit 429. Aștept ${Math.ceil(cooldownMs / 1000)}s și reîncerc.`);
             retryError.isRateLimit429 = true;
@@ -1752,6 +1752,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     // chunk-ul doar din cauza unui rate-limit temporar.
     const maxKeyAttempts = 8;
     let attemptedKeys = new Set();
+    let payloadRetryUsed = false;
 
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
         let keyState = null;
@@ -1771,8 +1772,38 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks}...${c.reset}`);
 
             const raw = await callGemini(prompt, keyState);
-            const parsed = JSON.parse(String(raw).trim());
-            const dict = normalizeTranslationPayload(parsed);
+            const parsed = safeJsonParse(raw);
+            if (!Array.isArray(parsed)) {
+                throw new Error('Răspuns Gemini invalid: era așteptat un array JSON cu ID-uri și text.');
+            }
+            const expectedIds = new Set(chunk.map(obj => String(obj.id)));
+            const seenExpectedIds = new Set();
+            const unknownIds = [];
+            for (const entry of parsed) {
+                if (!entry || entry.id === undefined || typeof entry.text !== 'string') {
+                    throw new Error('Structură/ID invalid în răspunsul JSON al traducerii.');
+                }
+                const id = String(entry.id);
+                if (!expectedIds.has(id)) {
+                    unknownIds.push(id);
+                    continue;
+                }
+                if (seenExpectedIds.has(id)) {
+                    throw new Error(`ID duplicat ${id} în răspunsul JSON al traducerii.`);
+                }
+                seenExpectedIds.add(id);
+            }
+            if (unknownIds.length) {
+                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: răspunsul conține ${unknownIds.length} ID-uri străine; le ignor.${c.reset}`);
+            }
+            const parsedPayload = normalizeTranslationPayload(parsed);
+            const dict = Object.create(null);
+            for (const obj of chunk) {
+                const id = String(obj.id);
+                if (parsedPayload[id] !== undefined && parsedPayload[id] !== null) {
+                    dict[id] = typeof parsedPayload[id] === 'string' ? parsedPayload[id] : String(parsedPayload[id]);
+                }
+            }
 
             const missingItems = chunk.filter(obj => dict[String(obj.id)] === undefined);
             if (missingItems.length > 12) {
@@ -1793,7 +1824,7 @@ ${JSON.stringify(missingItems, null, 2)}
 `;
                 try {
                     const missingRaw = await callGemini(missingPrompt, keyState, { timeout: 20000 });
-                    const missingJson = JSON.parse(String(missingRaw).trim());
+                    const missingJson = safeJsonParse(missingRaw);
                     const missingDict = normalizeTranslationPayload(missingJson);
                     for (const obj of missingItems) {
                         const value = missingDict[String(obj.id)];
@@ -1843,8 +1874,16 @@ ${JSON.stringify(missingItems, null, 2)}
                 register429(keyStates, Number(error.retryAfterMs) || 15000);
             }
             const isTransient = is429 || /status code 5\d\d/.test(error.message);
+            const isPayloadError = /JSON Parse failed|Unexpected token|Unexpected end of JSON|Expected ',' or '}'|Expected property name|array JSON cu ID-uri|Structură\/ID invalid|ID duplicat/i.test(String(error.message || ''));
             console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
 
+            // Pentru JSON/ID invalid, încercăm o singură dată același calup înainte
+            // să îl împărțim. Erorile de structură nu trebuie confundate cu 429.
+            if (!isTransient && isPayloadError && !payloadRetryUsed && attempt < maxKeyAttempts) {
+                payloadRetryUsed = true;
+                await sleep(1200);
+                continue;
+            }
             if (!isTransient) break;
             if (attempt < maxKeyAttempts) {
                 if (is429) {
@@ -1977,13 +2016,13 @@ Returnează DOAR JSON valid în forma:
                         fixed = true;
                         totalFixed++;
 
-                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată (${retry}/2)${c.reset}`);
+                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată (${retry}/1)${c.reset}`);
                         break;
                     }
 
-                    console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/1)${c.reset}`);
                 } catch (err) {
-                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/1): ${err.message}${c.reset}`);
                 }
             }
 
@@ -2167,6 +2206,24 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     }
                 });
                 const parsed = safeJsonParse(raw);
+                if (!Array.isArray(parsed)) {
+                    throw new Error('Răspuns Grammar Review invalid: era așteptat un array JSON de corecții.');
+                }
+                const expectedIds = new Set(batch.map(item => String(item.id)));
+                const seenCorrectionIds = new Set();
+                for (const entry of parsed) {
+                    if (!entry || entry.id === undefined || typeof entry.text !== 'string') {
+                        throw new Error('Structură/ID invalid în răspunsul JSON Grammar Review.');
+                    }
+                    const id = String(entry.id);
+                    if (!expectedIds.has(id)) {
+                        throw new Error(`ID ${id} din afara calupului în răspunsul Grammar Review.`);
+                    }
+                    if (seenCorrectionIds.has(id)) {
+                        throw new Error(`ID duplicat ${id} în răspunsul Grammar Review.`);
+                    }
+                    seenCorrectionIds.add(id);
+                }
                 const parsedDict = normalizeTranslationPayload(parsed);
 
                 for (const item of batch) {
@@ -2253,7 +2310,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     return { success: false, is429: false };
                 }
 
-                const isJsonError = /JSON Parse failed|Unexpected token|Unexpected end of JSON|Expected ',' or '}'|Expected property name/i.test(message);
+                const isJsonError = /JSON Parse failed|Unexpected token|Unexpected end of JSON|Expected ',' or '}'|Expected property name|array JSON de corecții|Structură\/ID invalid|ID .* din afara calupului|ID duplicat/i.test(message);
 
                 // Prima eroare JSON/conținut gol: retry pe același calup, cu prompt
                 // explicit de reparare. Nu împărțim încă pentru a păstra viteza normală.
@@ -2306,7 +2363,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
     // după traducerea principală și post-check-urile care au rulat deja.
     // Retry-urile pentru 429 rămân secvențiale și folosesc poarta globală.
     const GRAMMAR_REVIEW_CONCURRENCY = 2;
-    const GRAMMAR_REVIEW_START_STAGGER_MS = 2200;
+    const GRAMMAR_REVIEW_START_STAGGER_MS = 3000;
     const grammarConcurrency = Math.max(1, Math.min(GRAMMAR_REVIEW_CONCURRENCY, batches.length));
     for (let batchStart = 0; batchStart < batches.length; batchStart += grammarConcurrency) {
         const group = batches.slice(batchStart, batchStart + grammarConcurrency);
@@ -2329,13 +2386,14 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
         }
     }
 
-    // Maximum 3 reîncercări suplimentare DOAR pentru calupurile care au eșuat cu 429.
-    // Fiecare încercare așteaptă cooldown-ul în getAvailableKey/429 Gate.
+    // Maximum 4 reîncercări suplimentare DOAR pentru calupurile care au eșuat cu 429.
+    // Fiecare încercare așteaptă cooldown-ul în getAvailableKey/429 Gate; runda este afișată din aceeași constantă.
     // Nu modificăm aici logica de retry a traducerii principale.
-    const GRAMMAR_REVIEW_429_MAX_RETRIES = 3;
+    const GRAMMAR_REVIEW_429_MAX_RETRIES = 4;
+    const exhausted429Batches = [];
     for (let retryRound = 1; retryRound <= GRAMMAR_REVIEW_429_MAX_RETRIES && rateLimitRetryQueue.length; retryRound++) {
         const pending = rateLimitRetryQueue.splice(0);
-        console.log(`${c.cyan}🔄 [Grammar Review] Reîncerc 429: ${pending.length} calupuri (runda ${retryRound}/2)...${c.reset}`);
+        console.log(`${c.cyan}🔄 [Grammar Review] Reîncerc 429: ${pending.length} calupuri (runda ${retryRound}/${GRAMMAR_REVIEW_429_MAX_RETRIES})...${c.reset}`);
 
         for (const queued of pending) {
             const result = await processGrammarBatch(
@@ -2346,8 +2404,15 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
 
             if (result.is429 && retryRound < GRAMMAR_REVIEW_429_MAX_RETRIES) {
                 rateLimitRetryQueue.push(queued);
+            } else if (result.is429) {
+                exhausted429Batches.push(queued);
             }
         }
+    }
+
+    if (exhausted429Batches.length) {
+        const exhaustedIds = [...new Set(exhausted429Batches.flatMap(entry => entry.batch.map(item => String(item.id))))];
+        console.log(`${c.yellow}⚠ [Grammar Review] ${exhausted429Batches.length} calupuri au epuizat cele ${GRAMMAR_REVIEW_429_MAX_RETRIES} reîncercări 429 (${exhaustedIds.length} ID-uri). Verifică limita/quota Gemini; nu sunt marcate ca verificate.${c.reset}`);
     }
 
     // Raportăm acoperirea reală după TOATE încercările, nu doar dacă o coadă
