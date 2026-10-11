@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.123',
+    version: '12.78.124',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2865,6 +2865,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
         if (isJunkOrInterjection(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
+        // „Ok.” / „OK.” / „Okay.” sunt replici acceptabile în română; nu le marca drept engleză rămasă.
+        if (isOkOnlySubtitle(translated)) return false;
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
 
         if (!transClean) return true;
