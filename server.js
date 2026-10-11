@@ -74,7 +74,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.114',
+    version: '12.78.123',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2569,70 +2569,114 @@ async function recoverEmptyTranslationsAfterGrammarReview(items, translatedById,
     const emptyTranslations = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
-
-        // IMPORTANT: aici nu excludem interjecțiile. Dacă o replică originală
-        // precum "Oh", "Oof", "Uf", "Doamne!" a rămas goală după Grammar Review,
-        // trebuie recuperată la fel ca orice altă replică reală.
         const translated = translatedById[String(item.id)];
         const translatedClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
         return !translatedClean;
     });
 
-    if (!emptyTranslations.length) return { detected: 0, recovered: 0 };
+    if (!emptyTranslations.length) return { detected: 0, recovered: 0, failedIds: [] };
 
-    console.log(`${c.yellow}⚠ [Post-Grammar Empty Recovery] ${emptyTranslations.length} traduceri goale detectate. Le retraduc punctual...${c.reset}`);
-
-    const recoveryPrompt = `
-${MASTER_TRANSLATION_PROMPT}
-
-RECOVERY DUPĂ VERIFICAREA GRAMATICALĂ — TRADUCERI GOALE.
-Următoarele replici au text original, dar traducerea rezultată după Grammar Review este goală.
-Tradu TOATE liniile de mai jos în română naturală. Nu omite niciun ID.
-Nu returna text gol.
-
-${JSON.stringify(emptyTranslations.map(item => ({ id: item.id, text: item.text })), null, 2)}
-
-Returnează DOAR un ARRAY JSON valid în forma:
-[
-  {"id": 123, "text": "traducerea română"}
-]
-`;
+    console.log(`${c.yellow}⚠ [Post-Grammar Empty Recovery] ${emptyTranslations.length} traduceri goale detectate. Aplic recuperare punctuală cu ID unic...${c.reset}`);
 
     let recoveredCount = 0;
     const recoveredIds = [];
     const failedIds = [];
 
-    try {
-        const recoveryKey = await getAvailableKey(keyStates);
-        const recoveryRaw = await callGemini(recoveryPrompt, recoveryKey, { timeout: 20000 });
-        const recoveryJson = safeJsonParse(recoveryRaw);
-        const recoveryDict = normalizeTranslationPayload(recoveryJson);
+    // După ce recuperarea obișnuită și verificările globale nu au reușit,
+    // retrimitem fiecare ID rămas singur, cu schemă JSON strictă. Astfel modelul
+    // nu poate amesteca ID-urile sau omite o replică într-un răspuns de grup.
+    for (const item of emptyTranslations) {
+        const id = String(item.id);
+        const sourceForTerms = String(item.text || '').replace(/<[^>]+>/g, ' ');
+        const explicitTerms = EXPLICIT_ANATOMICAL_TERM_GUARDS
+            .filter(rule => rule.source.test(sourceForTerms))
+            .map(rule => rule.label);
+        const explicitTermInstruction = explicitTerms.length
+            ? `\nTermeni expliciți obligatoriu de păstrat în română: ${explicitTerms.join(', ')}.`
+            : '';
+        const prompt = `
+${MASTER_TRANSLATION_PROMPT}
 
-        for (const item of emptyTranslations) {
-            const candidateRaw = recoveryDict[String(item.id)];
-            const candidate = formatSubtitleLine(String(candidateRaw || ''));
+RECUPERARE FINALĂ — O SINGURĂ REPLICĂ.
+Traducerea pentru ID-ul de mai jos a rămas goală după încercările anterioare.
+Tradu integral textul sursă în română naturală, fără să omiți replica, fără explicații și fără text gol.
+Păstrează sensul, subiectul, obiectul, negația, numărul gramatical și termenii expliciți din original.${explicitTermInstruction}
 
-            if (
-                candidate &&
-                !hasUntranslatedEnglish(item.text, candidate) &&
-                !hasCorruptedSubtitleText(candidate, item.text) &&
-                !hasLostExplicitSourceTerm(item.text, candidate)
-            ) {
-                translatedById[String(item.id)] = candidate;
-                recoveredCount++;
-                recoveredIds.push(String(item.id));
-            } else {
-                failedIds.push(String(item.id));
+Pentru această cerere, instrucțiunea de format de mai jos înlocuiește orice exemplu generic de format JSON din promptul anterior: returnează un singur obiect JSON, nu un array.
+ID: ${id}
+TEXT ORIGINAL: ${JSON.stringify(item.text)}
+
+Returnează exact un obiect JSON cu același ID, inclusiv când replica este foarte scurtă:
+{"id": ${id}, "text": "traducerea română"}
+`;
+
+        try {
+            const recoveryKey = await getAvailableKey(keyStates);
+            const recoveryRaw = await callGemini(prompt, recoveryKey, {
+                timeout: 30000,
+                responseSchema: {
+                    type: 'OBJECT',
+                    properties: {
+                        id: { type: 'INTEGER' },
+                        text: { type: 'STRING' }
+                    },
+                    required: ['id', 'text'],
+                    propertyOrdering: ['id', 'text']
+                }
+            });
+            const parsed = safeJsonParse(recoveryRaw);
+            const recoveryDict = normalizeTranslationPayload(parsed);
+            let candidateRaw = recoveryDict[id];
+
+            // Tolerăm și un obiect {id, text} returnat direct, fără să confundăm
+            // câmpul „text” cu dicționarul de traduceri pentru mai multe ID-uri.
+            if (candidateRaw == null && parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+                if ((parsed.id == null || String(parsed.id) === id) && parsed.text != null) {
+                    candidateRaw = parsed.text;
+                }
+                if (candidateRaw == null && parsed.translations && typeof parsed.translations === 'object') {
+                    candidateRaw = parsed.translations[id];
+                }
             }
+
+            const rawCandidate = candidateRaw == null ? '' : String(candidateRaw).trim();
+            const candidate = rawCandidate ? formatSubtitleLine(rawCandidate) : '';
+            const reasons = [];
+
+            if (!String(candidate || '').trim()) {
+                reasons.push(candidateRaw ? 'formatterul a produs text gol' : 'răspuns gol sau ID lipsă');
+            } else {
+                if (hasUntranslatedEnglish(item.text, candidate)) reasons.push('posibilă engleză netradusă');
+                if (hasCorruptedSubtitleText(candidate, item.text)) reasons.push('text corupt');
+                if (hasLostExplicitSourceTerm(item.text, candidate)) {
+                    reasons.push(`fidelitate semantică: ${getSourceFidelityIssues(item.text, candidate).join('; ')}`);
+                }
+            }
+
+            if (String(candidate || '').trim() && reasons.length === 0) {
+                translatedById[id] = candidate;
+                recoveredCount++;
+                recoveredIds.push(id);
+                console.log(`${c.green}✔ [Post-Grammar Empty Recovery] ID ${id} recuperat prin cerere punctuală.${c.reset}`);
+            } else {
+                const reasonText = reasons.length ? reasons.join(' | ') : 'candidat invalid';
+                failedIds.push(id);
+                // Nu scriem peste valoarea goală cu o variantă suspectă. La export,
+                // protecția existentă păstrează textul sursă în loc să elimine replica.
+                console.log(`${c.red}❌ [Post-Grammar Empty Recovery] ID ${id} nerezolvat: ${reasonText}. Originalul va fi păstrat ca fallback în SRT.${c.reset}`);
+            }
+        } catch (error) {
+            failedIds.push(id);
+            console.log(`${c.red}❌ [Post-Grammar Empty Recovery] ID ${id} — cererea punctuală a eșuat: ${error.message}. Originalul va fi păstrat ca fallback în SRT.${c.reset}`);
         }
-    } catch (error) {
-        console.log(`${c.yellow}⚠ [Post-Grammar Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
     }
 
     const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
-    const failedSuffix = failedIds.length ? `; nereparate: ${failedIds.join(', ')}` : '';
-    console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Post-Grammar Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
-    return { detected: emptyTranslations.length, recovered: recoveredCount };
+    const failedSuffix = failedIds.length ? `; fallback la original pentru: ${failedIds.join(', ')}` : '';
+    const statusIcon = recoveredCount === emptyTranslations.length ? '✔' : '⚠';
+    const statusColor = recoveredCount === emptyTranslations.length ? c.green : c.yellow;
+    console.log(`${statusColor}${statusIcon} [Post-Grammar Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
+    return { detected: emptyTranslations.length, recovered: recoveredCount, failedIds };
 }
 
 // ============================================================
@@ -2740,7 +2784,9 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
             const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
             const failedSuffix = failedIds.length ? `; nereparate: ${failedIds.join(', ')}` : '';
-            console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
+            const statusIcon = recoveredCount === emptyTranslations.length ? '✔' : '⚠';
+            const statusColor = recoveredCount === emptyTranslations.length ? c.green : c.yellow;
+            console.log(`${statusColor}${statusIcon} [Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
         } catch (error) {
             console.log(`${c.yellow}⚠ [Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
         }
