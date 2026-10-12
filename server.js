@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.132',
+    version: '12.78.133',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1283,16 +1283,17 @@ function createKeyState(keys) {
 }
 
 function getGlobal429Until(keyStates) { return Number(keyStates._global429Until || 0); }
-function register429(keyStates, cooldownMs) {
+function register429(keyStates, cooldownMs, forceGlobal = false) {
     const now = Date.now();
     const paused = keyStates.filter(s => !s.disabled && s.pausedUntil > now).length;
     const active = keyStates.filter(s => !s.disabled).length;
     const normalizedCooldownMs = Math.min(120000, Math.max(10000, Number(cooldownMs) || 15000));
 
-    // Când mai multe chei primesc 429, suspendăm temporar întregul flux.
-    // Poarta globală respectă același cooldown ca cheia, până la limita
-    // folosită de callGemini, în loc să taie orice Retry-After la 30 secunde.
-    if (active > 0 && paused >= Math.min(2, active)) {
+    // Când Google spune că resursa/cota este epuizată, rotirea imediată către
+    // altă cheie poate lovi aceeași limită de proiect. În acest caz, activăm
+    // poarta globală chiar de la primul 429, nu după încercarea pe a doua cheie.
+    // Pentru 429-uri fără indiciu de cotă păstrăm logica bazată pe cheile limitate.
+    if (forceGlobal || (active > 0 && paused >= Math.min(2, active))) {
         keyStates._global429Until = Math.max(
             getGlobal429Until(keyStates),
             now + normalizedCooldownMs
@@ -1322,8 +1323,11 @@ async function waitFor429Gate(keyStates) {
     while (true) {
         const waitMs = getGlobal429Until(keyStates) - Date.now();
         if (waitMs <= 0) return;
-        console.log(`${c.yellow}⏳ [429 Gate] Prea multe chei limitate. Aștept ${Math.ceil(waitMs / 1000)}s înainte de următoarea încercare.${c.reset}`);
+        console.log(`${c.yellow}⏳ [429 Gate] Limitare Gemini activă. Aștept ${Math.ceil(waitMs / 1000)}s înainte de următoarea încercare.${c.reset}`);
         await sleep(waitMs);
+        // Cererile care așteptau simultan nu reiau toate apelurile în aceeași
+        // clipă după expirarea pauzei; decalarea reduce un nou vârf de cereri.
+        await sleep(250 + Math.floor(Math.random() * 1250));
     }
 }
 
@@ -1432,6 +1436,7 @@ async function callGemini(prompt, keyState, options = {}) {
             const details = providerMessage ? ` Detaliu Google: ${providerMessage}` : '';
             const retryError = new Error(`Limită Gemini 429; pauză ${Math.ceil(cooldownMs / 1000)}s.${details}`);
             retryError.isRateLimit429 = true;
+            retryError.isProjectQuota429 = /resource has been exhausted|quota/i.test(providerMessage);
             retryError.retryAfterMs = cooldownMs;
             retryError.providerMessage = providerMessage;
             throw retryError;
@@ -2028,7 +2033,11 @@ ${JSON.stringify(missingItems, null, 2)}
             lastError = error;
             const is429 = error.isRateLimit429 === true || error.message.includes('429');
             if (is429 && keyState) {
-                register429(keyStates, Number(error.retryAfterMs) || 15000);
+                register429(
+                    keyStates,
+                    Number(error.retryAfterMs) || 15000,
+                    error.isProjectQuota429 === true
+                );
             }
             const isTransient = is429 || /status code 5\d\d/.test(error.message);
             console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
