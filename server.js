@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.126',
+    version: '12.78.127',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1765,7 +1765,7 @@ function getSourceFidelityIssues(original, translation) {
         ''
     ).replace(/\b(?:(?:in|into|out\s+in|from)\s+)?(?:the\s+)?middle\s+of\s+nowhere\b/gi, ' ');
     const sourceHasExplicitNegation = /\b(?:don't|doesn't|didn't|isn't|aren't|wasn't|weren't|can't|cannot|couldn't|won't|wouldn't|shouldn't|mustn't|haven't|hasn't|hadn't|do\s+not|does\s+not|did\s+not|is\s+not|are\s+not|was\s+not|were\s+not|can\s+not|could\s+not|will\s+not|would\s+not|should\s+not|must\s+not|have\s+not|has\s+not|had\s+not|never|nobody|no\s+one|nothing|nowhere|none|neither)\b/i.test(sourceForNegation);
-    const isKnownPositiveEquivalent = /\b(?:can't|cannot)\s+wait\b/i.test(sourceNorm) ||
+    const isKnownPositiveEquivalent = /\b(?:can't|cannot|couldn't|could\s+not)\s+wait\b/i.test(sourceNorm) ||
         /\bcould(?:n't| not)\s+agree\s+more\b/i.test(sourceNorm) ||
         /\bnot\s+(?:only|just|merely|simply)\b/i.test(sourceNorm) ||
         /\bnot\s+(?:so\s+)?bad\b/i.test(sourceNorm);
@@ -3222,12 +3222,12 @@ function applyContinuationCase(items, translatedById) {
 
 async function translateSrtWithGemini(srtText, apiKeys) {
     const sourceBlockCount = (String(srtText || '').match(/-->/g) || []).length;
-    const parseStats = { fillerBlocksFiltered: 0, otherBlocksFiltered: 0 };
+    const parseStats = { fillerBlocksFiltered: 0, otherBlocksFiltered: 0, invalidBlocksSkipped: 0 };
     const items = parseSrt(srtText, parseStats);
     if (!items.length) throw new Error('Nu s-au găsit subtitrări valide.');
 
-    const omittedOtherBlocks = Math.max(0, sourceBlockCount - items.length - parseStats.fillerBlocksFiltered);
-    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${items.length} | interjecții eliminate înainte de traducere: ${parseStats.fillerBlocksFiltered}${omittedOtherBlocks ? ` | alte blocuri omise: ${omittedOtherBlocks}` : ''}.${c.reset}`);
+    const accountingDelta = sourceBlockCount - items.length - parseStats.fillerBlocksFiltered - parseStats.otherBlocksFiltered - parseStats.invalidBlocksSkipped;
+    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${items.length} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
 
     const cleanKeys = Array.from(new Set(apiKeys.map(k => String(k).trim()).filter(Boolean)));
     if (!cleanKeys.length) throw new Error('Nu există chei Gemini valide.');
@@ -3468,7 +3468,13 @@ Returnează DOAR un ARRAY JSON valid în forma:
     // Interjecțiile generate ca traducere izolată sunt eliminate din ieșire și
     // scoase din numitorul QA; nu trebuie raportate ca eroare de fidelitate.
     const suppressedFillerIds = items
-        .filter(item => isOnlyStandaloneFillerSequence(String(translatedById[String(item.id)] || '').trim()))
+        .filter(item => {
+            const id = String(item.id);
+            const translated = String(translatedById[id] || '').trim();
+            // A source-only reaction/marker must not leak into the output, even if Gemini
+            // returned an empty or non-empty paraphrase for it. Also suppress reaction-only translations.
+            return isJunkOrInterjection(item.text) || isOnlyStandaloneFillerSequence(translated);
+        })
         .map(item => String(item.id));
     const suppressedFillerIdSet = new Set(suppressedFillerIds);
 
@@ -3496,11 +3502,11 @@ Returnează DOAR un ARRAY JSON valid în forma:
         if (suppressedFillerIdSet.has(id)) return false;
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
-        if (isJunkOrInterjection(item.text)) return false;
 
         const translated = translatedById[id];
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
         if (!transClean) return true;
+        if (isJunkOrInterjection(item.text)) return false;
 
         return hasUntranslatedEnglish(item.text, translated) ||
             hasCorruptedSubtitleText(translated, item.text) ||
@@ -3526,7 +3532,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
     const checkedCount = items.length - suppressedFillerIds.length;
     const passedCount = Math.max(0, checkedCount - finalSuspicious.length);
-    console.log(`${c.cyan}[INTERJECȚII] ${parseStats.fillerBlocksFiltered} eliminate înainte de Gemini | ${suppressedFillerIds.length} eliminate după traducere.${c.reset}`);
+    console.log(`${c.cyan}[INTERJECȚII] ${parseStats.fillerBlocksFiltered} eliminate înainte de Gemini | ${suppressedFillerIds.length} reacții/markeri izolați eliminați la ieșire.${c.reset}`);
     console.log(`${c.cyan}[INTEGRITATE] ${passedCount}/${checkedCount} blocuri au trecut verificările automate.${c.reset}`);
 
     const unverifiedQualityCount = finalQualityFlags.length;
@@ -3846,18 +3852,28 @@ function parseSrt(srt, stats = null) {
     if (stats) {
         stats.fillerBlocksFiltered = 0;
         stats.otherBlocksFiltered = 0;
+        stats.invalidBlocksSkipped = 0;
     }
 
     for (const block of blocks) {
         const lines = block.split('\n').map(l => l.trimEnd());
-        if (lines.length < 3) continue;
+        if (lines.length < 3) {
+            if (stats && /-->/.test(block)) stats.invalidBlocksSkipped++;
+            continue;
+        }
 
         const id = Number(lines[0].trim());
-        if (!Number.isInteger(id)) continue;
+        if (!Number.isInteger(id)) {
+            if (stats && /-->/.test(block)) stats.invalidBlocksSkipped++;
+            continue;
+        }
 
         const timing = lines[1].trim();
         const match = timing.match(/^(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})(?:.*)?$/);
-        if (!match) continue;
+        if (!match) {
+            if (stats && /-->/.test(block)) stats.invalidBlocksSkipped++;
+            continue;
+        }
 
         let rawText = lines.slice(2).join('\n');
 
