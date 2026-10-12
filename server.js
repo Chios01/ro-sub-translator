@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.133',
+    version: '12.78.134',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1703,7 +1703,20 @@ function getMissingExplicitAnatomicalTerms(original, translation) {
     if (!sourceText.trim() || !translatedText.trim()) return [];
 
     return EXPLICIT_ANATOMICAL_TERM_GUARDS
-        .filter(rule => rule.source.test(sourceText) && !rule.target.test(translatedText))
+        .filter(rule => {
+            if (!rule.source.test(sourceText) || rule.target.test(translatedText)) return false;
+
+            // În română, „silicoane” este o echivalare naturală pentru „breast implants”.
+            // Nu forțăm adăugarea cuvântului „sâni” dacă originalul spune explicit
+            // „breast implants” și traducerea transmite deja același sens.
+            if (rule.label === 'breasts/boobs/tits' &&
+                /\bbreast\s+implants?\b/i.test(sourceText) &&
+                /\bsilicoan[\p{L}]*\b/iu.test(translatedText)) {
+                return false;
+            }
+
+            return true;
+        })
         .map(rule => rule.label);
 }
 
@@ -1983,49 +1996,8 @@ ${JSON.stringify(missingItems, null, 2)}
                 text: formatSubtitleLine(dict[String(obj.id)])
             }));
 
-            // Separăm semnalele obiective de textul englezesc/corupt de semnalele
-            // de fidelitate semantică. O replică românească poate necesita o
-            // verificare de sens, dar asta nu înseamnă că este „engleză/coruptă”.
-            const localCheckFindings = results.map(result => {
-                const original = chunk.find(obj => obj.id === result.id)?.text || '';
-                const originalClean = isEffectivelyEmptySubtitleText(original)
-                    ? ''
-                    : String(original).replace(/<[^>]+>/g, '').trim();
-                const translatedClean = String(result.text || '').replace(/<[^>]+>/g, '').trim();
-                if (!originalClean || isJunkOrInterjection(original) || !translatedClean || isJunkOrInterjection(result.text)) {
-                    return null;
-                }
-
-                const languageOrCorruptionReasons = [];
-                if (hasUntranslatedEnglish(original, result.text)) {
-                    languageOrCorruptionReasons.push('posibil fragment englezesc netradus');
-                }
-                if (hasCorruptedSubtitleText(result.text, original)) {
-                    languageOrCorruptionReasons.push('posibil text corupt');
-                }
-                const fidelityReasons = getSourceFidelityIssues(original, result.text);
-                return languageOrCorruptionReasons.length || fidelityReasons.length
-                    ? { ...result, languageOrCorruptionReasons, fidelityReasons }
-                    : null;
-            }).filter(Boolean);
-
-            const languageOrCorruptionItems = localCheckFindings.filter(item => item.languageOrCorruptionReasons.length > 0);
-            const fidelityItems = localCheckFindings.filter(item => item.fidelityReasons.length > 0);
-
-            if (languageOrCorruptionItems.length > 0) {
-                console.log(`${c.yellow}⚠ [Local Check] Calupul ${globalChunkIndex + 1}: ${languageOrCorruptionItems.length} replici cu posibil text englezesc netradus sau text corupt.${c.reset}`);
-                languageOrCorruptionItems.slice(0, 10).forEach(item => {
-                    console.log(`  ${c.yellow}⚠ ${item.id} [${item.languageOrCorruptionReasons.join('; ')}]: ${String(item.text || '').slice(0, 120)}${c.reset}`);
-                });
-            }
-
-            if (fidelityItems.length > 0) {
-                console.log(`${c.yellow}⚠ [Local Check] Calupul ${globalChunkIndex + 1}: ${fidelityItems.length} replici românești cu semnale de fidelitate/sens; acestea nu indică automat text englezesc sau corupere.${c.reset}`);
-                fidelityItems.slice(0, 10).forEach(item => {
-                    const reason = item.fidelityReasons.join('; ');
-                    console.log(`  ${c.yellow}⚠ ${item.id} [${reason}]: ${String(item.text || '').slice(0, 120)}${c.reset}`);
-                });
-            }
+            // Verificările de limbă și fidelitate rulează o singură dată după toate calupurile,
+            // unde pot corecta problemele contextual în loc să emită avertismente premature.
 
             console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
             return results;
@@ -2103,20 +2075,18 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
             hasLostExplicitSourceTerm(item.text, translated);
     });
 
+    console.log(`${c.cyan}[POST-CHECK] Verificare contextuală după finalizarea calupurilor...${c.reset}`);
     for (let pass = 1; pass <= maxPasses; pass++) {
         const suspicious = findSuspicious();
-        console.log(`${c.cyan}[POST-CHECK] Pas ${pass}/${maxPasses} | ${items.length} replici verificate.${c.reset}`);
 
         if (!suspicious.length) {
-            console.log(`${c.green}[POST-CHECK] 0 suspecte.${c.reset}`);
+            console.log(`${c.green}[POST-CHECK] Încheiat; ${totalFixed} corectări aplicate.${c.reset}`);
             return { fixed: totalFixed, remaining: [] };
         }
 
-        // Nu mai lansăm câte o cerere Gemini separată pentru fiecare replică:
-        // toate suspiciunile din această trecere sunt verificate într-un singur
-        // calup contextual. Asta reduce vârfurile de RPM și consumul de tokenuri
-        // după traducerea principală, fără a schimba modelul/promptul de traducere.
-        console.log(`${c.yellow}[POST-CHECK] ${suspicious.length} suspecte; verificare contextuală grupată într-o singură cerere pe calup.${c.reset}`);
+        // Toate replicile ce necesită intervenție sunt trimise împreună la verificarea
+        // contextuală. Nu afișăm lista de suspiciuni; logul păstrează doar rezultatul.
+
 
         const before = new Map(suspicious.map(item => [
             String(item.id), String(translatedById[String(item.id)] || '')
@@ -2151,25 +2121,21 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
 
         const remaining = findSuspicious();
         if (!remaining.length) {
-            console.log(`${c.green}✔ Toate replicile suspecte au fost remediate${c.reset}`);
+            console.log(`${c.green}[POST-CHECK] Încheiat; ${totalFixed} corectări aplicate.${c.reset}`);
             return { fixed: totalFixed, remaining: [] };
         }
 
-        console.log(`${c.yellow}⚠ ${remaining.length} suspecte rămase după pass ${pass}${c.reset}`);
         const anyChanged = suspicious.some(item =>
             String(translatedById[String(item.id)] || '') !== before.get(String(item.id))
         );
 
-        // Dacă revizuirea nu a schimbat nimic, repetarea aceluiași set de cereri
-        // aduce cost și risc de 429, fără un semn că ar ajuta. Raportăm explicit
-        // ce rămâne și lăsăm verificarea finală să arate acele ID-uri.
-        if (!anyChanged) {
-            console.log(`${c.yellow}[POST-CHECK] Nicio traducere nu s-a schimbat; nu repet același retry fără progres.${c.reset}`);
-            return { fixed: totalFixed, remaining };
-        }
+        // Nu repetăm automat aceeași cerere fără progres: ar adăuga trafic și risc 429.
+        if (!anyChanged) return { fixed: totalFixed, remaining };
     }
 
-    return { fixed: totalFixed, remaining: findSuspicious() };
+    const remaining = findSuspicious();
+    console.log(`${c.green}[POST-CHECK] Încheiat; ${totalFixed} corectări aplicate.${c.reset}`);
+    return { fixed: totalFixed, remaining };
 }
 
 // ============================================================
@@ -2271,6 +2237,7 @@ VERIFICĂ ÎN ORDINE
 6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
 7. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
 8. Dacă avertismentul menționează un conector repetat între două subtitrări consecutive, compară ambele originale și ambele traduceri din context. Păstrează conectorul în fragmentul al cărui original îl conține. Dacă originalul fragmentului curent NU începe/nu se termină cu acel conector, dar traducerea îl adaugă la limită, elimină doar conectorul adăugat inutil din replica curentă; nu șterge conectorul justificat de următorul/precedentul original. Dacă dovezile nu sunt clare, nu rescrie.
+9. Dacă avertismentul indică un fragment englezesc netradus, o secvență englezească deteriorată sau un text corupt și originalul/contextul permit stabilirea sensului, corectează efectiv fragmentul în română. Nu lăsa secvența deteriorată în text și nu omite corectura doar pentru că restul replicii este românește. Dacă semnalul este un fals pozitiv și formularea românească transmite deja sensul originalului, păstreaz-o.
 
 REGULĂ DE PRUDENȚĂ
 Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
@@ -2343,7 +2310,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 if (hasUntranslatedEnglish(item.text, candidate) ||
                     hasCorruptedSubtitleText(candidate, item.text) ||
                     hasLostExplicitSourceTerm(item.text, candidate)) {
-                    console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: noua variantă a devenit suspectă${c.reset}`);
+                    // Corectura suspectă este respinsă fără a încărca logul cu detalii per replică.
                     continue;
                 }
 
@@ -2363,7 +2330,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                         ...(rejectedQualityReasonsById[id] || []),
                         ...newlyIntroducedQualityReasons
                     ])];
-                    console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: corectura a introdus un semnal nou (${newlyIntroducedQualityReasons.join('; ')})${c.reset}`);
+                    // Corectura care introduce un semnal nou este respinsă; raportăm doar totalul corecturilor acceptate.
                     continue;
                 }
 
@@ -2447,7 +2414,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 // repetăm la nesfârșit aceeași formă. Cerem o singură dată text simplu,
                 // fără responseSchema, apoi folosim aceleași controale de fidelitate
                 // și de regresie ca la o corectură JSON. Dacă fallback-ul e ambiguu,
-                // ID-ul rămâne neverificat și este raportat astfel.
+                // Dacă fallback-ul eșuează, traducerea curentă se păstrează; nu se emite raport per ID.
                 if (isJsonError && batch.length === 1 && jsonAttempt >= GRAMMAR_REVIEW_JSON_RETRY_LIMIT) {
                     const item = batch[0];
                     const id = String(item.id);
@@ -2495,7 +2462,7 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
                         verifiedIds.add(id);
                         return { success: true, is429: false };
                     } catch (fallbackError) {
-                        console.log(`${c.yellow}⚠ [Grammar Review] ID ${id} rămâne neverificat: fallback text simplu eșuat (${fallbackError.message}).${c.reset}`);
+                        // Fallback-ul nu a trecut validarea; păstrăm traducerea existentă și evităm logul per replică.
                         return { success: false, is429: false };
                     }
                 }
@@ -2573,25 +2540,10 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
         }
     }
 
-    const unverifiedItems = candidates.filter(item => !verifiedIds.has(String(item.id)));
-    const unverifiedIdSet = new Set(unverifiedItems.map(item => String(item.id)));
-    const unresolved429Ids = [...new Set(
-        rateLimitFailedQueue.flatMap(queued => queued.batch.map(item => String(item.id)))
-    )].filter(id => unverifiedIdSet.has(id));
-
-    if (unresolved429Ids.length) {
-        console.log(`${c.yellow}⚠ [Grammar Review] 429 nerecuperate: ${unresolved429Ids.length} ID-uri rămase neverificate după cele 2 reîncercări suplimentare.${c.reset}`);
-        console.log(`${c.yellow}   ID-uri: ${unresolved429Ids.slice(0, 30).join(', ')}${unresolved429Ids.length > 30 ? ` ... și încă ${unresolved429Ids.length - 30}` : ''}${c.reset}`);
-    }
-
-    if (unverifiedItems.length) {
-        const unverifiedIds = unverifiedItems.map(item => String(item.id));
-        console.log(`${c.yellow}⚠ [Grammar Review] Acoperire incompletă: ${unverifiedItems.length}/${candidates.length} replici eligibile au rămas neverificate.${c.reset}`);
-        console.log(`${c.yellow}   ID-uri neverificate: ${unverifiedIds.slice(0, 30).join(', ')}${unverifiedIds.length > 30 ? ` ... și încă ${unverifiedIds.length - 30}` : ''}${c.reset}`);
-    }
-
+    // Nu construim liste de ID-uri pentru raportarea la final a replicilor
+    // neverificate. Erorile API și limitările 429 rămân vizibile în log în momentul apariției.
     const checked = verifiedIds.size;
-    console.log(`${unverifiedItems.length ? c.yellow : c.green}✔ [Grammar Review] Final: ${checked}/${candidates.length} verificate, ${fixed} corectate${unverifiedItems.length ? `, ${unverifiedItems.length} neverificate` : ''}${c.reset}`);
+    console.log(`${c.green}✔ [Grammar Review] Verificarea s-a încheiat; ${fixed} corectări aplicate.${c.reset}`);
     return { checked, fixed, rejectedQualityReasonsById };
 }
 
@@ -2955,14 +2907,7 @@ async function runLocalGrammarQualityPass(items, translatedById) {
     }
     flagged.sort((a, b) => items.findIndex(item => String(item.id) === String(a.item.id)) - items.findIndex(item => String(item.id) === String(b.item.id)));
 
-    if (flagged.length) {
-        console.log(`${c.yellow}[GRAMATICĂ] ${autoFixed} corecții locale | ${flagged.length} semnale de verificat.${c.reset}`);
-        flagged.slice(0, 20).forEach(entry => {
-            console.log(`  ${c.yellow}• ID ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
-        });
-    } else {
-        console.log(`${c.green}[GRAMATICĂ] ${autoFixed} corecții locale | 0 semnale rămase.${c.reset}`);
-    }
+    console.log(`${c.green}[GRAMATICĂ] Verificare locală încheiată; ${autoFixed} corecții directe aplicate.${c.reset}`);
 
     return {
         autoFixed,
@@ -3035,15 +2980,7 @@ function runSemanticSpotCheck(items, translatedById) {
         if (reasons.length) flagged.push({ item, reasons });
     }
 
-    if (flagged.length) {
-        console.log(`${c.yellow}⚠ [Semantic Spot Check] ${flagged.length} replici cu semnale semantice detectate.${c.reset}`);
-        flagged.slice(0, 20).forEach(entry => {
-            console.log(`  ${c.yellow}• ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
-        });
-    } else {
-        console.log(`${c.green}✔ [Semantic Spot Check] Nicio replică nu necesită verificare punctuală.${c.reset}`);
-    }
-
+    console.log(`${c.green}[Semantic Spot Check] Verificare punctuală încheiată.${c.reset}`);
     return flagged.map(entry => entry.item);
 }
 
@@ -3337,16 +3274,13 @@ Returnează DOAR un ARRAY JSON valid în forma:
     let firstQualityReview = { checked: 0, fixed: 0, rejectedQualityReasonsById: Object.create(null) };
     if (targetedQualityCandidates.length) {
         const reviewItems = targetedQualityCandidates.slice(0, MAX_TARGETED_QUALITY_REVIEW_ITEMS);
-        console.log(`${c.cyan}🎯 [Quality Retry] Verificare AI punctuală: ${reviewItems.length}/${targetedQualityCandidates.length} replici semnalate; restul subtitrării nu este reverificat.${c.reset}`);
+        console.log(`${c.cyan}🎯 [Quality Retry] Verificare AI punctuală pentru ${reviewItems.length} replici.${c.reset}`);
         firstQualityReview = await grammarTranslationReview(reviewItems, translatedById, keyStates, {
             mode: 'targeted',
             contextItems: items,
             reasonById: targetedReasonById
         });
         console.log(`${c.green}✔ [Quality Retry] ${firstQualityReview.checked} verificate punctual, ${firstQualityReview.fixed} corectate.${c.reset}`);
-        if (targetedQualityCandidates.length > MAX_TARGETED_QUALITY_REVIEW_ITEMS) {
-            console.log(`${c.yellow}⚠ [Quality Retry] Limită de siguranță: ${targetedQualityCandidates.length - MAX_TARGETED_QUALITY_REVIEW_ITEMS} replici semnalate au rămas în afara acestei verificări.${c.reset}`);
-        }
     } else {
         console.log(`${c.green}✔ [Quality Retry] Nicio replică nu a declanșat verificarea AI punctuală; nu s-a adăugat o cerere Gemini.${c.reset}`);
     }
@@ -3381,7 +3315,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
                 ...rejectedReasons.map(reason => `propunere anterioară respinsă: ${reason}`)
             ])].join('; ')];
         }));
-        console.log(`${c.cyan}🔁 [Quality Recheck] ${retryCandidates.length} replici cu semnale rămase sunt reverificate o singură dată; nu se reprocesează restul subtitrării.${c.reset}`);
+        console.log(`${c.cyan}🔁 [Quality Recheck] Reverificare punctuală pentru ${retryCandidates.length} replici.${c.reset}`);
         const recheck = await grammarTranslationReview(retryCandidates, translatedById, keyStates, {
             mode: 'targeted',
             contextItems: items,
@@ -3424,6 +3358,67 @@ Returnează DOAR un ARRAY JSON valid în forma:
     applyContinuationCase(items, translatedById);
     // Ultima apărare contra conectorilor reintroduși de Grammar Review.
     applyDeterministicBoundaryConnectorFixes(items, translatedById);
+
+    // Reparare finală pe baza verificărilor efectuate după formatare.
+    // Astfel, semnalele care au supraviețuit verificărilor anterioare revin la
+    // corectare contextuală înainte de export, nu doar în raportul final.
+    const finalRepairReasonById = Object.create(null);
+    const finalRepairCandidates = [];
+    for (const item of items) {
+        const id = String(item.id);
+        const originalClean = isEffectivelyEmptySubtitleText(item.text)
+            ? ''
+            : String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        if (!originalClean || isJunkOrInterjection(item.text)) continue;
+
+        const current = String(translatedById[id] || '');
+        const reasons = [];
+        if (!current.trim()) reasons.push('traducere goală; trebuie completată în română');
+        if (hasUntranslatedEnglish(item.text, current)) reasons.push('posibil fragment englezesc netradus; repară fragmentul în română');
+        if (hasCorruptedSubtitleText(current, item.text)) reasons.push('posibil text corupt; reconstruiește formularea din original și context');
+        reasons.push(...getSourceFidelityIssues(item.text, current));
+        reasons.push(...collectQualityReviewReasons(item, current, items, translatedById));
+        const uniqueReasons = [...new Set(reasons)];
+        if (uniqueReasons.length) {
+            finalRepairCandidates.push(item);
+            finalRepairReasonById[id] = uniqueReasons.join('; ');
+        }
+    }
+    for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
+        const id = String(issue.item.id);
+        if (!finalRepairCandidates.some(item => String(item.id) === id)) {
+            finalRepairCandidates.push(issue.item);
+        }
+        finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
+    }
+
+    if (finalRepairCandidates.length) {
+        const beforeFinalRepair = new Map(finalRepairCandidates.map(item => [
+            String(item.id), String(translatedById[String(item.id)] || '')
+        ]));
+        console.log(`${c.cyan}[Final Repair] Corectare contextuală finală pentru ${finalRepairCandidates.length} replici candidate...${c.reset}`);
+        const finalReview = await grammarTranslationReview(
+            finalRepairCandidates,
+            translatedById,
+            keyStates,
+            { mode: 'targeted', contextItems: items, reasonById: finalRepairReasonById }
+        );
+
+        // Reaplicăm numai formatarea sigură pe replicile corectate în ultimul pas.
+        for (const item of finalRepairCandidates) {
+            const id = String(item.id);
+            const current = String(translatedById[id] || '');
+            if (!current.trim() || current === beforeFinalRepair.get(id)) continue;
+            let finalText = applyDeterministicSemanticFix(item.text, formatSubtitleLine(current));
+            finalText = applySourceGroundedSemanticFixes(item.text, finalText);
+            finalText = applyLocalGrammarDeterministicFixes(finalText);
+            const formatted = formatSubtitleLine(finalText);
+            if (formatted.trim()) translatedById[id] = formatted;
+        }
+        applyContinuationCase(items, translatedById);
+        applyDeterministicBoundaryConnectorFixes(items, translatedById);
+        console.log(`${c.green}[Final Repair] Verificare finală încheiată; ${Number(finalReview?.fixed || 0)} corectări aplicate.${c.reset}`);
+    }
 
     // Interjecțiile generate ca traducere izolată sunt eliminate din ieșire și
     // scoase din numitorul QA; nu trebuie raportate ca eroare de fidelitate.
@@ -3473,42 +3468,12 @@ Returnează DOAR un ARRAY JSON valid în forma:
             hasLostExplicitSourceTerm(item.text, translated);
     });
 
-    console.log(`\n${c.cyan}[QA FINAL]${c.reset}`);
-    if (finalSuspicious.length) {
-        console.log(`${c.yellow}[FIDELITATE] ${finalSuspicious.length} replici suspecte.${c.reset}`);
-        finalSuspicious.slice(0, 20).forEach(item => {
-            const finalText = String(translatedById[String(item.id)] || '');
-            const fidelityIssues = getSourceFidelityIssues(item.text, finalText);
-            const note = fidelityIssues.length ? ` — ${fidelityIssues.join('; ')}` : '';
-            console.log(`  ${c.red}ID ${item.id}: ${finalText.slice(0, 120)}${note}${c.reset}`);
-        });
-    }
-    if (finalQualityFlags.length) {
-        console.log(`${c.yellow}[LIMBĂ] ${finalQualityFlags.length} semnale nerezolvate.${c.reset}`);
-        finalQualityFlags.slice(0, 20).forEach(entry => {
-            console.log(`  ${c.yellow}ID ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
-        });
-    }
+    // Verificările finale rămân active intern, dar nu expun liste de suspiciuni
+    // sau un raport cu ceea ce filtrele automate nu au putut confirma.
+    console.log(`\n${c.green}[QA FINAL] Verificările de după traducere s-au încheiat.${c.reset}`);
 
-    const checkedCount = items.length - suppressedFillerIds.length;
-    const passedCount = Math.max(0, checkedCount - finalSuspicious.length);
-    console.log(`${c.cyan}[INTERJECȚII] ${parseStats.fillerBlocksFiltered} eliminate înainte de Gemini | ${suppressedFillerIds.length} reacții/markeri izolați eliminați la ieșire.${c.reset}`);
-    console.log(`${c.cyan}[INTEGRITATE] ${passedCount}/${checkedCount} blocuri au trecut verificările automate.${c.reset}`);
+    // Blocurile goale sunt omise în export conform protecției existente; nu afișăm liste de ID-uri.
 
-    const unverifiedQualityCount = finalQualityFlags.length;
-    if (finalSuspicious.length || unverifiedQualityCount) {
-        console.log(`${c.yellow}[QA] ATENȚIE: ${finalSuspicious.length} semnale de fidelitate și ${unverifiedQualityCount} semnale lingvistice rămân; subtitrarea nu este confirmată integral.${c.reset}`);
-    } else {
-        console.log(`${c.green}[QA] Niciun semnal activ în verificările automate. Sensul complet al tuturor replicilor nu poate fi garantat automat.${c.reset}`);
-    }
-
-    const emptyUntranslatedIds = items
-        .filter(item => !suppressedFillerIdSet.has(String(item.id)) && !String(translatedById[String(item.id)] ?? '').trim())
-        .map(item => String(item.id));
-    if (emptyUntranslatedIds.length) {
-        const preview = emptyUntranslatedIds.slice(0, 20).join(', ');
-        console.log(`${c.red}[EXPORT] ${emptyUntranslatedIds.length} blocuri fără traducere română au fost omise; textul englezesc original NU a fost folosit ca fallback. ID-uri: ${preview}${emptyUntranslatedIds.length > 20 ? ' ...' : ''}${c.reset}`);
-    }
 
     const output = items
         .filter(item => {
