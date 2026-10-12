@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.117',
+    version: '12.78.118',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -665,21 +665,21 @@ function deepCleanSubtitleText(text) {
 
     cleaned = cleaned.replace(/\bman-ar\b/gi, 'mi-ar');
     cleaned = cleaned.replace(/\bman-a\b/gi, 'mi-a');
-    cleaned = cleaned.replace(/\b[Dd]e ce man pas[aă]\b/gi, 'De ce mi-ar păsa');
+    cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])[Dd]e ce man pas[aă](?![\p{L}\p{N}_])/giu, m => m[0] === m[0].toLowerCase() ? 'de ce mi-ar păsa' : 'De ce mi-ar păsa');
     cleaned = cleaned.replace(/\b[Dd]e ce man-ar pasa\b/gi, 'De ce mi-ar păsa');
     cleaned = cleaned.replace(/\bDe ce man spui\b/gi, 'De ce îmi spui');
     cleaned = cleaned.replace(/\bLasă-man\b/gi, 'Lasă-mă');
     
-    cleaned = cleaned.replace(/\bșă-i\b/g, 'să-i');
-    cleaned = cleaned.replace(/\bȘă-i\b/g, 'Să-i');
-    cleaned = cleaned.replace(/\bșă-ți\b/g, 'să-ți');
-    cleaned = cleaned.replace(/\bȘă-ți\b/g, 'Să-ți');
-    cleaned = cleaned.replace(/\bșă-și\b/g, 'să-și');
-    cleaned = cleaned.replace(/\bȘă-și\b/g, 'Să-și');
+    cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])șă-i(?![\p{L}\p{N}_])/gu, 'să-i');
+    cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])Șă-i(?![\p{L}\p{N}_])/gu, 'Să-i');
+    cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])șă-ți(?![\p{L}\p{N}_])/gu, 'să-ți');
+    cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])Șă-ți(?![\p{L}\p{N}_])/gu, 'Să-ți');
+    cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])șă-și(?![\p{L}\p{N}_])/gu, 'să-și');
+    cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])Șă-și(?![\p{L}\p{N}_])/gu, 'Să-și');
 
     cleaned = cleaned.replace(/^[aA]?[,\s]*mi s-a plătit\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/^[aA]?[,\s]*am fost plătit[aă]?\.?/gi, 'Mi-am primit banii.');
-    cleaned = cleaned.replace(/\bdistraggă\b/gi, 'distragă');
+    cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])distraggă(?![\p{L}\p{N}_])/giu, 'distragă');
 
     return cleaned;
 }
@@ -890,7 +890,7 @@ function formatSubtitleLine(text) {
         [/\babroach\b/gi, 'abordare'],
         [/\bfrom project\b/gi, 'din proiect'],
         [/\bbanca acuzaților bancul acuzaților\b/gi, 'pe banca acuzaților'],
-        [/\bîn joi\b/gi, 'joi'],
+        [/(?<![\p{L}\p{N}_])în joi(?![\p{L}\p{N}_])/giu, 'joi'],
         [/\bde la embedding itself in a mudbank\.?/gi, 'de la a se înfige într-un mal de noroi.'],
         [/\bembedding itself in a mudbank\.?/gi, 'a se înfige într-un mal de noroi.'],
         [/\bN-a fost nic67\b/gi, 'Nu era niciun loc aici?'],
@@ -898,8 +898,8 @@ function formatSubtitleLine(text) {
         [/\bbackground juridic\b/gi, 'trecut juridic'],
         [/\bCă\.E\.A\./gi, 'A.E.C.'],
         [/\bpro Jean Tatlock\b/gi, 'despre Jean Tatlock'],
-        [/\bîn ș\s*\./gi, 'în șah.'],
-        [/\bîn ș\b(?!\w)/gi, 'în șah'],
+        [/(?<![\p{L}\p{N}_])în ș\s*\./giu, 'în șah.'],
+        [/(?<![\p{L}\p{N}_])în ș(?![\p{L}\p{N}_])/giu, 'în șah'],
         [/\bsomom\b/gi, 'somon'],
         [/\bdilettant\b/gi, 'diletant'],
         [/\bcowboys\b/gi, 'cowboy'],
@@ -923,7 +923,7 @@ function formatSubtitleLine(text) {
         // Scăpări și anomalii identificate anterior
         [/\bCcat\b/gi, 'Căcat'],
         [/\bbănuiuiesc\b/gi, 'bănuiesc'],
-        [/\bîmpotriva asta\b/gi, 'împotriva acestui lucru'],
+        [/(?<![\p{L}\p{N}_])împotriva asta(?![\p{L}\p{N}_])/giu, 'împotriva acestui lucru'],
         [/\bI tăiați capul\b/gi, 'Îi tăiați capul'],
         [/\bnam niciun fel\b/gi, 'n-am niciun fel'],
         [/\bnarțiune\b/gi, 'narațiune'],
@@ -963,7 +963,6 @@ function formatSubtitleLine(text) {
         [/\bbrioșelea aia\b/gi, 'brioșele alea'],
         [/Sânișor Kournikova/gi, 'Rusoaica Pectorală'],
         [/fundul tău strâns/gi, 'fundul tău scorțos'],
-        [/\bînța\b/gi, 'apuca'],
         [/cafondist/gi, 'mojic'],
         [/Pu[țt]in-Kournikova/gi, 'Rusoaica Pectorală'],
         [/ghicercici/gi, 'ghicești'],
@@ -1028,7 +1027,7 @@ function formatSubtitleLine(text) {
         [/\bcei-o fi\b/gi, 'ce i-o fi'],
         [/\btoți leau\b/gi, 'șleau'],
         [/\bfeșciști\b/gi, 'fasciști'],
-        [/\bÎ j cunosc\b/gi, 'Îi cunosc'],
+        [/(?<![\p{L}\p{N}_])Î j cunosc(?![\p{L}\p{N}_])/giu, 'Îi cunosc'],
         [/\bororbit\b/gi, 'orbit'],
         [/\bi-ale refuze\b/gi, 'să le refuze'],
         [/\bsecreției\b/gi, 'secretomaniei'],
@@ -1041,7 +1040,6 @@ function formatSubtitleLine(text) {
         [/\bSunt tot un an de uium\.?\b/gi, 'Eram un dezastru'],
         [/\bunnea\b/gi, 'un'],
         [/\bparuri\b/gi, 'pariuri'],
-        [/\bdetonăm o raită\b/gi, 'declanșăm un eșec'],
         [/\bpaharele lui Berzelius și poțiuni\b/gi, 'eprubetele și poțiunile'],
         [/\bniliște\b/gi, 'niște'],
         [/\bcalmază-te\b/gi, 'calmează-te'],
@@ -1057,7 +1055,6 @@ function formatSubtitleLine(text) {
         [/\bpentru a obține concesii consemnând de la ruși\b/gi, 'pentru a obține garanții de la ruși'],
         [/\bfacem bomba sigură\b/gi, 'securizăm bomba'],
         [/\binteresată de provocate\b/gi, 'interesată de capcane'],
-        [/\bpe opt așt[^\s]*,?\s*pe bănci\b/gi, 'pe banca acuzaților'],
         [/\bjiul\b/gi, 'fel'],
         [/\bdupă o oră și 58 de minute\b/gi, 'în exact o oră și 58 de minute'],
         [/\bil voi suna pe Lloyd Garrison\b/gi, 'îl voi suna pe Lloyd Garrison'],
@@ -1128,11 +1125,11 @@ function formatSubtitleLine(text) {
         [/\bfrecându-menta\b/gi, 'frecând menta'],
         [/\bT-Ar trebui\b/g, 'Ar trebui'],
         [/\btuți\b/gi, 'toți'],
-        [/\bțin-ținta\b/gi, 'ținta'],
+        [/(?<![\p{L}\p{N}_])țin-ținta(?![\p{L}\p{N}_])/giu, 'ținta'],
         [/\bfãcut-o\b/gi, 'făcut-o'],
         [/\bca i-au făcut\b/gi, 'cum i-au făcut'],
         [/\bpână la adânci bătrânețe\b/gi, 'până la adânci bătrâneți'],
-        [/\breeligitată\b/gi, 'realeasă'],
+        [/(?<![\p{L}\p{N}_])reeligitată(?![\p{L}\p{N}_])/giu, 'realeasă'],
         [/\bîn ourselves\b/gi, 'înșine'],
         [/\bMă-nvățați\b/g, 'mă-nvățați'],
         [/\bmi l-a învățat tata\b/gi, 'm-a învățat tata'],
