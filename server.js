@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.121',
+    version: '12.78.122',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1840,6 +1840,43 @@ function applySourceGroundedSemanticFixes(original, translation) {
             text = text.replace(/(?<![\p{L}\p{N}_])sepcuta(?![\p{L}\p{N}_])/giu, match => match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Șapcă' : 'șapcă');
         }
     }
+
+    // Corecții strict ancorate în sursă pentru erori de traducere demonstrate.
+    // Se activează doar dacă originalul confirmă sensul; nu sunt reguli globale de vocabular.
+    if (/\bresponse\b/i.test(sourceNorm) && /(?<![\p{L}])retrasul(?![\p{L}])/iu.test(text)) {
+        text = text.replace(/(?<![\p{L}])retrasul(?![\p{L}])/iu, match =>
+            match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Răspunsul' : 'răspunsul');
+    }
+
+    if (/\b(?:but\s+)?you(?:'re|\s+are)\s+not\s+sorry\b/i.test(sourceNorm) &&
+        /(?<![\p{L}])nu\s+ești\s+(?:nici\s+)?părere\s+de\s+rău(?![\p{L}])/iu.test(text)) {
+        text = text.replace(/(?<![\p{L}])nu\s+ești\s+(?:nici\s+)?părere\s+de\s+rău(?![\p{L}])/iu, match =>
+            match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Nu-ți pare rău' : 'nu-ți pare rău');
+    }
+
+    if (/\bshould\s+at\s+least\s+tell\b/i.test(sourceNorm)) {
+        text = text.replace(/(?<![\p{L}])ar\s+trebui\s+măcar\s+(le|îi|mi|ne|vă|te|mă)\s+(spunem|spun|zicem|dăm|dau|spunem|anunțăm|anuntam)(?![\p{L}])/iu,
+            (match, pronoun, verb) => {
+                const corrected = `ar trebui măcar să ${pronoun.toLocaleLowerCase('ro-RO')} ${verb.toLocaleLowerCase('ro-RO')}`;
+                return match[0] === match[0].toLocaleUpperCase('ro-RO')
+                    ? corrected.charAt(0).toLocaleUpperCase('ro-RO') + corrected.slice(1)
+                    : corrected;
+            });
+    }
+
+    if (/\bcould\s+i\s+have\s+a\s+word\b/i.test(sourceNorm) &&
+        /(?<![\p{L}])pot\s+să\s+vorbim(?![\p{L}])/iu.test(text)) {
+        text = text.replace(/(?<![\p{L}])pot\s+să\s+vorbim(?![\p{L}])/iu, match =>
+            match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Pot să vorbesc' : 'pot să vorbesc');
+    }
+
+    // Elimină engleza redundantă numai când aceeași informație a fost deja tradusă corect.
+    if (/\boutnumbered\b/i.test(sourceNorm) && /\boutnumbered\b/i.test(text) &&
+        /(?:depășiți numeric|în inferioritate numerică)/iu.test(text)) {
+        text = text.replace(/(?<![\p{L}])([Ee]ram|[Ss]untem|[Ee]rau)\s+outnumbered\s*(?:[.!?…]{1,3})?\s*\1\s+/iu, '$1 ');
+        text = text.replace(/\s{2,}/g, ' ').replace(/\s+([,.!?;:])/g, '$1').trim();
+    }
+
     return text;
 }
 
@@ -2194,6 +2231,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
     let fixed = 0;
     const verifiedIds = new Set();
+    const rejectedQualityReasonsById = Object.create(null);
 
     const rateLimitRetryQueue = [];
     const rateLimitFailedQueue = [];
@@ -2307,6 +2345,26 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     hasCorruptedSubtitleText(candidate, item.text) ||
                     hasLostExplicitSourceTerm(item.text, candidate)) {
                     console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: noua variantă a devenit suspectă${c.reset}`);
+                    continue;
+                }
+
+                // Nu acceptăm o corectură AI dacă ea introduce o problemă lingvistică
+                // sau semantică de înaltă încredere pe care versiunea anterioară nu o avea.
+                const previousQualityReasons = collectQualityReviewReasons(
+                    item, current, contextItems, translatedById
+                );
+                const candidateQualityReasons = collectQualityReviewReasons(
+                    item, candidate, contextItems, translatedById
+                );
+                const newlyIntroducedQualityReasons = candidateQualityReasons.filter(
+                    reason => !previousQualityReasons.includes(reason)
+                );
+                if (newlyIntroducedQualityReasons.length) {
+                    rejectedQualityReasonsById[id] = [...new Set([
+                        ...(rejectedQualityReasonsById[id] || []),
+                        ...newlyIntroducedQualityReasons
+                    ])];
+                    console.log(`${c.yellow}  ⚠ [Grammar Review] ${item.id} ignorată: corectura a introdus un semnal nou (${newlyIntroducedQualityReasons.join('; ')})${c.reset}`);
                     continue;
                 }
 
@@ -2474,7 +2532,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
 
     const checked = verifiedIds.size;
     console.log(`${unverifiedItems.length ? c.yellow : c.green}✔ [Grammar Review] Final: ${checked}/${candidates.length} verificate, ${fixed} corectate${unverifiedItems.length ? `, ${unverifiedItems.length} neverificate` : ''}${c.reset}`);
-    return { checked, fixed };
+    return { checked, fixed, rejectedQualityReasonsById };
 }
 
 // ============================================================
@@ -2519,6 +2577,10 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\binnascut\b/gi, 'înnăscut'],
     [/\binnascuti\b/gi, 'înnăscuți'],
     [/(?<![\p{L}])ți-a\s+pasat\b/iu, 'ți-a păsat'],
+    // Corectări ortografice de încredere ridicată observate în verificarea v121.
+    [/(?<![\p{L}])resuscitatăm(?![\p{L}])/giu, 'resuscităm'],
+    [/(?<![\p{L}])nimani(?![\p{L}])/giu, 'nimeni'],
+    [/(?<![\p{L}])lasă-mi-te(?![\p{L}])/giu, 'lasă-mă'],
     [/\bnite\b/giu, 'niște'],
     [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are']
 ];
@@ -2557,7 +2619,11 @@ function detectLocalGrammarReviewReasons(text) {
         { pattern: /(?<![\p{L}])modalitate\s+noi\s+\p{L}+(?![\p{L}])/iu, message: 'construcție gramaticală suspectă după „modalitate noi”' },
         { pattern: /(?<![\p{L}])din\s+cauza\s+(?:voastră|voștri|voastre),?\s*a\s+doi(?![\p{L}])/iu, message: 'construcție suspectă „din cauza voastră, a doi”' },
         { pattern: /(?<![\p{L}])lăsați-mi\s+(?:echipa|grupul|echipajul|oamenii|soldații|soldatii)\s+să(?![\p{L}])/iu, message: 'posibilă ordine greșită a pronumelui în construcția „lăsați-mi ... să”' },
-        { pattern: /(?<![\p{L}])(?:lucrura|acesa|întregă|nite|introm)(?![\p{L}])/iu, message: 'posibilă deformare/greșeală ortografică' }
+        { pattern: /(?<![\p{L}])(?:lucrura|acesa|întregă|nite|introm|nimani|resuscitatăm)(?![\p{L}])/iu, message: 'posibilă deformare/greșeală ortografică' },
+        { pattern: /(?<![\p{L}])lasă-mi-te(?![\p{L}])/iu, message: 'succesiune de clitice agramaticală „lasă-mi-te”' },
+        { pattern: /(?<![\p{L}])pot\s+să\s+(?:vorbim|mergem|facem|avem|plecăm|plecam|vedem|spunem|știm|stim|fim)(?![\p{L}])/iu, message: 'nepotrivire de persoană după „pot să”' },
+        { pattern: /(?<![\p{L}])ar\s+trebui(?:\s+măcar)?\s+(?:le|îi|mi|ne|vă|te|mă)\s+\p{L}+/iu, message: 'posibil „să” lipsă în construcția „ar trebui ...”' },
+        { pattern: /(?<![\p{L}])nu\s+ești\s+(?:nici\s+)?părere\s+de\s+rău(?![\p{L}])/iu, message: 'expresie idiomatică agramaticală „nu ești părere de rău”' }
     ];
     for (const guard of highConfidenceRomanianQualityGuards) {
         if (guard.pattern.test(clean)) reasons.push(guard.message);
@@ -2592,7 +2658,7 @@ function detectLocalGrammarReviewReasons(text) {
     const highConfidenceEnglish = new Set([
         'upheaval', 'innate', 'indictment', 'disregard', 'however', 'although',
         'meanwhile', 'witness', 'threat', 'helpless', 'sudden', 'footage',
-        'outcome', 'warning', 'breach', 'device', 'evidence'
+        'outcome', 'warning', 'breach', 'device', 'evidence', 'outnumbered'
     ]);
     const englishIntegrated = clean.match(/[A-Za-z]+/g) || [];
     const englishHits = englishIntegrated.filter(word => highConfidenceEnglish.has(word.toLowerCase()));
@@ -2601,6 +2667,70 @@ function detectLocalGrammarReviewReasons(text) {
     }
 
     return reasons;
+}
+
+function detectSourceAwareQualityReviewReasons(item, translation, contextItems, translatedById) {
+    const source = String(item?.text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const target = String(translation || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!source || !target || isJunkOrInterjection(item?.text)) return [];
+
+    const reasons = [];
+    // Sursă „response” + traducere lexical greșită; corecția deterministă ar trebui
+    // s-o repare înainte de review, iar acest semnal protejează cazul dacă reapare.
+    if (/\bresponse\b/i.test(source) && /(?<![\p{L}])retras(?:ul|ului)?(?![\p{L}])/iu.test(target)) {
+        reasons.push('cuvânt incompatibil cu sursa: „response” tradus ca „retrasul”');
+    }
+
+    if (/\b(?:but\s+)?you(?:'re|\s+are)\s+not\s+sorry\b/i.test(source) &&
+        /(?<![\p{L}])nu\s+ești\s+(?:nici\s+)?părere\s+de\s+rău(?![\p{L}])/iu.test(target)) {
+        reasons.push('expresia idiomatică „you are not sorry” este tradusă agramatical');
+    }
+
+    if (/\bcould\s+i\s+have\s+a\s+word\b/i.test(source) &&
+        /(?<![\p{L}])pot\s+să\s+vorbim(?![\p{L}])/iu.test(target)) {
+        reasons.push('nepotrivire de persoană: „Could I…” nu corespunde lui „Pot să vorbim”');
+    }
+
+    if (/\bshould\s+at\s+least\s+tell\b/i.test(source) &&
+        /(?<![\p{L}])ar\s+trebui\s+măcar\s+(?:le|îi|mi|ne|vă|te|mă)\s+\p{L}+/iu.test(target) &&
+        !/(?<![\p{L}])ar\s+trebui\s+măcar\s+să\s+(?:le|îi|mi|ne|vă|te|mă)(?![\p{L}])/iu.test(target)) {
+        reasons.push('lipsește „să” într-o construcție cu „ar trebui ... să”');
+    }
+
+    if (/\boutnumbered\b/i.test(source) && /\boutnumbered\b/i.test(target)) {
+        reasons.push('a rămas un cuvânt englezesc netradus („outnumbered”)');
+    }
+
+    // Validare contextuală a continuității: dacă blocul englezesc anterior se termină
+    // cu „was/were”, blocul curent începe cu un gerunziu, iar traducerea începe cu
+    // o formă clară de persoana I prezent, persoana/timpul s-au schimbat.
+    const allItems = Array.isArray(contextItems) ? contextItems : [item];
+    const index = allItems.findIndex(entry => String(entry.id) === String(item.id));
+    if (index > 0) {
+        const previous = allItems[index - 1];
+        const previousSource = String(previous.text || '').replace(/<[^>]+>/g, ' ').trim();
+        const currentSource = source;
+        const previousTarget = String(translatedById[String(previous.id)] || '').replace(/<[^>]+>/g, ' ').trim();
+        const beginsEnglishProgressive = /^[a-z]+ing\b/i.test(currentSource);
+        const hasPastProgressiveAuxiliary = /\b(?:was|were)\s*$/i.test(previousSource);
+        const firstTargetToken = (target.match(/^[“„"'«»(\s-]*([\p{L}-]+)/u) || [])[1] || '';
+        const likelyFirstPersonPresent = /(?:ez|esc|iesc)$/iu.test(firstTargetToken);
+        const previousTargetContinues = previousTarget && !/[.!?…]["”')\]]*$/u.test(previousTarget);
+        const currentSourceNotFirstPerson = !/^(?:I|we)\b/i.test(currentSource);
+        if (beginsEnglishProgressive && hasPastProgressiveAuxiliary && previousTargetContinues &&
+            currentSourceNotFirstPerson && likelyFirstPersonPresent) {
+            reasons.push('nepotrivire de persoană/timp: continuarea „was/were + -ing” a devenit persoana I, prezent');
+        }
+    }
+
+    return reasons;
+}
+
+function collectQualityReviewReasons(item, translation, contextItems, translatedById) {
+    return [
+        ...detectLocalGrammarReviewReasons(translation),
+        ...detectSourceAwareQualityReviewReasons(item, translation, contextItems, translatedById)
+    ];
 }
 
 function findRepeatedBoundaryConnectorIssues(items, translatedById) {
@@ -2641,20 +2771,23 @@ async function runLocalGrammarQualityPass(items, translatedById) {
         if (!current.trim()) continue;
         if (isJunkOrInterjection(item.text)) continue;
 
-        const fixed = applyLocalGrammarDeterministicFixes(current);
+        // Aplicăm întâi numai corecțiile ancorate clar în sursă și typo-fix-urile
+        // cu risc mic; astfel AI primește o versiune curățată, nu duplică munca locală.
+        const sourceFixed = applySourceGroundedSemanticFixes(item.text, current);
+        const fixed = applyLocalGrammarDeterministicFixes(sourceFixed);
         if (fixed !== current) {
             translatedById[id] = formatSubtitleLine(fixed);
             autoFixed++;
-            continue;
         }
 
-        const reasons = detectLocalGrammarReviewReasons(current);
-        const missingExplicitTerms = getMissingExplicitAnatomicalTerms(item.text, current);
+        const effective = String(translatedById[id] || '');
+        const reasons = collectQualityReviewReasons(item, effective, items, translatedById);
+        const missingExplicitTerms = getMissingExplicitAnatomicalTerms(item.text, effective);
         if (missingExplicitTerms.length) {
             reasons.push(`detaliu anatomic explicit pierdut din original: ${missingExplicitTerms.join(', ')}`);
         }
         if (reasons.length) {
-            flagged.push({ item, reasons });
+            flagged.push({ item, reasons: [...new Set(reasons)] });
         }
     }
 
@@ -2882,7 +3015,10 @@ function applyContinuationCase(items, translatedById) {
         const match = current.match(/^(\s*[.…"„“]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*)/);
         if (!match) continue;
         const word = match[2] + match[3];
-        if (!CONTINUATION_FUNCTION_WORDS.has(word.toLowerCase())) continue;
+        const previousEnglish = String(items[i - 1].text || '').replace(/<[^>]+>/g, ' ').trim();
+        const currentEnglish = String(items[i].text || '').replace(/<[^>]+>/g, ' ').trim();
+        const progressiveContinuation = /\b(?:was|were|is|are)\s*$/i.test(previousEnglish) && /^[a-z]+ing\b/i.test(currentEnglish);
+        if (!CONTINUATION_FUNCTION_WORDS.has(word.toLowerCase()) && !progressiveContinuation) continue;
 
         translatedById[id] = match[1] + match[2].toLowerCase() + match[3] + current.slice(match[0].length);
         changed++;
@@ -3026,20 +3162,60 @@ Returnează DOAR un ARRAY JSON valid în forma:
     ]);
     const targetedQualityCandidates = items.filter(item => targetedQualityIds.has(String(item.id)));
     const MAX_TARGETED_QUALITY_REVIEW_ITEMS = 30;
+    let firstQualityReview = { checked: 0, fixed: 0, rejectedQualityReasonsById: Object.create(null) };
     if (targetedQualityCandidates.length) {
         const reviewItems = targetedQualityCandidates.slice(0, MAX_TARGETED_QUALITY_REVIEW_ITEMS);
         console.log(`${c.cyan}🎯 [Quality Retry] Verificare AI punctuală: ${reviewItems.length}/${targetedQualityCandidates.length} replici semnalate; restul subtitrării nu este reverificat.${c.reset}`);
-        const qualityReview = await grammarTranslationReview(reviewItems, translatedById, keyStates, {
+        firstQualityReview = await grammarTranslationReview(reviewItems, translatedById, keyStates, {
             mode: 'targeted',
             contextItems: items,
             reasonById: targetedReasonById
         });
-        console.log(`${c.green}✔ [Quality Retry] ${qualityReview.checked} verificate punctual, ${qualityReview.fixed} corectate.${c.reset}`);
+        console.log(`${c.green}✔ [Quality Retry] ${firstQualityReview.checked} verificate punctual, ${firstQualityReview.fixed} corectate.${c.reset}`);
         if (targetedQualityCandidates.length > MAX_TARGETED_QUALITY_REVIEW_ITEMS) {
             console.log(`${c.yellow}⚠ [Quality Retry] Limită de siguranță: ${targetedQualityCandidates.length - MAX_TARGETED_QUALITY_REVIEW_ITEMS} replici semnalate au rămas în afara acestei verificări.${c.reset}`);
         }
     } else {
         console.log(`${c.green}✔ [Quality Retry] Nicio replică nu a declanșat verificarea AI punctuală; nu s-a adăugat o cerere Gemini.${c.reset}`);
+    }
+
+    // Verificare după corectare: reevaluăm numai replicile care încă au semnale
+    // cunoscute. Un singur al doilea tur, limitat la 15 replici, evită atât acceptarea
+    // oarbă a unei corecturi greșite, cât și o Grammar Review costisitoare pentru tot filmul.
+    const unresolvedQualityMap = new Map();
+    for (const item of items) {
+        if (isJunkOrInterjection(item.text)) continue;
+        const id = String(item.id);
+        const text = String(translatedById[id] || '');
+        if (!text.trim()) continue;
+        const reasons = collectQualityReviewReasons(item, text, items, translatedById);
+        if (reasons.length) unresolvedQualityMap.set(id, { item, reasons: [...new Set(reasons)] });
+    }
+    for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
+        const id = String(issue.item.id);
+        const existing = unresolvedQualityMap.get(id);
+        if (existing) existing.reasons.push(issue.reason);
+        else unresolvedQualityMap.set(id, { item: issue.item, reasons: [issue.reason] });
+    }
+
+    if (unresolvedQualityMap.size && targetedQualityCandidates.length) {
+        const retryCandidates = items.filter(item => unresolvedQualityMap.has(String(item.id))).slice(0, 15);
+        const retryReasonById = Object.fromEntries(retryCandidates.map(item => {
+            const id = String(item.id);
+            const unresolvedReasons = unresolvedQualityMap.get(id).reasons;
+            const rejectedReasons = firstQualityReview.rejectedQualityReasonsById?.[id] || [];
+            return [id, [...new Set([
+                ...unresolvedReasons,
+                ...rejectedReasons.map(reason => `propunere anterioară respinsă: ${reason}`)
+            ])].join('; ')];
+        }));
+        console.log(`${c.cyan}🔁 [Quality Recheck] ${retryCandidates.length} replici cu semnale rămase sunt reverificate o singură dată; nu se reprocesează restul subtitrării.${c.reset}`);
+        const recheck = await grammarTranslationReview(retryCandidates, translatedById, keyStates, {
+            mode: 'targeted',
+            contextItems: items,
+            reasonById: retryReasonById
+        });
+        console.log(`${c.cyan}🔁 [Quality Recheck] ${recheck.checked} reverificate, ${recheck.fixed} corectate la a doua verificare.${c.reset}`);
     }
 
     // Recuperare finală independentă de Grammar Review pentru eventuale traduceri goale.
@@ -3079,8 +3255,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
     for (const item of items) {
         if (isJunkOrInterjection(item.text)) continue;
         const text = String(translatedById[String(item.id)] || '');
-        const reasons = detectLocalGrammarReviewReasons(text);
-        if (reasons.length) finalQualityFlags.push({ item, reasons });
+        const reasons = collectQualityReviewReasons(item, text, items, translatedById);
+        if (reasons.length) finalQualityFlags.push({ item, reasons: [...new Set(reasons)] });
     }
     for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
         const id = String(issue.item.id);
@@ -3119,7 +3295,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
         console.log(`${c.green}✔ 0 replici suspecte${c.reset}`);
     }
 
-    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici trecute de verificarea de integritate/fidelitate${c.reset}`);
+    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici au trecut verificările automate de integritate și semnale de fidelitate (nu certifică toate nuanțele de sens)${c.reset}`);
     if (finalQualityFlags.length) {
         console.log(`${c.yellow}⚠ [Calitate lingvistică] ${finalQualityFlags.length} replici încă au semnale locale după verificarea punctuală.${c.reset}`);
         finalQualityFlags.slice(0, 20).forEach(entry => {
@@ -3134,6 +3310,12 @@ Returnează DOAR un ARRAY JSON valid în forma:
         const translated = translatedById[String(item.id)] || item.text;
         return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
     }).join('\n');
+
+    if (finalSuspicious.length || finalQualityFlags.length) {
+        console.log(`${c.yellow}⚠ [Rezultat QA] Procesarea tehnică s-a încheiat, dar au rămas ${finalSuspicious.length} probleme de integritate/fidelitate și ${finalQualityFlags.length} semnale de calitate lingvistică. Verificarea automată nu confirmă subtitrarea ca fiind complet corectă.${c.reset}`);
+    } else {
+        console.log(`${c.green}✔ [Rezultat QA] Nu au rămas semnale din verificările automate active. Acesta nu este un certificat că fiecare nuanță semantică este perfectă.${c.reset}`);
+    }
 
     return output.trim() + '\n';
 }
@@ -3380,7 +3562,7 @@ app.get('/:configData/translate', async (req, res) => {
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
-                console.log(`${c.green}\n✔ PROCESARE FINALIZATĂ CU SUCCES PENTRU: ${imdbId}${c.reset}`);
+                console.log(`${c.green}\n✔ PROCESARE TEHNICĂ FINALIZATĂ PENTRU: ${imdbId}${c.reset}`);
                 console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
                 console.log(`${c.cyan}==================================================\n${c.reset}`);
                 
