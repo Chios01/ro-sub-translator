@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.124',
+    version: '12.78.125',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1792,8 +1792,21 @@ function hasLostExplicitSourceTerm(original, translation) {
     return getSourceFidelityIssues(original, translation).length > 0;
 }
 
-function applySourceGroundedSemanticFixes(original, translation) {
+function applyBecauseOfWhatISaidCorrection(original, translation) {
     let text = String(translation || '');
+    const sourceNorm = String(original || '').replace(/<[^>]+>/g, ' ').toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
+    if (!/\bbecause of what i said\b/i.test(sourceNorm)) return text;
+    return text.replace(/(?<![\p{L}])din\s+cauz[ăa]\s+la\s+ce(?![\p{L}])/iu, match => {
+        const replacement = 'din cauza a ceea ce';
+        if (match === match.toLocaleUpperCase('ro-RO')) return replacement.toLocaleUpperCase('ro-RO');
+        return match[0] === match[0].toLocaleUpperCase('ro-RO')
+            ? replacement.charAt(0).toLocaleUpperCase('ro-RO') + replacement.slice(1)
+            : replacement;
+    });
+}
+
+function applySourceGroundedSemanticFixes(original, translation) {
+    let text = applyBecauseOfWhatISaidCorrection(original, translation);
     const sourceText = String(original || '').replace(/<[^>]+>/g, ' ');
     const sourceNorm = sourceText.toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
 
@@ -2066,15 +2079,14 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
                 hasLostExplicitSourceTerm(item.text, translated);
         });
 
-        console.log(`\n${c.cyan}🔍 POST-CHECK GLOBAL — pass ${pass}/${maxPasses}${c.reset}`);
-        console.log(`   Verificate: ${items.length} replici`);
+        console.log(`${c.cyan}[POST-CHECK] Pas ${pass}/${maxPasses} | ${items.length} replici verificate.${c.reset}`);
 
         if (suspicious.length === 0) {
-            console.log(`${c.green}✔ 0 replici suspecte${c.reset}`);
+            console.log(`${c.green}[POST-CHECK] 0 suspecte.${c.reset}`);
             return { fixed: totalFixed, remaining: [] };
         }
 
-        console.log(`${c.yellow}⚠ Detectate ${suspicious.length} replici suspecte${c.reset}`);
+        console.log(`${c.yellow}[POST-CHECK] ${suspicious.length} suspecte; începe retry contextual.${c.reset}`);
 
         const retryConcurrency = Math.max(1, Math.min(CONCURRENCY_LIMIT, suspicious.length));
         let retryIndex = 0;
@@ -2136,13 +2148,13 @@ Returnează DOAR JSON valid în forma:
                         fixed = true;
                         totalFixed++;
 
-                        console.log(`${c.green}  ✔ Global retry: ${item.id} reparată (${retry}/2)${c.reset}`);
+                        console.log(`${c.green}  ✔ Retry ${item.id}: reparată (pas ${pass}/${maxPasses}).${c.reset}`);
                         break;
                     }
 
-                    console.log(`${c.yellow}  ⚠ Global retry: ${item.id} încă suspectă (${retry}/2)${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ Retry ${item.id}: încă suspectă (pas ${pass}/${maxPasses}).${c.reset}`);
                 } catch (err) {
-                    console.log(`${c.yellow}  ⚠ Global retry eșuat pentru ${item.id} (${retry}/2): ${err.message}${c.reset}`);
+                    console.log(`${c.yellow}  ⚠ Retry ${item.id} eșuat (pas ${pass}/${maxPasses}): ${err.message}${c.reset}`);
                 }
             }
 
@@ -2662,6 +2674,7 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}])nimani(?![\p{L}])/giu, 'nimeni'],
     [/(?<![\p{L}])lasă-mi-te(?![\p{L}])/giu, 'lasă-mă'],
     [/\bnite\b/giu, 'niște'],
+    [/(?<![\p{L}])din\s+cauz[ăa]\s+la\s+ce(?![\p{L}])/giu, 'din cauza a ceea ce'],
     [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are']
 ];
 
@@ -2697,6 +2710,7 @@ function detectLocalGrammarReviewReasons(text) {
         { pattern: /(?<![\p{L}])necesiți(?![\p{L}])/iu, message: 'formă verbală românească suspectă „necesiți”' },
         { pattern: /(?<![\p{L}])flori[-\s]+soarelui(?![\p{L}])/iu, message: 'posibil calc/declinare greșită „flori-soarelui”' },
         { pattern: /(?<![\p{L}])modalitate\s+noi\s+\p{L}+(?![\p{L}])/iu, message: 'construcție gramaticală suspectă după „modalitate noi”' },
+        { pattern: /(?<![\p{L}])din\s+cauz[ăa]\s+la(?![\p{L}])/iu, message: 'construcție gramaticală suspectă „din cauză la”; necesită verificare contextuală' },
         { pattern: /(?<![\p{L}])din\s+cauza\s+(?:voastră|voștri|voastre),?\s*a\s+doi(?![\p{L}])/iu, message: 'construcție suspectă „din cauza voastră, a doi”' },
         { pattern: /(?<![\p{L}])lăsați-mi\s+(?:echipa|grupul|echipajul|oamenii|soldații|soldatii)\s+să(?![\p{L}])/iu, message: 'posibilă ordine greșită a pronumelui în construcția „lăsați-mi ... să”' },
         { pattern: /(?<![\p{L}])(?:lucrura|acesa|întregă|nite|introm|nimani|resuscitatăm)(?![\p{L}])/iu, message: 'posibilă deformare/greșeală ortografică' },
@@ -2974,15 +2988,13 @@ async function runLocalGrammarQualityPass(items, translatedById) {
     }
     flagged.sort((a, b) => items.findIndex(item => String(item.id) === String(a.item.id)) - items.findIndex(item => String(item.id) === String(b.item.id)));
 
-    console.log(`${c.green}✔ [Micro-Grammar] ${autoFixed} corecții locale certe aplicate.${c.reset}`);
-
     if (flagged.length) {
-        console.log(`${c.yellow}⚠ [Micro-Grammar] ${flagged.length} replici cu semnale locale detectate.${c.reset}`);
+        console.log(`${c.yellow}[GRAMATICĂ] ${autoFixed} corecții locale | ${flagged.length} semnale de verificat.${c.reset}`);
         flagged.slice(0, 20).forEach(entry => {
-            console.log(`  ${c.yellow}• ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
+            console.log(`  ${c.yellow}• ID ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
         });
     } else {
-        console.log(`${c.green}✔ [Micro-Grammar] Nicio problemă locală detectată.${c.reset}`);
+        console.log(`${c.green}[GRAMATICĂ] ${autoFixed} corecții locale | 0 semnale rămase.${c.reset}`);
     }
 
     return {
@@ -3202,8 +3214,13 @@ function applyContinuationCase(items, translatedById) {
 // ============================================================
 
 async function translateSrtWithGemini(srtText, apiKeys) {
-    const items = parseSrt(srtText);
+    const sourceBlockCount = (String(srtText || '').match(/-->/g) || []).length;
+    const parseStats = { fillerBlocksFiltered: 0, otherBlocksFiltered: 0 };
+    const items = parseSrt(srtText, parseStats);
     if (!items.length) throw new Error('Nu s-au găsit subtitrări valide.');
+
+    const omittedOtherBlocks = Math.max(0, sourceBlockCount - items.length - parseStats.fillerBlocksFiltered);
+    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${items.length} | interjecții eliminate înainte de traducere: ${parseStats.fillerBlocksFiltered}${omittedOtherBlocks ? ` | alte blocuri omise: ${omittedOtherBlocks}` : ''}.${c.reset}`);
 
     const cleanKeys = Array.from(new Set(apiKeys.map(k => String(k).trim()).filter(Boolean)));
     if (!cleanKeys.length) throw new Error('Nu există chei Gemini valide.');
@@ -3243,7 +3260,21 @@ async function translateSrtWithGemini(srtText, apiKeys) {
         }
     }
 
-    console.log(`\n${c.green}✔ Toate cele ${chunks.length} de calupuri finalizate!${c.reset}`);
+    console.log(`${c.green}[Gemini] Calupuri finalizate: ${chunks.length}/${chunks.length}.${c.reset}`);
+
+    let sourceGroundedCorrections = 0;
+    for (const item of items) {
+        const id = String(item.id);
+        const before = String(translatedById[id] || '');
+        const after = applyBecauseOfWhatISaidCorrection(item.text, before);
+        if (after !== before) {
+            translatedById[id] = formatSubtitleLine(after);
+            sourceGroundedCorrections++;
+        }
+    }
+    if (sourceGroundedCorrections) {
+        console.log(`${c.green}[Corecturi locale] ${sourceGroundedCorrections} corecții ancorate în originalul EN aplicate înainte de retry.${c.reset}`);
+    }
 
     const emptyTranslations = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
@@ -3309,7 +3340,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
     }
 
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
-    console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
+    console.log(`${c.green}[RETRY FINAL] ${targetedRetry.fixed} replici reparate.${c.reset}`);
 
     // Reparăm determinist doar connectorii repetați când cele două originale
     // stabilesc fără ambiguitate că primul bloc a adăugat conectorul prea devreme.
@@ -3427,31 +3458,41 @@ Returnează DOAR un ARRAY JSON valid în forma:
     // Ultima apărare contra conectorilor reintroduși de Grammar Review.
     applyDeterministicBoundaryConnectorFixes(items, translatedById);
 
+    // Interjecțiile generate ca traducere izolată sunt eliminate din ieșire și
+    // scoase din numitorul QA; nu trebuie raportate ca eroare de fidelitate.
+    const suppressedFillerIds = items
+        .filter(item => isOnlyStandaloneFillerSequence(String(translatedById[String(item.id)] || '').trim()))
+        .map(item => String(item.id));
+    const suppressedFillerIdSet = new Set(suppressedFillerIds);
+
     const finalQualityFlags = [];
     for (const item of items) {
-        if (isJunkOrInterjection(item.text)) continue;
-        const text = String(translatedById[String(item.id)] || '');
+        const id = String(item.id);
+        if (isJunkOrInterjection(item.text) || suppressedFillerIdSet.has(id)) continue;
+        const text = String(translatedById[id] || '');
         const reasons = collectQualityReviewReasons(item, text, items, translatedById);
         if (reasons.length) finalQualityFlags.push({ item, reasons: [...new Set(reasons)] });
     }
     for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
         const id = String(issue.item.id);
+        if (suppressedFillerIdSet.has(id)) continue;
         const existing = finalQualityFlags.find(entry => String(entry.item.id) === id);
-        if (existing) existing.reasons.push(issue.reason);
-        else finalQualityFlags.push({ item: issue.item, reasons: [issue.reason] });
+        if (existing) {
+            if (!existing.reasons.includes(issue.reason)) existing.reasons.push(issue.reason);
+        } else {
+            finalQualityFlags.push({ item: issue.item, reasons: [issue.reason] });
+        }
     }
 
-    console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate.${c.reset}`);
-    console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
-
     const finalSuspicious = items.filter(item => {
+        const id = String(item.id);
+        if (suppressedFillerIdSet.has(id)) return false;
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
         if (isJunkOrInterjection(item.text)) return false;
 
-        const translated = translatedById[String(item.id)];
+        const translated = translatedById[id];
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
-
         if (!transClean) return true;
 
         return hasUntranslatedEnglish(item.text, translated) ||
@@ -3459,52 +3500,39 @@ Returnează DOAR un ARRAY JSON valid în forma:
             hasLostExplicitSourceTerm(item.text, translated);
     });
 
-    if (finalSuspicious.length > 0) {
-        console.log(`${c.yellow}⚠ ${finalSuspicious.length} replici suspecte rămân după Global Post-Check${c.reset}`);
+    console.log(`\n${c.cyan}[QA FINAL]${c.reset}`);
+    if (finalSuspicious.length) {
+        console.log(`${c.yellow}[FIDELITATE] ${finalSuspicious.length} replici suspecte.${c.reset}`);
         finalSuspicious.slice(0, 20).forEach(item => {
             const finalText = String(translatedById[String(item.id)] || '');
             const fidelityIssues = getSourceFidelityIssues(item.text, finalText);
-            const note = fidelityIssues.length ? ` [FIDELITATE SEMANTICĂ INCOMPLETĂ: ${fidelityIssues.join('; ')}]` : '';
-            console.log(`  ${c.red}❌ ${item.id}: ${finalText.slice(0, 120)}${note}${c.reset}`);
+            const note = fidelityIssues.length ? ` — ${fidelityIssues.join('; ')}` : '';
+            console.log(`  ${c.red}ID ${item.id}: ${finalText.slice(0, 120)}${note}${c.reset}`);
         });
-    } else {
-        console.log(`${c.green}✔ 0 replici suspecte${c.reset}`);
     }
-
-    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici au trecut verificările automate de integritate și semnale de fidelitate (nu certifică toate nuanțele de sens)${c.reset}`);
     if (finalQualityFlags.length) {
-        console.log(`${c.yellow}⚠ [Calitate lingvistică] ${finalQualityFlags.length} replici încă au semnale locale după verificarea punctuală.${c.reset}`);
+        console.log(`${c.yellow}[LIMBĂ] ${finalQualityFlags.length} semnale nerezolvate.${c.reset}`);
         finalQualityFlags.slice(0, 20).forEach(entry => {
-            console.log(`  ${c.yellow}• ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
+            console.log(`  ${c.yellow}ID ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
         });
-    } else {
-        console.log(`${c.green}✔ [Calitate lingvistică] Niciunul dintre semnalele locale urmărite nu a rămas detectat.${c.reset}`);
     }
-    console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
 
-    const suppressedFillerIds = [];
-    const output = items.filter(item => {
-        const translated = String(translatedById[String(item.id)] || '').trim();
-        if (translated && isOnlyStandaloneFillerSequence(translated)) {
-            suppressedFillerIds.push(String(item.id));
-            return false;
-        }
-        return true;
-    }).map(item => {
+    const checkedCount = items.length - suppressedFillerIds.length;
+    const passedCount = Math.max(0, checkedCount - finalSuspicious.length);
+    console.log(`${c.cyan}[INTERJECȚII] ${parseStats.fillerBlocksFiltered} eliminate înainte de Gemini | ${suppressedFillerIds.length} eliminate după traducere.${c.reset}`);
+    console.log(`${c.cyan}[INTEGRITATE] ${passedCount}/${checkedCount} blocuri au trecut verificările automate.${c.reset}`);
+
+    const unverifiedQualityCount = finalQualityFlags.length;
+    if (finalSuspicious.length || unverifiedQualityCount) {
+        console.log(`${c.yellow}[QA] ATENȚIE: ${finalSuspicious.length} semnale de fidelitate și ${unverifiedQualityCount} semnale lingvistice rămân; subtitrarea nu este confirmată integral.${c.reset}`);
+    } else {
+        console.log(`${c.green}[QA] Niciun semnal activ în verificările automate. Sensul complet al tuturor replicilor nu poate fi garantat automat.${c.reset}`);
+    }
+
+    const output = items.filter(item => !suppressedFillerIdSet.has(String(item.id))).map(item => {
         const translated = translatedById[String(item.id)] || item.text;
         return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
     }).join('\n');
-
-    if (suppressedFillerIds.length) {
-        console.log(`${c.yellow}⚠ [Filtru final] ${suppressedFillerIds.length} traduceri formate exclusiv din interjecții au fost scoase din rezultat (ID: ${suppressedFillerIds.slice(0, 30).join(', ')}${suppressedFillerIds.length > 30 ? ', ...' : ''}). Verificați sursa dacă nu erau interjecții în original.${c.reset}`);
-    }
-
-    const unverifiedQualityCount = finalQualityFlags.length;
-    if (finalSuspicious.length || unverifiedQualityCount || suppressedFillerIds.length) {
-        console.log(`${c.yellow}⚠ [Rezultat QA] Procesarea tehnică s-a încheiat, dar au rămas ${finalSuspicious.length} probleme de integritate/fidelitate, ${unverifiedQualityCount} semnale de calitate lingvistică și ${suppressedFillerIds.length} rezultate eliminate fiind doar interjecții. Aceste categorii sunt separate; verificarea automată nu confirmă subtitrarea ca fiind complet corectă.${c.reset}`);
-    } else {
-        console.log(`${c.green}✔ [Rezultat QA] Nu au rămas semnale din verificările automate active. Integritatea a trecut; calitatea semantică completă nu poate fi garantată doar automat.${c.reset}`);
-    }
 
     return output.trim() + '\n';
 }
@@ -3733,10 +3761,7 @@ app.get('/:configData/translate', async (req, res) => {
                 rememberOriginalSource(cacheKey, String(srtRes.data || ''));
                 
                 const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
-                console.log(`${c.cyan}\n==================================================${c.reset}`);
-                console.log(`${c.magenta}▶ ÎNCEPE PROCESAREA PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.magenta}📑 Total linii de tradus: ${totalLinesCount}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                console.log(`${c.cyan}\n[START] ${imdbId}.${c.reset}`);
                 
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
             })();
@@ -3751,9 +3776,7 @@ app.get('/:configData/translate', async (req, res) => {
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
-                console.log(`${c.green}\n✔ PROCESARE TEHNICĂ FINALIZATĂ PENTRU: ${imdbId}${c.reset}`);
-                console.log(`${c.green}⏱ Timp total de traducere: ${timeFormatted}${c.reset}`);
-                console.log(`${c.cyan}==================================================\n${c.reset}`);
+                console.log(`${c.green}[DONE] ${imdbId} | ${timeFormatted}.${c.reset}\n`);
                 
             }).catch((err) => {
                 console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
@@ -3796,10 +3819,14 @@ app.get('/:configData/translate', async (req, res) => {
 // SRT PARSER NATIV 
 // ============================================================
 
-function parseSrt(srt) {
+function parseSrt(srt, stats = null) {
     const normalized = String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, '');
     const blocks = normalized.split(/\n{2,}/);
     const result = [];
+    if (stats) {
+        stats.fillerBlocksFiltered = 0;
+        stats.otherBlocksFiltered = 0;
+    }
 
     for (const block of blocks) {
         const lines = block.split('\n').map(l => l.trimEnd());
@@ -3818,11 +3845,21 @@ function parseSrt(srt) {
         // entități HTML pentru spații/caractere invizibile, iar etapa de curățare poate
         // transforma aceste entități într-un fragment aparent nenul. Un astfel de bloc
         // este totuși gol și nu trebuie să intre în pipeline-ul de traducere.
-        if (isEffectivelyEmptySubtitleText(rawText)) continue;
+        if (isEffectivelyEmptySubtitleText(rawText)) {
+            if (stats) stats.otherBlocksFiltered++;
+            continue;
+        }
 
+        const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(rawText);
         const text = cleanTextForJson(rawText);
 
-        if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) continue;
+        if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) {
+            if (stats) {
+                if (sourceIsFillerOnly) stats.fillerBlocksFiltered++;
+                else stats.otherBlocksFiltered++;
+            }
+            continue;
+        }
 
         result.push({ id, start: match[1], end: match[2], text });
     }
