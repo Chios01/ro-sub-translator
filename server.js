@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.119',
+    version: '12.78.120',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -554,6 +554,28 @@ function isEffectivelyEmptySubtitleText(text) {
 }
 
 // ============================================================
+// STANDALONE INTERJECTIONS / FILLERS
+// ============================================================
+
+const STANDALONE_SOURCE_FILLERS = new Set((
+    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
+).split(/\s+/));
+
+function isOnlyStandaloneFillerSequence(text) {
+    const clean = String(text || '').replace(/<[^>]*>/g, ' ').trim();
+    if (!clean) return false;
+    const normalized = clean
+        .replace(/^[-–—\s]+/, '')
+        .toLocaleLowerCase('ro-RO')
+        .replace(/[.,!?;:…]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!normalized) return false;
+    const tokens = normalized.split(' ').filter(Boolean);
+    return tokens.length > 0 && tokens.every(token => STANDALONE_SOURCE_FILLERS.has(token));
+}
+
+// ============================================================
 // CLEAN TEXT FOR JSON 
 // ============================================================
 
@@ -582,18 +604,10 @@ function cleanTextForJson(text) {
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
 
-    // Like SubStudio, drop a subtitle block that consists only of a standalone
-    // filler sound. Do not drop multi-word expressions such as “Oh my God”.
-    const standaloneSourceFillers = new Set((
-        'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
-    ).split(/\s+/));
+    // Eliminăm replicile alcătuite exclusiv din interjecții, inclusiv secvențe
+    // precum „Um... hmm.”. Expresiile cu sens, de ex. „Oh my God”, rămân.
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean).filter(line => {
-        const token = line.replace(/<[^>]+>/g, ' ')
-            .replace(/^[-–—]\s*/, '')
-            .replace(/[.,!?;:…]+$/g, '')
-            .trim()
-            .toLocaleLowerCase('ro-RO');
-        return !standaloneSourceFillers.has(token);
+        return !isOnlyStandaloneFillerSequence(line);
     });
     clean = lines.join('\n');
 
@@ -1521,6 +1535,7 @@ function isJunkOrInterjection(text) {
     if (/^[\s0-9\-–—._,;:!?…'"~^`´‚„“”‘’()\[\]{}|\\/♪♫♬♩#]+$/.test(clean)) return true;
 
     if (/^(?:[-–—\s]*)(ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*$/i.test(clean)) return true;
+    if (isOnlyStandaloneFillerSequence(clean)) return true;
     return false;
 }
 
@@ -1684,6 +1699,30 @@ function getSourceFidelityIssues(original, translation) {
     const sourceNorm = sourceText.toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
     const targetNorm = targetText.toLocaleLowerCase('ro-RO').replace(/\s+/g, ' ').trim();
 
+    // Semnale conservatoare pentru câteva forme românești evident suspecte.
+    // Nu rescriem automat replica; post-check-ul o retrimite contextual.
+    const obviousRomanianQualityGuards = [
+        {
+            pattern: /(?<![\p{L}])lucrura(?![\p{L}])/iu,
+            message: 'posibilă eroare ortografică în forma „lucrura”'
+        },
+        {
+            pattern: /(?<![\p{L}])acesa(?![\p{L}])/iu,
+            message: 'posibilă eroare ortografică în forma „acesa”'
+        },
+        {
+            pattern: /(?<![\p{L}])întregă(?![\p{L}])/iu,
+            message: 'posibilă eroare de acord în forma „întregă”'
+        },
+        {
+            pattern: /(?<![\p{L}])din\s+cauză\s+la(?![\p{L}])/iu,
+            message: 'construcție gramaticală suspectă „din cauză la”'
+        }
+    ];
+    for (const guard of obviousRomanianQualityGuards) {
+        if (guard.pattern.test(targetNorm)) issues.push(guard.message);
+    }
+
     // Relație semantică: „dries my vagina” numește vaginul ca obiect direct.
     // Prezența cuvântului „vagin” într-o construcție locativă nu este suficientă.
     if (/\b(?:dry|dries|dried|drying)\s+(?:my|your|her|his|their|the)\s+vagina\b/i.test(sourceNorm) &&
@@ -1712,13 +1751,21 @@ function getSourceFidelityIssues(original, translation) {
     // atunci când traducerea nu conține niciun marcator românesc de negație.
     // Este folosit de POST-CHECK-ul existent pentru un retry punctual; nu
     // modifică direct textul și nu pornește o a doua verificare pentru toate replicile.
-    const sourceHasExplicitNegation = /\b(?:don't|doesn't|didn't|isn't|aren't|wasn't|weren't|can't|cannot|couldn't|won't|wouldn't|shouldn't|mustn't|haven't|hasn't|hadn't|do\s+not|does\s+not|did\s+not|is\s+not|are\s+not|was\s+not|were\s+not|can\s+not|could\s+not|will\s+not|would\s+not|should\s+not|must\s+not|have\s+not|has\s+not|had\s+not|never|nobody|no\s+one|nothing|nowhere|none|neither)\b/i.test(sourceNorm);
+    // Un tag question negativ la final („..., didn't it?”) poate fi redat
+    // firesc în română prin „așa-i?”, fără „nu”. Eliminăm doar tag-ul terminal
+    // înainte să verificăm dacă propoziția principală conține o negație.
+    const sourceForNegation = sourceNorm.replace(
+        /,\s*(?:don't|doesn't|didn't|isn't|aren't|wasn't|weren't|can't|couldn't|won't|wouldn't|shouldn't|mustn't|haven't|hasn't|hadn't|do\s+not|does\s+not|did\s+not|is\s+not|are\s+not|was\s+not|were\s+not|can\s+not|could\s+not|will\s+not|would\s+not|should\s+not|must\s+not|have\s+not|has\s+not|had\s+not)\s+(?:i|you|he|she|it|we|they|this|that)\s*\?$/i,
+        ''
+    );
+    const sourceHasExplicitNegation = /\b(?:don't|doesn't|didn't|isn't|aren't|wasn't|weren't|can't|cannot|couldn't|won't|wouldn't|shouldn't|mustn't|haven't|hasn't|hadn't|do\s+not|does\s+not|did\s+not|is\s+not|are\s+not|was\s+not|were\s+not|can\s+not|could\s+not|will\s+not|would\s+not|should\s+not|must\s+not|have\s+not|has\s+not|had\s+not|never|nobody|no\s+one|nothing|nowhere|none|neither)\b/i.test(sourceForNegation);
     const isKnownPositiveEquivalent = /\b(?:can't|cannot)\s+wait\b/i.test(sourceNorm) ||
         /\bcould(?:n't| not)\s+agree\s+more\b/i.test(sourceNorm) ||
         /\bnot\s+(?:only|just|merely|simply)\b/i.test(sourceNorm) ||
         /\bnot\s+(?:so\s+)?bad\b/i.test(sourceNorm);
     const targetHasRomanianNegation = /(?<![\p{L}])(?:nu|nici|nimeni|nimic|nimănui|nicăieri|nicidecum|fără|deloc|imposibil|niciun[\p{L}]*|nicio[\p{L}]*)(?![\p{L}])/iu.test(targetNorm) ||
-        /(?<![\p{L}])n-(?:am|ai|a|are|au|avem|aveți|ar|aș|as|o|îl|il|îi|ii|au)(?![\p{L}])/iu.test(targetNorm);
+        // Acoperă și forme precum „n-aveam”, nu doar „n-am”/„n-a”.
+        /(?<![\p{L}])n-[\p{L}]+(?![\p{L}])/iu.test(targetNorm);
     if (sourceHasExplicitNegation && !isKnownPositiveEquivalent && !targetHasRomanianNegation) {
         issues.push('negație explicită din sursă posibil pierdută în traducere');
     }
@@ -2667,9 +2714,9 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
 
-        // IMPORTANT: aici nu excludem interjecțiile. Dacă o replică originală
-        // precum "Oh", "Oof", "Uf", "Doamne!" a rămas goală, trebuie recuperată
-        // la fel ca orice altă replică reală.
+        // Interjecțiile/vocalizările izolate sunt eliminate intenționat din
+        // subtitrarea română; nu le retraducem în recuperarea finală.
+        if (isJunkOrInterjection(item.text)) return false;
         const translated = translatedById[String(item.id)];
         const translatedClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
         return !translatedClean;
