@@ -55,7 +55,7 @@ const c = {
 // MEMORY CACHE & SECRET ARCHIVE (MAX 30 ELEMENTE)
 // ============================================================
 
-const memoryCache = Object.create(null);
+const memoryCache = new Map();
 const secretArchive = [];
 
 // Textul englez sursă, păstrat temporar ca să poată fi descărcat din arhivă (comparație calitate).
@@ -142,12 +142,27 @@ function rememberOriginalSource(key, text) {
     }
 }
 
-function cleanMemoryCache() {
-    const keys = Object.keys(memoryCache);
-    if (keys.length > 30) {
-        const excess = keys.length - 30;
-        for (let i = 0; i < excess; i++) {
-            delete memoryCache[keys[i]];
+// Returnează o intrare și o mută la finalul Map-ului pentru o ordine LRU simplă.
+function getMemoryCacheEntry(key) {
+    if (!memoryCache.has(key)) return undefined;
+    const value = memoryCache.get(key);
+    memoryCache.delete(key);
+    memoryCache.set(key, value);
+    return value;
+}
+
+// Limitează cache-ul la 30 de rezultate finalizate. Promisiunile active nu sunt
+// evacuate: altfel o cerere identică ar putea porni o a doua traducere Gemini.
+// protectedKey este păstrată în timpul curățării pentru a nu elimina tocmai
+// rezultatul accesat sau finalizat cel mai recent.
+function cleanMemoryCache(protectedKey = null) {
+    if (memoryCache.size <= 30) return;
+
+    for (const [key, value] of memoryCache) {
+        if (memoryCache.size <= 30) break;
+        if (key === protectedKey) continue;
+        if (typeof value === 'string') {
+            memoryCache.delete(key);
         }
     }
 }
@@ -158,7 +173,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.137',
+    version: '12.78.138',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -190,6 +205,26 @@ app.get('/ping', (req, res) => {
     res.send('OK');
 });
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>\"']/g, character => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '\"': '&quot;',
+        "'": '&#39;'
+    })[character]);
+}
+
+// ID-ul este folosit și în numele fișierului atașat. Păstrăm doar caractere
+// sigure pentru un nume portabil și evităm caractere de control/header injection.
+function safeAttachmentId(value) {
+    const safe = String(value ?? 'subtitle')
+        .replace(/[^a-zA-Z0-9._:-]/g, '_')
+        .replace(/\.{2,}/g, '.')
+        .slice(0, 100);
+    return safe || 'subtitle';
+}
+
 app.get('/arhiva-secreta', (req, res) => {
     let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
     html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
@@ -202,7 +237,7 @@ app.get('/arhiva-secreta', (req, res) => {
         html += '<ul style="list-style-type:none; padding:0;">';
         secretArchive.forEach((item, index) => {
             html += `<li style="background:#222; margin-bottom:10px; padding:15px; border-radius:5px;">
-                <strong style="color:#0bf;">ID: ${item.id}</strong> <span style="color:#888; font-size:0.9em;">(${item.time})</span><br><br>
+                <strong style="color:#0bf;">ID: ${escapeHtml(item.id)}</strong> <span style="color:#888; font-size:0.9em;">(${escapeHtml(item.time)})</span><br><br>
                 <a href="/download-srt/${index}" style="background:#0bf; color:#000; text-decoration:none; padding:8px 12px; border-radius:4px; font-weight:bold;">Descarcă fișier .srt</a>
                 ${item.original ? `<a href="/download-srt-en/${index}" style="background:#555; color:#fff; text-decoration:none; padding:8px 12px; border-radius:4px; font-weight:bold; margin-left:8px;">Original (EN)</a>` : ''}
             </li>`;
@@ -219,7 +254,7 @@ app.get('/download-srt-en/:index', (req, res) => {
         return res.status(404).send('Originalul nu există sau a fost șters automat din memorie.');
     }
     const item = secretArchive[index];
-    res.setHeader('Content-disposition', `attachment; filename=EN_${item.id}.srt`);
+    res.setHeader('Content-disposition', `attachment; filename="EN_${safeAttachmentId(item.id)}.srt"`);
     res.setHeader('Content-type', 'text/plain; charset=utf-8');
     res.send(item.original);
 });
@@ -230,7 +265,7 @@ app.get('/download-srt/:index', (req, res) => {
         return res.status(404).send('Fișierul nu există sau a fost șters automat din memorie.');
     }
     const item = secretArchive[index];
-    res.setHeader('Content-disposition', `attachment; filename=RO_${item.id}.srt`);
+    res.setHeader('Content-disposition', `attachment; filename="RO_${safeAttachmentId(item.id)}.srt"`);
     res.setHeader('Content-type', 'text/plain; charset=utf-8');
     res.send(item.content);
 });
@@ -3754,9 +3789,10 @@ app.get('/:configData/translate', async (req, res) => {
 
     const cacheKey = validatedTarget.url;
 
-    if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] === 'string') {
+    const cachedEntry = getMemoryCacheEntry(cacheKey);
+    if (typeof cachedEntry === 'string') {
         res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
-        return res.send(memoryCache[cacheKey]);
+        return res.send(cachedEntry);
     }
 
     res.writeHead(200, {
@@ -3776,8 +3812,8 @@ app.get('/:configData/translate', async (req, res) => {
     try {
         let processPromise;
 
-        if (memoryCache[cacheKey] && typeof memoryCache[cacheKey] !== 'string') {
-            processPromise = memoryCache[cacheKey];
+        if (cachedEntry && typeof cachedEntry !== 'string') {
+            processPromise = cachedEntry;
         } else {
             const startTime = Date.now();
             
@@ -3793,12 +3829,17 @@ app.get('/:configData/translate', async (req, res) => {
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
             })();
             
-            memoryCache[cacheKey] = processPromise;
-            cleanMemoryCache(); 
+            memoryCache.set(cacheKey, processPromise);
+            cleanMemoryCache(cacheKey);
             
             processPromise.then(translatedSrtString => {
-                memoryCache[cacheKey] = translatedSrtString;
-                cleanMemoryCache(); 
+                // Înlocuiește numai intrarea pentru această promisiune; nu suprascrie
+                // accidental o intrare mai nouă dacă logica cache-ului se schimbă ulterior.
+                if (memoryCache.get(cacheKey) === processPromise) {
+                    memoryCache.delete(cacheKey);
+                    memoryCache.set(cacheKey, translatedSrtString);
+                }
+                cleanMemoryCache(cacheKey); 
                 
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
@@ -3807,7 +3848,9 @@ app.get('/:configData/translate', async (req, res) => {
                 
             }).catch((err) => {
                 console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
-                delete memoryCache[cacheKey];
+                if (memoryCache.get(cacheKey) === processPromise) {
+                    memoryCache.delete(cacheKey);
+                }
             });
         }
 
