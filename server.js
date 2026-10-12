@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.130',
+    version: '12.78.131',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1994,23 +1994,47 @@ ${JSON.stringify(missingItems, null, 2)}
                 text: formatSubtitleLine(dict[String(obj.id)])
             }));
 
-            const untranslatedItems = results.filter(result => {
+            // Separăm semnalele obiective de textul englezesc/corupt de semnalele
+            // de fidelitate semantică. O replică românească poate necesita o
+            // verificare de sens, dar asta nu înseamnă că este „engleză/coruptă”.
+            const localCheckFindings = results.map(result => {
                 const original = chunk.find(obj => obj.id === result.id)?.text || '';
-                const originalClean = isEffectivelyEmptySubtitleText(original) ? '' : String(original).replace(/<[^>]+>/g, '').trim();
+                const originalClean = isEffectivelyEmptySubtitleText(original)
+                    ? ''
+                    : String(original).replace(/<[^>]+>/g, '').trim();
                 const translatedClean = String(result.text || '').replace(/<[^>]+>/g, '').trim();
-                if (!originalClean) return false;
-                if (isJunkOrInterjection(original)) return false;
-                // Nu logăm ca „suspectă” o replică al cărei rezultat este gol
-                // sau este doar un marker tehnic (—, -, ..., punctuație etc.).
-                // Acestea sunt gestionate separat de Empty Recovery / validarea finală.
-                if (!translatedClean || isJunkOrInterjection(result.text)) return false;
-                return hasUntranslatedEnglish(original, result.text) || hasCorruptedSubtitleText(result.text, original) || hasLostExplicitSourceTerm(original, result.text);
-            });
+                if (!originalClean || isJunkOrInterjection(original) || !translatedClean || isJunkOrInterjection(result.text)) {
+                    return null;
+                }
 
-            if (untranslatedItems.length > 0) {
-                console.log(`${c.yellow}⚠ [Local Check] Calupul ${globalChunkIndex + 1}: ${untranslatedItems.length} replici suspecte de engleză/corupere.${c.reset}`);
-                untranslatedItems.slice(0, 10).forEach(item => {
-                    console.log(`  ${c.yellow}⚠ ${item.id}: ${String(item.text || '').slice(0, 120)}${c.reset}`);
+                const languageOrCorruptionReasons = [];
+                if (hasUntranslatedEnglish(original, result.text)) {
+                    languageOrCorruptionReasons.push('posibil fragment englezesc netradus');
+                }
+                if (hasCorruptedSubtitleText(result.text, original)) {
+                    languageOrCorruptionReasons.push('posibil text corupt');
+                }
+                const fidelityReasons = getSourceFidelityIssues(original, result.text);
+                return languageOrCorruptionReasons.length || fidelityReasons.length
+                    ? { ...result, languageOrCorruptionReasons, fidelityReasons }
+                    : null;
+            }).filter(Boolean);
+
+            const languageOrCorruptionItems = localCheckFindings.filter(item => item.languageOrCorruptionReasons.length > 0);
+            const fidelityItems = localCheckFindings.filter(item => item.fidelityReasons.length > 0);
+
+            if (languageOrCorruptionItems.length > 0) {
+                console.log(`${c.yellow}⚠ [Local Check] Calupul ${globalChunkIndex + 1}: ${languageOrCorruptionItems.length} replici cu posibil text englezesc netradus sau text corupt.${c.reset}`);
+                languageOrCorruptionItems.slice(0, 10).forEach(item => {
+                    console.log(`  ${c.yellow}⚠ ${item.id} [${item.languageOrCorruptionReasons.join('; ')}]: ${String(item.text || '').slice(0, 120)}${c.reset}`);
+                });
+            }
+
+            if (fidelityItems.length > 0) {
+                console.log(`${c.yellow}⚠ [Local Check] Calupul ${globalChunkIndex + 1}: ${fidelityItems.length} replici românești cu semnale de fidelitate/sens; acestea nu indică automat text englezesc sau corupere.${c.reset}`);
+                fidelityItems.slice(0, 10).forEach(item => {
+                    const reason = item.fidelityReasons.join('; ');
+                    console.log(`  ${c.yellow}⚠ ${item.id} [${reason}]: ${String(item.text || '').slice(0, 120)}${c.reset}`);
                 });
             }
 
