@@ -107,17 +107,32 @@ function logTranslationStart(mediaId, mediaTitle) {
         .trim();
     const details = cleanTitle ? `${cleanId} — ${cleanTitle}` : cleanId;
 
-    // Lățimea se adaptează la titlu, astfel încât ID-ul și numele să nu fie trunchiate.
-    const innerWidth = Math.max(64, headline.length, details.length);
-    const outerWidth = innerWidth + 4;
-    const top = `╔${'═'.repeat(outerWidth - 2)}╗`;
-    const bottom = `╚${'═'.repeat(outerWidth - 2)}╝`;
-    const centered = (value) => {
-        const left = Math.floor((innerWidth - value.length) / 2);
-        return `║ ${' '.repeat(left)}${value}${' '.repeat(innerWidth - value.length - left)} ║`;
+    // Antet compact: doar două linii orizontale; titlul rămâne aliniat la stânga.
+    // Titlurile lungi se împart pe rânduri suplimentare fără să centreze textul.
+    const lineWidth = 64;
+    const wrapText = (value, width) => {
+        const words = String(value).split(/\s+/).filter(Boolean);
+        const lines = [];
+        let line = '';
+        for (const word of words) {
+            if (!line) {
+                line = word;
+            } else if ((line + ' ' + word).length <= width) {
+                line += ' ' + word;
+            } else {
+                lines.push(line);
+                line = word;
+            }
+        }
+        if (line) lines.push(line);
+        return lines.length ? lines : [''];
     };
+    const topBottom = '═'.repeat(lineWidth);
+    const detailLines = wrapText(details, lineWidth);
+    const block = [topBottom, headline, ...detailLines, topBottom].join('\n');
 
-    console.log(`${c.red}\n${top}\n${centered(headline)}\n${centered(details)}\n${bottom}${c.reset}`);
+    // ANSI bright red pentru o separare vizuală mai clară în logurile care suportă culori.
+    console.log(`\x1b[91m\n${block}\x1b[0m`);
 }
 function rememberOriginalSource(key, text) {
     originalSources[key] = text;
@@ -143,7 +158,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.136',
+    version: '12.78.137',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
