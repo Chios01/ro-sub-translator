@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.131',
+    version: '12.78.132',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1760,28 +1760,12 @@ function getSourceFidelityIssues(original, translation) {
         }
     }
 
-    // Guard semantic cu risc redus: detectează negația explicită din sursă
-    // atunci când traducerea nu conține niciun marcator românesc de negație.
-    // Este folosit de POST-CHECK-ul existent pentru un retry punctual; nu
-    // modifică direct textul și nu pornește o a doua verificare pentru toate replicile.
-    // Un tag question negativ la final („..., didn't it?”) poate fi redat
-    // firesc în română prin „așa-i?”, fără „nu”. Eliminăm doar tag-ul terminal
-    // înainte să verificăm dacă propoziția principală conține o negație.
-    const sourceForNegation = sourceNorm.replace(
-        /,\s*(?:don't|doesn't|didn't|isn't|aren't|wasn't|weren't|can't|couldn't|won't|wouldn't|shouldn't|mustn't|haven't|hasn't|hadn't|do\s+not|does\s+not|did\s+not|is\s+not|are\s+not|was\s+not|were\s+not|can\s+not|could\s+not|will\s+not|would\s+not|should\s+not|must\s+not|have\s+not|has\s+not|had\s+not)\s+(?:i|you|he|she|it|we|they|this|that)\s*\?$/i,
-        ''
-    ).replace(/\b(?:(?:in|into|out\s+in|from)\s+)?(?:the\s+)?middle\s+of\s+nowhere\b/gi, ' ');
-    const sourceHasExplicitNegation = /\b(?:don't|doesn't|didn't|isn't|aren't|wasn't|weren't|can't|cannot|couldn't|won't|wouldn't|shouldn't|mustn't|haven't|hasn't|hadn't|do\s+not|does\s+not|did\s+not|is\s+not|are\s+not|was\s+not|were\s+not|can\s+not|could\s+not|will\s+not|would\s+not|should\s+not|must\s+not|have\s+not|has\s+not|had\s+not|never|nobody|no\s+one|nothing|nowhere|none|neither)\b/i.test(sourceForNegation);
-    const isKnownPositiveEquivalent = /\b(?:can't|cannot|couldn't|could\s+not)\s+wait\b/i.test(sourceNorm) ||
-        /\bcould(?:n't| not)\s+agree\s+more\b/i.test(sourceNorm) ||
-        /\bnot\s+(?:only|just|merely|simply)\b/i.test(sourceNorm) ||
-        /\bnot\s+(?:so\s+)?bad\b/i.test(sourceNorm);
-    const targetHasRomanianNegation = /(?<![\p{L}])(?:nu|nici|nimeni|nimic(?:ul(?:ui)?|uri(?:le|lor)?)?|nimănui|nicăieri|nicidecum|fără|deloc|imposibil|niciun[\p{L}]*|nicio[\p{L}]*)(?![\p{L}])/iu.test(targetNorm) ||
-        // Acoperă și forme precum „n-aveam”, nu doar „n-am”/„n-a”.
-        /(?<![\p{L}])n-[\p{L}]+(?![\p{L}])/iu.test(targetNorm);
-    if (sourceHasExplicitNegation && !isKnownPositiveEquivalent && !targetHasRomanianNegation) {
-        issues.push('negație explicită din sursă posibil pierdută în traducere');
-    }
+    // NU folosim o euristică generică de tipul „sursa conține o negație, iar
+    // traducerea nu conține «nu/nici»”. Aceasta produce alarme false pentru
+    // propoziții reformulate firesc în română și pentru replici împărțite între
+    // blocuri. O posibilă pierdere de sens nu se deduce doar din absența unui
+    // marcator lexical; rămân active verificările de engleză netradusă,
+    // text corupt și regulile semantice înguste, legate de expresii concrete.
 
     // „following orders” înseamnă a urma/a executa ordinele, nu „ordinea de zi”.
     // Semnalăm numai combinația de sursă și traducere care indică precis acest
