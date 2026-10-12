@@ -58,6 +58,16 @@ const c = {
 const memoryCache = Object.create(null);
 const secretArchive = [];
 
+// Textul englez sursă, păstrat temporar ca să poată fi descărcat din arhivă (comparație calitate).
+const originalSources = Object.create(null);
+function rememberOriginalSource(key, text) {
+    originalSources[key] = text;
+    const keys = Object.keys(originalSources);
+    if (keys.length > 12) {
+        for (let i = 0; i < keys.length - 12; i++) delete originalSources[keys[i]];
+    }
+}
+
 function cleanMemoryCache() {
     const keys = Object.keys(memoryCache);
     if (keys.length > 30) {
@@ -120,12 +130,24 @@ app.get('/arhiva-secreta', (req, res) => {
             html += `<li style="background:#222; margin-bottom:10px; padding:15px; border-radius:5px;">
                 <strong style="color:#0bf;">ID: ${item.id}</strong> <span style="color:#888; font-size:0.9em;">(${item.time})</span><br><br>
                 <a href="/download-srt/${index}" style="background:#0bf; color:#000; text-decoration:none; padding:8px 12px; border-radius:4px; font-weight:bold;">Descarcă fișier .srt</a>
+                ${item.original ? `<a href="/download-srt-en/${index}" style="background:#555; color:#fff; text-decoration:none; padding:8px 12px; border-radius:4px; font-weight:bold; margin-left:8px;">Original (EN)</a>` : ''}
             </li>`;
         });
         html += '</ul>';
     }
     html += '</body></html>';
     res.send(html);
+});
+
+app.get('/download-srt-en/:index', (req, res) => {
+    const index = parseInt(req.params.index);
+    if (isNaN(index) || !secretArchive[index] || !secretArchive[index].original) {
+        return res.status(404).send('Originalul nu există sau a fost șters automat din memorie.');
+    }
+    const item = secretArchive[index];
+    res.setHeader('Content-disposition', `attachment; filename=EN_${item.id}.srt`);
+    res.setHeader('Content-type', 'text/plain; charset=utf-8');
+    res.send(item.original);
 });
 
 app.get('/download-srt/:index', (req, res) => {
@@ -625,7 +647,8 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/[^\S\r\n]+/g, ' ');
 
     // După eliminarea unei ezitări, repară majuscula de început de propoziție.
-    cleaned = cleaned.replace(/(^|[.!?]\s+)([a-zăâîșț])/g, (m, prefix, letter) => prefix + letter.toUpperCase());
+    // Nu forța majuscula după „...” (propoziția continuă) și nici după abrevieri uzuale (dl., dna, nr., etc.).
+    cleaned = cleaned.replace(/(^|(?<!\.)(?<!\b(?:[Dd]l|[Dd]na|[Dd]r|[Nn]r|[Ee]tc|[Ee]x))[.!?]\s+)([a-zăâîșț])/g, (m, prefix, letter) => prefix + letter.toUpperCase());
     
     if (/^(ah|oh|uh|agh|aâ|aoleu|ăă|ugh|argh|aah|oof|uf)[!.]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
@@ -633,7 +656,9 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\\+/g, ' ');
     cleaned = cleaned.replace(/\b(nu|de|ce|pe|la)1\b/gi, '$1');
 
-    cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/]/g, '');
+    // Normalizează apostroful curb și semnul „…”, apoi păstrează ghilimelele românești „ ” și “ ”.
+    cleaned = cleaned.replace(/[\u2018\u2019]/g, "'").replace(/\u2026/g, '...');
+    cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/\u201C\u201D\u201E]/g, '');
     cleaned = cleaned.replace(/\s*\([^)]+\)$/g, '');
 
     if (!cleaned.trim()) return '';
@@ -824,15 +849,8 @@ function formatSubtitleLine(text) {
 
     let lowerText = text.toLowerCase();
 
-    if (lowerText.includes('înțeles') && lowerText.includes('hei') && lowerText.includes('când')) {
-        return formatSubtitleLayout('Am înțeles. Hei, când ai o secundă...');
-    }
-
-    if ((lowerText.includes('holba') || lowerText.includes('uita') || lowerText.includes('ochii') || lowerText.includes('holbezi') || lowerText.includes('oprește-te') || lowerText.includes('termină')) && (/\bsân(i|ii)?\b/.test(lowerText) || lowerText.includes('țâțe') || lowerText.includes('decolteu') || lowerText.includes('tăiței') || lowerText.includes('piept'))) {
-        return formatSubtitleLayout('Nu te mai holba la sânii mei.');
-    }
-
-    text = text.replace(/(^|[\s])([cCsS])(?=[\s.,!?:;]|$)/gm, function(match, spatiu, litera) {
+    // Doar litere mici izolate (trunchieri „c”/„s” → „că”/„să”); majusculele („Vitamina C”, „Harry S. Truman”) rămân neatinse.
+    text = text.replace(/(?<!\d)(^|[\s])([cs])(?=[\s.,!?:;]|$)/gm, function(match, spatiu, litera) {
         return spatiu + litera + 'ă';
     });
     text = text.replace(/(^|[\s])([Aa]dic)(?=[\s.,!?:;]|$)/gm, '$1$2ă');
@@ -846,18 +864,18 @@ function formatSubtitleLine(text) {
         // Sunt limitate la expresii confirmate ca greșite în acest proiect.
         [/\b(?:Iași|Iasi|Ieși|Iesi)[- ]mi din cap\b/gi, 'Ieși din capul meu'],
         [/\b(?:Ia|I-a) mâna după mine\b/gi, 'Ia mâna de pe mine'],
-        [/\bȘi pe urmă am fut-o ca să sărbătorim\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])Și pe urmă am fut-o ca să sărbătorim(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m) => (m[0] === m[0].toLowerCase() ? 'și pe urmă ne-am futut ca să sărbătorim' : 'Și pe urmă ne-am futut ca să sărbătorim')],
         [/\b(?:Și|Si) pe urmă am f\*{2,}ut ca să sărbătorim\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
         [/\b(?:Și|Si) pe urmă am f\*{2,}t ca să sărbătorim\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
         [/\bE un cuptor dracului aici\b/gi, 'E un cuptor al naibii aici'],
-        [/\bRezoluția Concurrentă\b/g, 'Rezoluția Concurentă'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])Rezoluția Concurrentă(?![A-Za-zĂÂÎȘȚăâîșț])/g, 'Rezoluția Concurentă'],
         [/\bun cerc de încrederi\b/gi, 'un cerc de încredere'],
         [/\bcuando îți zic\b/gi, 'când îți zic'],
         [/\bmult așteptatului film\b/gi, 'mult așteptatul film'],
         [/\bnăibii\b/gi, 'naibii'],
         [/\blar că sunteți aici\b/gi, 'că sunteți aici'],
         [/\bn-am gânit\b/gi, 'n-am gândit'],
-        [/\bnicodată\b/gi, 'niciodată'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])nicodată(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'niciodată'],
         [/\bNu iau sifilis de Schifter\b/gi, 'Nu iau sifilis de Shapeshifter'],
         [/\bCa sămă înveți\b/gi, 'Ca să mă înveți'],
         [/\bCititoare de minți\b/gi, 'Cititoare de gânduri'],
@@ -882,7 +900,6 @@ function formatSubtitleLine(text) {
         [/\bpro Jean Tatlock\b/gi, 'despre Jean Tatlock'],
         [/\bîn ș\s*\./gi, 'în șah.'],
         [/\bîn ș\b(?!\w)/gi, 'în șah'],
-        [/\bpunerile\b/gi, 'vederile'],
         [/\bsomom\b/gi, 'somon'],
         [/\bdilettant\b/gi, 'diletant'],
         [/\bcowboys\b/gi, 'cowboy'],
@@ -912,12 +929,12 @@ function formatSubtitleLine(text) {
         [/\bnarțiune\b/gi, 'narațiune'],
         [/\binteriorul acestei cupe\b/gi, 'interiorul acestei cuști'],
         [/\bspuneți-i saluta\b/gi, 'spuneți-i salut'],
-        [/\bcea mai izolatã\b/gi, 'cea mai izolată'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])cea mai izolatã(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'cea mai izolată'],
         [/\brebuie să știm\b/gi, 'trebuie să știm'],
         [/\buficient de mult\b/gi, 'suficient de mult'],
-        [/\bîi cureț\b/gi, 'îi curăț'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])îi cureț(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'îi curăț'],
         [/\bArată foarte atleți\b/gi, 'Arată foarte atletici'],
-        [/\bîn toată regla\b/gi, 'în toată regula'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])în toată regla(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'în toată regula'],
         [/\bI se strânge noțul\b/gi, 'I se strânge lațul'],
         [/\bdeatât un câine\b/gi, 'decât un câine'],
         [/\bBandurile cu spini\b/gi, 'Benzile cu țepi'],
@@ -935,9 +952,9 @@ function formatSubtitleLine(text) {
         [/\bnu-mi mai aparține!\b/gi, 'că nu-mi mai aparține!'],
         [/\bscoateți-o pe mama pe insulă\b/gi, 'scoateți-o pe mama de pe insulă'],
         [/\bva face denunț\b/gi, 'îi va denunța'],
-        [/\bȚ-am cerut\b/gi, 'Ți-am cerut'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])Ț-am cerut(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m) => (m[0] === m[0].toLowerCase() ? 'ți-am cerut' : 'Ți-am cerut')],
         [/\bcearsăfuri\b/gi, 'cearșafuri'],
-        [/\bșă ne ținem\b/gi, 'să ne ținem'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])șă ne ținem(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'să ne ținem'],
         [/\boevacuare\b/gi, 'o evacuare'],
         [/\btat-tu\b/gi, 'tatăl tău'],
         [/\btat-meu\b/gi, 'tatăl meu'],
@@ -953,10 +970,9 @@ function formatSubtitleLine(text) {
         [/dafirma/gi, 'da afară'],
         [/judicativ[aă]/gi, 'plină de prejudecăți'],
         [/le-atâmită/gi, 'le tâmpește'],
-        [/\bEu poartă\b/gi, 'Eu port'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])Eu poartă(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m) => (m[0] === m[0].toLowerCase() ? 'eu port' : 'Eu port')],
         [/\bAleile aia\b/gi, 'Chestia aia'],
-        [/s-ți/gi, 'să-ți'],
-        [/s-l/gi, 'să-l'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])s-(ți|l)(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m, a) => (m[0] === 'S' ? 'Să-' : 'să-') + a],
         [/\bEu poart\b/gi, 'Eu port'],
         [/\btîmpenie\b/gi, 'tâmpenie'],
         [/\bjobul asta\b/gi, 'jobul ăsta'],
@@ -971,16 +987,16 @@ function formatSubtitleLine(text) {
         [/\bhoțul afla-nărav o fi spart\b/gi, 'vreun hoț o fi spart'],
         [/\breînălța ea a trebuit\b/gi, 'ea a trebuit'],
         [/\ba fute-o pe o pește-clovn\b/gi, 'a futut un pește-clovn'],
-        [/\bțeață\b/gi, 'țeavă'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])țeață(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'țeavă'],
         [/\bnite amenzi\b/gi, 'niște amenzi'],
         [/\bFlore la ureche\b/gi, 'Floare la ureche'],
         [/\blaptepentru\b/gi, 'lapte pentru'],
         [/\bc-total\b/gi, 'total'],
-        [/\bÎntreabă--i\b/gi, 'Întreabă-i'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])Întreabă--i(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m) => (m[0] === m[0].toLowerCase() ? 'întreabă-i' : 'Întreabă-i')],
         [/「/g, ''],
         [/\bdirectorenul\b/gi, 'directorul'],
         [/\bstorcești\b/gi, 'strivești'],
-        [/\bcea mai albitură\b/gi, 'cea mai albă'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])cea mai albitură(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'cea mai albă'],
         [/\bcroșetă-n branhii\b/gi, 'croșeu în branhii'],
         [/\bfătat de prostie\b/gi, 'futut de prostie'],
         [/\bpsihoopat\b/gi, 'psihopat'],
@@ -1001,15 +1017,13 @@ function formatSubtitleLine(text) {
         [/\bștiu la mașină\b/gi, 'știu să dactilografiez'],
         [/\bse bucură de prea multă binefacere\b/gi, 'sunt bineveniți'],
         [/\bce-ți veni\b/gi, 'ce-ai pățit'],
-        [/\bmarșă de manevră\b/gi, 'marjă de manevră'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])marșă de manevră(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'marjă de manevră'],
         [/\b(Ah|Oh|Uh|Agh|Aoleu)[!.]+$/gmi, ''],
         [/\bV Dumneata\b/gi, 'Dumneata'],
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
         [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
         [/\bde ce n-a fost asocierile\b/gi, 'de ce n-au fost asocierile'],
         [/\bialaltăieri\b/gi, 'alaltăieri'],
-        [/\bGăură\b/gi, 'Gaură'],
-        [/\bOricum\b/gi, 'Oricum'],
         [/\beceam\b/gi, 'eram'],
         [/\bcei-o fi\b/gi, 'ce i-o fi'],
         [/\btoți leau\b/gi, 'șleau'],
@@ -1027,9 +1041,7 @@ function formatSubtitleLine(text) {
         [/\bSunt tot un an de uium\.?\b/gi, 'Eram un dezastru'],
         [/\bunnea\b/gi, 'un'],
         [/\bparuri\b/gi, 'pariuri'],
-        [/\bo raită\b/gi, 'un rateu'],
         [/\bdetonăm o raită\b/gi, 'declanșăm un eșec'],
-        [/\bpe opt\b/gi, 'pe banca acuzaților'],
         [/\bpaharele lui Berzelius și poțiuni\b/gi, 'eprubetele și poțiunile'],
         [/\bniliște\b/gi, 'niște'],
         [/\bcalmază-te\b/gi, 'calmează-te'],
@@ -1066,7 +1078,7 @@ function formatSubtitleLine(text) {
         [/\b2dansezi\b/gi, 'dansezi'],
         [/\bdespăre\b/gi, 'despre'],
         [/\bhabar navea\b/gi, 'habar n-avea'],
-        [/\bEu acționează\b/gi, 'Eu acționez'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])Eu acționează(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m) => (m[0] === m[0].toLowerCase() ? 'eu acționez' : 'Eu acționez')],
         [/\bSă te fwt\b/gi, 'Să te fut'],
         [/\bcolțișorezi\b/gi, 'încolțești'],
         [/\bcolțișorești\b/gi, 'încolțești'],
@@ -1101,13 +1113,13 @@ function formatSubtitleLine(text) {
         [/\bCitească-gânduri\b/gi, 'Cititoare de gânduri'],
         [/\bdemocracția\b/gi, 'democrația'],
         [/\bMă reasigur în patru ani\b/gi, 'Să fiu realeasă în patru ani'],
-        [/\bS-a dus totul pe râpă\b/gi, 'S-a dus totul de râpă'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])S-a dus totul pe râpă(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m) => (m[0] === m[0].toLowerCase() ? 's-a dus totul de râpă' : 'S-a dus totul de râpă')],
         [/\bo bullet\b/gi, 'un glonț'],
         [/\bmergem orbești\b/gi, 'mergem orbește'],
-        [/\bo favoră\b/gi, 'o favoare'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])o favoră(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'o favoare'],
         [/\bMă închizi într-o cușcă\s*\/\s*dacă nu accept să fii arma ta\b/gi, 'Mă închizi într-o cușcă / dacă nu accept să fiu arma ta'],
         [/\bȘi pe urmă am fumat-o de sărbătoare\b/gi, 'Și pe urmă ne-am futut ca să sărbătorim'],
-        [/\bRezoluția Concurrentă\b/gi, 'Rezoluția Concurentă'],
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])Rezoluția Concurrentă(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m) => (m[0] === m[0].toLowerCase() ? 'rezoluția Concurentă' : 'Rezoluția Concurentă')],
         [/\bun cerc de încrederi\b/gi, 'un cerc de încredere'],
 
         // Sunt intenționat conservative: repară doar forme clar corupte/typo.
@@ -1128,8 +1140,22 @@ function formatSubtitleLine(text) {
         [/\bDe ce ne-ar pasa\b/gi, 'De ce ne-ar păsa'],
         [/\bDe ce i-ar pasa\b/gi, 'De ce i-ar păsa'],
         [/\bcomuniștii erau periculoase\b/gi, 'comuniștii erau periculoși'],
-        [/\bîn ziua în care\b/gi, 'în ziua în care'],
-        [/\.icon\b/gi, '']
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])în ziua în care(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'în ziua în care'],
+        [/\.icon\b/gi, ''],
+
+        // „fucking” calchiat: „Ce a dracului…” nu există în română.
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])(ce|cine|unde|cum|când|cât|care) a (dracului|naibii)(?![A-Za-zĂÂÎȘȚăâîșț])/gi,
+            (m, w, k) => w + ' ' + (k.toLowerCase() === 'dracului' ? "dracu'" : 'naiba')],
+        // „nici o/un” → „nicio/niciun” (nu se atinge „nici un singur” și structurile „nici… nici…”).
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])nici (o|un)(?![A-Za-zĂÂÎȘȚăâîșț])(?!\s+singur)/gi,
+            (m, a, offset, whole) => {
+                const rest = String(whole).slice(offset + m.length);
+                const before = String(whole).slice(0, offset);
+                if (/(?<![A-Za-zĂÂÎȘȚăâîșț])nici(?![A-Za-zĂÂÎȘȚăâîșț])/i.test(rest) || /(?<![A-Za-zĂÂÎȘȚăâîșț])nici(?![A-Za-zĂÂÎȘȚăâîșț])/i.test(before)) return m;
+                return (m[0] === 'N' ? 'N' : 'n') + 'ici' + a.toLowerCase();
+            }],
+        // Imperativ trunchiat: „păstreaz-o” → „păstrează-o”.
+        [/(?<![A-Za-zĂÂÎȘȚăâîșț])([a-zăâîșț]+ea)z-(o|l|i|le|mi|ți|ne|vă)(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m, stem, cl) => stem + 'ză-' + cl]
     ];
 
     for (let i = 0; i < dictionar.length; i++) {
@@ -1156,12 +1182,14 @@ TRANSLATION AND CONTEXT
 - Translate every meaningful sentence, phrase, joke, idiom, slang expression, and fragment into Romanian. Preserve names and established foreign expressions only when they genuinely belong in the source.
 - Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
+- If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
 - Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
 - Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
 - Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
 - When the source explicitly names an anatomical or sexual term, use an accurate Romanian equivalent. Do not replace it with vague euphemisms such as „jos” or „acolo”. Preserve the grammatical relationship too: for example, “the sound that dries my vagina” means „sunetul care-mi usucă vaginul”, not „sunetul care mă usucă în vagin”.
 - Preserve singular/plural, gender, and the identity of the object. A singular source noun such as “a hat” must not become plural „căciuli”. Do not add diminutives such as „căciuliță” unless smallness, affection, or a diminutive is actually expressed by the source.
 - Translate idioms and profanity by their function in context, not by mechanically matching each English word. For example, “fucking” may be an intensifier, an insult, or a literal verb; choose the Romanian equivalent for that function.
+- Romanian profanity: after an interrogative word use „dracu'” or „naiba” directly („Ce dracu' faci?”, „Despre ce naiba vorbești?”, „Cine dracu' ești?”); NEVER write „ce a dracului” or „cine a dracului”. As an intensifier use „al naibii de”, „la naiba”, „pe naiba”, or put „al naibii/al dracului” after a masculine noun group. Do not append „dracului” to every sentence and do not keep the English word order of “fucking”; often it is better dropped or rendered by a natural interjection. Examples: “What the fuck is in Switzerland?” → „Ce dracu' e în Elveția?”; “No fucking way.” → „Nici gând, la naiba.”; “It's a fucking disaster.” → „E un dezastru al naibii.”; “Shut the fuck up.” → „Taci dracului din gură.”
 - Choose terms of endearment according to the relationship and context; do not translate “babe”, “honey”, or “baby” mechanically every time.
 - Translate “But” as „Dar” when it begins a clause. Do not leave ordinary English dialogue untranslated.
 - Use correct Romanian grammar, spelling, punctuation, and diacritics (ă, â, î, ș, ț). Use complete real Romanian words; never truncate, merge, invent, or corrupt a word. Check pronouns, clitics, prepositions, conjugation, and agreement.
@@ -2394,7 +2422,7 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\brenumererațiilor\b/gi, 'remunerațiilor'],
     [/\brenumererați\b/gi, 'remunerați'],
     [/\brenumererate\b/gi, 'remunerate'],
-    [/\brenumerată\b/gi, 'remunerată'],
+    [/(?<![A-Za-zĂÂÎȘȚăâîșț])renumerată(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'remunerată'],
     [/\brenumerat\b/gi, 'remunerat'],
     [/\brenumerare\b/gi, 'remunerare'],
     [/\brenumerarea\b/gi, 'remunerarea'],
@@ -2407,8 +2435,6 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\brenumerațiilor\b/gi, 'remunerațiilor'],
     [/\brenumerați\b/gi, 'remunerați'],
     [/\brenumerate\b/gi, 'remunerate'],
-    [/\brenumerată\b/gi, 'remunerată'],
-    [/\brenumerat\b/gi, 'remunerat'],
     [/\bsugist\b/gi, 'sugi'],
 
     // Corecții locale suplimentare cu încredere foarte mare, validate în QA.
@@ -2687,6 +2713,58 @@ Returnează DOAR un ARRAY JSON valid în forma:
 }
 
 // ============================================================
+// MAJUSCULE LA FRAGMENTELE CONTINUATE
+// Dacă blocul englez continuă propoziția anterioară (începe cu literă mică, iar
+// blocul precedent nu s-a încheiat cu punct), cuvintele funcționale de la începutul
+// traducerii (Și, Iar, Dar, Să, Mai, De...) trec la literă mică. Folosește o listă
+// închisă de cuvinte, ca să nu atingă niciodată nume proprii.
+// ============================================================
+
+const CONTINUATION_FUNCTION_WORDS = new Set([
+    'și', 'iar', 'dar', 'sau', 'să', 'că', 'care', 'ce', 'cine', 'cum', 'când', 'unde', 'cât',
+    'dacă', 'ca', 'de', 'pe', 'la', 'în', 'din', 'cu', 'pentru', 'prin', 'fără', 'despre',
+    'după', 'înainte', 'către', 'între', 'mai', 'apoi', 'atunci', 'doar', 'chiar', 'tot',
+    'totul', 'toți', 'toate', 'așa', 'nu', 'un', 'cea', 'cel', 'cei', 'cele', 'mă', 'te',
+    'se', 'ne', 'vă', 'îmi', 'îți', 'își'
+]);
+
+function isContinuationBlock(prevEnglish, currentEnglish) {
+    const cur = String(currentEnglish || '').replace(/<[^>]+>/g, '').trim();
+    const prev = String(prevEnglish || '').replace(/<[^>]+>/g, '').trim();
+    if (!cur || !prev) return false;
+    if (/^[-–—]/.test(cur)) return false;
+    const body = cur.replace(/^[.…\s"'“‘(\[]+/, '');
+    if (!/^[a-z]/.test(body)) return false;
+    if (/(?<!\.)[.!?]["”')\]]*$/.test(prev)) return false;
+    return true;
+}
+
+function applyContinuationCase(items, translatedById) {
+    let changed = 0;
+    for (let i = 1; i < items.length; i++) {
+        if (!isContinuationBlock(items[i - 1].text, items[i].text)) continue;
+
+        const id = String(items[i].id);
+        const current = String(translatedById[id] || '');
+        const previousRo = String(translatedById[String(items[i - 1].id)] || '').trim();
+        if (!current.trim() || !previousRo) continue;
+        if (/(?<!\.)[.!?]["”]?$/.test(previousRo)) continue;
+        if (/^\s*[-–—]/.test(current)) continue;
+
+        const match = current.match(/^(\s*[.…"„“]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*)/);
+        if (!match) continue;
+        const word = match[2] + match[3];
+        if (!CONTINUATION_FUNCTION_WORDS.has(word.toLowerCase())) continue;
+
+        translatedById[id] = match[1] + match[2].toLowerCase() + match[3] + current.slice(match[0].length);
+        changed++;
+    }
+    console.log(`${c.green}✔ [Continuări] ${changed} fragmente continuate au primit literă mică la început.${c.reset}`);
+    return changed;
+}
+
+
+// ============================================================
 // MOTORUL PRINCIPAL DE TRADUCERE SRT
 // ============================================================
 
@@ -2836,6 +2914,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
             console.log(`${c.yellow}⚠ [Protecție finală] ID ${id}: formatterul ar fi golit traducerea; am păstrat ultima variantă nenulă.${c.reset}`);
         }
     }
+
+    applyContinuationCase(items, translatedById);
 
     console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate.${c.reset}`);
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
@@ -3099,6 +3179,7 @@ app.get('/:configData/translate', async (req, res) => {
             
             processPromise = (async () => {
                 const srtRes = await fetchValidatedSubtitleUrl(validatedTarget.url);
+                rememberOriginalSource(cacheKey, String(srtRes.data || ''));
                 
                 const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
                 console.log(`${c.cyan}\n==================================================${c.reset}`);
@@ -3136,11 +3217,12 @@ app.get('/:configData/translate', async (req, res) => {
             const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
             
             const existingIndex = secretArchive.findIndex(item => item.id === imdbId);
+            const previousOriginal = existingIndex !== -1 ? secretArchive[existingIndex].original : '';
             if (existingIndex !== -1) {
                 secretArchive.splice(existingIndex, 1);
             }
 
-            secretArchive.unshift({ id: imdbId, time: timeStr, content: finalSrt });
+            secretArchive.unshift({ id: imdbId, time: timeStr, content: finalSrt, original: originalSources[cacheKey] || previousOriginal || '' });
             if (secretArchive.length > 10) secretArchive.pop();
         }
 
