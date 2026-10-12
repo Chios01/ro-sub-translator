@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.123',
+    version: '12.78.124',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -558,7 +558,7 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const STANDALONE_SOURCE_FILLERS = new Set((
-    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
+    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh ok okay oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
 ).split(/\s+/));
 
 function isOnlyStandaloneFillerSequence(text) {
@@ -1371,10 +1371,15 @@ async function callGemini(prompt, keyState, options = {}) {
     // SubStudio folosește nivelul de gândire MEDIUM pentru motoarele Gemini 3.
     // Gemini 3.5 Flash-Lite îl suportă; parametrul temperature este omis deoarece
     // documentația Gemini 3.5 îl marchează drept depreciat/ignorat pentru aceste modele.
-    const generationConfig = {
-        responseMimeType: 'application/json',
-        responseSchema
-    };
+    // Fallback-ul plainText este folosit numai când Grammar Review returnează
+    // JSON invalid chiar și pentru o singură replică. Toate cererile obișnuite
+    // păstrează schema JSON existentă.
+    const generationConfig = options.plainText
+        ? {}
+        : {
+            responseMimeType: 'application/json',
+            responseSchema
+        };
     // Implicit, păstrăm MEDIUM pentru apelurile normale (în special traducere).
     // O etapă poate trece thinkingLevel: null pentru a lăsa modelul să folosească
     // nivelul implicit. Grammar Review folosește această excepție.
@@ -2209,6 +2214,17 @@ function shouldSplitGrammarReviewBatch(batchLength, isJsonError, message) {
         (Boolean(isJsonError) || /conținut gol|empty content/i.test(String(message || '')));
 }
 
+function cleanPlainTextReviewResponse(rawText) {
+    let clean = String(rawText || '').trim();
+    clean = clean.replace(/^```(?:text|txt|plaintext)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    if (!clean) return '';
+    // Dacă modelul a ignorat modul plain-text și a întors JSON/explicații, nu
+    // acceptăm un răspuns ambiguu ca traducere.
+    if (/^\s*(?:\{|\[)\s*(?:[\"']?id[\"']?\s*:)?/i.test(clean)) return '';
+    if (/^(?:traducerea(?: corectată)?|textul corectat|varianta corectată|răspunsul)\s*:/iu.test(clean)) return '';
+    return clean;
+}
+
 async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
     const contextItems = options.contextItems || items;
     const isTargetedReview = options.mode === 'targeted';
@@ -2447,6 +2463,63 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 // sau gol. Erorile API nelegate de format nu declanșează split
                 // suplimentar; dacă un singleton tot nu produce JSON valid, îl
                 // lăsăm explicit neverificat în raportul final.
+                // Dacă JSON-ul este invalid chiar și la o singură replică, nu
+                // repetăm la nesfârșit aceeași formă. Cerem o singură dată text simplu,
+                // fără responseSchema, apoi folosim aceleași controale de fidelitate
+                // și de regresie ca la o corectură JSON. Dacă fallback-ul e ambiguu,
+                // ID-ul rămâne neverificat și este raportat astfel.
+                if (isJsonError && batch.length === 1 && jsonAttempt >= GRAMMAR_REVIEW_JSON_RETRY_LIMIT) {
+                    const item = batch[0];
+                    const id = String(item.id);
+                    const current = formatSubtitleLine(String(translatedById[id] || ''));
+                    const singlePayload = payload.find(entry => String(entry.id) === id) || payload[0];
+                    console.log(`${c.yellow}↻ [Grammar Review] JSON invalid la o singură replică (ID ${id}); încerc o singură rezervă text simplu...${c.reset}`);
+                    try {
+                        const fallbackPrompt = `Ești un corector profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Verifică DOAR replica descrisă mai jos, comparând originalul, traducerea curentă și contextul.
+
+Corectează numai dacă există o greșeală clară de sens, gramatică, vocabular sau ortografie. Dacă traducerea este deja corectă, returnează exact traducerea curentă. Păstrează sensul, persoana, timpul și punctuația justificată de context. Nu inventa text.
+
+DATE:
+${JSON.stringify(singlePayload, null, 2)}
+
+Returnează DOAR textul final al replicii românești, fără JSON, fără markdown, fără ghilimele adăugate în jurul întregii replici și fără explicații.`;
+                        const fallbackKey = await getAvailableKey(keyStates);
+                        const fallbackRaw = await callGemini(fallbackPrompt, fallbackKey, {
+                            timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
+                            thinkingLevel: null,
+                            plainText: true
+                        });
+                        const fallbackText = cleanPlainTextReviewResponse(fallbackRaw);
+                        const candidate = formatSubtitleLine(fallbackText);
+                        if (!candidate) throw new Error('răspunsul plain-text a fost gol, JSON sau conținea explicații');
+
+                        if (candidate !== current) {
+                            if (hasUntranslatedEnglish(item.text, candidate) ||
+                                hasCorruptedSubtitleText(candidate, item.text) ||
+                                hasLostExplicitSourceTerm(item.text, candidate)) {
+                                throw new Error('corectura plain-text nu a trecut verificările existente de fidelitate');
+                            }
+                            const previousQualityReasons = collectQualityReviewReasons(item, current, contextItems, translatedById);
+                            const candidateQualityReasons = collectQualityReviewReasons(item, candidate, contextItems, translatedById);
+                            const newlyIntroducedQualityReasons = candidateQualityReasons.filter(reason => !previousQualityReasons.includes(reason));
+                            if (newlyIntroducedQualityReasons.length) {
+                                rejectedQualityReasonsById[id] = [...new Set([...(rejectedQualityReasonsById[id] || []), ...newlyIntroducedQualityReasons])];
+                                throw new Error(`corectura a introdus un semnal nou: ${newlyIntroducedQualityReasons.join('; ')}`);
+                            }
+                            translatedById[id] = candidate;
+                            fixed++;
+                            console.log(`${c.green}✔ [Grammar Review] ID ${id}: fallback text simplu acceptat după validare.${c.reset}`);
+                        } else {
+                            console.log(`${c.green}✔ [Grammar Review] ID ${id}: fallback text simplu confirmă textul existent; nicio modificare necesară.${c.reset}`);
+                        }
+                        verifiedIds.add(id);
+                        return { success: true, is429: false };
+                    } catch (fallbackError) {
+                        console.log(`${c.yellow}⚠ [Grammar Review] ID ${id} rămâne neverificat: fallback text simplu eșuat (${fallbackError.message}).${c.reset}`);
+                        return { success: false, is429: false };
+                    }
+                }
+
                 if (shouldSplitGrammarReviewBatch(batch.length, isJsonError, message)) {
                     const middle = Math.ceil(batch.length / 2);
                     const left = batch.slice(0, middle);
@@ -2801,6 +2874,60 @@ function findRepeatedBoundaryConnectorIssues(items, translatedById) {
         issues.push({ item: issueItem, reason, pairedItem: issueItem === currentItem ? nextItem : currentItem });
     }
     return issues;
+}
+
+function applyDeterministicBoundaryConnectorFixes(items, translatedById) {
+    let fixed = 0;
+    const sourceSupports = (englishConnector, romanianConnector) => {
+        const en = String(englishConnector || '').toLocaleLowerCase('en-US');
+        const ro = String(romanianConnector || '').toLocaleLowerCase('ro-RO');
+        const supported = {
+            but: ['dar', 'însă'],
+            however: ['dar', 'însă', 'totuși'],
+            yet: ['dar', 'însă', 'totuși'],
+            still: ['dar', 'însă', 'totuși'],
+            nevertheless: ['dar', 'însă', 'totuși']
+        };
+        return Boolean(supported[en]?.includes(ro));
+    };
+    const roTail = /(?:^|\s)(dar|însă|totuși)\s*[,;:!?…]*$/iu;
+    const roHead = /^\s*(?:[-–—]\s*)?(dar|însă|totuși)(?![\p{L}])/iu;
+    const enTail = /(?:^|\s)(but|however|yet|still|nevertheless)\s*[,;:!?…]*$/iu;
+    const enHead = /^\s*(?:[-–—]\s*)?(but|however|yet|still|nevertheless)\b/iu;
+
+    for (let i = 0; i < items.length - 1; i++) {
+        const current = items[i];
+        const next = items[i + 1];
+        if (isJunkOrInterjection(current.text) || isJunkOrInterjection(next.text)) continue;
+        const currentId = String(current.id);
+        const nextId = String(next.id);
+        const currentRo = String(translatedById[currentId] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const nextRo = String(translatedById[nextId] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const roCurrentTail = currentRo.match(roTail);
+        const roNextHead = nextRo.match(roHead);
+        if (!roCurrentTail || !roNextHead || roCurrentTail[1].toLocaleLowerCase('ro-RO') !== roNextHead[1].toLocaleLowerCase('ro-RO')) continue;
+
+        const currentEn = String(current.text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const nextEn = String(next.text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const enCurrentTail = currentEn.match(enTail);
+        const enNextHead = nextEn.match(enHead);
+        const currentSupported = enCurrentTail && sourceSupports(enCurrentTail[1], roCurrentTail[1]);
+        const nextSupported = enNextHead && sourceSupports(enNextHead[1], roNextHead[1]);
+
+        // Corectăm numai când originalul următor justifică conectorul, iar
+        // originalul curent nu îl justifică la sfârșit. Exemplul sigur este
+        // „... EF1”, dar” + „dar n-a fost ea” / EN: „EF1,” + „but it wasn't her”.
+        if (!currentSupported && nextSupported) {
+            const before = String(translatedById[currentId] || '');
+            const after = before.replace(/\s+(?:dar|însă|totuși)\s*[,;:!?…]*\s*$/iu, '').trimEnd();
+            if (after && after !== before.trimEnd()) {
+                translatedById[currentId] = formatSubtitleLine(after);
+                fixed++;
+                console.log(`${c.green}✔ [Boundary Connector Fix] ID ${currentId}: conectorul de la final eliminat; originalul ID ${nextId} începe cu „${enNextHead[1]}”.${c.reset}`);
+            }
+        }
+    }
+    return fixed;
 }
 
 async function runLocalGrammarQualityPass(items, translatedById) {
@@ -3184,6 +3311,11 @@ Returnează DOAR un ARRAY JSON valid în forma:
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
 
+    // Reparăm determinist doar connectorii repetați când cele două originale
+    // stabilesc fără ambiguitate că primul bloc a adăugat conectorul prea devreme.
+    // Astfel, cazul de limită nu mai consumă o cerere Grammar Review/JSON.
+    applyDeterministicBoundaryConnectorFixes(items, translatedById);
+
     // Verificare AI punctuală și limitată: numai replicile pe care semnalele
     // locale le marchează ca potențial corupte/agramaticale. Nu revizuim toate
     // subtitrările și nu schimbăm modelul, calupurile sau mecanismul cheilor.
@@ -3292,6 +3424,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
     }
 
     applyContinuationCase(items, translatedById);
+    // Ultima apărare contra conectorilor reintroduși de Grammar Review.
+    applyDeterministicBoundaryConnectorFixes(items, translatedById);
 
     const finalQualityFlags = [];
     for (const item of items) {
@@ -3348,14 +3482,26 @@ Returnează DOAR un ARRAY JSON valid în forma:
     }
     console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
 
-    const output = items.map(item => {
+    const suppressedFillerIds = [];
+    const output = items.filter(item => {
+        const translated = String(translatedById[String(item.id)] || '').trim();
+        if (translated && isOnlyStandaloneFillerSequence(translated)) {
+            suppressedFillerIds.push(String(item.id));
+            return false;
+        }
+        return true;
+    }).map(item => {
         const translated = translatedById[String(item.id)] || item.text;
         return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
     }).join('\n');
 
+    if (suppressedFillerIds.length) {
+        console.log(`${c.yellow}⚠ [Filtru final] ${suppressedFillerIds.length} traduceri formate exclusiv din interjecții au fost scoase din rezultat (ID: ${suppressedFillerIds.slice(0, 30).join(', ')}${suppressedFillerIds.length > 30 ? ', ...' : ''}). Verificați sursa dacă nu erau interjecții în original.${c.reset}`);
+    }
+
     const unverifiedQualityCount = finalQualityFlags.length;
-    if (finalSuspicious.length || unverifiedQualityCount) {
-        console.log(`${c.yellow}⚠ [Rezultat QA] Procesarea tehnică s-a încheiat, dar au rămas ${finalSuspicious.length} probleme de integritate/fidelitate și ${unverifiedQualityCount} semnale de calitate lingvistică. Aceste categorii sunt separate; verificarea automată nu confirmă subtitrarea ca fiind complet corectă.${c.reset}`);
+    if (finalSuspicious.length || unverifiedQualityCount || suppressedFillerIds.length) {
+        console.log(`${c.yellow}⚠ [Rezultat QA] Procesarea tehnică s-a încheiat, dar au rămas ${finalSuspicious.length} probleme de integritate/fidelitate, ${unverifiedQualityCount} semnale de calitate lingvistică și ${suppressedFillerIds.length} rezultate eliminate fiind doar interjecții. Aceste categorii sunt separate; verificarea automată nu confirmă subtitrarea ca fiind complet corectă.${c.reset}`);
     } else {
         console.log(`${c.green}✔ [Rezultat QA] Nu au rămas semnale din verificările automate active. Integritatea a trecut; calitatea semantică completă nu poate fi garantată doar automat.${c.reset}`);
     }
