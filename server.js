@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.118',
+    version: '12.78.119',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1706,6 +1706,29 @@ function getSourceFidelityIssues(original, translation) {
         if (diminutivesWithoutSourceCue) {
             issues.push('diminutiv introdus fără suport evident în sursă');
         }
+    }
+
+    // Guard semantic cu risc redus: detectează negația explicită din sursă
+    // atunci când traducerea nu conține niciun marcator românesc de negație.
+    // Este folosit de POST-CHECK-ul existent pentru un retry punctual; nu
+    // modifică direct textul și nu pornește o a doua verificare pentru toate replicile.
+    const sourceHasExplicitNegation = /\b(?:don't|doesn't|didn't|isn't|aren't|wasn't|weren't|can't|cannot|couldn't|won't|wouldn't|shouldn't|mustn't|haven't|hasn't|hadn't|do\s+not|does\s+not|did\s+not|is\s+not|are\s+not|was\s+not|were\s+not|can\s+not|could\s+not|will\s+not|would\s+not|should\s+not|must\s+not|have\s+not|has\s+not|had\s+not|never|nobody|no\s+one|nothing|nowhere|none|neither)\b/i.test(sourceNorm);
+    const isKnownPositiveEquivalent = /\b(?:can't|cannot)\s+wait\b/i.test(sourceNorm) ||
+        /\bcould(?:n't| not)\s+agree\s+more\b/i.test(sourceNorm) ||
+        /\bnot\s+(?:only|just|merely|simply)\b/i.test(sourceNorm) ||
+        /\bnot\s+(?:so\s+)?bad\b/i.test(sourceNorm);
+    const targetHasRomanianNegation = /(?<![\p{L}])(?:nu|nici|nimeni|nimic|nimănui|nicăieri|nicidecum|fără|deloc|imposibil|niciun[\p{L}]*|nicio[\p{L}]*)(?![\p{L}])/iu.test(targetNorm) ||
+        /(?<![\p{L}])n-(?:am|ai|a|are|au|avem|aveți|ar|aș|as|o|îl|il|îi|ii|au)(?![\p{L}])/iu.test(targetNorm);
+    if (sourceHasExplicitNegation && !isKnownPositiveEquivalent && !targetHasRomanianNegation) {
+        issues.push('negație explicită din sursă posibil pierdută în traducere');
+    }
+
+    // „following orders” înseamnă a urma/a executa ordinele, nu „ordinea de zi”.
+    // Semnalăm numai combinația de sursă și traducere care indică precis acest
+    // schimb de sens; remedierea se face prin retry-ul contextual deja existent.
+    if (/\bfollow(?:ing|ed)?\s+(?:the\s+)?orders\b/i.test(sourceNorm) &&
+        /(?<![\p{L}])(?:la\s+)?ordinea\s+(?:de\s+zi|zilei)(?![\p{L}])/iu.test(targetNorm)) {
+        issues.push('expresia „following orders” pare tradusă cu sensul de „ordinea de zi”');
     }
 
     return issues;
