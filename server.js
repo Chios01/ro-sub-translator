@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.127',
+    version: '12.78.130',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1315,7 +1315,7 @@ function parseRetryAfterMs(retryAfterHeader) {
             return Math.min(120000, Math.max(10000, retryAt - now));
         }
     }
-    return 15000;
+    return 30000;
 }
 
 async function waitFor429Gate(keyStates) {
@@ -1418,15 +1418,22 @@ async function callGemini(prompt, keyState, options = {}) {
             throw new Error(`Cheie Gemini invalidă (${status}).`);
         }
         if (status === 429) {
-            // 429 este tratat ca limitare temporară. Cheia curentă intră
-            // în cooldown; dacă mai multe chei au fost limitate, activăm
-            // temporar poarta globală pentru a evita rotația frenetică.
+            // 429 este o limitare de quota/rate la nivelul proiectului sau modelului,
+            // nu neapărat o problemă a cheii individuale. Păstrăm mesajul Google
+            // pentru diagnostic și respectăm Retry-After când este furnizat.
             const retryAfterHeader = error.response?.headers?.['retry-after'];
             const cooldownMs = parseRetryAfterMs(retryAfterHeader);
+            const providerMessage = String(
+                error.response?.data?.error?.message ||
+                error.response?.data?.message ||
+                ''
+            ).replace(/\s+/g, ' ').trim().slice(0, 300);
             keyState.pausedUntil = Date.now() + cooldownMs;
-            const retryError = new Error(`Limită Gemini 429; cheia intră în pauză pentru ${Math.ceil(cooldownMs / 1000)}s.`);
+            const details = providerMessage ? ` Detaliu Google: ${providerMessage}` : '';
+            const retryError = new Error(`Limită Gemini 429; pauză ${Math.ceil(cooldownMs / 1000)}s.${details}`);
             retryError.isRateLimit429 = true;
             retryError.retryAfterMs = cooldownMs;
+            retryError.providerMessage = providerMessage;
             throw retryError;
         }
         throw error;
@@ -2060,152 +2067,18 @@ function isOkOnlySubtitle(text) {
     return /^(?:[-–—\s]*(?:ok|okay)(?:[.!?…]+)?[-–—\s]*)$/i.test(clean);
 }
 
-async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) { 
+async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) {
     let totalFixed = 0;
 
-    for (let pass = 1; pass <= maxPasses; pass++) {
-        const suspicious = items.filter(item => {
-            const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
-            if (!originalClean) return false;
-            if (isJunkOrInterjection(item.text)) return false;
-
-            const translated = translatedById[String(item.id)];
-            if (isOkOnlySubtitle(translated)) return false;
-            const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
-
-            if (!transClean) return true;
-
-            return hasUntranslatedEnglish(item.text, translated) ||
-                hasCorruptedSubtitleText(translated, item.text) ||
-                hasLostExplicitSourceTerm(item.text, translated);
-        });
-
-        console.log(`${c.cyan}[POST-CHECK] Pas ${pass}/${maxPasses} | ${items.length} replici verificate.${c.reset}`);
-
-        if (suspicious.length === 0) {
-            console.log(`${c.green}[POST-CHECK] 0 suspecte.${c.reset}`);
-            return { fixed: totalFixed, remaining: [] };
-        }
-
-        console.log(`${c.yellow}[POST-CHECK] ${suspicious.length} suspecte; începe retry contextual.${c.reset}`);
-
-        const retryConcurrency = Math.max(1, Math.min(CONCURRENCY_LIMIT, suspicious.length));
-        let retryIndex = 0;
-        const retryWorker = async () => {
-            while (true) {
-                const item = suspicious[retryIndex++];
-                if (!item) return;
-                let fixed = false;
-
-                for (let retry = 1; retry <= 1; retry++) {
-                try {
-                    const keyState = await getAvailableKey(keyStates);
-                    const current = translatedById[String(item.id)] || '';
-                    const sourceFidelityIssues = getSourceFidelityIssues(item.text, current);
-                    const explicitTermInstruction = sourceFidelityIssues.length
-                        ? `
-PROBLEMĂ DE FIDELITATE SEMANTICĂ DETECTATĂ: ${sourceFidelityIssues.join('; ')}. Repară sensul, nu doar vocabularul. Păstrează termenii expliciți și relația gramaticală din original: obiect direct versus loc, subiect, complement, posesie, număr singular/plural. Pentru „dries my vagina”, folosește o construcție de tipul „îmi usucă vaginul”, nu „mă usucă în vagin”. Pentru „a hat”, păstrează un singur obiect, nu „căciuli”.
-`
-                        : '';
-
-                    const singlePrompt = `
-${MASTER_TRANSLATION_PROMPT}
-
-ACESTA ESTE UN RETRY FINAL, PUNCTUAL.
-Linia a fost detectată ca netradusă, coruptă sau posibil lipsită de un detaliu semantic. Ignoră traducerea anterioară dacă este greșită și produce o traducere română completă.
-${explicitTermInstruction}
-
-ID:
-"${item.id}"
-
-ORIGINAL:
-${JSON.stringify(item.text)}
-
-TRADUCEREA ACTUALĂ (poate fi greșită):
-${JSON.stringify(current)}
-
-Înainte de JSON, fă o ultimă verificare semantică a fiecărei corecții: compară EN → RO, pronumele, prepozițiile, subiectul, obiectul și relațiile dintre personaje. Nu accepta o corecție care doar sună mai bine.
-
-Returnează DOAR JSON valid în forma:
-[
-  {"id": ${item.id}, "text": "traducerea română"}
-]
-`;
-
-                    const raw = await callGemini(singlePrompt, keyState, { timeout: 30000 });
-                    const parsed = safeJsonParse(raw);
-                    const parsedDict = normalizeTranslationPayload(parsed);
-                    const candidateRaw = parsedDict[String(item.id)];
-
-                    const candidate = formatSubtitleLine(String(candidateRaw || ''));
-
-                    if (
-                        candidate &&
-                        !hasUntranslatedEnglish(item.text, candidate) &&
-                        !hasCorruptedSubtitleText(candidate, item.text) &&
-                        !hasLostExplicitSourceTerm(item.text, candidate)
-                    ) {
-                        translatedById[String(item.id)] = candidate;
-                        fixed = true;
-                        totalFixed++;
-
-                        console.log(`${c.green}  ✔ Retry ${item.id}: reparată (pas ${pass}/${maxPasses}).${c.reset}`);
-                        break;
-                    }
-
-                    console.log(`${c.yellow}  ⚠ Retry ${item.id}: încă suspectă (pas ${pass}/${maxPasses}).${c.reset}`);
-                } catch (err) {
-                    const is429 = err?.isRateLimit429 === true || /\b429\b/.test(String(err?.message || ''));
-                    if (is429) {
-                        const cooldownMs = Number(err?.retryAfterMs) || 15000;
-                        register429(keyStates, cooldownMs);
-                        console.log(`${c.yellow}  ⚠ Retry ${item.id}: Gemini a limitat cererea (429); cheia este în pauză ${Math.ceil(cooldownMs / 1000)}s.${c.reset}`);
-                    } else {
-                        console.log(`${c.yellow}  ⚠ Retry ${item.id} eșuat (pas ${pass}/${maxPasses}): ${err.message}${c.reset}`);
-                    }
-                }
-            }
-
-                if (!fixed) {
-                    console.log(`${c.red}  ❌ Neremediată: ${item.id}${c.reset}`);
-                }
-            }
-        };
-
-        await Promise.all(Array.from({ length: retryConcurrency }, () => retryWorker()));
-
-        const remaining = items.filter(item => {
-            const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
-            if (!originalClean) return false;
-            if (isJunkOrInterjection(item.text)) return false;
-
-            const translated = translatedById[String(item.id)];
-            if (isOkOnlySubtitle(translated)) return false;
-            const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
-
-            if (!transClean) return true;
-
-            return hasUntranslatedEnglish(item.text, translated) ||
-                hasCorruptedSubtitleText(translated, item.text) ||
-                hasLostExplicitSourceTerm(item.text, translated);
-        });
-
-        if (remaining.length === 0) {
-            console.log(`${c.green}✔ Toate replicile suspecte au fost remediate${c.reset}`);
-            return { fixed: totalFixed, remaining: [] };
-        }
-
-        console.log(`${c.yellow}⚠ ${remaining.length} suspecte rămase după pass ${pass}${c.reset}`);
-    }
-
-    const remaining = items.filter(item => {
-        const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
-        if (!originalClean) return false;
-        if (isJunkOrInterjection(item.text)) return false;
+    const findSuspicious = () => items.filter(item => {
+        const originalClean = isEffectivelyEmptySubtitleText(item.text)
+            ? ''
+            : String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        if (!originalClean || isJunkOrInterjection(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
+        if (isOkOnlySubtitle(translated)) return false;
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
-
         if (!transClean) return true;
 
         return hasUntranslatedEnglish(item.text, translated) ||
@@ -2213,7 +2086,73 @@ Returnează DOAR JSON valid în forma:
             hasLostExplicitSourceTerm(item.text, translated);
     });
 
-    return { fixed: totalFixed, remaining };
+    for (let pass = 1; pass <= maxPasses; pass++) {
+        const suspicious = findSuspicious();
+        console.log(`${c.cyan}[POST-CHECK] Pas ${pass}/${maxPasses} | ${items.length} replici verificate.${c.reset}`);
+
+        if (!suspicious.length) {
+            console.log(`${c.green}[POST-CHECK] 0 suspecte.${c.reset}`);
+            return { fixed: totalFixed, remaining: [] };
+        }
+
+        // Nu mai lansăm câte o cerere Gemini separată pentru fiecare replică:
+        // toate suspiciunile din această trecere sunt verificate într-un singur
+        // calup contextual. Asta reduce vârfurile de RPM și consumul de tokenuri
+        // după traducerea principală, fără a schimba modelul/promptul de traducere.
+        console.log(`${c.yellow}[POST-CHECK] ${suspicious.length} suspecte; verificare contextuală grupată într-o singură cerere pe calup.${c.reset}`);
+
+        const before = new Map(suspicious.map(item => [
+            String(item.id), String(translatedById[String(item.id)] || '')
+        ]));
+        const reasonById = Object.create(null);
+        for (const item of suspicious) {
+            const id = String(item.id);
+            const current = translatedById[id] || '';
+            const reasons = [];
+            if (!String(current).trim()) reasons.push('traducere goală');
+            if (hasUntranslatedEnglish(item.text, current)) reasons.push('posibil fragment englezesc netradus');
+            if (hasCorruptedSubtitleText(current, item.text)) reasons.push('posibil text corupt');
+            reasons.push(...getSourceFidelityIssues(item.text, current));
+            reasonById[id] = [...new Set(reasons)].join('; ');
+        }
+
+        try {
+            const reviewResult = await grammarTranslationReview(
+                suspicious,
+                translatedById,
+                keyStates,
+                {
+                    mode: 'targeted',
+                    contextItems: items,
+                    reasonById
+                }
+            );
+            totalFixed += Number(reviewResult?.fixed || 0);
+        } catch (error) {
+            console.log(`${c.yellow}[POST-CHECK] Verificarea grupată nu a putut fi terminată: ${String(error?.message || error).slice(0, 300)}${c.reset}`);
+        }
+
+        const remaining = findSuspicious();
+        if (!remaining.length) {
+            console.log(`${c.green}✔ Toate replicile suspecte au fost remediate${c.reset}`);
+            return { fixed: totalFixed, remaining: [] };
+        }
+
+        console.log(`${c.yellow}⚠ ${remaining.length} suspecte rămase după pass ${pass}${c.reset}`);
+        const anyChanged = suspicious.some(item =>
+            String(translatedById[String(item.id)] || '') !== before.get(String(item.id))
+        );
+
+        // Dacă revizuirea nu a schimbat nimic, repetarea aceluiași set de cereri
+        // aduce cost și risc de 429, fără un semn că ar ajuta. Raportăm explicit
+        // ce rămâne și lăsăm verificarea finală să arate acele ID-uri.
+        if (!anyChanged) {
+            console.log(`${c.yellow}[POST-CHECK] Nicio traducere nu s-a schimbat; nu repet același retry fără progres.${c.reset}`);
+            return { fixed: totalFixed, remaining };
+        }
+    }
+
+    return { fixed: totalFixed, remaining: findSuspicious() };
 }
 
 // ============================================================
@@ -2252,7 +2191,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     const candidates = items.filter(item => {
         const original = String(item.text || '').replace(/<[^>]+>/g, '').trim();
         const translated = String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim();
-        if (!original || !translated) return false;
+        if (!original || (!translated && !isTargetedReview)) return false;
         if (isJunkOrInterjection(item.text)) return false;
         if (isOkOnlySubtitle(translated)) return false;
         return true;
@@ -2318,7 +2257,7 @@ VERIFICĂ ÎN ORDINE
 
 REGULĂ DE PRUDENȚĂ
 Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
-
+${isTargetedReview && batch.some(entry => !String(translatedById[String(entry.id)] || '').trim()) ? '\nIMPORTANT: dacă un obiect are câmpul „translation” gol, nu există text de păstrat pentru acel ID. Tradu acel original în română pe baza contextului și returnează textul pentru acel ID; nu-l omite.\n' : ''}
 DATE DE VERIFICAT:
 Fiecare obiect include id, original, translation, context_anterior_en, context_urmator_en, context_anterior_ro, context_urmator_ro și, uneori, avertisment_semantic. Contextul este doar pentru înțelegere; corectează numai replica curentă.
 ${JSON.stringify(payload, null, 2)}
@@ -2460,7 +2399,11 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     // Grammar Review trebuie să activeze aceeași poartă globală
                     // folosită de traducerea principală, nu doar pauza cheii curente.
                     if (is429) {
-                        register429(keyStates, Number(error?.retryAfterMs) || 15000);
+                        const cooldownMs = Number(error?.retryAfterMs) || 30000;
+                        register429(keyStates, cooldownMs);
+                        const providerDetails = String(error?.providerMessage || message || 'fără detalii suplimentare')
+                            .replace(/\s+/g, ' ').trim().slice(0, 300);
+                        console.log(`${c.yellow}⚠ [Gemini 429] Limită/quota atinsă; pauză ${Math.ceil(cooldownMs / 1000)}s. Detaliu Google: ${providerDetails}${c.reset}`);
                         return { success: false, is429: true };
                     }
 
