@@ -60,6 +60,65 @@ const secretArchive = [];
 
 // Textul englez sursă, păstrat temporar ca să poată fi descărcat din arhivă (comparație calitate).
 const originalSources = Object.create(null);
+const mediaTitleCache = Object.create(null);
+
+// Rezolvă numele filmului/serialului din Cinemeta pentru antetul de început.
+// Dacă metadatele lipsesc, traducerea continuă folosind ID-ul.
+async function fetchMediaTitle(mediaId) {
+    const rawId = String(mediaId || '').trim();
+    const match = rawId.match(/^(tt\d+)(?::\d+(?::\d+)?)?$/i);
+    if (!match) return '';
+
+    const baseId = match[1];
+    const mediaType = rawId.includes(':') ? 'series' : 'movie';
+    const cacheKey = `${mediaType}:${baseId}`;
+    if (Object.prototype.hasOwnProperty.call(mediaTitleCache, cacheKey)) {
+        return mediaTitleCache[cacheKey];
+    }
+
+    try {
+        const response = await axios.get(
+            `https://v3-cinemeta.strem.io/meta/${mediaType}/${baseId}.json`,
+            { timeout: 2500, headers: { 'User-Agent': BROWSER_USER_AGENT } }
+        );
+        const meta = response.data?.meta || response.data?.item?.meta || {};
+        const title = String(meta.name || meta.title || '')
+            .replace(/[\r\n\t]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        mediaTitleCache[cacheKey] = title;
+        return title;
+    } catch (_) {
+        // O eroare la preluarea numelui nu trebuie să oprească traducerea.
+        mediaTitleCache[cacheKey] = '';
+        return '';
+    }
+}
+
+function logTranslationStart(mediaId, mediaTitle) {
+    const headline = '🎬 ÎNCEPE TRADUCEREA';
+    const cleanId = String(mediaId || 'ID necunoscut')
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const cleanTitle = String(mediaTitle || '')
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const details = cleanTitle ? `${cleanId} — ${cleanTitle}` : cleanId;
+
+    // Lățimea se adaptează la titlu, astfel încât ID-ul și numele să nu fie trunchiate.
+    const innerWidth = Math.max(64, headline.length, details.length);
+    const outerWidth = innerWidth + 4;
+    const top = `╔${'═'.repeat(outerWidth - 2)}╗`;
+    const bottom = `╚${'═'.repeat(outerWidth - 2)}╝`;
+    const centered = (value) => {
+        const left = Math.floor((innerWidth - value.length) / 2);
+        return `║ ${' '.repeat(left)}${value}${' '.repeat(innerWidth - value.length - left)} ║`;
+    };
+
+    console.log(`${c.red}\n${top}\n${centered(headline)}\n${centered(details)}\n${bottom}${c.reset}`);
+}
 function rememberOriginalSource(key, text) {
     originalSources[key] = text;
     const keys = Object.keys(originalSources);
@@ -84,7 +143,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.134',
+    version: '12.78.136',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3708,12 +3767,14 @@ app.get('/:configData/translate', async (req, res) => {
             const startTime = Date.now();
             
             processPromise = (async () => {
-                const srtRes = await fetchValidatedSubtitleUrl(validatedTarget.url);
+                const [srtRes, mediaTitle] = await Promise.all([
+                    fetchValidatedSubtitleUrl(validatedTarget.url),
+                    fetchMediaTitle(imdbId)
+                ]);
                 rememberOriginalSource(cacheKey, String(srtRes.data || ''));
-                
-                const totalLinesCount = (String(srtRes.data || '').match(/-->/g) || []).length;
-                console.log(`${c.cyan}\n[START] ${imdbId}.${c.reset}`);
-                
+
+                logTranslationStart(imdbId, mediaTitle);
+
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
             })();
             
