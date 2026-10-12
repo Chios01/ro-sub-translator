@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.122',
+    version: '12.78.123',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2201,7 +2201,13 @@ const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
 const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
 const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
 const GRAMMAR_REVIEW_JSON_RETRY_LIMIT = 1;
-const GRAMMAR_REVIEW_JSON_SPLIT_MIN = 20;
+// La eroare JSON se izolează prin split până la replică individuală, dacă este nevoie.
+const GRAMMAR_REVIEW_JSON_SPLIT_MIN = 1;
+
+function shouldSplitGrammarReviewBatch(batchLength, isJsonError, message) {
+    return batchLength > GRAMMAR_REVIEW_JSON_SPLIT_MIN &&
+        (Boolean(isJsonError) || /conținut gol|empty content/i.test(String(message || '')));
+}
 
 async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
     const contextItems = options.contextItems || items;
@@ -2272,6 +2278,7 @@ VERIFICĂ ÎN ORDINE
 5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase.
 6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
 7. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
+8. Dacă avertismentul menționează un conector repetat între două subtitrări consecutive, compară ambele originale și ambele traduceri din context. Păstrează conectorul în fragmentul al cărui original îl conține. Dacă originalul fragmentului curent NU începe/nu se termină cu acel conector, dar traducerea îl adaugă la limită, elimină doar conectorul adăugat inutil din replica curentă; nu șterge conectorul justificat de următorul/precedentul original. Dacă dovezile nu sunt clare, nu rescrie.
 
 REGULĂ DE PRUDENȚĂ
 Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
@@ -2289,10 +2296,10 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
         let lastJsonError = null;
 
         // JSON-ul Gemini poate fi invalid ocazional chiar dacă promptul cere
-        // explicit JSON valid. Nu abandonăm calupul la prima eroare: facem
-        // un retry punctual pe același calup, iar dacă răspunsul rămâne invalid
-        // îl împărțim automat în două. Astfel păstrăm 120 ca dimensiune normală
-        // și nu pierdem verificări doar din cauza unei ghilimele/virgule stricate.
+        // explicit JSON valid. Facem un retry pe același calup; dacă răspunsul
+        // rămâne invalid, îl împărțim repetat până la replici individuale.
+        // Dimensiunea normală rămâne 120; split-ul apare doar la eroare de format
+        // și evită ca un singur răspuns invalid să lase neverificat tot grupul.
         for (let jsonAttempt = 0; jsonAttempt <= GRAMMAR_REVIEW_JSON_RETRY_LIMIT; jsonAttempt++) {
             try {
                 if (jsonAttempt > 0) {
@@ -2436,11 +2443,11 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     continue;
                 }
 
-                // Dacă am ajuns aici după un retry JSON eșuat, NU mai abandonăm
-                // calupul indiferent dacă a doua eroare a fost JSON, răspuns gol sau
-                // o eroare neașteptată. Îl împărțim pentru a izola replica problematică.
-                if (batch.length > GRAMMAR_REVIEW_JSON_SPLIT_MIN &&
-                    (isJsonError || jsonAttempt > 0 || /conținut gol|empty content/i.test(message))) {
+                // După retry-ul JSON, împărțim numai dacă răspunsul rămâne invalid
+                // sau gol. Erorile API nelegate de format nu declanșează split
+                // suplimentar; dacă un singleton tot nu produce JSON valid, îl
+                // lăsăm explicit neverificat în raportul final.
+                if (shouldSplitGrammarReviewBatch(batch.length, isJsonError, message)) {
                     const middle = Math.ceil(batch.length / 2);
                     const left = batch.slice(0, middle);
                     const right = batch.slice(middle);
@@ -2737,26 +2744,61 @@ function findRepeatedBoundaryConnectorIssues(items, translatedById) {
     const issues = [];
     const seen = new Set();
     const connectorPattern = /(?:^|\s)(dar|însă|totuși)\s*[,;:!?…]*$/iu;
-    const leadingConnectorPattern = /^\s*(?:[-–—]\s*)?(dar|însă|totuși)\b/iu;
+    const leadingConnectorPattern = /^\s*(?:[-–—]\s*)?(dar|însă|totuși)(?![\p{L}])/iu;
+    const sourceTailPattern = /(?:^|\s)(but|however|yet|still|nevertheless)\s*[,;:!?…]*$/iu;
+    const sourceHeadPattern = /^\s*(?:[-–—]\s*)?(but|however|yet|still|nevertheless)\b/iu;
+
+    const sourceConnectorSupportsRomanian = (englishConnector, romanianConnector) => {
+        const en = String(englishConnector || '').toLocaleLowerCase('en-US');
+        const ro = String(romanianConnector || '').toLocaleLowerCase('ro-RO');
+        const supported = {
+            but: ['dar', 'însă'],
+            however: ['dar', 'însă', 'totuși'],
+            yet: ['dar', 'însă', 'totuși'],
+            still: ['dar', 'însă', 'totuși'],
+            nevertheless: ['dar', 'însă', 'totuși']
+        };
+        return Boolean(supported[en]?.includes(ro));
+    };
 
     for (let i = 0; i < items.length - 1; i++) {
         const currentItem = items[i];
         const nextItem = items[i + 1];
         if (isJunkOrInterjection(currentItem.text) || isJunkOrInterjection(nextItem.text)) continue;
 
-        const currentText = String(translatedById[String(currentItem.id)] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-        const nextText = String(translatedById[String(nextItem.id)] || '').replace(/<[^>]+>/g, ' ').trim();
+        const currentText = String(translatedById[String(currentItem.id)] || '')
+            .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const nextText = String(translatedById[String(nextItem.id)] || '')
+            .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
         const tail = currentText.match(connectorPattern);
         const head = nextText.match(leadingConnectorPattern);
         if (!tail || !head || tail[1].toLocaleLowerCase('ro-RO') !== head[1].toLocaleLowerCase('ro-RO')) continue;
 
-        const reason = `conector repetat între două fragmente consecutive: „${tail[1]}”`;
-        for (const item of [currentItem, nextItem]) {
-            const id = String(item.id);
-            if (seen.has(id)) continue;
-            seen.add(id);
-            issues.push({ item, reason });
-        }
+        // Folosim ambele originale pentru a afla ce fragment justifică de fapt
+        // conectorul. Astfel, nu raportăm o dublare mecanic doar din română.
+        const sourceCurrent = String(currentItem.text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const sourceNext = String(nextItem.text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const sourceTail = sourceCurrent.match(sourceTailPattern);
+        const sourceHead = sourceNext.match(sourceHeadPattern);
+        const tailSupportedBySource = sourceTail && sourceConnectorSupportsRomanian(sourceTail[1], tail[1]);
+        const headSupportedBySource = sourceHead && sourceConnectorSupportsRomanian(sourceHead[1], head[1]);
+
+        // Dacă ambele surse au același conector în aceeași poziție, păstrăm
+        // traducerea lor: nu presupunem că repetiția vine dintr-o eroare AI.
+        if (tailSupportedBySource && headSupportedBySource) continue;
+
+        // Când conectorul de la final este susținut de originalul precedent,
+        // semnalăm blocul următor (al cărui original nu începe cu acel conector).
+        // În celelalte cazuri, semnalăm conectorul introdus la finalul blocului
+        // curent; de ex. ID 669 adăuga „dar”, deși originalul continuă abia la 670
+        // cu „but”.
+        const issueItem = tailSupportedBySource && !headSupportedBySource ? nextItem : currentItem;
+        const issueId = String(issueItem.id);
+        if (seen.has(issueId)) continue;
+        seen.add(issueId);
+
+        const reason = `conector repetat între două fragmente consecutive: „${tail[1]}”; originalele EN indică plasarea conectorului ${tailSupportedBySource ? `la ID ${currentItem.id}` : headSupportedBySource ? `la ID ${nextItem.id}` : 'doar după compararea contextului'}; verifică dacă traducerea a adăugat conectorul în blocul greșit`;
+        issues.push({ item: issueItem, reason, pairedItem: issueItem === currentItem ? nextItem : currentItem });
     }
     return issues;
 }
@@ -3311,10 +3353,11 @@ Returnează DOAR un ARRAY JSON valid în forma:
         return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
     }).join('\n');
 
-    if (finalSuspicious.length || finalQualityFlags.length) {
-        console.log(`${c.yellow}⚠ [Rezultat QA] Procesarea tehnică s-a încheiat, dar au rămas ${finalSuspicious.length} probleme de integritate/fidelitate și ${finalQualityFlags.length} semnale de calitate lingvistică. Verificarea automată nu confirmă subtitrarea ca fiind complet corectă.${c.reset}`);
+    const unverifiedQualityCount = finalQualityFlags.length;
+    if (finalSuspicious.length || unverifiedQualityCount) {
+        console.log(`${c.yellow}⚠ [Rezultat QA] Procesarea tehnică s-a încheiat, dar au rămas ${finalSuspicious.length} probleme de integritate/fidelitate și ${unverifiedQualityCount} semnale de calitate lingvistică. Aceste categorii sunt separate; verificarea automată nu confirmă subtitrarea ca fiind complet corectă.${c.reset}`);
     } else {
-        console.log(`${c.green}✔ [Rezultat QA] Nu au rămas semnale din verificările automate active. Acesta nu este un certificat că fiecare nuanță semantică este perfectă.${c.reset}`);
+        console.log(`${c.green}✔ [Rezultat QA] Nu au rămas semnale din verificările automate active. Integritatea a trecut; calitatea semantică completă nu poate fi garantată doar automat.${c.reset}`);
     }
 
     return output.trim() + '\n';
