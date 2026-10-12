@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.125',
+    version: '12.78.126',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -673,7 +673,8 @@ function deepCleanSubtitleText(text) {
     // Normalizează apostroful curb și semnul „…”, apoi păstrează ghilimelele românești „ ” și “ ”.
     cleaned = cleaned.replace(/[\u2018\u2019]/g, "'").replace(/\u2026/g, '...');
     cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/\u201C\u201D\u201E]/g, '');
-    cleaned = cleaned.replace(/\s*\([^)]+\)$/g, '');
+    // Nu eliminăm generic parantezele terminale: pot conține dialog real.
+    // Indicațiile sonore sunt filtrate explicit mai sus, după conținut.
 
     if (!cleaned.trim()) return '';
 
@@ -1423,7 +1424,7 @@ async function callGemini(prompt, keyState, options = {}) {
             const retryAfterHeader = error.response?.headers?.['retry-after'];
             const cooldownMs = parseRetryAfterMs(retryAfterHeader);
             keyState.pausedUntil = Date.now() + cooldownMs;
-            const retryError = new Error(`Rate limit 429. Aștept ${Math.ceil(cooldownMs / 1000)}s și reîncerc.`);
+            const retryError = new Error(`Limită Gemini 429; cheia intră în pauză pentru ${Math.ceil(cooldownMs / 1000)}s.`);
             retryError.isRateLimit429 = true;
             retryError.retryAfterMs = cooldownMs;
             throw retryError;
@@ -1762,13 +1763,13 @@ function getSourceFidelityIssues(original, translation) {
     const sourceForNegation = sourceNorm.replace(
         /,\s*(?:don't|doesn't|didn't|isn't|aren't|wasn't|weren't|can't|couldn't|won't|wouldn't|shouldn't|mustn't|haven't|hasn't|hadn't|do\s+not|does\s+not|did\s+not|is\s+not|are\s+not|was\s+not|were\s+not|can\s+not|could\s+not|will\s+not|would\s+not|should\s+not|must\s+not|have\s+not|has\s+not|had\s+not)\s+(?:i|you|he|she|it|we|they|this|that)\s*\?$/i,
         ''
-    );
+    ).replace(/\b(?:(?:in|into|out\s+in|from)\s+)?(?:the\s+)?middle\s+of\s+nowhere\b/gi, ' ');
     const sourceHasExplicitNegation = /\b(?:don't|doesn't|didn't|isn't|aren't|wasn't|weren't|can't|cannot|couldn't|won't|wouldn't|shouldn't|mustn't|haven't|hasn't|hadn't|do\s+not|does\s+not|did\s+not|is\s+not|are\s+not|was\s+not|were\s+not|can\s+not|could\s+not|will\s+not|would\s+not|should\s+not|must\s+not|have\s+not|has\s+not|had\s+not|never|nobody|no\s+one|nothing|nowhere|none|neither)\b/i.test(sourceForNegation);
     const isKnownPositiveEquivalent = /\b(?:can't|cannot)\s+wait\b/i.test(sourceNorm) ||
         /\bcould(?:n't| not)\s+agree\s+more\b/i.test(sourceNorm) ||
         /\bnot\s+(?:only|just|merely|simply)\b/i.test(sourceNorm) ||
         /\bnot\s+(?:so\s+)?bad\b/i.test(sourceNorm);
-    const targetHasRomanianNegation = /(?<![\p{L}])(?:nu|nici|nimeni|nimic|nimănui|nicăieri|nicidecum|fără|deloc|imposibil|niciun[\p{L}]*|nicio[\p{L}]*)(?![\p{L}])/iu.test(targetNorm) ||
+    const targetHasRomanianNegation = /(?<![\p{L}])(?:nu|nici|nimeni|nimic(?:ul(?:ui)?|uri(?:le|lor)?)?|nimănui|nicăieri|nicidecum|fără|deloc|imposibil|niciun[\p{L}]*|nicio[\p{L}]*)(?![\p{L}])/iu.test(targetNorm) ||
         // Acoperă și forme precum „n-aveam”, nu doar „n-am”/„n-a”.
         /(?<![\p{L}])n-[\p{L}]+(?![\p{L}])/iu.test(targetNorm);
     if (sourceHasExplicitNegation && !isKnownPositiveEquivalent && !targetHasRomanianNegation) {
@@ -2154,7 +2155,14 @@ Returnează DOAR JSON valid în forma:
 
                     console.log(`${c.yellow}  ⚠ Retry ${item.id}: încă suspectă (pas ${pass}/${maxPasses}).${c.reset}`);
                 } catch (err) {
-                    console.log(`${c.yellow}  ⚠ Retry ${item.id} eșuat (pas ${pass}/${maxPasses}): ${err.message}${c.reset}`);
+                    const is429 = err?.isRateLimit429 === true || /\b429\b/.test(String(err?.message || ''));
+                    if (is429) {
+                        const cooldownMs = Number(err?.retryAfterMs) || 15000;
+                        register429(keyStates, cooldownMs);
+                        console.log(`${c.yellow}  ⚠ Retry ${item.id}: Gemini a limitat cererea (429); cheia este în pauză ${Math.ceil(cooldownMs / 1000)}s.${c.reset}`);
+                    } else {
+                        console.log(`${c.yellow}  ⚠ Retry ${item.id} eșuat (pas ${pass}/${maxPasses}): ${err.message}${c.reset}`);
+                    }
                 }
             }
 
@@ -2674,7 +2682,6 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}])nimani(?![\p{L}])/giu, 'nimeni'],
     [/(?<![\p{L}])lasă-mi-te(?![\p{L}])/giu, 'lasă-mă'],
     [/\bnite\b/giu, 'niște'],
-    [/(?<![\p{L}])din\s+cauz[ăa]\s+la\s+ce(?![\p{L}])/giu, 'din cauza a ceea ce'],
     [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are']
 ];
 
@@ -3529,12 +3536,25 @@ Returnează DOAR un ARRAY JSON valid în forma:
         console.log(`${c.green}[QA] Niciun semnal activ în verificările automate. Sensul complet al tuturor replicilor nu poate fi garantat automat.${c.reset}`);
     }
 
-    const output = items.filter(item => !suppressedFillerIdSet.has(String(item.id))).map(item => {
-        const translated = translatedById[String(item.id)] || item.text;
-        return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
-    }).join('\n');
+    const emptyUntranslatedIds = items
+        .filter(item => !suppressedFillerIdSet.has(String(item.id)) && !String(translatedById[String(item.id)] ?? '').trim())
+        .map(item => String(item.id));
+    if (emptyUntranslatedIds.length) {
+        const preview = emptyUntranslatedIds.slice(0, 20).join(', ');
+        console.log(`${c.red}[EXPORT] ${emptyUntranslatedIds.length} blocuri fără traducere română au fost omise; textul englezesc original NU a fost folosit ca fallback. ID-uri: ${preview}${emptyUntranslatedIds.length > 20 ? ' ...' : ''}${c.reset}`);
+    }
 
-    return output.trim() + '\n';
+    const output = items
+        .filter(item => {
+            const id = String(item.id);
+            return !suppressedFillerIdSet.has(id) && String(translatedById[id] ?? '').trim().length > 0;
+        })
+        .map(item => {
+            const translated = String(translatedById[String(item.id)]);
+            return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
+        }).join('\n');
+
+    return output.trim() ? output.trim() + '\n' : '';
 }
 
 // ============================================================
