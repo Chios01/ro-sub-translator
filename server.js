@@ -84,7 +84,7 @@ function cleanMemoryCache() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.120',
+    version: '12.78.121',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2214,7 +2214,10 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
                 context_urmator_en: next ? `[${next.id}] ${next.text}` : '(niciunul)',
                 context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
                 context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)',
-                avertisment_semantic: getSourceFidelityIssues(item.text, translatedById[String(item.id)] || '').join('; ')
+                avertisment_semantic: [
+                    getSourceFidelityIssues(item.text, translatedById[String(item.id)] || '').join('; '),
+                    options.reasonById ? (options.reasonById[String(item.id)] || '') : ''
+                ].filter(Boolean).join('; ')
             };
         });
 
@@ -2515,7 +2518,9 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\binnascuta\b/gi, 'înnăscută'],
     [/\binnascut\b/gi, 'înnăscut'],
     [/\binnascuti\b/gi, 'înnăscuți'],
-    [/(?<![\p{L}])ți-a\s+pasat\b/iu, 'ți-a păsat']
+    [/(?<![\p{L}])ți-a\s+pasat\b/iu, 'ți-a păsat'],
+    [/\bnite\b/giu, 'niște'],
+    [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are']
 ];
 
 function applyLocalGrammarDeterministicFixes(text) {
@@ -2541,6 +2546,22 @@ function detectLocalGrammarReviewReasons(text) {
     if (!clean) return [];
 
     const reasons = [];
+
+    // Semnale pentru deformări și construcții românești cu risc mare.
+    // Nu rescriem automat: sunt trimise la verificare AI numai replicile marcate.
+    const highConfidenceRomanianQualityGuards = [
+        { pattern: /(?<![\p{L}])introm(?![\p{L}])/iu, message: 'posibil cuvânt trunchiat/inexistent „introm”' },
+        { pattern: /(?<![\p{L}])eau\s+(?:de\s+)?\d+(?:\s*,\s*\d+)?(?![\p{L}])/iu, message: 'posibil cuvânt trunchiat înaintea unui număr („eau de 12, 15”)' },
+        { pattern: /(?<![\p{L}])necesiți(?![\p{L}])/iu, message: 'formă verbală românească suspectă „necesiți”' },
+        { pattern: /(?<![\p{L}])flori[-\s]+soarelui(?![\p{L}])/iu, message: 'posibil calc/declinare greșită „flori-soarelui”' },
+        { pattern: /(?<![\p{L}])modalitate\s+noi\s+\p{L}+(?![\p{L}])/iu, message: 'construcție gramaticală suspectă după „modalitate noi”' },
+        { pattern: /(?<![\p{L}])din\s+cauza\s+(?:voastră|voștri|voastre),?\s*a\s+doi(?![\p{L}])/iu, message: 'construcție suspectă „din cauza voastră, a doi”' },
+        { pattern: /(?<![\p{L}])lăsați-mi\s+(?:echipa|grupul|echipajul|oamenii|soldații|soldatii)\s+să(?![\p{L}])/iu, message: 'posibilă ordine greșită a pronumelui în construcția „lăsați-mi ... să”' },
+        { pattern: /(?<![\p{L}])(?:lucrura|acesa|întregă|nite|introm)(?![\p{L}])/iu, message: 'posibilă deformare/greșeală ortografică' }
+    ];
+    for (const guard of highConfidenceRomanianQualityGuards) {
+        if (guard.pattern.test(clean)) reasons.push(guard.message);
+    }
 
     // Repetiție imediată de cuvânt: nu o corectăm automat, deoarece poate fi
     // o bâlbâială/replică intenționată; o lăsăm Grammar Review să decidă.
@@ -2582,6 +2603,34 @@ function detectLocalGrammarReviewReasons(text) {
     return reasons;
 }
 
+function findRepeatedBoundaryConnectorIssues(items, translatedById) {
+    const issues = [];
+    const seen = new Set();
+    const connectorPattern = /(?:^|\s)(dar|însă|totuși)\s*[,;:!?…]*$/iu;
+    const leadingConnectorPattern = /^\s*(?:[-–—]\s*)?(dar|însă|totuși)\b/iu;
+
+    for (let i = 0; i < items.length - 1; i++) {
+        const currentItem = items[i];
+        const nextItem = items[i + 1];
+        if (isJunkOrInterjection(currentItem.text) || isJunkOrInterjection(nextItem.text)) continue;
+
+        const currentText = String(translatedById[String(currentItem.id)] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const nextText = String(translatedById[String(nextItem.id)] || '').replace(/<[^>]+>/g, ' ').trim();
+        const tail = currentText.match(connectorPattern);
+        const head = nextText.match(leadingConnectorPattern);
+        if (!tail || !head || tail[1].toLocaleLowerCase('ro-RO') !== head[1].toLocaleLowerCase('ro-RO')) continue;
+
+        const reason = `conector repetat între două fragmente consecutive: „${tail[1]}”`;
+        for (const item of [currentItem, nextItem]) {
+            const id = String(item.id);
+            if (seen.has(id)) continue;
+            seen.add(id);
+            issues.push({ item, reason });
+        }
+    }
+    return issues;
+}
+
 async function runLocalGrammarQualityPass(items, translatedById) {
     let autoFixed = 0;
     const flagged = [];
@@ -2605,12 +2654,23 @@ async function runLocalGrammarQualityPass(items, translatedById) {
             reasons.push(`detaliu anatomic explicit pierdut din original: ${missingExplicitTerms.join(', ')}`);
         }
         if (reasons.length) {
-            flagged.push({
-                item,
-                reasons
-            });
+            flagged.push({ item, reasons });
         }
     }
+
+    // Verifică relația dintre două blocuri: un „dar” la sfârșitul primului
+    // bloc urmat imediat de „dar” la începutul celui de-al doilea poate dubla
+    // aceeași legătură logică. Ambele fragmente sunt trimise împreună la review.
+    for (const boundaryIssue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
+        const id = String(boundaryIssue.item.id);
+        const existing = flagged.find(entry => String(entry.item.id) === id);
+        if (existing) {
+            if (!existing.reasons.includes(boundaryIssue.reason)) existing.reasons.push(boundaryIssue.reason);
+        } else {
+            flagged.push({ item: boundaryIssue.item, reasons: [boundaryIssue.reason] });
+        }
+    }
+    flagged.sort((a, b) => items.findIndex(item => String(item.id) === String(a.item.id)) - items.findIndex(item => String(item.id) === String(b.item.id)));
 
     console.log(`${c.green}✔ [Micro-Grammar] ${autoFixed} corecții locale certe aplicate.${c.reset}`);
 
@@ -2625,7 +2685,8 @@ async function runLocalGrammarQualityPass(items, translatedById) {
 
     return {
         autoFixed,
-        flaggedItems: flagged.map(entry => entry.item)
+        flaggedItems: flagged.map(entry => entry.item),
+        reasonsById: Object.fromEntries(flagged.map(entry => [String(entry.item.id), entry.reasons.join('; ')]))
     };
 }
 
@@ -2791,7 +2852,7 @@ const CONTINUATION_FUNCTION_WORDS = new Set([
     'și', 'iar', 'dar', 'sau', 'să', 'că', 'care', 'ce', 'cine', 'cum', 'când', 'unde', 'cât',
     'dacă', 'ca', 'de', 'pe', 'la', 'în', 'din', 'cu', 'pentru', 'prin', 'fără', 'despre',
     'după', 'înainte', 'către', 'între', 'mai', 'apoi', 'atunci', 'doar', 'chiar', 'tot',
-    'totul', 'toți', 'toate', 'așa', 'nu', 'un', 'cea', 'cel', 'cei', 'cele', 'mă', 'te',
+    'totul', 'toți', 'toate', 'ceva', 'așa', 'nu', 'un', 'cea', 'cel', 'cei', 'cele', 'mă', 'te',
     'se', 'ne', 'vă', 'îmi', 'îți', 'își'
 ]);
 
@@ -2945,11 +3006,41 @@ Returnează DOAR un ARRAY JSON valid în forma:
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}✔ Targeted retry final: ${targetedRetry.fixed} linii reparate${c.reset}`);
 
-    // Etapa AI Grammar Review nu este apelată în această versiune de comparație.
-    // Păstrăm verificările locale deterministe și detectoarele existente, fără o a doua
-    // rescriere AI care poate schimba sensul unor replici deja traduse.
-    await runLocalGrammarQualityPass(items, translatedById);
-    runSemanticSpotCheck(items, translatedById);
+    // Verificare AI punctuală și limitată: numai replicile pe care semnalele
+    // locale le marchează ca potențial corupte/agramaticale. Nu revizuim toate
+    // subtitrările și nu schimbăm modelul, calupurile sau mecanismul cheilor.
+    const localQuality = await runLocalGrammarQualityPass(items, translatedById);
+    const semanticQualityItems = runSemanticSpotCheck(items, translatedById);
+    const targetedReasonById = { ...localQuality.reasonsById };
+    for (const item of semanticQualityItems) {
+        const id = String(item.id);
+        const reasons = detectSemanticSpotCheckReasons(translatedById[id] || '');
+        if (reasons.length) {
+            targetedReasonById[id] = [targetedReasonById[id], reasons.join('; ')].filter(Boolean).join('; ');
+        }
+    }
+
+    const targetedQualityIds = new Set([
+        ...localQuality.flaggedItems.map(item => String(item.id)),
+        ...semanticQualityItems.map(item => String(item.id))
+    ]);
+    const targetedQualityCandidates = items.filter(item => targetedQualityIds.has(String(item.id)));
+    const MAX_TARGETED_QUALITY_REVIEW_ITEMS = 30;
+    if (targetedQualityCandidates.length) {
+        const reviewItems = targetedQualityCandidates.slice(0, MAX_TARGETED_QUALITY_REVIEW_ITEMS);
+        console.log(`${c.cyan}🎯 [Quality Retry] Verificare AI punctuală: ${reviewItems.length}/${targetedQualityCandidates.length} replici semnalate; restul subtitrării nu este reverificat.${c.reset}`);
+        const qualityReview = await grammarTranslationReview(reviewItems, translatedById, keyStates, {
+            mode: 'targeted',
+            contextItems: items,
+            reasonById: targetedReasonById
+        });
+        console.log(`${c.green}✔ [Quality Retry] ${qualityReview.checked} verificate punctual, ${qualityReview.fixed} corectate.${c.reset}`);
+        if (targetedQualityCandidates.length > MAX_TARGETED_QUALITY_REVIEW_ITEMS) {
+            console.log(`${c.yellow}⚠ [Quality Retry] Limită de siguranță: ${targetedQualityCandidates.length - MAX_TARGETED_QUALITY_REVIEW_ITEMS} replici semnalate au rămas în afara acestei verificări.${c.reset}`);
+        }
+    } else {
+        console.log(`${c.green}✔ [Quality Retry] Nicio replică nu a declanșat verificarea AI punctuală; nu s-a adăugat o cerere Gemini.${c.reset}`);
+    }
 
     // Recuperare finală independentă de Grammar Review pentru eventuale traduceri goale.
     await recoverEmptyTranslationsFinal(items, translatedById, keyStates);
@@ -2984,6 +3075,20 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
     applyContinuationCase(items, translatedById);
 
+    const finalQualityFlags = [];
+    for (const item of items) {
+        if (isJunkOrInterjection(item.text)) continue;
+        const text = String(translatedById[String(item.id)] || '');
+        const reasons = detectLocalGrammarReviewReasons(text);
+        if (reasons.length) finalQualityFlags.push({ item, reasons });
+    }
+    for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
+        const id = String(issue.item.id);
+        const existing = finalQualityFlags.find(entry => String(entry.item.id) === id);
+        if (existing) existing.reasons.push(issue.reason);
+        else finalQualityFlags.push({ item: issue.item, reasons: [issue.reason] });
+    }
+
     console.log(`\n${c.cyan}🔒 Protecție finală: corecțiile deterministe au fost reaplicate.${c.reset}`);
     console.log(`\n${c.cyan}🔍 VERIFICARE FINALĂ...${c.reset}`);
 
@@ -3014,7 +3119,15 @@ Returnează DOAR un ARRAY JSON valid în forma:
         console.log(`${c.green}✔ 0 replici suspecte${c.reset}`);
     }
 
-    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici valide${c.reset}`);
+    console.log(`${c.green}✔ ${items.length - finalSuspicious.length}/${items.length} replici trecute de verificarea de integritate/fidelitate${c.reset}`);
+    if (finalQualityFlags.length) {
+        console.log(`${c.yellow}⚠ [Calitate lingvistică] ${finalQualityFlags.length} replici încă au semnale locale după verificarea punctuală.${c.reset}`);
+        finalQualityFlags.slice(0, 20).forEach(entry => {
+            console.log(`  ${c.yellow}• ${entry.item.id}: ${entry.reasons.join('; ')}${c.reset}`);
+        });
+    } else {
+        console.log(`${c.green}✔ [Calitate lingvistică] Niciunul dintre semnalele locale urmărite nu a rămas detectat.${c.reset}`);
+    }
     console.log(`${c.green}✔ Verificarea finală executată după targeted retry.${c.reset}`);
 
     const output = items.map(item => {
