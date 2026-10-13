@@ -173,7 +173,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.140',
+    version: '12.78.141',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2065,21 +2065,28 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const parsed = JSON.parse(String(raw).trim());
             const dict = normalizeTranslationPayload(parsed);
 
-            const missingItems = chunk.filter(obj => dict[String(obj.id)] === undefined);
+            // Pentru succesul unui ID verificăm și conținutul textului, nu doar prezența ID-ului.
+            // Un câmp text gol trebuie tratat la fel ca un ID lipsă, cât încă știm din ce calup provine.
+            const hasUsableTranslation = value => {
+                if (value === undefined || value === null) return false;
+                return Boolean(String(value).replace(/<[^>]+>/g, '').trim());
+            };
+
+            const missingItems = chunk.filter(obj => !hasUsableTranslation(dict[String(obj.id)]));
             if (missingItems.length > 12) {
-                throw new Error(`Răspuns Gemini sever incomplet: lipsesc ${missingItems.length} ID-uri.`);
+                throw new Error(`Răspuns Gemini sever incomplet: ${missingItems.length} ID-uri lipsă sau cu traduceri goale.`);
             }
             if (missingItems.length) {
-                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: lipsesc ${missingItems.length} ID-uri. Cerere punctuală...${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: ${missingItems.length} ID-uri lipsă sau cu traducere goală. Cerere punctuală...${c.reset}`);
                 const missingPrompt = `
 ${MASTER_TRANSLATION_PROMPT}
 
-Returnează STRICT un ARRAY JSON valid pentru TOATE liniile de mai jos. Nu omite niciun ID și nu modifica ID-urile:
+Returnează STRICT un ARRAY JSON valid pentru TOATE replicile de mai jos care lipsesc sau au primit text gol. Nu omite niciun ID și nu modifica ID-urile:
 [
   {"id": 123, "text": "traducerea română"}
 ]
 
-LINIILE LIPSĂ:
+LINIILE LIPSĂ SAU GOALE:
 ${JSON.stringify(missingItems, null, 2)}
 `;
                 try {
@@ -2088,21 +2095,52 @@ ${JSON.stringify(missingItems, null, 2)}
                     const missingDict = normalizeTranslationPayload(missingJson);
                     for (const obj of missingItems) {
                         const value = missingDict[String(obj.id)];
-                        if (value !== undefined) dict[String(obj.id)] = value;
+                        if (hasUsableTranslation(value)) dict[String(obj.id)] = value;
                     }
                 } catch (missingError) {
-                    console.log(`${c.yellow}  ⚠ [Gemini] Cererea punctuală a eșuat: ${missingError.message}${c.reset}`);
+                    const is429 = missingError?.isRateLimit429 === true || /\b429\b/i.test(String(missingError?.message || ''));
+                    if (is429) {
+                        register429(
+                            keyStates,
+                            Number(missingError.retryAfterMs) || 15000,
+                            missingError.isProjectQuota429 === true
+                        );
+                    }
+                    const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, missingError);
+                    console.log(`${c.yellow}  ⚠ [Gemini] Cererea punctuală a eșuat: ${missingError.message}${quotaBlocked ? ' Oprind alte cereri de recuperare din cauza limitei Gemini.' : ''}${c.reset}`);
                 }
             }
 
-            const stillMissing = chunk.filter(obj => dict[String(obj.id)] === undefined);
+            // Dacă cererea punctuală pentru întregul set tot a lăsat unele texte goale,
+            // încercăm fiecare ID separat. Nu retrimitem calupul întreg și oprim la primul 429.
+            let stillMissing = chunk.filter(obj => !hasUsableTranslation(dict[String(obj.id)]));
+            if (stillMissing.length && !keyStates._emptyRecoveryQuotaBlocked) {
+                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: ${stillMissing.length} ID-uri încă goale; încercări individuale...${c.reset}`);
+                for (const item of stillMissing) {
+                    if (keyStates._emptyRecoveryQuotaBlocked) break;
+                    const singleResult = Object.create(null);
+                    const recovered = await retryEmptyTranslationIndividually(
+                        item, singleResult, keyStates, `Calup ${globalChunkIndex + 1} Empty Recovery`
+                    );
+                    if (recovered && hasUsableTranslation(singleResult[String(item.id)])) {
+                        dict[String(item.id)] = singleResult[String(item.id)];
+                    }
+                }
+            } else if (stillMissing.length && keyStates._emptyRecoveryQuotaBlocked) {
+                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: ${stillMissing.length} ID-uri rămân goale; cererile individuale sunt oprite din cauza cotei/429 și vor fi lăsate pentru etapa finală/locală.${c.reset}`);
+            }
+
+            stillMissing = chunk.filter(obj => !hasUsableTranslation(dict[String(obj.id)]));
             if (stillMissing.length) {
-                throw new Error(`JSON incomplet: lipsesc ${stillMissing.length} ID-uri după completarea punctuală.`);
+                console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: rămân ${stillMissing.length} traduceri goale după recuperarea punctuală; vor fi verificate din nou după finalizarea calupurilor.${c.reset}`);
             }
 
             const results = chunk.map(obj => ({
                 id: obj.id,
-                text: formatSubtitleLine(dict[String(obj.id)])
+                // Un text gol rămâne detectabil de Empty Recovery; nu eșuăm și nu retrimitem tot calupul.
+                text: hasUsableTranslation(dict[String(obj.id)])
+                    ? formatSubtitleLine(dict[String(obj.id)])
+                    : ' '
             }));
 
             // Verificările de limbă și fidelitate rulează o singură dată după toate calupurile,
@@ -3245,6 +3283,14 @@ Format obligatoriu:
         console.log(`${c.green}✔ [${stageLabel} Retry] ID ${id} recuperat prin cerere individuală.${c.reset}`);
         return true;
     } catch (error) {
+        const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(String(error?.message || ''));
+        if (is429) {
+            register429(
+                keyStates,
+                Number(error.retryAfterMs) || 15000,
+                error.isProjectQuota429 === true
+            );
+        }
         const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
         console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id}: cererea individuală a eșuat: ${error.message}${quotaBlocked ? ' Oprind alte cereri de recuperare din cauza limitei Gemini.' : ''}${c.reset}`);
         return false;
