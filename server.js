@@ -173,7 +173,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.138',
+    version: '12.78.139',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3097,8 +3097,87 @@ function runSemanticSpotCheck(items, translatedById) {
 // RECUPERARE FINALĂ — TRADUCERI DEVENITE GOALE
 // ============================================================
 
+// Întoarce un motiv explicit când o traducere de recuperare nu este acceptată.
+function assessEmptyRecoveryCandidate(item, candidateRaw) {
+    if (candidateRaw === undefined || candidateRaw === null) {
+        return { ok: false, reason: 'ID absent din răspunsul Gemini' };
+    }
+
+    const candidate = formatSubtitleLine(String(candidateRaw || ''));
+    if (!candidate || !candidate.replace(/<[^>]+>/g, '').trim()) {
+        return { ok: false, reason: 'Gemini a returnat text gol' };
+    }
+    if (hasUntranslatedEnglish(item.text, candidate)) {
+        return { ok: false, reason: 'textul conține engleză netradusă' };
+    }
+    if (hasCorruptedSubtitleText(candidate, item.text)) {
+        return { ok: false, reason: 'textul a fost respins de verificarea de corupere' };
+    }
+    if (hasLostExplicitSourceTerm(item.text, candidate)) {
+        return { ok: false, reason: 'traducerea pierde un termen explicit din original' };
+    }
+    return { ok: true, candidate };
+}
+
+function markEmptyRecoveryQuotaBlock(keyStates, error) {
+    const message = String(error?.message || error || '');
+    if (error?.isRateLimit429 === true || /\b429\b/i.test(message) || /resource has been exhausted|quota exceeded/i.test(message)) {
+        keyStates._emptyRecoveryQuotaBlocked = true;
+        return true;
+    }
+    return false;
+}
+
+async function retryEmptyTranslationIndividually(item, translatedById, keyStates, stageLabel = 'Empty Recovery') {
+    const id = String(item.id);
+    if (keyStates._emptyRecoveryQuotaBlocked) return false;
+
+    if (!(keyStates._emptyRecoveryAttemptedIds instanceof Set)) {
+        keyStates._emptyRecoveryAttemptedIds = new Set();
+    }
+    // Marcăm ID-ul înaintea apelului: aceeași replică nu va primi încă un retry
+    // automat în etapa Final Empty Recovery.
+    keyStates._emptyRecoveryAttemptedIds.add(id);
+
+    const prompt = `
+${MASTER_TRANSLATION_PROMPT}
+
+RECUPERARE INDIVIDUALĂ PENTRU O SINGURĂ TRADUCERE GOALĂ.
+Tradu numai replica de mai jos în română naturală. Păstrează sensul, tonul și formatul de subtitrare.
+Nu omite ID-ul și nu returna text gol. Returnează doar un array JSON cu exact un obiect.
+
+${JSON.stringify([{ id: item.id, text: item.text }], null, 2)}
+
+Format obligatoriu:
+[
+  {"id": ${Number.parseInt(id, 10)}, "text": "traducerea română"}
+]
+`;
+
+    try {
+        const retryKey = await getAvailableKey(keyStates);
+        const retryRaw = await callGemini(prompt, retryKey, { timeout: 30000 });
+        const retryJson = safeJsonParse(retryRaw);
+        const retryDict = normalizeTranslationPayload(retryJson);
+        const assessment = assessEmptyRecoveryCandidate(item, retryDict[id]);
+
+        if (!assessment.ok) {
+            console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id} respins la retry individual: ${assessment.reason}.${c.reset}`);
+            return false;
+        }
+
+        translatedById[id] = assessment.candidate;
+        console.log(`${c.green}✔ [${stageLabel} Retry] ID ${id} recuperat prin cerere individuală.${c.reset}`);
+        return true;
+    } catch (error) {
+        const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
+        console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id}: cererea individuală a eșuat: ${error.message}${quotaBlocked ? ' Oprind alte cereri de recuperare din cauza limitei Gemini.' : ''}${c.reset}`);
+        return false;
+    }
+}
+
 async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
-    const emptyTranslations = items.filter(item => {
+    const detectedEmptyTranslations = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
 
@@ -3110,7 +3189,25 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
         return !translatedClean;
     });
 
-    if (!emptyTranslations.length) return { detected: 0, recovered: 0 };
+    if (!detectedEmptyTranslations.length) return { detected: 0, recovered: 0 };
+
+    // Nu mai generăm cereri de recuperare după ce Gemini a semnalat limită/cotă.
+    if (keyStates._emptyRecoveryQuotaBlocked) {
+        console.log(`${c.yellow}⚠ [Final Empty Recovery] Omisă: există deja o eroare Gemini 429/cotă în această procesare; rămase goale: ${detectedEmptyTranslations.map(item => item.id).join(', ')}.${c.reset}`);
+        return { detected: detectedEmptyTranslations.length, recovered: 0 };
+    }
+
+    const attemptedIds = keyStates._emptyRecoveryAttemptedIds instanceof Set
+        ? keyStates._emptyRecoveryAttemptedIds
+        : new Set();
+    const previouslyRetried = detectedEmptyTranslations.filter(item => attemptedIds.has(String(item.id)));
+    if (previouslyRetried.length) {
+        console.log(`${c.yellow}ℹ [Final Empty Recovery] Nu repet retry-ul individual deja efectuat pentru ID-urile: ${previouslyRetried.map(item => item.id).join(', ')}.${c.reset}`);
+    }
+    const emptyTranslations = detectedEmptyTranslations.filter(item => !attemptedIds.has(String(item.id)));
+    if (!emptyTranslations.length) {
+        return { detected: detectedEmptyTranslations.length, recovered: 0 };
+    }
 
     console.log(`${c.yellow}⚠ [Final Empty Recovery] ${emptyTranslations.length} traduceri goale detectate. Le retraduc punctual...${c.reset}`);
 
@@ -3141,30 +3238,30 @@ Returnează DOAR un ARRAY JSON valid în forma:
         const recoveryDict = normalizeTranslationPayload(recoveryJson);
 
         for (const item of emptyTranslations) {
-            const candidateRaw = recoveryDict[String(item.id)];
-            const candidate = formatSubtitleLine(String(candidateRaw || ''));
-
-            if (
-                candidate &&
-                !hasUntranslatedEnglish(item.text, candidate) &&
-                !hasCorruptedSubtitleText(candidate, item.text) &&
-                !hasLostExplicitSourceTerm(item.text, candidate)
-            ) {
-                translatedById[String(item.id)] = candidate;
+            const id = String(item.id);
+            const assessment = assessEmptyRecoveryCandidate(item, recoveryDict[id]);
+            if (assessment.ok) {
+                translatedById[id] = assessment.candidate;
                 recoveredCount++;
-                recoveredIds.push(String(item.id));
+                recoveredIds.push(id);
             } else {
-                failedIds.push(String(item.id));
+                failedIds.push(id);
+                console.log(`${c.yellow}⚠ [Final Empty Recovery] ID ${id} respins: ${assessment.reason}.${c.reset}`);
             }
         }
     } catch (error) {
-        console.log(`${c.yellow}⚠ [Final Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
+        const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
+        console.log(`${c.yellow}⚠ [Final Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${quotaBlocked ? ' Nu vor mai fi pornite alte cereri de recuperare în această procesare.' : ''}${c.reset}`);
+        for (const item of emptyTranslations) {
+            const id = String(item.id);
+            if (!recoveredIds.includes(id) && !failedIds.includes(id)) failedIds.push(id);
+        }
     }
 
     const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
     const failedSuffix = failedIds.length ? `; nereparate: ${failedIds.join(', ')}` : '';
     console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Final Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
-    return { detected: emptyTranslations.length, recovered: recoveredCount };
+    return { detected: detectedEmptyTranslations.length, recovered: recoveredCount };
 }
 
 // ============================================================
@@ -3317,39 +3414,68 @@ Returnează DOAR un ARRAY JSON valid în forma:
 ]
 `;
 
+        let recoveredCount = 0;
+        const recoveredIds = [];
+        const failedIds = [];
+        const failedItems = [];
+        let parsedInitialResponse = false;
+
         try {
             const recoveryKey = await getAvailableKey(keyStates);
             const recoveryRaw = await callGemini(recoveryPrompt, recoveryKey);
             const recoveryJson = safeJsonParse(recoveryRaw);
             const recoveryDict = normalizeTranslationPayload(recoveryJson);
-            let recoveredCount = 0;
-            const recoveredIds = [];
-            const failedIds = [];
+            parsedInitialResponse = true;
 
             for (const item of emptyTranslations) {
-                const candidateRaw = recoveryDict[String(item.id)];
-                const candidate = formatSubtitleLine(String(candidateRaw || ''));
-
-                if (
-                    candidate &&
-                    !hasUntranslatedEnglish(item.text, candidate) &&
-                    !hasCorruptedSubtitleText(candidate, item.text) &&
-                    !hasLostExplicitSourceTerm(item.text, candidate)
-                ) {
-                    translatedById[String(item.id)] = candidate;
+                const id = String(item.id);
+                const assessment = assessEmptyRecoveryCandidate(item, recoveryDict[id]);
+                if (assessment.ok) {
+                    translatedById[id] = assessment.candidate;
                     recoveredCount++;
-                    recoveredIds.push(String(item.id));
+                    recoveredIds.push(id);
                 } else {
-                    failedIds.push(String(item.id));
+                    failedIds.push(id);
+                    failedItems.push(item);
+                    console.log(`${c.yellow}⚠ [Empty Recovery] ID ${id} respins: ${assessment.reason}.${c.reset}`);
                 }
             }
-
-            const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
-            const failedSuffix = failedIds.length ? `; nereparate: ${failedIds.join(', ')}` : '';
-            console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
         } catch (error) {
-            console.log(`${c.yellow}⚠ [Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${c.reset}`);
+            const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
+            console.log(`${c.yellow}⚠ [Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${quotaBlocked ? ' Nu vor mai fi pornite alte cereri de recuperare în această procesare.' : ''}${c.reset}`);
         }
+
+        // O cerere inițială validă poate totuși să omită sau să returneze greșit
+        // unele ID-uri. Retraducem o singură dată fiecare ID respins, individual.
+        // Dacă răspunsul inițial nu a putut fi interpretat, nu pornim acest retry.
+        if (parsedInitialResponse && !keyStates._emptyRecoveryQuotaBlocked) {
+            for (const item of failedItems) {
+                if (keyStates._emptyRecoveryQuotaBlocked) break;
+                const id = String(item.id);
+                const retriedSuccessfully = await retryEmptyTranslationIndividually(
+                    item, translatedById, keyStates, 'Empty Recovery'
+                );
+                if (retriedSuccessfully) {
+                    recoveredCount++;
+                    recoveredIds.push(id);
+                    const failedIndex = failedIds.indexOf(id);
+                    if (failedIndex >= 0) failedIds.splice(failedIndex, 1);
+                }
+            }
+        }
+
+        // Dacă răspunsul inițial nu a putut fi interpretat, raportăm toate ID-urile
+        // rămase goale; etapa finală poate încerca ulterior, exceptând cazul 429.
+        for (const item of emptyTranslations) {
+            const id = String(item.id);
+            if (!String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim() && !failedIds.includes(id)) {
+                failedIds.push(id);
+            }
+        }
+
+        const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
+        const failedSuffix = failedIds.length ? `; nereparate: ${failedIds.join(', ')}` : '';
+        console.log(`${recoveredCount === emptyTranslations.length ? c.green : c.yellow}✔ [Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
     }
 
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
