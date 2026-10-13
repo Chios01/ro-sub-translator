@@ -173,7 +173,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.141',
+    version: '12.78.142',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2065,14 +2065,36 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const parsed = JSON.parse(String(raw).trim());
             const dict = normalizeTranslationPayload(parsed);
 
-            // Pentru succesul unui ID verificăm și conținutul textului, nu doar prezența ID-ului.
-            // Un câmp text gol trebuie tratat la fel ca un ID lipsă, cât încă știm din ce calup provine.
-            const hasUsableTranslation = value => {
-                if (value === undefined || value === null) return false;
-                return Boolean(String(value).replace(/<[^>]+>/g, '').trim());
-            };
+            // Verificăm rezultatul DUPĂ același formatter care va fi folosit la ieșire.
+            // Astfel, un răspuns format doar din ezitări/interjecții eliminate de formatter
+            // este tratat drept gol și reparat în calupul curent, nu abia la Empty Recovery.
+            // Cache-ul evită să rulăm formatterul repetat pentru aceeași valoare a aceluiași ID.
+            const formattedTranslationCache = new Map();
+            const getUsableFormattedTranslation = (id, value) => {
+                if (value === undefined || value === null) return '';
+                const raw = String(value);
+                const cacheKey = String(id);
+                const cached = formattedTranslationCache.get(cacheKey);
+                if (cached && cached.raw === raw) return cached.formatted;
 
-            const missingItems = chunk.filter(obj => !hasUsableTranslation(dict[String(obj.id)]));
+                if (!raw.replace(/<[^>]+>/g, '').trim()) {
+                    formattedTranslationCache.set(cacheKey, { raw, formatted: '' });
+                    return '';
+                }
+
+                let formatted = '';
+                try {
+                    formatted = formatSubtitleLine(raw);
+                } catch (_) {
+                    formatted = '';
+                }
+                if (!String(formatted || '').replace(/<[^>]+>/g, '').trim()) formatted = '';
+                formattedTranslationCache.set(cacheKey, { raw, formatted });
+                return formatted;
+            };
+            const hasUsableTranslation = (id, value) => Boolean(getUsableFormattedTranslation(id, value));
+
+            const missingItems = chunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
             if (missingItems.length > 12) {
                 throw new Error(`Răspuns Gemini sever incomplet: ${missingItems.length} ID-uri lipsă sau cu traduceri goale.`);
             }
@@ -2095,7 +2117,7 @@ ${JSON.stringify(missingItems, null, 2)}
                     const missingDict = normalizeTranslationPayload(missingJson);
                     for (const obj of missingItems) {
                         const value = missingDict[String(obj.id)];
-                        if (hasUsableTranslation(value)) dict[String(obj.id)] = value;
+                        if (hasUsableTranslation(obj.id, value)) dict[String(obj.id)] = value;
                     }
                 } catch (missingError) {
                     const is429 = missingError?.isRateLimit429 === true || /\b429\b/i.test(String(missingError?.message || ''));
@@ -2113,7 +2135,7 @@ ${JSON.stringify(missingItems, null, 2)}
 
             // Dacă cererea punctuală pentru întregul set tot a lăsat unele texte goale,
             // încercăm fiecare ID separat. Nu retrimitem calupul întreg și oprim la primul 429.
-            let stillMissing = chunk.filter(obj => !hasUsableTranslation(dict[String(obj.id)]));
+            let stillMissing = chunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
             if (stillMissing.length && !keyStates._emptyRecoveryQuotaBlocked) {
                 console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: ${stillMissing.length} ID-uri încă goale; încercări individuale...${c.reset}`);
                 for (const item of stillMissing) {
@@ -2122,7 +2144,7 @@ ${JSON.stringify(missingItems, null, 2)}
                     const recovered = await retryEmptyTranslationIndividually(
                         item, singleResult, keyStates, `Calup ${globalChunkIndex + 1} Empty Recovery`
                     );
-                    if (recovered && hasUsableTranslation(singleResult[String(item.id)])) {
+                    if (recovered && hasUsableTranslation(item.id, singleResult[String(item.id)])) {
                         dict[String(item.id)] = singleResult[String(item.id)];
                     }
                 }
@@ -2130,7 +2152,7 @@ ${JSON.stringify(missingItems, null, 2)}
                 console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: ${stillMissing.length} ID-uri rămân goale; cererile individuale sunt oprite din cauza cotei/429 și vor fi lăsate pentru etapa finală/locală.${c.reset}`);
             }
 
-            stillMissing = chunk.filter(obj => !hasUsableTranslation(dict[String(obj.id)]));
+            stillMissing = chunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
             if (stillMissing.length) {
                 console.log(`${c.yellow}⚠ [Gemini] Calupul ${globalChunkIndex + 1}: rămân ${stillMissing.length} traduceri goale după recuperarea punctuală; vor fi verificate din nou după finalizarea calupurilor.${c.reset}`);
             }
@@ -2138,9 +2160,7 @@ ${JSON.stringify(missingItems, null, 2)}
             const results = chunk.map(obj => ({
                 id: obj.id,
                 // Un text gol rămâne detectabil de Empty Recovery; nu eșuăm și nu retrimitem tot calupul.
-                text: hasUsableTranslation(dict[String(obj.id)])
-                    ? formatSubtitleLine(dict[String(obj.id)])
-                    : ' '
+                text: getUsableFormattedTranslation(obj.id, dict[String(obj.id)]) || ' '
             }));
 
             // Verificările de limbă și fidelitate rulează o singură dată după toate calupurile,
