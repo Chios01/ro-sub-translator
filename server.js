@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const dns = require('dns').promises;
@@ -173,7 +174,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.143',
+    version: '12.78.144',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1448,8 +1449,14 @@ async function acquireGeminiRequestSlot() {
     }
 }
 
-function noteGeminiRequestSuccess() {
+function noteGeminiRequestSuccess(keyState = null) {
     const now = Date.now();
+    const lane = getLaneForKeyState(keyState);
+    if (lane) {
+        lane.lastTouchedAt = now;
+        lane.consecutive429 = 0;
+        lane.cooldownUntil = Math.min(Number(lane.cooldownUntil || 0), now);
+    }
     if (now < geminiRequestControl.cooldownUntil) return;
 
     if (geminiRequestControl.maxConcurrent < geminiRequestControl.targetConcurrent) {
@@ -1475,15 +1482,36 @@ function noteGeminiRequestSuccess() {
     }
 }
 
-function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown') {
+function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = null) {
     const now = Date.now();
     const pauseMs = Math.max(1000, Number(cooldownMs) || 15000);
-    geminiRequestControl.cooldownUntil = Math.max(geminiRequestControl.cooldownUntil, now + pauseMs);
-    geminiRequestControl.maxConcurrent = 1;
+    const lane = getLaneForKeyState(keyState);
     geminiRequestControl.consecutive429++;
     geminiRequestControl.consecutive5xx = 0;
     geminiRequestControl.successesSinceThrottle = 0;
-    console.log(`${c.yellow}⚠ [Gemini Control] 429 (${quotaKind}); pauză comună ${Math.ceil(pauseMs / 1000)}s și concurență redusă la 1/${geminiRequestControl.targetConcurrent} pentru toate traducerile active.${c.reset}`);
+
+    if (lane) {
+        lane.last429At = now;
+        lane.lastTouchedAt = now;
+        lane.consecutive429++;
+        if (quotaKind === 'daily') {
+            const resetAt = Math.max(Number(lane.dailyQuotaUntil || 0), Number(keyState?.dailyQuotaUntil || 0), getNextPacificMidnightMs(now));
+            lane.dailyQuotaUntil = resetAt;
+            lane.cooldownUntil = 0;
+            console.log(`${c.yellow}⚠ [Gemini Control] Cotă zilnică epuizată pentru proiectul ${lane.fingerprint.slice(0, 8)}; îl scot din rotație până la resetare. Celelalte proiecte rămân disponibile.${c.reset}`);
+            notifyGeminiRequestWaiters();
+            return;
+        }
+        lane.cooldownUntil = Math.max(Number(lane.cooldownUntil || 0), now + pauseMs);
+        if (keyState) keyState.pausedUntil = Math.max(Number(keyState.pausedUntil || 0), lane.cooldownUntil);
+    }
+
+    // Un 429 pentru un proiect nu blochează global proiectele rămase. Reducem
+    // temporar concurența generală cu un pas, iar selectorul evită banda limitată.
+    const previousLimit = geminiRequestControl.maxConcurrent;
+    geminiRequestControl.maxConcurrent = Math.max(1, geminiRequestControl.maxConcurrent - 1);
+    const projectLabel = lane ? lane.fingerprint.slice(0, 8) : 'necunoscut';
+    console.log(`${c.yellow}⚠ [Gemini Control] 429 pe proiectul ${projectLabel} (${quotaKind}); pauză doar pentru acest proiect ${Math.ceil(pauseMs / 1000)}s; concurență globală ${previousLimit}→${geminiRequestControl.maxConcurrent}/${geminiRequestControl.targetConcurrent}. Celelalte proiecte pot prelua cereri.${c.reset}`);
     notifyGeminiRequestWaiters();
 }
 
@@ -1583,37 +1611,108 @@ function extractGeminiRetryDelayMs(error, fallbackMs) {
     return fallbackMs;
 }
 
+// Selector global pentru proiectele Gemini folosite în acest proces Node.
+// Conform configurării addon-ului, fiecare cheie distinctă trebuie să provină
+// dintr-un proiect Google Cloud distinct. Amprentarea SHA-256 permite coordonarea
+// fără păstrarea cheii API ca identificator și fără afișarea ei în loguri.
+const geminiProjectLanes = new Map();
+const GEMINI_RECENT_REQUEST_WINDOW_MS = 60_000;
+
+function getGeminiProjectLane(apiKey) {
+    const fingerprint = crypto.createHash('sha256').update(String(apiKey)).digest('hex');
+    const now = Date.now();
+    let lane = geminiProjectLanes.get(fingerprint);
+    if (!lane) {
+        lane = {
+            fingerprint,
+            lastSelectedAt: 0,
+            lastRequestAt: 0,
+            recentRequestStarts: [],
+            activeRequests: 0,
+            reservations: 0,
+            selections: 0,
+            cooldownUntil: 0,
+            dailyQuotaUntil: 0,
+            disabled: false,
+            consecutive429: 0,
+            last429At: 0,
+            lastTouchedAt: now
+        };
+        geminiProjectLanes.set(fingerprint, lane);
+    }
+    lane.lastTouchedAt = now;
+
+    // Limitează creșterea memoriei dacă instanța primește configurații foarte
+    // multe și diferite. Nu eliminăm niciodată o bandă activă, rezervată sau blocată.
+    if (geminiProjectLanes.size > 2000) {
+        const staleBefore = now - 6 * 60 * 60 * 1000;
+        for (const [id, candidate] of geminiProjectLanes) {
+            if (geminiProjectLanes.size <= 1500) break;
+            if (
+                candidate.activeRequests === 0 &&
+                candidate.reservations === 0 &&
+                candidate.cooldownUntil <= now &&
+                candidate.dailyQuotaUntil <= now &&
+                candidate.lastTouchedAt < staleBefore
+            ) {
+                geminiProjectLanes.delete(id);
+            }
+        }
+    }
+    return lane;
+}
+
+function getLaneForKeyState(keyState) {
+    if (!keyState) return null;
+    if (!keyState.globalLane) keyState.globalLane = getGeminiProjectLane(keyState.key);
+    keyState.globalLane.lastTouchedAt = Date.now();
+    return keyState.globalLane;
+}
+
+function consumeGlobalKeyReservation(keyState) {
+    const lane = getLaneForKeyState(keyState);
+    if (!lane || Number(keyState._pendingGlobalReservations || 0) <= 0) return false;
+    keyState._pendingGlobalReservations--;
+    lane.reservations = Math.max(0, lane.reservations - 1);
+    lane.lastTouchedAt = Date.now();
+    return true;
+}
+
+function getRecentProjectRequestCount(lane, now) {
+    lane.recentRequestStarts = (lane.recentRequestStarts || [])
+        .filter(timestamp => now - timestamp < GEMINI_RECENT_REQUEST_WINDOW_MS);
+    return lane.recentRequestStarts.length;
+}
+
 function createKeyState(keys) {
-    return keys.map(key => ({ key, pausedUntil: 0, dailyQuotaUntil: 0, disabled: false, failures: 0, lastUsed: 0 }));
+    return keys.map(key => ({
+        key,
+        pausedUntil: 0,
+        dailyQuotaUntil: 0,
+        disabled: false,
+        failures: 0,
+        lastUsed: 0,
+        globalLane: getGeminiProjectLane(key),
+        _pendingGlobalReservations: 0
+    }));
 }
 
 function getGlobal429Until(keyStates) { return Number(keyStates._global429Until || 0); }
-function register429(keyStates, cooldownMs, forceGlobal = false) {
-    const now = Date.now();
-    const paused = keyStates.filter(s => !s.disabled && s.pausedUntil > now).length;
-    const active = keyStates.filter(s => !s.disabled).length;
-    const normalizedCooldownMs = Math.max(1000, Number(cooldownMs) || 15000);
 
-    // Când Google spune că resursa/cota este epuizată, rotirea imediată către
-    // altă cheie poate lovi aceeași limită de proiect. În acest caz, activăm
-    // poarta globală chiar de la primul 429, nu după încercarea pe a doua cheie.
-    // Pentru 429-uri fără indiciu de cotă păstrăm logica bazată pe cheile limitate.
-    if (forceGlobal || (active > 0 && paused >= Math.min(2, active))) {
-        keyStates._global429Until = Math.max(
-            getGlobal429Until(keyStates),
-            now + normalizedCooldownMs
-        );
-    }
+function register429(keyStates, cooldownMs, forceGlobal = false) {
+    // 429-ul este înregistrat în callGemini pe banda proiectului exact care l-a
+    // primit. Nu punem întreaga subtitrare în pauză: celelalte proiecte trebuie
+    // să poată prelua cererile rămase. Păstrăm funcția drept wrapper pentru
+    // apelurile existente din Grammar Review/recuperare.
+    return false;
 }
 
 async function waitFor429Gate(keyStates) {
     while (true) {
         const waitMs = getGlobal429Until(keyStates) - Date.now();
         if (waitMs <= 0) return;
-        console.log(`${c.yellow}⏳ [429 Gate] Limitare Gemini activă. Aștept ${Math.ceil(waitMs / 1000)}s înainte de următoarea încercare.${c.reset}`);
+        console.log(`${c.yellow}⏳ [429 Gate] Limitare globală Gemini activă. Aștept ${Math.ceil(waitMs / 1000)}s înainte de următoarea încercare.${c.reset}`);
         await sleep(waitMs);
-        // Cererile care așteptau simultan nu reiau toate apelurile în aceeași
-        // clipă după expirarea pauzei; decalarea reduce un nou vârf de cereri.
         await sleep(250 + Math.floor(Math.random() * 1250));
     }
 }
@@ -1622,21 +1721,60 @@ async function getAvailableKey(keyStates) {
     while (true) {
         await waitFor429Gate(keyStates);
         const now = Date.now();
-        const nonDisabled = keyStates.filter(s => !s.disabled);
+        const nonDisabled = keyStates.filter(state => {
+            const lane = getLaneForKeyState(state);
+            return !state.disabled && !lane.disabled;
+        });
+        const statusFor = state => {
+            const lane = getLaneForKeyState(state);
+            return {
+                lane,
+                dailyUntil: Math.max(Number(state.dailyQuotaUntil || 0), Number(lane.dailyQuotaUntil || 0)),
+                pausedUntil: Math.max(Number(state.pausedUntil || 0), Number(lane.cooldownUntil || 0))
+            };
+        };
+
         const available = nonDisabled
-            .filter(s => s.pausedUntil <= now && Number(s.dailyQuotaUntil || 0) <= now)
-            .sort((a, b) => a.lastUsed - b.lastUsed);
+            .map(state => ({ state, ...statusFor(state) }))
+            .filter(entry => entry.dailyUntil <= now && entry.pausedUntil <= now)
+            .sort((a, b) => {
+                // Mai întâi proiectele mai puțin solicitate simultan, apoi cele
+                // cu mai puține cereri în ultimul minut și, la egalitate, cele
+                // folosite cel mai demult. Rezervările împiedică procesările
+                // concurente să aleagă toate aceeași cheie înainte de start.
+                const aLoad = a.lane.activeRequests + a.lane.reservations;
+                const bLoad = b.lane.activeRequests + b.lane.reservations;
+                if (aLoad !== bLoad) return aLoad - bLoad;
+                const aRecent = getRecentProjectRequestCount(a.lane, now);
+                const bRecent = getRecentProjectRequestCount(b.lane, now);
+                if (aRecent !== bRecent) return aRecent - bRecent;
+                if (a.lane.lastSelectedAt !== b.lane.lastSelectedAt) {
+                    return a.lane.lastSelectedAt - b.lane.lastSelectedAt;
+                }
+                return a.lane.selections - b.lane.selections;
+            });
 
         if (available.length) {
-            const state = available[0];
-            state.lastUsed = Date.now();
-            return state;
+            const selected = available[0].state;
+            const lane = getLaneForKeyState(selected);
+            lane.reservations++;
+            lane.selections++;
+            lane.lastSelectedAt = now;
+            lane.lastTouchedAt = now;
+            selected._pendingGlobalReservations = Number(selected._pendingGlobalReservations || 0) + 1;
+            selected.lastUsed = now;
+            // Sincronizăm starea locală cu pauza globală a acestei chei/proiect.
+            selected.pausedUntil = Math.max(Number(selected.pausedUntil || 0), lane.cooldownUntil);
+            selected.dailyQuotaUntil = Math.max(Number(selected.dailyQuotaUntil || 0), lane.dailyQuotaUntil);
+            return selected;
         }
 
-        const dailyBlocked = nonDisabled.filter(s => Number(s.dailyQuotaUntil || 0) > now);
+        const dailyBlocked = nonDisabled
+            .map(state => ({ state, ...statusFor(state) }))
+            .filter(entry => entry.dailyUntil > now);
         if (nonDisabled.length > 0 && dailyBlocked.length === nonDisabled.length) {
-            const nextReset = Math.min(...dailyBlocked.map(s => Number(s.dailyQuotaUntil)));
-            const error = new Error(`429: Cota zilnică Gemini este epuizată pentru toate cheile disponibile; următoarea resetare estimată este ${new Date(nextReset).toISOString()}. Oprire fără reîncercări inutile.`);
+            const nextReset = Math.min(...dailyBlocked.map(entry => entry.dailyUntil));
+            const error = new Error(`429: Cota zilnică Gemini este epuizată pentru toate proiectele disponibile; următoarea resetare estimată este ${new Date(nextReset).toISOString()}. Oprire fără reîncercări inutile.`);
             error.isRateLimit429 = true;
             error.isDailyQuota429 = true;
             error.isPermanentQuotaBlock = true;
@@ -1644,13 +1782,17 @@ async function getAvailableKey(keyStates) {
         }
 
         const waits = nonDisabled
-            .filter(s => Number(s.dailyQuotaUntil || 0) <= now && s.pausedUntil > now)
-            .map(s => s.pausedUntil - now);
+            .map(state => ({ state, ...statusFor(state) }))
+            .filter(entry => entry.dailyUntil <= now && entry.pausedUntil > now)
+            .map(entry => entry.pausedUntil - now);
 
-        if (!waits.length) throw new Error('Toate cheile Gemini sunt dezactivate sau blocate de cotă.');
+        if (!waits.length) {
+            throw new Error('Toate proiectele Gemini configurate sunt dezactivate sau blocate de cotă.');
+        }
 
-        const waitMs = Math.max(250, Math.min(...waits));
-        await sleep(waitMs);
+        // Dacă toate proiectele sunt temporar în pauză, așteptăm expirarea celei
+        // mai apropiate pauze și apoi alegem din nou global.
+        await sleep(Math.max(250, Math.min(...waits)));
     }
 }
 
@@ -1694,9 +1836,40 @@ async function callGemini(prompt, keyState, options = {}) {
     }
 
     // Permisul este la nivelul procesului, nu al unei singure subtitrări.
-    // El este eliberat în finally, indiferent dacă API-ul reușește sau eșuează.
-    const releaseGeminiSlot = await acquireGeminiRequestSlot();
+    // Fiecare cheie are și o bandă globală de proiect: active, rezervări,
+    // frecvență recentă și pauză după 429. Cheia nu este logată sau păstrată
+    // ca identificator în selector.
+    let releaseGeminiSlot = null;
+    let lane = getLaneForKeyState(keyState);
+    let laneRequestStarted = false;
     try {
+        releaseGeminiSlot = await acquireGeminiRequestSlot();
+        lane = getLaneForKeyState(keyState);
+        const preflightNow = Date.now();
+        const laneDailyUntil = Math.max(Number(keyState.dailyQuotaUntil || 0), Number(lane?.dailyQuotaUntil || 0));
+        const laneCooldownUntil = Math.max(Number(keyState.pausedUntil || 0), Number(lane?.cooldownUntil || 0));
+        if (keyState.disabled || lane?.disabled || laneDailyUntil > preflightNow || laneCooldownUntil > preflightNow) {
+            const blockedUntil = laneDailyUntil > preflightNow ? laneDailyUntil : laneCooldownUntil;
+            const error = new Error(
+                laneDailyUntil > preflightNow
+                    ? '429: Proiectul selectat a fost marcat între timp cu o cotă zilnică epuizată; selectorul va alege alt proiect.'
+                    : '429: Proiectul selectat a intrat în pauză înainte de pornirea cererii; selectorul va alege alt proiect.'
+            );
+            error.isRateLimit429 = true;
+            error.isProjectQuota429 = true;
+            error.isDailyQuota429 = laneDailyUntil > preflightNow;
+            error.retryAfterMs = Math.max(1000, blockedUntil - preflightNow);
+            throw error;
+        }
+        consumeGlobalKeyReservation(keyState);
+        if (lane) {
+            lane.activeRequests++;
+            lane.lastRequestAt = Date.now();
+            lane.lastTouchedAt = lane.lastRequestAt;
+            lane.recentRequestStarts.push(lane.lastRequestAt);
+            getRecentProjectRequestCount(lane, lane.lastRequestAt);
+            laneRequestStarted = true;
+        }
         const response = await axios.post(
             endpoint,
             {
@@ -1715,22 +1888,28 @@ async function callGemini(prompt, keyState, options = {}) {
         const raw = response.data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
         if (!raw.trim()) throw new Error('Gemini a returnat conținut gol.');
         keyState.failures = 0;
-        noteGeminiRequestSuccess();
+        noteGeminiRequestSuccess(keyState);
         return raw;
     } catch (error) {
         const status = error.response?.status;
         if (status === 401 || status === 403) {
             keyState.disabled = true;
+            const invalidLane = getLaneForKeyState(keyState);
+            if (invalidLane) invalidLane.disabled = true;
             throw new Error(`Cheie Gemini invalidă (${status}).`);
         }
         if (status === 429) {
             const quotaInfo = classifyGeminiQuotaError(error);
-            // Fără Retry-After/RetryInfo, folosim backoff global progresiv: 15, 30, 60, 120s (+ jitter).
-            const fallbackCooldown = Math.min(120000, 15000 * Math.pow(2, Math.min(3, geminiRequestControl.consecutive429))) + Math.floor(Math.random() * 1500);
+            lane = getLaneForKeyState(keyState);
+            // Backoff-ul progresiv este separat pentru fiecare proiect, nu pentru
+            // întregul pool: 15, 30, 60, apoi 120s (+ jitter), dacă Google nu dă
+            // Retry-After/RetryInfo explicit.
+            const project429Count = Number(lane?.consecutive429 || 0);
+            const fallbackCooldown = Math.min(120000, 15000 * Math.pow(2, Math.min(3, project429Count))) + Math.floor(Math.random() * 1500);
             const cooldownMs = extractGeminiRetryDelayMs(error, fallbackCooldown);
-            keyState.pausedUntil = Date.now() + cooldownMs;
-            if (quotaInfo.kind === 'daily') keyState.dailyQuotaUntil = getNextPacificMidnightMs();
-            registerGlobalGemini429(cooldownMs, quotaInfo.kind);
+            keyState.pausedUntil = Math.max(Number(keyState.pausedUntil || 0), Date.now() + cooldownMs);
+            if (quotaInfo.kind === 'daily') keyState.dailyQuotaUntil = Math.max(Number(keyState.dailyQuotaUntil || 0), getNextPacificMidnightMs());
+            registerGlobalGemini429(cooldownMs, quotaInfo.kind, keyState);
 
             const providerMessage = quotaInfo.message;
             const details = providerMessage ? ` Detaliu Google: ${providerMessage}` : '';
@@ -1756,7 +1935,15 @@ async function callGemini(prompt, keyState, options = {}) {
         }
         throw error;
     } finally {
-        releaseGeminiSlot();
+        if (laneRequestStarted && lane) {
+            lane.activeRequests = Math.max(0, lane.activeRequests - 1);
+            lane.lastTouchedAt = Date.now();
+        } else if (keyState && Number(keyState._pendingGlobalReservations || 0) > 0) {
+            // Dacă apelul nu a ajuns să pornească după rezervare, nu lăsăm un
+            // slot fantomă să influențeze selecția globală.
+            consumeGlobalKeyReservation(keyState);
+        }
+        if (releaseGeminiSlot) releaseGeminiSlot();
     }
 }
 
@@ -2253,17 +2440,9 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
         let keyState = null;
         try {
-            await waitFor429Gate(keyStates);
-            const candidates = keyStates
-                .filter(s => !s.disabled && s.pausedUntil <= Date.now() && Number(s.dailyQuotaUntil || 0) <= Date.now())
-                .sort((a, b) => a.lastUsed - b.lastUsed);
-
-            if (!candidates.length) {
-                keyState = await getAvailableKey(keyStates);
-            } else {
-                keyState = candidates[0];
-                keyState.lastUsed = Date.now();
-            }
+            // Alegem proiectul la nivel global, ținând cont de toate traducerile
+            // active în acest proces și evitând proiectele aflate în pauză după 429.
+            keyState = await getAvailableKey(keyStates);
 
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks}...${c.reset}`);
 
@@ -2391,8 +2570,9 @@ ${JSON.stringify(missingItems, null, 2)}
 
             if (!isTransient) break;
             if (attempt < maxKeyAttempts) {
-                // Pauzele pentru 429/5xx sunt coordonate global în callGemini;
-                // nu adăugăm încă un backoff local care ar dubla timpul de așteptare.
+                // 429 pune în pauză proiectul care l-a primit; selectorul poate
+                // încerca un alt proiect. Erorile 503/5xx folosesc pauza globală.
+                // Nu adăugăm un al doilea backoff local care ar dubla așteptarea.
                 if (is429 || is5xx) continue;
             }
         }
@@ -3460,7 +3640,26 @@ function recoverEmptyTranslationsLocally(allItems, emptyItems, translatedById, s
 
 function markEmptyRecoveryQuotaBlock(keyStates, error) {
     const message = String(error?.message || error || '');
-    if (error?.isRateLimit429 === true || /\b429\b/i.test(message) || /resource has been exhausted|quota exceeded/i.test(message)) {
+    const quotaError = error?.isRateLimit429 === true || /\b429\b/i.test(message) || /resource has been exhausted|quota exceeded/i.test(message);
+    if (!quotaError) return false;
+
+    // O eroare de cotă pentru un singur proiect nu blochează recuperarea prin
+    // celelalte proiecte. Oprim numai dacă toate proiectele rămase sunt marcate
+    // cu cotă zilnică epuizată (sau au fost dezactivate ca invalide).
+    if (error?.isPermanentQuotaBlock === true) {
+        keyStates._emptyRecoveryQuotaBlocked = true;
+        return true;
+    }
+    const now = Date.now();
+    const nonDisabled = keyStates.filter(state => {
+        const lane = getLaneForKeyState(state);
+        return !state.disabled && !lane.disabled;
+    });
+    const allDailyBlocked = nonDisabled.length > 0 && nonDisabled.every(state => {
+        const lane = getLaneForKeyState(state);
+        return Math.max(Number(state.dailyQuotaUntil || 0), Number(lane.dailyQuotaUntil || 0)) > now;
+    });
+    if (allDailyBlocked || nonDisabled.length === 0) {
         keyStates._emptyRecoveryQuotaBlocked = true;
         return true;
     }
