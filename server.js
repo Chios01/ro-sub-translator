@@ -173,7 +173,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.142',
+    version: '12.78.143',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1387,8 +1387,204 @@ ${JSON.stringify(keysToTranslate, null, 2)}
 // API KEY STATE & MANAGEMENT
 // ============================================================
 
+// Un singur controler pentru toate cererile Gemini ale acestui proces Node.
+// Astfel, două subtitrări procesate simultan nu își ignoră reciproc pauza de 429.
+const geminiRequestControl = {
+    active: 0,
+    maxConcurrent: CONCURRENCY_LIMIT,
+    targetConcurrent: CONCURRENCY_LIMIT,
+    cooldownUntil: 0,
+    nextStartAt: 0,
+    waiters: new Set(),
+    consecutive429: 0,
+    consecutive5xx: 0,
+    successesSinceThrottle: 0
+};
+
+function notifyGeminiRequestWaiters() {
+    for (const wake of Array.from(geminiRequestControl.waiters)) wake();
+}
+
+function waitForGeminiRequestChange(timeoutMs = 250) {
+    return new Promise(resolve => {
+        let settled = false;
+        let timer;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (timer) clearTimeout(timer);
+            geminiRequestControl.waiters.delete(finish);
+            resolve();
+        };
+        geminiRequestControl.waiters.add(finish);
+        timer = setTimeout(finish, Math.max(10, timeoutMs));
+    });
+}
+
+async function acquireGeminiRequestSlot() {
+    while (true) {
+        const now = Date.now();
+        const cooldownMs = Math.max(0, geminiRequestControl.cooldownUntil - now);
+        const pacingMs = Math.max(0, geminiRequestControl.nextStartAt - now);
+
+        if (cooldownMs <= 0 && pacingMs <= 0 && geminiRequestControl.active < geminiRequestControl.maxConcurrent) {
+            geminiRequestControl.active++;
+            geminiRequestControl.nextStartAt = Date.now() + 200;
+            let released = false;
+            return () => {
+                if (released) return;
+                released = true;
+                geminiRequestControl.active = Math.max(0, geminiRequestControl.active - 1);
+                notifyGeminiRequestWaiters();
+            };
+        }
+
+        const waitMs = cooldownMs > 0
+            ? Math.min(cooldownMs, 1000)
+            : pacingMs > 0 && geminiRequestControl.active < geminiRequestControl.maxConcurrent
+                ? Math.min(pacingMs, 1000)
+                : 1000;
+        await waitForGeminiRequestChange(waitMs);
+    }
+}
+
+function noteGeminiRequestSuccess() {
+    const now = Date.now();
+    if (now < geminiRequestControl.cooldownUntil) return;
+
+    if (geminiRequestControl.maxConcurrent < geminiRequestControl.targetConcurrent) {
+        geminiRequestControl.successesSinceThrottle++;
+        if (geminiRequestControl.successesSinceThrottle >= 3) {
+            const previousLimit = geminiRequestControl.maxConcurrent;
+            geminiRequestControl.maxConcurrent = Math.min(
+                geminiRequestControl.targetConcurrent,
+                geminiRequestControl.maxConcurrent + 1
+            );
+            geminiRequestControl.successesSinceThrottle = 0;
+            if (geminiRequestControl.maxConcurrent >= geminiRequestControl.targetConcurrent) {
+                geminiRequestControl.consecutive429 = 0;
+                geminiRequestControl.consecutive5xx = 0;
+            }
+            console.log(`${c.green}✔ [Gemini Control] 3 cereri reușite; concurența crește controlat ${previousLimit}→${geminiRequestControl.maxConcurrent}/${geminiRequestControl.targetConcurrent}.${c.reset}`);
+            notifyGeminiRequestWaiters();
+        }
+    } else {
+        geminiRequestControl.consecutive429 = 0;
+        geminiRequestControl.consecutive5xx = 0;
+        geminiRequestControl.successesSinceThrottle = 0;
+    }
+}
+
+function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown') {
+    const now = Date.now();
+    const pauseMs = Math.max(1000, Number(cooldownMs) || 15000);
+    geminiRequestControl.cooldownUntil = Math.max(geminiRequestControl.cooldownUntil, now + pauseMs);
+    geminiRequestControl.maxConcurrent = 1;
+    geminiRequestControl.consecutive429++;
+    geminiRequestControl.consecutive5xx = 0;
+    geminiRequestControl.successesSinceThrottle = 0;
+    console.log(`${c.yellow}⚠ [Gemini Control] 429 (${quotaKind}); pauză comună ${Math.ceil(pauseMs / 1000)}s și concurență redusă la 1/${geminiRequestControl.targetConcurrent} pentru toate traducerile active.${c.reset}`);
+    notifyGeminiRequestWaiters();
+}
+
+function registerGlobalGemini5xx(status) {
+    const now = Date.now();
+    geminiRequestControl.consecutive5xx++;
+    geminiRequestControl.consecutive429 = 0;
+    geminiRequestControl.maxConcurrent = Math.max(1, geminiRequestControl.maxConcurrent - 1);
+    geminiRequestControl.successesSinceThrottle = 0;
+    const backoffBaseMs = Math.min(30000, 2000 * Math.pow(2, geminiRequestControl.consecutive5xx - 1));
+    const jitterMs = Math.floor(Math.random() * Math.min(1500, Math.max(250, backoffBaseMs * 0.25)));
+    const pauseMs = backoffBaseMs + jitterMs;
+    geminiRequestControl.cooldownUntil = Math.max(geminiRequestControl.cooldownUntil, now + pauseMs);
+    console.log(`${c.yellow}⚠ [Gemini Control] API ${status}; pauză comună ${Math.ceil(pauseMs / 1000)}s și concurență redusă la ${geminiRequestControl.maxConcurrent}/${geminiRequestControl.targetConcurrent}.${c.reset}`);
+    notifyGeminiRequestWaiters();
+}
+
+function getNextPacificMidnightMs(nowMs = Date.now()) {
+    const timeZone = 'America/Los_Angeles';
+    const partsFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+    });
+    const dateParts = partsFormatter.formatToParts(new Date(nowMs));
+    const pick = type => Number(dateParts.find(part => part.type === type)?.value);
+    const tomorrowUtcDate = new Date(Date.UTC(pick('year'), pick('month') - 1, pick('day') + 1));
+    const targetYear = tomorrowUtcDate.getUTCFullYear();
+    const targetMonth = tomorrowUtcDate.getUTCMonth() + 1;
+    const targetDay = tomorrowUtcDate.getUTCDate();
+    const targetWallTime = Date.UTC(targetYear, targetMonth - 1, targetDay, 0, 0, 0);
+    let guess = targetWallTime;
+
+    // Conversie iterativă a miezului nopții din Los Angeles în UTC, inclusiv DST.
+    for (let i = 0; i < 4; i++) {
+        const localParts = partsFormatter.formatToParts(new Date(guess));
+        const get = type => Number(localParts.find(part => part.type === type)?.value);
+        const observedAsUtc = Date.UTC(
+            get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second')
+        );
+        guess += targetWallTime - observedAsUtc;
+    }
+    return Math.max(nowMs + 60000, guess);
+}
+
+function classifyGeminiQuotaError(error) {
+    const providerError = error?.response?.data?.error || {};
+    const message = String(providerError.message || error?.response?.data?.message || '').replace(/\s+/g, ' ').trim();
+    const details = Array.isArray(providerError.details) ? providerError.details : [];
+    const detailsText = details.map(detail => {
+        if (!detail || typeof detail !== 'object') return String(detail || '');
+        return [detail.quotaMetric, detail.quotaId, detail.reason, detail.retryDelay,
+            detail.metadata ? JSON.stringify(detail.metadata) : ''].filter(Boolean).join(' ');
+    }).join(' ');
+    const combined = `${message} ${detailsText}`;
+    let kind = 'unknown';
+    if (/(?:requests?|tokens?|generatecontent).{0,40}(?:per.?day|perday)|(?:per.?day).{0,30}(?:quota|project|model)|daily\s+quota/i.test(combined)) {
+        kind = 'daily';
+    } else if (/(?:per.?minute|per.?second|requestsperminute|tokensperminute|\bRPM\b|\bTPM\b|rate.?limit|too many requests)/i.test(combined)) {
+        kind = 'rate';
+    }
+    const diagnosticDetail = detailsText.replace(/\s+/g, ' ').trim().slice(0, 500);
+    return { kind, message: message.slice(0, 300), detailsText: diagnosticDetail };
+}
+
+function parseRetryAfterMs(retryAfterHeader, fallbackMs = 30000) {
+    const now = Date.now();
+    const raw = String(retryAfterHeader ?? '').trim();
+    if (raw) {
+        const seconds = Number(raw);
+        if (Number.isFinite(seconds) && seconds >= 0) {
+            return Math.max(1000, Math.ceil(seconds * 1000));
+        }
+
+        // Retry-After poate fi fie număr de secunde, fie dată HTTP.
+        const retryAt = Date.parse(raw);
+        if (Number.isFinite(retryAt) && retryAt > now) {
+            return Math.max(1000, retryAt - now);
+        }
+    }
+    return fallbackMs == null ? null : Math.max(1000, Number(fallbackMs) || 30000);
+}
+
+function extractGeminiRetryDelayMs(error, fallbackMs) {
+    const headers = error?.response?.headers || {};
+    const fromHeader = parseRetryAfterMs(headers['retry-after'] ?? headers['Retry-After'], null);
+    if (fromHeader != null) return fromHeader;
+
+    const details = error?.response?.data?.error?.details;
+    if (Array.isArray(details)) {
+        for (const detail of details) {
+            const retryDelay = String(detail?.retryDelay || '').trim();
+            const match = retryDelay.match(/^(\d+(?:\.\d+)?)s$/i);
+            if (match) return Math.max(1000, Math.ceil(Number(match[1]) * 1000));
+        }
+    }
+    return fallbackMs;
+}
+
 function createKeyState(keys) {
-    return keys.map(key => ({ key, pausedUntil: 0, disabled: false, failures: 0, lastUsed: 0 }));
+    return keys.map(key => ({ key, pausedUntil: 0, dailyQuotaUntil: 0, disabled: false, failures: 0, lastUsed: 0 }));
 }
 
 function getGlobal429Until(keyStates) { return Number(keyStates._global429Until || 0); }
@@ -1396,7 +1592,7 @@ function register429(keyStates, cooldownMs, forceGlobal = false) {
     const now = Date.now();
     const paused = keyStates.filter(s => !s.disabled && s.pausedUntil > now).length;
     const active = keyStates.filter(s => !s.disabled).length;
-    const normalizedCooldownMs = Math.min(120000, Math.max(10000, Number(cooldownMs) || 15000));
+    const normalizedCooldownMs = Math.max(1000, Number(cooldownMs) || 15000);
 
     // Când Google spune că resursa/cota este epuizată, rotirea imediată către
     // altă cheie poate lovi aceeași limită de proiect. În acest caz, activăm
@@ -1408,24 +1604,6 @@ function register429(keyStates, cooldownMs, forceGlobal = false) {
             now + normalizedCooldownMs
         );
     }
-}
-
-function parseRetryAfterMs(retryAfterHeader) {
-    const now = Date.now();
-    const raw = String(retryAfterHeader ?? '').trim();
-    if (raw) {
-        const seconds = Number(raw);
-        if (Number.isFinite(seconds) && seconds > 0) {
-            return Math.min(120000, Math.max(10000, Math.ceil(seconds * 1000)));
-        }
-
-        // Retry-After poate fi fie număr de secunde, fie dată HTTP.
-        const retryAt = Date.parse(raw);
-        if (Number.isFinite(retryAt) && retryAt > now) {
-            return Math.min(120000, Math.max(10000, retryAt - now));
-        }
-    }
-    return 30000;
 }
 
 async function waitFor429Gate(keyStates) {
@@ -1444,8 +1622,9 @@ async function getAvailableKey(keyStates) {
     while (true) {
         await waitFor429Gate(keyStates);
         const now = Date.now();
-        const available = keyStates
-            .filter(s => !s.disabled && s.pausedUntil <= now)
+        const nonDisabled = keyStates.filter(s => !s.disabled);
+        const available = nonDisabled
+            .filter(s => s.pausedUntil <= now && Number(s.dailyQuotaUntil || 0) <= now)
             .sort((a, b) => a.lastUsed - b.lastUsed);
 
         if (available.length) {
@@ -1454,11 +1633,21 @@ async function getAvailableKey(keyStates) {
             return state;
         }
 
-        const waits = keyStates
-            .filter(s => !s.disabled && s.pausedUntil > now)
+        const dailyBlocked = nonDisabled.filter(s => Number(s.dailyQuotaUntil || 0) > now);
+        if (nonDisabled.length > 0 && dailyBlocked.length === nonDisabled.length) {
+            const nextReset = Math.min(...dailyBlocked.map(s => Number(s.dailyQuotaUntil)));
+            const error = new Error(`429: Cota zilnică Gemini este epuizată pentru toate cheile disponibile; următoarea resetare estimată este ${new Date(nextReset).toISOString()}. Oprire fără reîncercări inutile.`);
+            error.isRateLimit429 = true;
+            error.isDailyQuota429 = true;
+            error.isPermanentQuotaBlock = true;
+            throw error;
+        }
+
+        const waits = nonDisabled
+            .filter(s => Number(s.dailyQuotaUntil || 0) <= now && s.pausedUntil > now)
             .map(s => s.pausedUntil - now);
 
-        if (!waits.length) throw new Error('Toate cheile Gemini sunt dezactivate.');
+        if (!waits.length) throw new Error('Toate cheile Gemini sunt dezactivate sau blocate de cotă.');
 
         const waitMs = Math.max(250, Math.min(...waits));
         await sleep(waitMs);
@@ -1504,6 +1693,9 @@ async function callGemini(prompt, keyState, options = {}) {
         generationConfig.thinkingConfig = { thinkingLevel };
     }
 
+    // Permisul este la nivelul procesului, nu al unei singure subtitrări.
+    // El este eliberat în finally, indiferent dacă API-ul reușește sau eșuează.
+    const releaseGeminiSlot = await acquireGeminiRequestSlot();
     try {
         const response = await axios.post(
             endpoint,
@@ -1523,6 +1715,7 @@ async function callGemini(prompt, keyState, options = {}) {
         const raw = response.data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
         if (!raw.trim()) throw new Error('Gemini a returnat conținut gol.');
         keyState.failures = 0;
+        noteGeminiRequestSuccess();
         return raw;
     } catch (error) {
         const status = error.response?.status;
@@ -1531,26 +1724,39 @@ async function callGemini(prompt, keyState, options = {}) {
             throw new Error(`Cheie Gemini invalidă (${status}).`);
         }
         if (status === 429) {
-            // 429 este o limitare de quota/rate la nivelul proiectului sau modelului,
-            // nu neapărat o problemă a cheii individuale. Păstrăm mesajul Google
-            // pentru diagnostic și respectăm Retry-After când este furnizat.
-            const retryAfterHeader = error.response?.headers?.['retry-after'];
-            const cooldownMs = parseRetryAfterMs(retryAfterHeader);
-            const providerMessage = String(
-                error.response?.data?.error?.message ||
-                error.response?.data?.message ||
-                ''
-            ).replace(/\s+/g, ' ').trim().slice(0, 300);
+            const quotaInfo = classifyGeminiQuotaError(error);
+            // Fără Retry-After/RetryInfo, folosim backoff global progresiv: 15, 30, 60, 120s (+ jitter).
+            const fallbackCooldown = Math.min(120000, 15000 * Math.pow(2, Math.min(3, geminiRequestControl.consecutive429))) + Math.floor(Math.random() * 1500);
+            const cooldownMs = extractGeminiRetryDelayMs(error, fallbackCooldown);
             keyState.pausedUntil = Date.now() + cooldownMs;
+            if (quotaInfo.kind === 'daily') keyState.dailyQuotaUntil = getNextPacificMidnightMs();
+            registerGlobalGemini429(cooldownMs, quotaInfo.kind);
+
+            const providerMessage = quotaInfo.message;
             const details = providerMessage ? ` Detaliu Google: ${providerMessage}` : '';
-            const retryError = new Error(`Limită Gemini 429; pauză ${Math.ceil(cooldownMs / 1000)}s.${details}`);
+            const structuredDetails = quotaInfo.detailsText ? ` Detalii cotă: ${quotaInfo.detailsText}` : '';
+            const diagnosis = quotaInfo.kind === 'daily'
+                ? 'limită zilnică indicată explicit de metadatele Google'
+                : quotaInfo.kind === 'rate'
+                    ? 'limită de frecvență indicată de metadatele Google'
+                    : 'tipul exact al cotei nu este precizat de răspunsul Google';
+            console.log(`${c.yellow}ℹ [Gemini Diagnostic] 429: ${diagnosis}.${structuredDetails}${quotaInfo.kind === 'daily' ? ` Cheia curentă este pusă în pauză până la resetarea estimată ${new Date(keyState.dailyQuotaUntil).toISOString()}.` : ''}${c.reset}`);
+
+            const retryError = new Error(`Limită Gemini 429; pauză ${Math.ceil(cooldownMs / 1000)}s.${details}${structuredDetails}`);
             retryError.isRateLimit429 = true;
             retryError.isProjectQuota429 = /resource has been exhausted|quota/i.test(providerMessage);
+            retryError.isDailyQuota429 = quotaInfo.kind === 'daily';
+            retryError.quotaKind = quotaInfo.kind;
             retryError.retryAfterMs = cooldownMs;
             retryError.providerMessage = providerMessage;
             throw retryError;
         }
+        if (Number.isInteger(status) && status >= 500 && status <= 599) {
+            registerGlobalGemini5xx(status);
+        }
         throw error;
+    } finally {
+        releaseGeminiSlot();
     }
 }
 
@@ -2049,7 +2255,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
         try {
             await waitFor429Gate(keyStates);
             const candidates = keyStates
-                .filter(s => !s.disabled && s.pausedUntil <= Date.now())
+                .filter(s => !s.disabled && s.pausedUntil <= Date.now() && Number(s.dailyQuotaUntil || 0) <= Date.now())
                 .sort((a, b) => a.lastUsed - b.lastUsed);
 
             if (!candidates.length) {
@@ -2178,22 +2384,22 @@ ${JSON.stringify(missingItems, null, 2)}
                     error.isProjectQuota429 === true
                 );
             }
-            const isTransient = is429 || /status code 5\d\d/.test(error.message);
+            const isDailyQuotaBlocked = error.isPermanentQuotaBlock === true;
+            const is5xx = /status code 5\d\d/.test(error.message);
+            const isTransient = !isDailyQuotaBlocked && (is429 || is5xx);
             console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
 
             if (!isTransient) break;
             if (attempt < maxKeyAttempts) {
-                if (is429) {
-                    continue;
-                }
-
-                const baseMs = 5000;
-                const backoffMs = Math.min(120000, baseMs * Math.pow(2, attempt - 1));
-                const jitterMs = Math.floor(Math.random() * 1500);
-                await sleep(backoffMs + jitterMs);
-                continue;
+                // Pauzele pentru 429/5xx sunt coordonate global în callGemini;
+                // nu adăugăm încă un backoff local care ar dubla timpul de așteptare.
+                if (is429 || is5xx) continue;
             }
         }
+    }
+
+    if (lastError?.isPermanentQuotaBlock) {
+        throw lastError;
     }
 
     if (chunk.length > 20 && depth < 2) {
