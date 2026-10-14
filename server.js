@@ -234,7 +234,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.157',
+    version: '12.78.158',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4146,11 +4146,18 @@ Format obligatoriu:
 
 ORIGINAL: ${String(item.text || '').trim()}`;
 
-    const maxAttempts = Math.min(3, Math.max(2, keyStates.length));
+    // Empty Recovery trebuie să rotească prin pool, nu să se oprească după 3
+    // încercări. După un 429 extindem retry-ul pentru a avea timp să folosim
+    // proiectele disponibile, exact cum se întâmplă la traducerea calupului.
+    const maxKeyAttempts = Math.max(8, keyStates.length);
+    const maxRateLimitAttempts = Math.max(maxKeyAttempts, keyStates.length * 3);
+    let sawRateLimit429 = false;
+    let plainTextFallbackNext = false;
     let lastReason = 'nu a fost obținută o traducere validă';
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    for (let attempt = 1; attempt <= (sawRateLimit429 ? maxRateLimitAttempts : maxKeyAttempts); attempt++) {
         if (keyStates._emptyRecoveryQuotaBlocked) return false;
-        const plainTextMode = attempt === 1;
+        const plainTextMode = plainTextFallbackNext;
+        plainTextFallbackNext = false;
         try {
             const retryKey = await getAvailableKey(keyStates);
             const retryRaw = await callGemini(
@@ -4173,21 +4180,33 @@ ORIGINAL: ${String(item.text || '').trim()}`;
                 return true;
             }
             lastReason = assessment.reason;
+            // Trecem la răspuns simplu numai după un răspuns JSON inutilizabil,
+            // nu după 429/503; o eroare de cotă trebuie să schimbe proiectul.
+            plainTextFallbackNext = !plainTextMode;
         } catch (error) {
-            const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(String(error?.message || ''));
+            const message = String(error?.message || error || lastReason);
+            const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(message);
+            const is503 = /(?:status code\s*)?\b503\b/i.test(message);
             if (is429) {
+                sawRateLimit429 = true;
                 register429(
                     keyStates,
                     Number(error.retryAfterMs) || 15000,
                     error.isProjectQuota429 === true
                 );
+                console.log(`${c.yellow}⚠ [429 Retry] ${stageLabel} ID ${id}: proiect limitat; încerc alt proiect (${attempt}/${maxRateLimitAttempts}).${c.reset}`);
+            } else if (is503) {
+                console.log(`${c.yellow}⚠ [503 Retry] ${stageLabel} ID ${id}: serviciu temporar indisponibil; reîncerc (${attempt}/${sawRateLimit429 ? maxRateLimitAttempts : maxKeyAttempts}).${c.reset}`);
             }
             const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
-            lastReason = String(error?.message || error || lastReason).slice(0, 180);
+            lastReason = message.slice(0, 180);
             if (quotaBlocked || error?.isPermanentQuotaBlock) return false;
+            // 429 e înregistrat în callGemini pe proiectul exact care l-a primit;
+            // următoarea iterație apelează selectorul, care ocolește cheia în pauză.
         }
     }
-    console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id} nerecuperat după ${maxAttempts} încercări (${lastReason}).${c.reset}`);
+    const attemptsUsed = sawRateLimit429 ? maxRateLimitAttempts : maxKeyAttempts;
+    console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id} nerecuperat după limita de ${attemptsUsed} încercări (${lastReason}).${c.reset}`);
     return false;
 }
 
