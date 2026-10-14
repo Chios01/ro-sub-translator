@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.149',
+    version: '12.78.165',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2150,7 +2150,7 @@ function chunkArray(array, size) {
 // nu o dovadă semantică; de aceea declanșează retraducere, nu mutarea textelor.
 const ALIGNMENT_WINDOW_SIZE = 28;
 const ALIGNMENT_WINDOW_STEP = 8;
-const ALIGNMENT_REPAIR_CHUNK_SIZE = 35;
+const ALIGNMENT_REPAIR_CHUNK_SIZE = 50;
 
 function alignmentTextMetrics(text) {
     const clean = String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -2279,19 +2279,19 @@ async function repairTranslationAlignmentRange(sourceChunk, currentResult, detec
     const end = Math.min(sourceChunk.length - 1, detection.end + 2);
     const currentById = new Map((currentResult || []).map(item => [String(item.id), String(item.text || '')]));
     const replacementById = new Map();
-    let index = start;
 
-    while (index <= end) {
-        if (!canRetranslateAlignmentItem(sourceChunk[index])) {
-            index++;
-            continue;
-        }
-        const runStart = index;
-        while (index <= end && index - runStart < ALIGNMENT_REPAIR_CHUNK_SIZE && canRetranslateAlignmentItem(sourceChunk[index])) {
-            index++;
-        }
-        const piece = sourceChunk.slice(runStart, index);
-        if (!piece.length) continue;
+    // Păstrăm segmentele contigue și le grupăm în ferestre fixe. Nu mai lansăm
+    // cereri separate de 1–2 replici când întâlnim o replică de tip junk/filler.
+    // Rezultatele replicilor care nu trebuie retraduse nu sunt aplicate peste
+    // textul deja obținut la traducerea principală.
+    for (let runStart = start; runStart <= end; runStart += ALIGNMENT_REPAIR_CHUNK_SIZE) {
+        const runEnd = Math.min(end, runStart + ALIGNMENT_REPAIR_CHUNK_SIZE - 1);
+        const piece = sourceChunk.slice(runStart, runEnd + 1);
+        const candidateIds = new Set(
+            piece.filter(canRetranslateAlignmentItem).map(item => String(item.id))
+        );
+        if (!candidateIds.size) continue;
+
         const absoluteStart = absoluteChunkStart + runStart;
         const repaired = await processChunkWithRetry(
             piece,
@@ -2305,7 +2305,10 @@ async function repairTranslationAlignmentRange(sourceChunk, currentResult, detec
             0,
             true
         );
-        for (const item of repaired) replacementById.set(String(item.id), String(item.text || ''));
+        for (const item of repaired) {
+            const id = String(item.id);
+            if (candidateIds.has(id)) replacementById.set(id, String(item.text || ''));
+        }
     }
 
     return sourceChunk.map(item => {
@@ -2705,18 +2708,18 @@ function normalizeTranslationPayload(parsed) {
     return Object.create(null);
 }
 
-async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, alignmentRepair = false) {
+async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, alignmentRepair = false, deferred429Retry = false) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     let lastError = null;
 
-    // 503 păstrează bugetul obișnuit de retry. După primul 429, permitem până
-    // la trei treceri prin pool (cel puțin 8 încercări), ca să poată fi încercate
-    // toate proiectele și să poată expira pauzele, fără split prematur al calupului.
+    // 5xx păstrează retry-ul limitat. Pentru 429 încercăm imediat o singură
+    // cheie alternativă; dacă și aceea este limitată, amânăm calupul pentru o
+    // singură reîncercare secvențială după terminarea turei inițiale.
     const maxKeyAttempts = 8;
-    const maxRateLimitAttempts = Math.max(8, keyStates.length * 3);
     let sawRateLimit429 = false;
+    let immediate429RetryUsed = false;
 
-    for (let attempt = 1; attempt <= (sawRateLimit429 ? maxRateLimitAttempts : maxKeyAttempts); attempt++) {
+    for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
         let keyState = null;
         try {
             // Alegem proiectul la nivel global, ținând cont de toate traducerile
@@ -2854,22 +2857,54 @@ ${JSON.stringify(missingItems, null, 2)}
             const isDailyQuotaBlocked = error.isPermanentQuotaBlock === true;
             const is5xx = /status code 5\d\d/.test(error.message);
             const isTransient = !isDailyQuotaBlocked && (is429 || is5xx);
-            console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
 
-            if (!isTransient) break;
-            const retryLimit = sawRateLimit429 ? maxRateLimitAttempts : maxKeyAttempts;
-            if (attempt < retryLimit) {
-                // 429 pune în pauză doar proiectul care l-a primit. Dacă există
-                // alte proiecte eligibile, selectorul trece la ele; dacă toate
-                // sunt în pauză, getAvailableKey așteaptă primul proiect care revine.
-                // 503/5xx păstrează gate-ul global de serviciu.
-                if (is429 || is5xx) continue;
+            // callGemini a înregistrat deja detaliile 429. Nu mai rotim în buclă
+            // prin toate proiectele: cel mult o trecere imediată pe alt proiect.
+            if (is429 && !isDailyQuotaBlocked) {
+                if (!deferred429Retry && !immediate429RetryUsed && attempt < maxKeyAttempts) {
+                    immediate429RetryUsed = true;
+                    console.log(`${c.yellow}[Gemini Recovery] 429; încerc imediat un alt proiect pentru același calup (o singură schimbare de proiect).${c.reset}`);
+                    continue;
+                }
+                break;
             }
+            if (isDailyQuotaBlocked) break;
+            if (!isTransient) {
+                if (!(chunk.length > 20 && depth < 2)) {
+                    console.error(`${c.red}✖ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} eșuat: ${error.message}${c.reset}`);
+                }
+                break;
+            }
+            if (is5xx && attempt < maxKeyAttempts) continue;
+            if (is5xx && !(chunk.length > 20 && depth < 2)) {
+                console.error(`${c.red}✖ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} eșuat după ${attempt} încercări: ${error.message}${c.reset}`);
+            }
+            break;
         }
     }
 
     if (lastError?.isPermanentQuotaBlock) {
         throw lastError;
+    }
+
+    if (sawRateLimit429 && (lastError?.isRateLimit429 || /\b429\b/i.test(String(lastError?.message || '')))) {
+        if (!deferred429Retry) {
+            if (!Array.isArray(keyStates._deferred429Chunks)) keyStates._deferred429Chunks = [];
+            const alreadyQueued = keyStates._deferred429Chunks.some(entry =>
+                entry.globalChunkIndex === globalChunkIndex &&
+                entry.chunkStart === chunkStart &&
+                entry.depth === depth &&
+                entry.alignmentRepair === alignmentRepair
+            );
+            if (!alreadyQueued) {
+                keyStates._deferred429Chunks.push({
+                    chunk: [...chunk], allItems, chunkStart, chunkEnd,
+                    previousTranslatedContext: [...(previousTranslatedContext || [])],
+                    globalChunkIndex, totalChunks, depth, alignmentRepair
+                });
+            }
+        }
+        return chunk.map(item => ({ id: item.id, text: ' ' }));
     }
 
     if (chunk.length > 20 && depth < 2) {
@@ -4264,6 +4299,37 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         const lastResult = results[results.length - 1];
         if (lastResult && lastResult.result) {
             previousTranslatedContext = lastResult.result.slice(-PREVIOUS_TRANSLATION_CONTEXT);
+        }
+    }
+
+    const deferred429Chunks = Array.isArray(keyStates._deferred429Chunks)
+        ? keyStates._deferred429Chunks.splice(0)
+        : [];
+    if (deferred429Chunks.length) {
+        console.log(`${c.cyan}[429 Retry] ${deferred429Chunks.length} calupuri/segmente; reîncercare secvențială unică după tura inițială.${c.reset}`);
+        for (const task of deferred429Chunks) {
+            await sleep(750);
+            const retryResult = await processChunkWithRetry(
+                task.chunk,
+                task.allItems,
+                task.chunkStart,
+                task.chunkEnd,
+                task.previousTranslatedContext,
+                keyStates,
+                task.globalChunkIndex,
+                task.totalChunks,
+                task.depth,
+                task.alignmentRepair,
+                true
+            );
+            const taskItemsById = new Map(task.chunk.map(item => [String(item.id), item]));
+            for (const item of retryResult) {
+                const id = String(item.id);
+                // Un segment de aliniere poate include ID-uri pe care formatterul
+                // le exclude din retraducere. Nu suprascriem traducerea lor existentă.
+                if (task.alignmentRepair && !canRetranslateAlignmentItem(taskItemsById.get(id))) continue;
+                translatedById[id] = item.text;
+            }
         }
     }
 
