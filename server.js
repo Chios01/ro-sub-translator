@@ -37,8 +37,16 @@ function shouldSuppressRoutineTranslationLog(args) {
     // Nu filtrăm logurile normale ale serverului, doar zgomotul dintr-o traducere.
     if (!ctx || !ctx.mediaId) return false;
 
-    // Aceste două statusuri sunt operațional importante și nu se ascund niciodată.
+    // Etapele și timpii sunt solicitați explicit pentru diagnostic și nu se ascund.
+    if (/\[PERF\]/i.test(message)) return false;
+
+    // Aceste statusuri sunt operațional importante și nu se ascund niciodată.
     if (/\b(?:429|503)\b|status code (?:429|503)/i.test(message)) return false;
+
+    // Restaurăm rezultatele tuturor etapelor de traducere; avertismentele
+    // nerelevante rămân filtrate mai jos, iar 429/503 rămân întotdeauna vizibile.
+    const stageResultMessage = /\[(?:POST-CHECK|Grammar Review|GRAMATICĂ|Semantic Spot Check|RETRY FINAL|Quality Retry|Quality Recheck|Final Repair|Final Empty Recovery|Empty Recovery|Continuări|Aliniere|QA FINAL|Gemini)\]|VERIFICARE PUNCTUALĂ|VERIFICARE SUPLIMENTARĂ|^Verificate: \d+ replici$/i.test(message);
+    if (stageResultMessage && !/(?:⚠|✖|\bERROR\b|\bfailed\b|\beșuat\b|\beroare\b|\btimeout\b|\btimed out\b|\binvalid JSON\b)/i.test(message)) return false;
 
     // Păstrăm progresul fiecărui calup și raportul final de integritate.
     if (/➤ \[Gemini\] Traduc calup \d+\/\d+\.\.\.|✔ \[Gemini\] Calup \d+\/\d+ finalizat!|\[QA FINAL\]|\[DONE\]|ID-uri fără traducere|\[SRT\] Sursă:/i.test(message)) return false;
@@ -234,7 +242,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.158',
+    version: '12.78.159',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4371,6 +4379,25 @@ function applyContinuationCase(items, translatedById) {
 // ============================================================
 
 async function translateSrtWithGemini(srtText, apiKeys) {
+    const perfStartedAt = Date.now();
+    const perfStageStarts = Object.create(null);
+    const formatPerfDuration = milliseconds => {
+        const ms = Math.max(0, Number(milliseconds) || 0);
+        if (ms < 1000) return `${ms} ms`;
+        return `${(ms / 1000).toFixed(2)} s`;
+    };
+    const perfStart = (name, detail = '') => {
+        perfStageStarts[name] = Date.now();
+        console.log(`${c.cyan}[PERF] START ${name}${detail ? ` | ${detail}` : ''}${c.reset}`);
+    };
+    const perfEnd = (name, detail = '') => {
+        const startedAt = perfStageStarts[name];
+        const elapsed = Number.isFinite(startedAt) ? Date.now() - startedAt : 0;
+        delete perfStageStarts[name];
+        console.log(`${c.cyan}[PERF] END ${name} | ${formatPerfDuration(elapsed)}${detail ? ` | ${detail}` : ''}${c.reset}`);
+    };
+
+    perfStart('SRT parse + filtrare');
     const sourceBlockCount = (String(srtText || '').match(/-->/g) || []).length;
     const parseStats = { fillerBlocksFiltered: 0, otherBlocksFiltered: 0, invalidBlocksSkipped: 0 };
     const items = parseSrt(srtText, parseStats);
@@ -4378,6 +4405,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
 
     const accountingDelta = sourceBlockCount - items.length - parseStats.fillerBlocksFiltered - parseStats.otherBlocksFiltered - parseStats.invalidBlocksSkipped;
     console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${items.length} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
+    perfEnd('SRT parse + filtrare', `${items.length} linii eligibile`);
 
     const cleanKeys = Array.from(new Set(apiKeys.map(k => String(k).trim()).filter(Boolean)));
     if (!cleanKeys.length) throw new Error('Nu există chei Gemini valide.');
@@ -4388,6 +4416,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     const translatedById = Object.create(null);
     let previousTranslatedContext = [];
 
+    perfStart('Traducere Gemini principală', `${chunks.length} calupuri, concurență ${CONCURRENCY_LIMIT}`);
     for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY_LIMIT) {
         const batch = chunks.slice(batchStart, batchStart + CONCURRENCY_LIMIT);
 
@@ -4396,9 +4425,13 @@ async function translateSrtWithGemini(srtText, apiKeys) {
             const start = globalIndex * CHUNK_SIZE;
             const end = start + chunk.length;
 
+            const chunkStartedAt = Date.now();
             if (localIndex > 0) await sleep(1500 * localIndex);
 
             const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, globalIndex, chunks.length);
+            const chunkElapsed = Date.now() - chunkStartedAt;
+            const chunkTextCount = result.filter(item => String(item.text || '').trim()).length;
+            console.log(`${c.cyan}[PERF] Calup ${globalIndex + 1}/${chunks.length} | ${formatPerfDuration(chunkElapsed)} | ${chunkTextCount}/${chunk.length} replici cu text${c.reset}`);
             return { globalIndex, result };
         });
 
@@ -4449,7 +4482,9 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     }
 
     console.log(`${c.green}[Gemini] Calupuri inițiale finalizate: ${chunks.length}/${chunks.length}.${c.reset}`);
+    perfEnd('Traducere Gemini principală', `${chunks.length} calupuri încheiate`);
 
+    perfStart('Corecturi locale ancorate în original');
     let sourceGroundedCorrections = 0;
     for (const item of items) {
         const id = String(item.id);
@@ -4463,6 +4498,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     if (sourceGroundedCorrections) {
         console.log(`${c.green}[Corecturi locale] ${sourceGroundedCorrections} corecții ancorate în originalul EN aplicate înainte de retry.${c.reset}`);
     }
+    perfEnd('Corecturi locale ancorate în original', `${sourceGroundedCorrections} modificări`);
 
     const emptyTranslations = items.filter(item => {
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
@@ -4472,6 +4508,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
     });
 
     if (emptyTranslations.length > 0) {
+        perfStart('Empty Recovery inițial', `${emptyTranslations.length} replici goale`);
         console.log(`${c.yellow}⚠ [Empty Recovery] ${emptyTranslations.length} traduceri goale detectate. Încerc mai întâi recuperarea locală...${c.reset}`);
         const localRecovery = recoverEmptyTranslationsLocally(
             items, emptyTranslations, translatedById, 'Empty Recovery'
@@ -4556,10 +4593,15 @@ Returnează DOAR un ARRAY JSON valid în forma:
         const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
         const failedSuffix = stillEmpty.length ? `; nereparate: ${stillEmpty.map(item => item.id).join(', ')}` : '';
         console.log(`${stillEmpty.length === 0 ? c.green : c.yellow}✔ [Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}${failedSuffix}${c.reset}`);
+        perfEnd('Empty Recovery inițial', `${recoveredCount}/${emptyTranslations.length} recuperate; ${stillEmpty.length} rămase goale`);
+    } else {
+        console.log(`${c.cyan}[PERF] SKIP Empty Recovery inițial | nu există replici goale${c.reset}`);
     }
 
+    perfStart('POST-CHECK global / RETRY FINAL', 'maxim 2 runde');
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}[RETRY FINAL] ${targetedRetry.fixed} replici reparate.${c.reset}`);
+    perfEnd('POST-CHECK global / RETRY FINAL', `${targetedRetry.fixed} corectări`);
 
     // Reparăm determinist doar connectorii repetați când cele două originale
     // stabilesc fără ambiguitate că primul bloc a adăugat conectorul prea devreme.
@@ -4569,6 +4611,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
     // Verificare AI punctuală și limitată: numai replicile pe care semnalele
     // locale le marchează ca potențial corupte/agramaticale. Nu revizuim toate
     // subtitrările și nu schimbăm modelul, calupurile sau mecanismul cheilor.
+    perfStart('Verificări locale: gramatică + semantică');
     const localQuality = await runLocalGrammarQualityPass(items, translatedById);
     const semanticQualityItems = runSemanticSpotCheck(items, translatedById);
     const targetedReasonById = { ...localQuality.reasonsById };
@@ -4585,8 +4628,10 @@ Returnează DOAR un ARRAY JSON valid în forma:
         ...semanticQualityItems.map(item => String(item.id))
     ]);
     const targetedQualityCandidates = items.filter(item => targetedQualityIds.has(String(item.id)));
+    perfEnd('Verificări locale: gramatică + semantică', `${localQuality.flaggedItems.length} semnale gramatică; ${semanticQualityItems.length} semnale semantice; ${targetedQualityCandidates.length} candidate AI`);
     const MAX_TARGETED_QUALITY_REVIEW_ITEMS = 30;
     let firstQualityReview = { checked: 0, fixed: 0, rejectedQualityReasonsById: Object.create(null) };
+    perfStart('Quality Retry AI', `${Math.min(targetedQualityCandidates.length, MAX_TARGETED_QUALITY_REVIEW_ITEMS)} candidate`);
     if (targetedQualityCandidates.length) {
         const reviewItems = targetedQualityCandidates.slice(0, MAX_TARGETED_QUALITY_REVIEW_ITEMS);
         console.log(`${c.cyan}🎯 [Quality Retry] Verificare AI punctuală pentru ${reviewItems.length} replici.${c.reset}`);
@@ -4599,6 +4644,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
     } else {
         console.log(`${c.green}✔ [Quality Retry] Nicio replică nu a declanșat verificarea AI punctuală; nu s-a adăugat o cerere Gemini.${c.reset}`);
     }
+
+    perfEnd('Quality Retry AI', `${firstQualityReview.checked} verificate; ${firstQualityReview.fixed} corectate`);
 
     // Verificare după corectare: reevaluăm numai replicile care încă au semnale
     // cunoscute. Un singur al doilea tur, limitat la 15 replici, evită atât acceptarea
@@ -4619,6 +4666,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
         else unresolvedQualityMap.set(id, { item: issue.item, reasons: [issue.reason] });
     }
 
+    perfStart('Quality Recheck AI', `${unresolvedQualityMap.size} rămase cu semnale`);
     if (unresolvedQualityMap.size && targetedQualityCandidates.length) {
         const retryCandidates = items.filter(item => unresolvedQualityMap.has(String(item.id))).slice(0, 15);
         const retryReasonById = Object.fromEntries(retryCandidates.map(item => {
@@ -4637,14 +4685,20 @@ Returnează DOAR un ARRAY JSON valid în forma:
             reasonById: retryReasonById
         });
         console.log(`${c.cyan}🔁 [Quality Recheck] ${recheck.checked} reverificate, ${recheck.fixed} corectate la a doua verificare.${c.reset}`);
+        perfEnd('Quality Recheck AI', `${recheck.checked} verificate; ${recheck.fixed} corectate`);
+    } else {
+        perfEnd('Quality Recheck AI', 'sărit: nu există motive rămase sau nu a existat Quality Retry');
     }
 
     // Recuperare finală independentă de Grammar Review pentru eventuale traduceri goale.
+    perfStart('Final Empty Recovery');
     await recoverEmptyTranslationsFinal(items, translatedById, keyStates);
+    perfEnd('Final Empty Recovery');
 
     // Ultima protecție: corecțiile mecanice certe se reaplică înainte de export.
     // formatSubtitleLine() este idempotent pentru aceste corecții și reaplică
     // dicționarul determinist la final.
+    perfStart('Curățare deterministă + formatare finală');
     for (const item of items) {
         const id = String(item.id);
         const current = translatedById[id];
@@ -4673,10 +4727,12 @@ Returnează DOAR un ARRAY JSON valid în forma:
     applyContinuationCase(items, translatedById);
     // Ultima apărare contra conectorilor reintroduși de Grammar Review.
     applyDeterministicBoundaryConnectorFixes(items, translatedById);
+    perfEnd('Curățare deterministă + formatare finală');
 
     // Reparare finală pe baza verificărilor efectuate după formatare.
     // Astfel, semnalele care au supraviețuit verificărilor anterioare revin la
     // corectare contextuală înainte de export, nu doar în raportul final.
+    perfStart('Scanare QA finală + Final Repair AI');
     const finalRepairReasonById = Object.create(null);
     const finalRepairCandidates = [];
     for (const item of items) {
@@ -4733,8 +4789,12 @@ Returnează DOAR un ARRAY JSON valid în forma:
         applyContinuationCase(items, translatedById);
         applyDeterministicBoundaryConnectorFixes(items, translatedById);
         console.log(`${c.green}[Final Repair] Verificare finală încheiată; ${Number(finalReview?.fixed || 0)} corectări aplicate.${c.reset}`);
+        perfEnd('Scanare QA finală + Final Repair AI', `${finalRepairCandidates.length} candidate AI; ${Number(finalReview?.checked || 0)} verificate; ${Number(finalReview?.fixed || 0)} corectate`);
+    } else {
+        perfEnd('Scanare QA finală + Final Repair AI', '0 candidate AI; fără apel Gemini');
     }
 
+    perfStart('QA final + construire SRT');
     // Interjecțiile generate ca traducere izolată sunt eliminate din ieșire și
     // scoase din numitorul QA; nu trebuie raportate ca eroare de fidelitate.
     // Ultima curățare înainte de export, după toate etapele care pot modifica textul.
@@ -4851,6 +4911,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
             return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
         }).join('\n');
 
+    perfEnd('QA final + construire SRT', `${emittedCount}/${qaEligibleItems.length} text; ${unresolvedEmpty.length} goale; ${remainingNonEmptySuspicious.length} suspecte`);
+    console.log(`${c.cyan}[PERF] TOTAL pipeline intern: ${formatPerfDuration(Date.now() - perfStartedAt)}${c.reset}`);
     return output.trim() ? output.trim() + '\n' : '';
 }
 
