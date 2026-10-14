@@ -108,11 +108,13 @@ function logTranslationStart(mediaId, mediaTitle) {
         .trim();
     const details = cleanTitle ? `${cleanId} — ${cleanTitle}` : cleanId;
 
-    // Fiecare element colorat este emis pe propria linie, cu secvența ANSI
-    // în aceeași linie ca textul. Nu folosim separatoare decorative, care pe
-    // unele interfețe de log se împart pe două rânduri și colorează doar parțial.
+    // Delimitare compactă, cu o singură linie înainte și una după antet.
+    // Separatorul este suficient de scurt ca să nu se rupă pe ecranele înguste.
+    const divider = '\x1b[90m────────────────────────────────────\x1b[0m';
+    console.log(divider);
     console.log(`\x1b[96m${headline}\x1b[0m`);
     console.log(`\x1b[93m${details}\x1b[0m`);
+    console.log(divider);
 }
 function rememberOriginalSource(key, text) {
     originalSources[key] = text;
@@ -153,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.147',
+    version: '12.78.148',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
