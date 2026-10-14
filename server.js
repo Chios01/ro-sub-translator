@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.161',
+    version: '12.78.162',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -651,7 +651,7 @@ function isEffectivelyEmptySubtitleText(text) {
 const STANDALONE_SOURCE_FILLERS = new Set((
     // Politica proiectului: nu se păstrează interjecții în subtitrarea română,
     // nici reacțiile exclamative considerate anterior „cu sens”.
-    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh pf pff pfff pffft pfft pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu haha hehe hey hei na ă ăă ăăă îhî ptiu brr wow whoa oops ouch yikes yay yayyy woot woohoo hooray hurray alas bravo phew aha eureka uau vai păi aoleu uf hopa măi băi doamne dumnezeule gee gosh jeez geez gosh darn darn dang heck phew phooey yeesh sheesh yikes'
+    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr hey hei na yay yayyy woot woohoo hooray hurray alas bravo eureka uau vai păi aoleu hopa măi băi doamne dumnezeule gee gosh jeez geez darn dang heck phooey yeesh sheesh'
 ).split(/\s+/));
 
 function isOnlyStandaloneFillerSequence(text) {
@@ -783,8 +783,8 @@ function cleanTextForJson(text) {
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
-    // Eliminăm toate interjecțiile cunoscute înainte de Gemini; pe replicile mixte
-    // păstrăm cuvintele cu conținut și eliminăm interjecțiile dintre ele.
+    // Eliminăm interjecțiile înainte de Gemini; replicile mixte își păstrează
+    // cuvintele cu sens, iar vocalizările izolate sunt lăsate în afara traducerii.
     clean = clean.split('\n').map(line => {
         if (isOnlyStandaloneFillerSequence(line)) return '';
         return stripKnownInterjectionTokens(line);
@@ -793,8 +793,8 @@ function cleanTextForJson(text) {
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
 
-    // Eliminăm replicile alcătuite exclusiv din interjecții, inclusiv reacțiile
-    // exclamative și expresii precum „Oh my God” sau „Oh no”.
+    // Eliminăm replicile alcătuite exclusiv din interjecții, inclusiv secvențe
+    // precum „Um... hmm.”. Expresiile cu sens, de ex. „Oh my God”, rămân.
     let lines = clean.split('\n').map(l => l.trim()).filter(Boolean).filter(line => {
         return !isOnlyStandaloneFillerSequence(line);
     });
@@ -2500,6 +2500,15 @@ function hasCorruptedSubtitleText(text, originalText) {
     if (!s) return true;
     if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) return true;
     if (/[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF]/.test(s)) return true;
+
+    // Erori confirmate manual în perechi EN/RO: semnalare pentru QA, nu rescriere oarbă.
+    const knownCorruption = /\bstrisoarea\b|\bne-am\s+lipsit\b|\ble\s+mai\s+te\s+uiți\b|\ble\s+mai\s+te\s+uiti\b|\bmartorizat\b|\bo\s+favor\b|\bașa\s+and\s+gândeam\b|\be\s+un\s+experimentat\b|\bte\s+scoat\b/i;
+    if (knownCorruption.test(s)) return true;
+
+    // Inversare de sens confirmată din perechea EN/RO: „drive” nu înseamnă „marșarier”.
+    const sourceClean = String(originalText || '').replace(/<[^>]+>/g, '').trim();
+    const driveGearReversal = /\bput\s+it\s+in\s+(?:the\s+)?drive\b/i.test(sourceClean) && /\bmar[șs]arier\b/i.test(s);
+    if (driveGearReversal) return true;
 
     return false;
 }
@@ -4617,8 +4626,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
         .filter(item => {
             const id = String(item.id);
             const translated = String(translatedById[id] || '').trim();
-            // O interjecție sursă nu trebuie să ajungă în ieșire, nici prin parafrazarea Gemini.
-            // Se suprimă și replicile traduse care conțin numai interjecții.
+            // A source-only reaction/marker must not leak into the output, even if Gemini
+            // returned an empty or non-empty paraphrase for it. Also suppress reaction-only translations.
             return isJunkOrInterjection(item.text) || isOnlyStandaloneFillerSequence(translated) || isOnlyStandaloneOutputInterjection(translated);
         })
         .map(item => String(item.id));
@@ -5003,7 +5012,7 @@ function parseSrt(srt, stats = null) {
 
         let rawText = lines.slice(2).join('\n');
 
-        // Clasificăm separat vocalizările izolate înainte de normalizare (inclusiv ♪ ... ♪).
+        // Clasificăm vocalizările izolate înainte de normalizare (inclusiv ♪ ... ♪).
         const sourceFillerProbe = rawText
             .replace(/[♪♫♬♩#]/g, '')
             .replace(/\{[^}]+\}/g, ' ')
