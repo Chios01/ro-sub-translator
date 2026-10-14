@@ -156,7 +156,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.163',
+    version: '12.78.164',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3879,9 +3879,14 @@ function assessEmptyRecoveryCandidate(item, candidateRaw) {
         return { ok: false, reason: 'ID absent din răspunsul Gemini' };
     }
 
-    const candidate = formatSubtitleLine(String(candidateRaw || ''));
+    // Validăm candidatul DUPĂ filtrul final de interjecții. În caz contrar,
+    // o traducere formată numai din „Oh/Whoa/etc.” părea validă aici, era
+    // ștearsă ulterior și ajungea goală abia la QA FINAL.
+    const candidate = stripRomanianOutputInterjections(
+        formatSubtitleLine(String(candidateRaw || ''))
+    );
     if (!candidate || !candidate.replace(/<[^>]+>/g, '').trim()) {
-        return { ok: false, reason: 'Gemini a returnat text gol' };
+        return { ok: false, reason: 'candidatul a rămas gol după eliminarea interjecțiilor' };
     }
     if (hasUntranslatedEnglish(item.text, candidate)) {
         return { ok: false, reason: 'textul conține engleză netradusă' };
@@ -4351,8 +4356,9 @@ Returnează DOAR un ARRAY JSON valid în forma:
         console.log(`${c.cyan}🔁 [Quality Recheck] ${recheck.checked} reverificate, ${recheck.fixed} corectate la a doua verificare.${c.reset}`);
     }
 
-    // Recuperare finală independentă de Grammar Review pentru eventuale traduceri goale.
-    await recoverEmptyTranslationsFinal(items, translatedById, keyStates);
+    // Recuperarea pentru ID-urile goale se execută după toate corecturile,
+    // mai jos, DUPĂ eliminarea finală a interjecțiilor. Astfel reparăm și
+    // replicile al căror text a devenit gol doar la curățarea finală.
 
     // Ultima protecție: corecțiile mecanice certe se reaplică înainte de export.
     // formatSubtitleLine() este idempotent pentru aceste corecții și reaplică
@@ -4454,6 +4460,11 @@ Returnează DOAR un ARRAY JSON valid în forma:
         if (!current.trim()) continue;
         translatedById[id] = stripRomanianOutputInterjections(current);
     }
+
+    // Ultima recuperare după curățarea finală: include și replicile care au
+    // devenit goale doar după eliminarea interjecțiilor. Toate ID-urile se
+    // trimit într-o singură cerere grupată, nu prin cereri individuale.
+    await recoverEmptyTranslationsFinal(items, translatedById, keyStates);
 
     // Interjecțiile generate ca traducere izolată sunt eliminate din ieșire și
     // scoase din numitorul QA; nu trebuie raportate ca eroare de fidelitate.
