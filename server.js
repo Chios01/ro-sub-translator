@@ -5,6 +5,16 @@ const path = require('path');
 const fs = require('fs');
 const dns = require('dns').promises;
 const net = require('net');
+const { AsyncLocalStorage } = require('async_hooks');
+
+// Asociază fiecare mesaj de log cu traducerea care l-a produs, inclusiv în operații async concurente.
+const translationLogContext = new AsyncLocalStorage();
+const nativeConsoleLog = console.log.bind(console);
+console.log = (...args) => {
+    const ctx = translationLogContext.getStore();
+    if (ctx && ctx.mediaId) nativeConsoleLog(`[${ctx.mediaId}]`, ...args);
+    else nativeConsoleLog(...args);
+};
 
 const app = express();
 
@@ -2789,18 +2799,17 @@ function normalizeTranslationPayload(parsed) {
     return Object.create(null);
 }
 
-async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, alignmentRepair = false) {
+async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, alignmentRepair = false, deferred429Retry = false) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     let lastError = null;
 
-    // 503 păstrează bugetul obișnuit de retry. După primul 429, permitem până
-    // la trei treceri prin pool (cel puțin 8 încercări), ca să poată fi încercate
-    // toate proiectele și să poată expira pauzele, fără split prematur al calupului.
+    // Erorile tranzitorii 5xx pot primi retry-uri obișnuite. La primul 429,
+    // nu rotim rapid aceeași cerere prin tot pool-ul: calupul este amânat pentru
+    // o singură reîncercare secvențială după terminarea calupurilor inițiale.
     const maxKeyAttempts = 8;
-    const maxRateLimitAttempts = Math.max(8, keyStates.length * 3);
     let sawRateLimit429 = false;
 
-    for (let attempt = 1; attempt <= (sawRateLimit429 ? maxRateLimitAttempts : maxKeyAttempts); attempt++) {
+    for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
         let keyState = null;
         try {
             // Alegem proiectul la nivel global, ținând cont de toate traducerile
@@ -2938,22 +2947,36 @@ ${JSON.stringify(missingItems, null, 2)}
             const isDailyQuotaBlocked = error.isPermanentQuotaBlock === true;
             const is5xx = /status code 5\d\d/.test(error.message);
             const isTransient = !isDailyQuotaBlocked && (is429 || is5xx);
-            console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
+            if (is429) {
+                console.log(`${c.yellow}⚠ [429] Calup ${globalChunkIndex + 1}/${totalChunks}: proiectul selectat este în pauză; opresc rotația pentru această încercare și amân calupul.${c.reset}`);
+                break;
+            }
+            console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}, încercarea ${attempt}/${maxKeyAttempts}: ${error.message}${c.reset}`);
 
             if (!isTransient) break;
-            const retryLimit = sawRateLimit429 ? maxRateLimitAttempts : maxKeyAttempts;
-            if (attempt < retryLimit) {
-                // 429 pune în pauză doar proiectul care l-a primit. Dacă există
-                // alte proiecte eligibile, selectorul trece la ele; dacă toate
-                // sunt în pauză, getAvailableKey așteaptă primul proiect care revine.
-                // 503/5xx păstrează gate-ul global de serviciu.
-                if (is429 || is5xx) continue;
-            }
+            if (attempt < maxKeyAttempts && is5xx) continue;
         }
     }
 
     if (lastError?.isPermanentQuotaBlock) {
         throw lastError;
+    }
+
+    if (sawRateLimit429 && lastError?.isRateLimit429) {
+        if (!deferred429Retry) {
+            if (!Array.isArray(keyStates._deferred429Chunks)) keyStates._deferred429Chunks = [];
+            if (!keyStates._deferred429Chunks.some(entry => entry.globalChunkIndex === globalChunkIndex && entry.chunkStart === chunkStart && entry.depth === depth)) {
+                keyStates._deferred429Chunks.push({
+                    chunk: [...chunk], allItems, chunkStart, chunkEnd,
+                    previousTranslatedContext: [...(previousTranslatedContext || [])],
+                    globalChunkIndex, totalChunks, depth, alignmentRepair
+                });
+            }
+            console.log(`${c.yellow}⏸ [429 Retry] Calup ${globalChunkIndex + 1}/${totalChunks} amânat; va primi o singură reîncercare secvențială după turul inițial.${c.reset}`);
+        } else {
+            console.log(`${c.yellow}⚠ [429 Retry] Calup ${globalChunkIndex + 1}/${totalChunks} a primit din nou 429 la reîncercarea amânată; nu mai rotesc prin alte proiecte. ID-urile goale vor fi raportate la QA FINAL.${c.reset}`);
+        }
+        return chunk.map(item => ({ id: item.id, text: ' ' }));
     }
 
     if (chunk.length > 20 && depth < 2) {
@@ -4294,7 +4317,9 @@ async function translateSrtWithGemini(srtText, apiKeys) {
         for (const batchResult of results) {
             const sourceChunk = chunks[batchResult.globalIndex];
             let chunkResult = batchResult.result;
-            const alignmentIssue = detectTranslationAlignmentShift(sourceChunk, chunkResult);
+            const blankCount = chunkResult.filter(item => !String(item.text || '').trim()).length;
+            const isMostlyBlank = chunkResult.length > 0 && blankCount >= Math.ceil(chunkResult.length * 0.8);
+            const alignmentIssue = isMostlyBlank ? null : detectTranslationAlignmentShift(sourceChunk, chunkResult);
             if (alignmentIssue) {
                 const suspectStart = Math.max(0, alignmentIssue.start - 2);
                 const suspectEnd = Math.min(sourceChunk.length - 1, alignmentIssue.end + 2);
@@ -4332,7 +4357,28 @@ async function translateSrtWithGemini(srtText, apiKeys) {
         }
     }
 
-    console.log(`${c.green}[Gemini] Calupuri finalizate: ${chunks.length}/${chunks.length}.${c.reset}`);
+    const deferred429Chunks = Array.isArray(keyStates._deferred429Chunks) ? keyStates._deferred429Chunks.splice(0) : [];
+    if (deferred429Chunks.length) {
+        console.log(`${c.yellow}[429 Retry] ${deferred429Chunks.length} calupuri amânate; reîncerc secvențial, câte unul, după turul inițial.${c.reset}`);
+        for (let index = 0; index < deferred429Chunks.length; index++) {
+            const task = deferred429Chunks[index];
+            await sleep(750);
+            console.log(`${c.cyan}[429 Retry] Calup ${task.globalChunkIndex + 1}/${task.totalChunks}, reîncercare amânată ${index + 1}/${deferred429Chunks.length}.${c.reset}`);
+            const retryResult = await processChunkWithRetry(
+                task.chunk, task.allItems, task.chunkStart, task.chunkEnd,
+                task.previousTranslatedContext, keyStates, task.globalChunkIndex,
+                task.totalChunks, task.depth, task.alignmentRepair, true
+            );
+            let recovered = 0;
+            for (const item of retryResult) {
+                translatedById[String(item.id)] = item.text;
+                if (String(item.text || '').trim()) recovered++;
+            }
+            console.log(`${recovered === retryResult.length ? c.green : c.yellow}[429 Retry] Calup ${task.globalChunkIndex + 1}/${task.totalChunks}: ${recovered}/${retryResult.length} replici cu text după reîncercarea amânată.${c.reset}`);
+        }
+    }
+
+    console.log(`${c.green}[Gemini] Calupuri inițiale finalizate: ${chunks.length}/${chunks.length}.${c.reset}`);
 
     let sourceGroundedCorrections = 0;
     for (const item of items) {
@@ -4681,12 +4727,40 @@ Returnează DOAR un ARRAY JSON valid în forma:
             hasLostExplicitSourceTerm(item.text, translated);
     });
 
-    // Verificările finale rămân active intern, dar nu expun liste de suspiciuni
-    // sau un raport cu ceea ce filtrele automate nu au putut confirma.
-    console.log(`\n${c.green}[QA FINAL] Verificările de după traducere s-au încheiat.${c.reset}`);
+    const unresolvedEmpty = items.filter(item => {
+        const id = String(item.id);
+        if (suppressedFillerIdSet.has(id) || isJunkOrInterjection(item.text)) return false;
+        const originalClean = isEffectivelyEmptySubtitleText(item.text)
+            ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        if (!originalClean) return false;
+        return !String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim();
+    });
+    const remainingNonEmptySuspicious = finalSuspicious.filter(item => {
+        const id = String(item.id);
+        return !unresolvedEmpty.some(missing => String(missing.id) === id);
+    });
+    const emittedCount = items.filter(item => {
+        const id = String(item.id);
+        return !suppressedFillerIdSet.has(id) && String(translatedById[id] ?? '').trim().length > 0;
+    }).length;
+    const finalStatus = {
+        inputCount: items.length,
+        emittedCount,
+        unresolvedEmptyCount: unresolvedEmpty.length,
+        unresolvedEmptyIds: unresolvedEmpty.map(item => String(item.id)),
+        remainingSuspiciousCount: remainingNonEmptySuspicious.length
+    };
+    const logContext = translationLogContext.getStore();
+    if (logContext) logContext.finalStatus = finalStatus;
 
-    // Blocurile goale sunt omise în export conform protecției existente; nu afișăm liste de ID-uri.
-
+    if (unresolvedEmpty.length) {
+        const ids = unresolvedEmpty.map(item => String(item.id));
+        console.log(`${c.yellow}[QA FINAL] COMPLETAT CU LIPSURI — ${emittedCount}/${items.length} blocuri cu text; ${unresolvedEmpty.length} ID-uri fără traducere: ${ids.join(', ')}. Aceste blocuri vor fi omise din SRT.${c.reset}`);
+    } else if (remainingNonEmptySuspicious.length) {
+        console.log(`${c.yellow}[QA FINAL] COMPLETAT CU AVERTISMENTE — ${emittedCount}/${items.length} blocuri cu text; ${remainingNonEmptySuspicious.length} replici rămân suspecte după verificările automate.${c.reset}`);
+    } else {
+        console.log(`${c.green}[QA FINAL] COMPLETAT — ${emittedCount}/${items.length} blocuri cu text; fără traduceri goale sau suspiciuni rămase.${c.reset}`);
+    }
 
     const output = items
         .filter(item => {
@@ -4921,7 +4995,8 @@ app.get('/:configData/translate', async (req, res) => {
         } else {
             const startTime = Date.now();
             
-            processPromise = (async () => {
+            const logContext = { mediaId: imdbId, finalStatus: null };
+            processPromise = translationLogContext.run(logContext, async () => {
                 const [srtRes, mediaTitle] = await Promise.all([
                     fetchValidatedSubtitleUrl(validatedTarget.url),
                     fetchMediaTitle(imdbId)
@@ -4931,7 +5006,7 @@ app.get('/:configData/translate', async (req, res) => {
                 logTranslationStart(imdbId, mediaTitle);
 
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
-            })();
+            });
             
             memoryCache.set(cacheKey, processPromise);
             cleanMemoryCache(cacheKey);
@@ -4948,7 +5023,19 @@ app.get('/:configData/translate', async (req, res) => {
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
-                console.log(`\x1b[96m[DONE] ${imdbId} | 🕒 ${timeFormatted}\x1b[0m\n`);
+                const status = logContext.finalStatus;
+                let qaSuffix = '';
+                if (status?.unresolvedEmptyCount) {
+                    const ids = status.unresolvedEmptyIds || [];
+                    const shown = ids.slice(0, 12).join(', ');
+                    const extra = ids.length > 12 ? `, +${ids.length - 12} altele` : '';
+                    qaSuffix = ` | ⚠ ${status.unresolvedEmptyCount} ID-uri fără text (${shown}${extra})`;
+                } else if (status?.remainingSuspiciousCount) {
+                    qaSuffix = ` | ⚠ ${status.remainingSuspiciousCount} replici suspecte`;
+                } else {
+                    qaSuffix = ' | QA OK';
+                }
+                console.log(`\x1b[96m[${imdbId}] [DONE] | 🕒 ${timeFormatted}${qaSuffix}\x1b[0m\n`);
                 
             }).catch((err) => {
                 console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
