@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.148',
+    version: '12.78.151',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -649,7 +649,9 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const STANDALONE_SOURCE_FILLERS = new Set((
-    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh ok okay oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
+    // Vocalizări/reacții fără conținut semantic; nu includem „ok/okay” deoarece
+    // „Bine.” este un răspuns real, nu un sunet de umplutură.
+    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oof aâ aoleu oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
 ).split(/\s+/));
 
 function isOnlyStandaloneFillerSequence(text) {
@@ -664,6 +666,40 @@ function isOnlyStandaloneFillerSequence(text) {
     if (!normalized) return false;
     const tokens = normalized.split(' ').filter(Boolean);
     return tokens.length > 0 && tokens.every(token => STANDALONE_SOURCE_FILLERS.has(token));
+}
+
+// Elimină reacțiile/vocalizările cunoscute oriunde apar în text, inclusiv în
+// traducerea generată de AI. Păstrează cuvintele cu sens din aceeași replică.
+// „ok/okay” sunt intenționat excluse: ca răspuns, se traduc natural prin „Bine.”.
+function stripKnownInterjectionTokens(text) {
+    let cleaned = String(text || '');
+    const escapedTokens = Array.from(STANDALONE_SOURCE_FILLERS)
+        .filter(token => token !== 'ok' && token !== 'okay')
+        .sort((a, b) => b.length - a.length)
+        .map(token => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    // Variantele prelungite sunt prinse fără a folosi potriviri în interiorul cuvintelor.
+    const variableSounds = [
+        'ă+', 'a+h+', 'e+h+', 'u+h+', 'u+m+', 'o+h+', 'h+m+', 'm+h+m+',
+        'm{2,}', 'w+o+w+', 'p+f+f+t*', 's+h+'
+    ];
+    const tokenPattern = [...variableSounds, ...escapedTokens].join('|');
+    const re = new RegExp('(^|[,;:]\\s*|[.!?…]\\s*|\\s+)(?:' + tokenPattern + ')(?=$|[\\s,;:.!?…])[,;:.!?…]*', 'giu');
+    cleaned = cleaned.replace(re, (match, prefix) => {
+        if (!prefix) return '';
+        // Păstrează finalul unei propoziții („! Oh, wait” -> „! wait”),
+        // dar elimină virgula care separă interjecția de cuvintele din jur.
+        if (/[.!?…]\s*$/.test(prefix)) return prefix;
+        if (/[,;:]\s*$/.test(prefix)) return ' ';
+        return prefix;
+    });
+    cleaned = cleaned
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\s+([,;:.!?…])/g, '$1')
+        .replace(/([,;:])\s*([,;:])/g, '$2')
+        .replace(/[,;:]\s*([.!?…])/g, '$1')
+        .replace(/\(\s*\)|\[\s*\]/g, '')
+        .replace(/^\s+|\s+$/g, '');
+    return cleaned;
 }
 
 // ============================================================
@@ -716,25 +752,9 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
-    // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație.
-    // IMPORTANT: includem și punctul în delimitatori; altfel „ăă...” / „mhm...”
-    // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
-    // „ă{2,}” prinde și forme precum „ăăă...”, nu doar exact „ăă”.
-    const hesitationToken = '(?:ă{1,}|îhî|mhm|a{1,}h{1,}|ahem|argh|aw+|ehm?|er+m?|gah|ha+|heh|hm+|hmph|huh|m+m+h?m?|oh+h?|ooh+|oops|ouch|ow|pff+t?|phew|psst|shh+|ugh|uh+m?|um+m?|whew|whoa|wow|yikes|aâ|aoleu)';
-
-    // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
-    // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
-    cleaned = cleaned.replace(
-        new RegExp('[,;:]\\s*' + hesitationToken + '[,;:.!?…]*\\s*$', 'gmi'),
-        '...'
-    );
-
-    cleaned = cleaned.replace(
-        new RegExp('(^|[\\s,;:.!?…])' + hesitationToken + '(?=[\\s,;:.!?…]|$)[,;:.!?…]*', 'gmi'),
-        '$1'
-    ).trim();
-
+    let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh|mwah|brr|ptiu)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
+    cleaned = cleaned.replace(/<[^>]+>/g, ' ');
+    cleaned = stripKnownInterjectionTokens(cleaned);
     // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
     cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț])-\1(?=[A-Za-zĂÂÎȘȚăâîșț])/gi, '$1');
 
@@ -1307,10 +1327,12 @@ SUBTITLE FORMATTING
 - If two speakers share one source block, keep both under the SAME ID on separate lines, each with “- ” and a capitalized first word. Never move a speaker to another ID.
 - Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
-INTERJECTIONS AND FILLERS
-- Remove standalone filler sounds and meaningless hesitation tokens (including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Wow”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”) from the subtitle.
-- Remove an embedded filler when it is only hesitation, then repair punctuation and capitalization. Do not delete a meaningful multi-word expression simply because it begins with an interjection; translate the expression by meaning.
-- Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise, not meaningful spoken dialogue.
+INTERJECTIONS AND FILLERS — STRICT OUTPUT RULE
+- Do NOT display sound-based reaction/filler interjections in Romanian subtitles. Remove standalone interjections and meaningless hesitation/vocalization tokens, including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Hmm”, “Mwah”, “Mm-hmm”, “Wow”, “Whoa”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”, “uff”, and similar sounds.
+- If such a token appears inside a meaningful sentence, remove only the interjection and keep/rephrase the meaningful words; fix punctuation and capitalization. Never reinsert a Romanian filler (for example “ă”, “ăă”, “ăăă”, “hmm”, “mhm”) in its place.
+- If the source is an idiom or expressive phrase that would normally begin with an interjection (for example “Oh my God”), translate its intended meaning naturally without rendering an interjection literally. Do not discard the meaningful content of the phrase.
+- Do not create a subtitle block for a source line consisting only of non-semantic vocalization/reaction noise. Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise.
+- Keep meaningful spoken acknowledgements and dialogue words (for example “yes”, “no”, “sorry”, and “okay” meaning “Bine.”); these are content, not filler noises.
 
 FINAL CHECK
 Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, dialogue format, filler cleanup, and one-to-one ID alignment. Correct clear errors without adding or deleting meaning.
