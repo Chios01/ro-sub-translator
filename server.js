@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.152',
+    version: '12.78.153',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -673,9 +673,12 @@ function isOnlyStandaloneFillerSequence(text) {
 // traducerea generată de AI. Păstrează cuvintele cu sens din aceeași replică.
 // „ok/okay” sunt intenționat excluse: ca răspuns, se traduc natural prin „Bine.”.
 // „hey/hei” și „na” sunt eliminate ca marcatori de umplutură; cuvintele următoare rămân.
-function stripKnownInterjectionTokens(text) {
+function stripKnownInterjectionTokens(text, extraTokens = []) {
     let cleaned = String(text || '');
-    const escapedTokens = Array.from(STANDALONE_SOURCE_FILLERS)
+    // „Ha-Hai” este ezitare vocală alipită de cuvântul real „Hai”; păstrăm cuvântul.
+    cleaned = cleaned.replace(/\b(?:ha|haha|heh|hehe)\s*[-–—]\s*(hai|haide)\b/giu, '$1');
+    const allTokens = new Set([...STANDALONE_SOURCE_FILLERS, ...extraTokens]);
+    const escapedTokens = Array.from(allTokens)
         .filter(token => token !== 'ok' && token !== 'okay')
         .sort((a, b) => b.length - a.length)
         .map(token => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
@@ -691,13 +694,21 @@ function stripKnownInterjectionTokens(text) {
         // Păstrează punctele de suspensie dacă tokenul eliminat este la finalul
         // unei replici întrerupte („Nu știu, na...” -> „Nu știu...”).
         const atEnd = offset + match.length >= whole.length;
-        const terminalPunctuation = atEnd ? ((match.match(/([.!?…]+)\s*$/) || [])[1] || '') : '';
+        const terminalPunctuation = (match.match(/([.!?…]+)\s*$/) || [])[1] || '';
+        const hasFollowingContent = offset + match.length < whole.length;
         // Dacă marcatorul era a doua replică după liniuță, eliminăm și separatorul
         // său și nu transferăm exclamația vocalizării în replica precedentă.
         if (atEnd && /(?:^|\s)[-–—]\s*$/.test(prefix)) return '';
         if (atEnd && terminalPunctuation) {
             if (/[,;:]\s*$/.test(prefix)) return ' ' + terminalPunctuation;
             return (prefix || '') + terminalPunctuation;
+        }
+        // Păstrăm granița dintre două propoziții când interjecția este între ele:
+        // „Bine, uau. Ok...” -> „Bine. Ok...”, dar „Uau. Foarte...” -> „Foarte...”.
+        if (hasFollowingContent && terminalPunctuation) {
+            if (/[.!?…]\s*$/.test(prefix)) return prefix;
+            if (!String(prefix || '').trim()) return '';
+            return terminalPunctuation + ' ';
         }
         if (!prefix) return '';
         // Păstrează punctuația dinaintea tokenului, dar elimină separatorul
@@ -718,6 +729,50 @@ function stripKnownInterjectionTokens(text) {
         cleaned = cleaned.replace(/\s+[-–—]\s*[.!?…]*\s*$/g, '').trim();
     }
     return cleaned;
+}
+
+// Interjecții românești pe care modelul le poate adăuga chiar dacă sursa a fost curățată.
+// Sunt filtrate doar în textul-țintă, niciodată din sursa engleză: „of” este o prepoziție
+// englezească foarte frecventă și nu trebuie eliminată din expresii precum „U of M”.
+const ROMANIAN_OUTPUT_INTERJECTIONS = new Set(['vai', 'uau', 'păi']);
+
+function stripRomanianOutputInterjections(text) {
+    let cleaned = String(text || '');
+
+    // „Mă rog...” folosit ca umplutură; nu atingem „mă rog la/pentru...” cu sens literal.
+    cleaned = cleaned.replace(
+        /(^|[.!?…]\s+)mă\s+rog(?=\s*(?:[,;:]|\.{2,}|[!?…]+|$))\s*(?:[,;:]|\.{2,}|[!?…]+)?/giu,
+        '$1'
+    );
+
+    // „Vai de mine!” este o reacție completă, nu păstrăm fragmentul „de mine!”.
+    cleaned = cleaned.replace(
+        /(^|[.!?…]\s*)(?:vai|aoleu)\s+de\s+mine[.!?…]*/giu,
+        '$1'
+    );
+
+    // „Of, ...” este o interjecție; nu atingem „of” în denumiri sau construcții ca „U of M”.
+    cleaned = cleaned.replace(
+        /(^|[.!?…;,]\s*)of(?=\s*[,;:!?…])[,;:!?…]*\s*/giu,
+        '$1'
+    );
+
+    cleaned = stripKnownInterjectionTokens(cleaned, ROMANIAN_OUTPUT_INTERJECTIONS);
+    cleaned = cleaned
+        .replace(/^[\s,;:]+/, '')
+        .replace(/[,;:]\s*([.!?…])/g, '$1')
+        .replace(/([,;:])\s*([,;:])/g, '$2')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+    // Dacă au rămas doar semne de punctuație după eliminarea vocalizărilor, blocul e gol.
+    if (!cleaned || /^[-–—\s.,;:!?…'"’]+$/.test(cleaned)) return '';
+    return cleaned;
+}
+
+function isOnlyStandaloneOutputInterjection(text) {
+    const raw = String(text || '').trim();
+    return raw.length > 0 && !stripRomanianOutputInterjections(raw).trim();
 }
 
 // ============================================================
@@ -745,6 +800,11 @@ function cleanTextForJson(text) {
     // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
+
+    // Elimină vocalizările și marcatorii de umplutură chiar și când sunt în interiorul
+    // unei replici-sursă („Um, we...” -> „we...”), nu doar când ocupă tot blocul.
+    // Astfel Gemini nu mai primește interjecția și nu o poate transforma în „Păi/Vai/Uau”.
+    clean = clean.split('\n').map(line => stripKnownInterjectionTokens(line)).join('\n');
 
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
@@ -1303,6 +1363,16 @@ function formatSubtitleLine(text) {
         text = text.replace(dictionar[i][0], dictionar[i][1]);
     }
 
+    // Ultimul filtru după toate corecțiile mecanice: nicio etapă de formatare/dicționar
+    // nu trebuie să reintroducă interjecții pe care utilizatorul a cerut să nu le afișăm.
+    text = stripRomanianOutputInterjections(text);
+    if (!text) return ' ';
+    // După eliminarea unei interjecții de la început, majuscula revine pe primul
+    // cuvânt real al replicii; pentru replicile marcate cu liniuță capitalizăm după separator.
+    text = text.replace(/^(\s*[-–—]\s*)([a-zăâîșț])/u,
+        (_, prefix, letter) => prefix + letter.toLocaleUpperCase('ro-RO'));
+    text = text.replace(/^([a-zăâîșț])/u, letter => letter.toLocaleUpperCase('ro-RO'));
+
     return formatSubtitleLayout(text);
 }
 
@@ -1347,7 +1417,7 @@ SUBTITLE FORMATTING
 
 INTERJECTIONS AND FILLERS — STRICT OUTPUT RULE
 - Do NOT display sound-based reaction/filler interjections in Romanian subtitles. Remove standalone interjections and meaningless hesitation/vocalization tokens, including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Hmm”, “Mwah”, “Mm-hmm”, “Wow”, “Whoa”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”, “uff”, and similar sounds. Also omit attention markers “Hey/Hei” and conversational filler “na” when they add no content; keep the rest of the sentence.
-- If such a token appears inside a meaningful sentence, remove only the interjection and keep/rephrase the meaningful words; fix punctuation and capitalization. Never reinsert a Romanian filler (for example “ă”, “ăă”, “ăăă”, “hmm”, “mhm”) in its place.
+- If such a token appears inside a meaningful sentence, remove only the interjection and keep/rephrase the meaningful words; fix punctuation and capitalization. Never replace it with a Romanian filler or reaction (including “ă”, “ăă”, “ăăă”, “hmm”, “mhm”, “Păi”, “Vai”, “Uau” or “Mă rog”) when that word merely fills the pause.
 - If the source is an idiom or expressive phrase that would normally begin with an interjection (for example “Oh my God”), translate its intended meaning naturally without rendering an interjection literally. Do not discard the meaningful content of the phrase.
 - Do not create a subtitle block for a source line consisting only of non-semantic vocalization/reaction noise. Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise.
 - Keep meaningful spoken acknowledgements and dialogue words (for example “yes”, “no”, “sorry”, and “okay” meaning “Bine.”); these are content, not filler noises.
@@ -4545,13 +4615,27 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
     // Interjecțiile generate ca traducere izolată sunt eliminate din ieșire și
     // scoase din numitorul QA; nu trebuie raportate ca eroare de fidelitate.
+    // Ultima curățare înainte de export, după toate etapele care pot modifica textul.
+    // Dacă replica a rămas numai o interjecție/umplutură, o golim; altfel păstrăm restul.
+    for (const item of items) {
+        const id = String(item.id);
+        const current = String(translatedById[id] || '');
+        if (!current.trim()) continue;
+        const cleaned = formatSubtitleLine(current);
+        if (cleaned.trim()) {
+            translatedById[id] = cleaned;
+        } else if (isOnlyStandaloneFillerSequence(current) || isOnlyStandaloneOutputInterjection(current)) {
+            translatedById[id] = '';
+        }
+    }
+
     const suppressedFillerIds = items
         .filter(item => {
             const id = String(item.id);
             const translated = String(translatedById[id] || '').trim();
             // A source-only reaction/marker must not leak into the output, even if Gemini
             // returned an empty or non-empty paraphrase for it. Also suppress reaction-only translations.
-            return isJunkOrInterjection(item.text) || isOnlyStandaloneFillerSequence(translated);
+            return isJunkOrInterjection(item.text) || isOnlyStandaloneFillerSequence(translated) || isOnlyStandaloneOutputInterjection(translated);
         })
         .map(item => String(item.id));
     const suppressedFillerIdSet = new Set(suppressedFillerIds);
