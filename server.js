@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.153',
+    version: '12.78.154',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -728,6 +728,9 @@ function stripKnownInterjectionTokens(text, extraTokens = []) {
     if (cleaned !== beforeTokenRemoval) {
         cleaned = cleaned.replace(/\s+[-–—]\s*[.!?…]*\s*$/g, '').trim();
     }
+    // O vocalizare izolată precum „Oh.” nu trebuie să lase un simplu punct,
+    // care altfel ar face blocul să pară nenul și l-ar trimite inutil la Gemini.
+    if (!/[\p{L}\p{N}]/u.test(cleaned)) return '';
     return cleaned;
 }
 
@@ -801,10 +804,13 @@ function cleanTextForJson(text) {
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
-    // Elimină vocalizările și marcatorii de umplutură chiar și când sunt în interiorul
-    // unei replici-sursă („Um, we...” -> „we...”), nu doar când ocupă tot blocul.
-    // Astfel Gemini nu mai primește interjecția și nu o poate transforma în „Păi/Vai/Uau”.
-    clean = clean.split('\n').map(line => stripKnownInterjectionTokens(line)).join('\n');
+    // Elimină o linie alcătuită numai din vocalizări ÎNAINTE de a curăța tokenurile;
+    // altfel „Oh.” putea deveni temporar „.” și rămânea în lista trimisă lui Gemini.
+    // Pe liniile care conțin și dialog, eliminăm doar tokenul și păstrăm textul util.
+    clean = clean.split('\n').map(line => {
+        if (isOnlyStandaloneFillerSequence(line)) return '';
+        return stripKnownInterjectionTokens(line);
+    }).join('\n');
 
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
@@ -5019,6 +5025,20 @@ function parseSrt(srt, stats = null) {
 
         let rawText = lines.slice(2).join('\n');
 
+        // Detectăm interjecțiile izolate pe sursa originală, înainte de orice normalizare.
+        // Curățăm pentru clasificare doar marcajele sonore uzuale, etichetele și parantezele,
+        // astfel încât „♪ Woo-hoo ♪” să fie tratat ca vocalizare, nu ca replică.
+        const sourceFillerProbe = rawText
+            .replace(/[♪♫♬♩#]/g, '')
+            .replace(/\{[^}]+\}/g, ' ')
+            .replace(/\[[^\]]*?\]/g, ' ')
+            .replace(/<[^>]+>/g, ' ');
+        const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(sourceFillerProbe);
+        if (sourceIsFillerOnly) {
+            if (stats) stats.fillerBlocksFiltered++;
+            continue;
+        }
+
         // Verificăm textul ORIGINAL înainte de cleanTextForJson(). Unele surse folosesc
         // entități HTML pentru spații/caractere invizibile, iar etapa de curățare poate
         // transforma aceste entități într-un fragment aparent nenul. Un astfel de bloc
@@ -5028,7 +5048,6 @@ function parseSrt(srt, stats = null) {
             continue;
         }
 
-        const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(rawText);
         const text = cleanTextForJson(rawText);
 
         if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) {
