@@ -130,10 +130,11 @@ function logTranslationStart(mediaId, mediaTitle) {
     };
     const topBottom = '═'.repeat(lineWidth);
     const detailLines = wrapText(details, lineWidth);
-    const block = [topBottom, headline, ...detailLines, topBottom].join('\n');
 
-    // ANSI bright red pentru o separare vizuală mai clară în logurile care suportă culori.
-    console.log(`\x1b[91m\n${block}\x1b[0m`);
+    // Antetul și metadatele au culori diferite pentru a fi ușor de reperat în Render.
+    console.log(`\x1b[96m\n${topBottom}\n${headline}\x1b[0m`);
+    console.log(`\x1b[93m${detailLines.join('\n')}\x1b[0m`);
+    console.log(`\x1b[96m${topBottom}\x1b[0m`);
 }
 function rememberOriginalSource(key, text) {
     originalSources[key] = text;
@@ -174,7 +175,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.145',
+    version: '12.78.146',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1298,6 +1299,8 @@ OUTPUT — CRITICAL
 - Return ONLY a valid JSON array, with exactly one object for every supplied ID, in the original order.
 - Every object must have exactly these fields: {"id": integer, "text": "Romanian translation"}.
 - Preserve IDs exactly. Never omit, duplicate, invent, merge, or move content to a neighboring ID.
+- Input IDs may contain gaps when subtitle blocks were filtered before translation. Never renumber by position or infer an ID from its neighbors: copy each supplied ID exactly, even when the numbers are not consecutive.
+- Before returning, verify that every text belongs to the English block with the same ID; do not shift translations forward or backward when a block is unusual, numeric, empty-looking, or difficult to translate.
 - Do not return markdown, code fences, comments, or explanations.
 
 TRANSLATION AND CONTEXT
@@ -2137,6 +2140,177 @@ function chunkArray(array, size) {
     return chunks;
 }
 
+// Detectează local un tipar statistic puternic în care textele traduse ale mai
+// multor ID-uri seamănă, ca lungime și structură de cuvinte, cu replicile EN
+// imediat precedente/următoare, nu cu originalele lor. Este un semnal de alarmă,
+// nu o dovadă semantică; de aceea declanșează retraducere, nu mutarea textelor.
+const ALIGNMENT_WINDOW_SIZE = 28;
+const ALIGNMENT_WINDOW_STEP = 8;
+const ALIGNMENT_REPAIR_CHUNK_SIZE = 35;
+
+function alignmentTextMetrics(text) {
+    const clean = String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    return {
+        chars: clean.length,
+        words: (clean.match(/[\p{L}\p{N}]+/gu) || []).length
+    };
+}
+
+function alignmentPearson(pairs) {
+    if (pairs.length < 18) return null;
+    const xs = pairs.map(pair => pair[0]);
+    const ys = pairs.map(pair => pair[1]);
+    const meanX = xs.reduce((sum, value) => sum + value, 0) / xs.length;
+    const meanY = ys.reduce((sum, value) => sum + value, 0) / ys.length;
+    let numerator = 0;
+    let sumX = 0;
+    let sumY = 0;
+    for (let i = 0; i < pairs.length; i++) {
+        const dx = xs[i] - meanX;
+        const dy = ys[i] - meanY;
+        numerator += dx * dy;
+        sumX += dx * dx;
+        sumY += dy * dy;
+    }
+    const denominator = Math.sqrt(sumX * sumY);
+    return denominator > 0 ? numerator / denominator : null;
+}
+
+function scoreAlignmentWindow(sourceItems, targetById, start, end, offset) {
+    const charPairs = [];
+    const wordPairs = [];
+    for (let index = start; index <= end; index++) {
+        const target = String(targetById.get(String(sourceItems[index].id)) || '');
+        const targetMetrics = alignmentTextMetrics(target);
+        // Ignorăm blocurile goale și foarte scurte, care nu oferă semnal util.
+        if (targetMetrics.chars < 5 || targetMetrics.words < 1) continue;
+        const sourceIndex = index + offset;
+        if (sourceIndex < 0 || sourceIndex >= sourceItems.length) continue;
+        const sourceMetrics = alignmentTextMetrics(sourceItems[sourceIndex].text);
+        if (sourceMetrics.chars < 5 || sourceMetrics.words < 1) continue;
+        charPairs.push([sourceMetrics.chars, targetMetrics.chars]);
+        wordPairs.push([sourceMetrics.words, targetMetrics.words]);
+    }
+
+    if (charPairs.length < 18) return { score: null, pairs: charPairs.length };
+    const correlations = [alignmentPearson(charPairs), alignmentPearson(wordPairs)]
+        .filter(value => value !== null && Number.isFinite(value));
+    if (!correlations.length) return { score: null, pairs: charPairs.length };
+    return {
+        score: correlations.reduce((sum, value) => sum + value, 0) / correlations.length,
+        pairs: charPairs.length
+    };
+}
+
+function detectTranslationAlignmentShift(sourceItems, translatedItems) {
+    if (!Array.isArray(sourceItems) || sourceItems.length < ALIGNMENT_WINDOW_SIZE + ALIGNMENT_WINDOW_STEP) return null;
+    const targetById = new Map((translatedItems || []).map(item => [String(item.id), String(item.text || '')]));
+    const offsets = [-2, -1, 0, 1, 2];
+    const hits = [];
+
+    for (let start = 0; start + ALIGNMENT_WINDOW_SIZE <= sourceItems.length; start += ALIGNMENT_WINDOW_STEP) {
+        const end = start + ALIGNMENT_WINDOW_SIZE - 1;
+        const scores = Object.create(null);
+        for (const offset of offsets) {
+            scores[offset] = scoreAlignmentWindow(sourceItems, targetById, start, end, offset);
+        }
+        const baseline = scores[0].score;
+        const alternatives = offsets.filter(offset => offset !== 0 && scores[offset].score !== null);
+        if (!alternatives.length) continue;
+        alternatives.sort((a, b) => scores[b].score - scores[a].score);
+        const shift = alternatives[0];
+        const best = scores[shift].score;
+        const base = baseline === null ? 0 : baseline;
+        if (best >= 0.80 && best - base >= 0.35 && scores[shift].pairs >= 18) {
+            hits.push({ start, end, shift, score: best, baseline: base });
+        }
+    }
+
+    if (!hits.length) return null;
+    const clusters = [];
+    for (const hit of hits) {
+        const previous = clusters[clusters.length - 1];
+        if (previous && previous.shift === hit.shift && hit.start <= previous.end + ALIGNMENT_WINDOW_STEP) {
+            previous.start = Math.min(previous.start, hit.start);
+            previous.end = Math.max(previous.end, hit.end);
+            previous.hits.push(hit);
+        } else {
+            clusters.push({ start: hit.start, end: hit.end, shift: hit.shift, hits: [hit] });
+        }
+    }
+
+    const supported = clusters.filter(cluster => {
+        if (cluster.hits.length >= 2 && cluster.end - cluster.start + 1 >= 36) return true;
+        const hit = cluster.hits[0];
+        return cluster.hits.length === 1 && hit.score >= 0.94 && hit.score - hit.baseline >= 0.55;
+    });
+    if (!supported.length) return null;
+    supported.sort((a, b) => {
+        const spanA = a.end - a.start + 1;
+        const spanB = b.end - b.start + 1;
+        return (b.hits.length * spanB) - (a.hits.length * spanA);
+    });
+    const chosen = supported[0];
+    return {
+        start: chosen.start,
+        end: chosen.end,
+        shift: chosen.shift,
+        windows: chosen.hits.length,
+        score: chosen.hits.reduce((sum, hit) => sum + hit.score, 0) / chosen.hits.length,
+        baseline: chosen.hits.reduce((sum, hit) => sum + hit.baseline, 0) / chosen.hits.length
+    };
+}
+
+function canRetranslateAlignmentItem(item) {
+    const source = String(item?.text || '').trim();
+    if (!source || isEffectivelyEmptySubtitleText(source) || isJunkOrInterjection(source)) return false;
+    // Formatterul curent elimină cifrele și punctuația fără litere; nu repetăm
+    // cereri pentru coduri numerice pe care ieșirea nu le poate păstra oricum.
+    return /[\p{L}]/u.test(source);
+}
+
+async function repairTranslationAlignmentRange(sourceChunk, currentResult, detection, allItems,
+    absoluteChunkStart, keyStates, globalChunkIndex, totalChunks) {
+    const start = Math.max(0, detection.start - 2);
+    const end = Math.min(sourceChunk.length - 1, detection.end + 2);
+    const currentById = new Map((currentResult || []).map(item => [String(item.id), String(item.text || '')]));
+    const replacementById = new Map();
+    let index = start;
+
+    while (index <= end) {
+        if (!canRetranslateAlignmentItem(sourceChunk[index])) {
+            index++;
+            continue;
+        }
+        const runStart = index;
+        while (index <= end && index - runStart < ALIGNMENT_REPAIR_CHUNK_SIZE && canRetranslateAlignmentItem(sourceChunk[index])) {
+            index++;
+        }
+        const piece = sourceChunk.slice(runStart, index);
+        if (!piece.length) continue;
+        const absoluteStart = absoluteChunkStart + runStart;
+        const repaired = await processChunkWithRetry(
+            piece,
+            allItems,
+            absoluteStart,
+            absoluteStart + piece.length,
+            [],
+            keyStates,
+            globalChunkIndex,
+            totalChunks,
+            0,
+            true
+        );
+        for (const item of repaired) replacementById.set(String(item.id), String(item.text || ''));
+    }
+
+    return sourceChunk.map(item => {
+        const id = String(item.id);
+        if (replacementById.has(id)) return { id: item.id, text: replacementById.get(id) };
+        return { id: item.id, text: currentById.get(id) || ' ' };
+    });
+}
+
 function isJunkOrInterjection(text) {
     const clean = String(text || '').replace(/<[^>]+>/g, '').trim();
     if (!clean) return true;
@@ -2519,7 +2693,7 @@ function normalizeTranslationPayload(parsed) {
     return Object.create(null);
 }
 
-async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0) {
+async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, alignmentRepair = false) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     let lastError = null;
 
@@ -2537,7 +2711,11 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             // active în acest proces și evitând proiectele aflate în pauză după 429.
             keyState = await getAvailableKey(keyStates);
 
-            console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks}...${c.reset}`);
+            if (alignmentRepair) {
+                console.log(`${c.cyan}➤ [Aliniere] Retraduc segment punctual (${chunk.length} replici)...${c.reset}`);
+            } else {
+                console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks}...${c.reset}`);
+            }
 
             const raw = await callGemini(prompt, keyState);
             const parsed = JSON.parse(String(raw).trim());
@@ -2644,7 +2822,11 @@ ${JSON.stringify(missingItems, null, 2)}
             // Verificările de limbă și fidelitate rulează o singură dată după toate calupurile,
             // unde pot corecta problemele contextual în loc să emită avertismente premature.
 
-            console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
+            if (alignmentRepair) {
+                console.log(`${c.green}✔ [Aliniere] Segment punctual finalizat (${chunk.length}/${chunk.length} replici).${c.reset}`);
+            } else {
+                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
+            }
             return results;
         } catch (error) {
             lastError = error;
@@ -2685,9 +2867,9 @@ ${JSON.stringify(missingItems, null, 2)}
         const first = chunk.slice(0, middle);
         const second = chunk.slice(middle);
 
-        const firstResult = await processChunkWithRetry(first, allItems, chunkStart, chunkStart + middle, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth + 1);
+        const firstResult = await processChunkWithRetry(first, allItems, chunkStart, chunkStart + middle, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth + 1, alignmentRepair);
         const secondContext = firstResult.slice(-PREVIOUS_TRANSLATION_CONTEXT);
-        const secondResult = await processChunkWithRetry(second, allItems, chunkStart + middle, chunkEnd, secondContext, keyStates, globalChunkIndex, totalChunks, depth + 1);
+        const secondResult = await processChunkWithRetry(second, allItems, chunkStart + middle, chunkEnd, secondContext, keyStates, globalChunkIndex, totalChunks, depth + 1, alignmentRepair);
 
         return [...firstResult, ...secondResult];
     }
@@ -4014,6 +4196,35 @@ async function translateSrtWithGemini(srtText, apiKeys) {
         results.sort((a, b) => a.globalIndex - b.globalIndex);
 
         for (const batchResult of results) {
+            const sourceChunk = chunks[batchResult.globalIndex];
+            let chunkResult = batchResult.result;
+            const alignmentIssue = detectTranslationAlignmentShift(sourceChunk, chunkResult);
+            if (alignmentIssue) {
+                const suspectStart = Math.max(0, alignmentIssue.start - 2);
+                const suspectEnd = Math.min(sourceChunk.length - 1, alignmentIssue.end + 2);
+                const startId = sourceChunk[suspectStart]?.id ?? sourceChunk[alignmentIssue.start]?.id;
+                const endId = sourceChunk[suspectEnd]?.id ?? sourceChunk[alignmentIssue.end]?.id;
+                console.log(`${c.yellow}⚠ [Aliniere] Posibilă decalare ${alignmentIssue.shift > 0 ? '+' : ''}${alignmentIssue.shift} replică detectată în zona ID ${startId}–${endId} (corelație ${alignmentIssue.score.toFixed(2)}, bază ${alignmentIssue.baseline.toFixed(2)}, ${alignmentIssue.windows} ferestre). Retraduc zona în segmente mai mici; nu mut automat textele între ID-uri.${c.reset}`);
+                chunkResult = await repairTranslationAlignmentRange(
+                    sourceChunk,
+                    chunkResult,
+                    alignmentIssue,
+                    items,
+                    batchResult.globalIndex * CHUNK_SIZE,
+                    keyStates,
+                    batchResult.globalIndex,
+                    chunks.length
+                );
+                const residualIssue = detectTranslationAlignmentShift(sourceChunk, chunkResult);
+                if (residualIssue) {
+                    const residualStart = sourceChunk[Math.max(0, residualIssue.start - 2)]?.id ?? sourceChunk[residualIssue.start]?.id;
+                    const residualEnd = sourceChunk[Math.min(sourceChunk.length - 1, residualIssue.end + 2)]?.id ?? sourceChunk[residualIssue.end]?.id;
+                    console.log(`${c.yellow}⚠ [Aliniere] După retraducere persistă un semnal statistic de posibilă decalare în zona ID ${residualStart}–${residualEnd}. Textele nu au fost mutate automat; zona merită verificată.${c.reset}`);
+                } else {
+                    console.log(`${c.green}✔ [Aliniere] Verificarea după retraducere nu mai detectează decalarea inițială.${c.reset}`);
+                }
+                batchResult.result = chunkResult;
+            }
             for (const item of batchResult.result) {
                 translatedById[String(item.id)] = item.text;
             }
@@ -4627,7 +4838,7 @@ app.get('/:configData/translate', async (req, res) => {
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
-                console.log(`${c.green}[DONE] ${imdbId} | ${timeFormatted}.${c.reset}\n`);
+                console.log(`\x1b[96m[DONE] ${imdbId} | 🕒 ${timeFormatted}\x1b[0m\n`);
                 
             }).catch((err) => {
                 console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
@@ -4745,4 +4956,5 @@ app.get('/health', (req, res) => {
 const PORT = Number(process.env.PORT) || 7000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
+    console.log(`${c.cyan}🧠 Model Gemini activ: ${MODEL_NAME}${c.reset}`);
 });
