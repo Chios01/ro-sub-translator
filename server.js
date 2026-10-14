@@ -5,78 +5,6 @@ const path = require('path');
 const fs = require('fs');
 const dns = require('dns').promises;
 const net = require('net');
-const { AsyncLocalStorage } = require('async_hooks');
-
-// Asociază logurile fiecărei traduceri cu titlul corect și ascunde mesajele de
-// succes repetitive. Erorile API, retry-urile importante și QA-ul final rămân vizibile.
-const translationLogContext = new AsyncLocalStorage();
-const nativeConsoleLog = console.log.bind(console);
-function getPlainLogMessage(args) {
-    return args.map(value => typeof value === 'string' ? value : String(value ?? ''))
-        .join(' ').replace(/\x1b\[[0-9;]*m/g, '').trim();
-}
-function recordRoutineTranslationMetrics(args, ctx) {
-    if (!ctx) return;
-    if (!ctx.routineMetrics) ctx.routineMetrics = { automatedInterventions: 0 };
-    const message = getPlainLogMessage(args);
-    const add = value => { ctx.routineMetrics.automatedInterventions += Math.max(0, Number(value) || 0); };
-    let match;
-    if ((match = message.match(/\[POST-CHECK\] Încheiat; (\d+) corectări aplicate\./))) add(match[1]);
-    else if ((match = message.match(/✔ \[Grammar Review\] Verificarea s-a încheiat; (\d+) corectări aplicate\./))) add(match[1]);
-    else if ((match = message.match(/\[GRAMATICĂ\] Verificare locală încheiată; (\d+) corecții directe aplicate\./))) add(match[1]);
-    else if ((match = message.match(/✔ \[Continuări\] (\d+) fragmente continuate au primit literă mică la început\./))) add(match[1]);
-    else if ((match = message.match(/\[RETRY FINAL\] (\d+) replici reparate\./))) add(match[1]);
-    else if ((match = message.match(/✔ \[Quality Retry\] (\d+) verificate punctual, (\d+) corectate\./))) add(match[2]);
-    else if ((match = message.match(/\[Quality Recheck\] (\d+) reverificate, (\d+) corectate la a doua verificare\./))) add(match[2]);
-    else if ((match = message.match(/\[Final Repair\] Verificare finală încheiată; (\d+) corectări aplicate\./))) add(match[1]);
-}
-function shouldSuppressRoutineTranslationLog(args) {
-    const message = getPlainLogMessage(args);
-    if (!message) return true;
-
-    // Pași normali/rezultate fără valoare operațională: sumarul numeric apare la final.
-    const routinePatterns = [
-        /➤ \[Gemini\] Traduc calup \d+\/\d+\.\.\./,
-        /✔ \[Gemini\] Calup \d+\/\d+ finalizat!/,
-        /\[Gemini\] Calupuri inițiale finalizate:/,
-        /✔ \[Gemini Control\] 3 cereri reușite; concurența crește controlat/,
-        /\[POST-CHECK\] Verificare contextuală după finalizarea calupurilor/,
-        /\[POST-CHECK\] Încheiat; \d+ corectări aplicate\./,
-        /✔ \[Grammar Review\] Calup \d+\/\d+: \d+ corectate/,
-        /✔ \[Grammar Review\] Verificarea s-a încheiat; \d+ corectări aplicate\./,
-        /🎯 VERIFICARE PUNCTUALĂ — GRAMATICĂ \+ TRADUCERE/,
-        /📝 VERIFICARE SUPLIMENTARĂ — GRAMATICĂ \+ TRADUCERE/,
-        /^Verificate: \d+ replici$/,
-        /✔ \[Continuări\] \d+ fragmente continuate au primit literă mică la început\./,
-        /\[GRAMATICĂ\] Verificare locală încheiată; \d+ corecții directe aplicate\./,
-        /\[Semantic Spot Check\] Verificare punctuală încheiată\./,
-        /\[RETRY FINAL\] \d+ replici reparate\./,
-        /✔ \[Quality Retry\] Nicio replică nu a declanșat verificarea AI punctuală/,
-        /✔ \[Quality Retry\] \d+ verificate punctual, \d+ corectate\./,
-        /\[Final Repair\] Corectare contextuală finală pentru \d+ replici candidate/,
-        /\[Final Repair\] Verificare finală încheiată;/,
-        /✔ \[Aliniere\].*(?:finalizat|nu mai detectează decalarea inițială)/,
-        /\[(?:(?:Final )?(?:Calup \d+ )?)?Empty Recovery Retry\] ID \d+ (?:respins|nerecuperat|recuperat|a eșuat)/,
-        /\[(?:Final )?Empty Recovery\] ID \d+ respins:/,
-        /\[Final Empty Recovery\].*(?:Toate cele \d+ traduceri goale au fost recuperate local|Nu repet retry-ul individual|Rămase goale după încercările anterioare|Recuperate:)/i,
-        /\[Empty Recovery\].*(?:traduceri goale detectate|replici nu au potrivire locală sigură|Gemini omis:|Recuperate:)/i,
-        /\[Gemini\] Calupul \d+: \d+ ID-uri (?:lipsă sau cu traducere goală|încă goale)|\[Gemini\] Calupul \d+: rămân \d+ traduceri goale/,
-        /\[QA FINAL\] Verificările de după traducere s-au încheiat\./,
-        /\[Gemini Diagnostic\] 429:/
-    ];
-
-    // Nu suprimăm nicio linie cu o eroare de transport/cotă; acestea trebuie să rămână vizibile.
-    const isOperationalError = /(?:status code 4\d\d|status code 5\d\d|\b429\b|\b503\b|timeout|timed out|eșuat|failed|eroare|invalid|quota|cotă zilnică|nu a putut|fără text)/i.test(message);
-    if (isOperationalError && /(?:429|503|timeout|timed out|status code|cotă zilnică|quota|eșuat definitiv|EROARE)/i.test(message)) return false;
-    return routinePatterns.some(pattern => pattern.test(message));
-}
-console.log = (...args) => {
-    const ctx = translationLogContext.getStore();
-    recordRoutineTranslationMetrics(args, ctx);
-    if (shouldSuppressRoutineTranslationLog(args)) return;
-    if (ctx && ctx.mediaId) nativeConsoleLog(`[${ctx.mediaId}]`, ...args);
-    else nativeConsoleLog(...args);
-};
 
 const app = express();
 
@@ -227,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.156',
+    version: '12.78.148',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -721,10 +649,7 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const STANDALONE_SOURCE_FILLERS = new Set((
-    // Vocalizări/reacții și marcatori de atenție folosiți ca umplutură; nu includem „ok/okay”
-    // deoarece „Bine.” este un răspuns real, nu un sunet de umplutură. „Hey/Hei” se elimină
-    // ca marcator de atenție; „na” se elimină ca tic conversațional, păstrând restul replicii.
-    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oof aâ aoleu oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe hey hei na ă ăă ăăă îhî ptiu brr'
+    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh ok okay oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
 ).split(/\s+/));
 
 function isOnlyStandaloneFillerSequence(text) {
@@ -739,115 +664,6 @@ function isOnlyStandaloneFillerSequence(text) {
     if (!normalized) return false;
     const tokens = normalized.split(' ').filter(Boolean);
     return tokens.length > 0 && tokens.every(token => STANDALONE_SOURCE_FILLERS.has(token));
-}
-
-// Elimină reacțiile/vocalizările cunoscute oriunde apar în text, inclusiv în
-// traducerea generată de AI. Păstrează cuvintele cu sens din aceeași replică.
-// „ok/okay” sunt intenționat excluse: ca răspuns, se traduc natural prin „Bine.”.
-// „hey/hei” și „na” sunt eliminate ca marcatori de umplutură; cuvintele următoare rămân.
-function stripKnownInterjectionTokens(text, extraTokens = []) {
-    let cleaned = String(text || '');
-    // „Ha-Hai” este ezitare vocală alipită de cuvântul real „Hai”; păstrăm cuvântul.
-    cleaned = cleaned.replace(/\b(?:ha|haha|heh|hehe)\s*[-–—]\s*(hai|haide)\b/giu, '$1');
-    const allTokens = new Set([...STANDALONE_SOURCE_FILLERS, ...extraTokens]);
-    const escapedTokens = Array.from(allTokens)
-        .filter(token => token !== 'ok' && token !== 'okay')
-        .sort((a, b) => b.length - a.length)
-        .map(token => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    // Variantele prelungite sunt prinse fără a folosi potriviri în interiorul cuvintelor.
-    const variableSounds = [
-        'ă+', 'a+h+', 'e+h+', 'u+h+', 'u+m+', 'o+h+', 'h+m+', 'm+h+m+',
-        'm{2,}', 'w+o+w+', 'p+f+f+t*', 's+h+'
-    ];
-    const tokenPattern = [...variableSounds, ...escapedTokens].join('|');
-    const re = new RegExp('(^|[,;:]\\s*|[.!?…]\\s*|\\s+)(?:' + tokenPattern + ')(?=$|[\\s,;:.!?…])[,;:.!?…]*', 'giu');
-    const beforeTokenRemoval = cleaned;
-    cleaned = cleaned.replace(re, (match, prefix, offset, whole) => {
-        // Păstrează punctele de suspensie dacă tokenul eliminat este la finalul
-        // unei replici întrerupte („Nu știu, na...” -> „Nu știu...”).
-        const atEnd = offset + match.length >= whole.length;
-        const terminalPunctuation = (match.match(/([.!?…]+)\s*$/) || [])[1] || '';
-        const hasFollowingContent = offset + match.length < whole.length;
-        // Dacă marcatorul era a doua replică după liniuță, eliminăm și separatorul
-        // său și nu transferăm exclamația vocalizării în replica precedentă.
-        if (atEnd && /(?:^|\s)[-–—]\s*$/.test(prefix)) return '';
-        if (atEnd && terminalPunctuation) {
-            if (/[,;:]\s*$/.test(prefix)) return ' ' + terminalPunctuation;
-            return (prefix || '') + terminalPunctuation;
-        }
-        // Păstrăm granița dintre două propoziții când interjecția este între ele:
-        // „Bine, uau. Ok...” -> „Bine. Ok...”, dar „Uau. Foarte...” -> „Foarte...”.
-        if (hasFollowingContent && terminalPunctuation) {
-            if (/[.!?…]\s*$/.test(prefix)) return prefix;
-            if (!String(prefix || '').trim()) return '';
-            return terminalPunctuation + ' ';
-        }
-        if (!prefix) return '';
-        // Păstrează punctuația dinaintea tokenului, dar elimină separatorul
-        // care lega interjecția de restul cuvintelor.
-        if (/[.!?…]\s*$/.test(prefix)) return prefix;
-        if (/[,;:]\s*$/.test(prefix)) return ' ';
-        return prefix;
-    });
-    cleaned = cleaned
-        .replace(/[ \t]{2,}/g, ' ')
-        .replace(/\s+([,;:.!?…])/g, '$1')
-        .replace(/([,;:])\s*([,;:])/g, '$2')
-        .replace(/[,;:]\s*([.!?…])/g, '$1')
-        .replace(/\(\s*\)|\[\s*\]/g, '')
-        .replace(/^\s+|\s+$/g, '');
-    // Dacă eliminăm toată a doua replică după separator, nu lăsăm o liniuță orfană.
-    if (cleaned !== beforeTokenRemoval) {
-        cleaned = cleaned.replace(/\s+[-–—]\s*[.!?…]*\s*$/g, '').trim();
-    }
-    // O vocalizare izolată precum „Oh.” nu trebuie să lase un simplu punct,
-    // care altfel ar face blocul să pară nenul și l-ar trimite inutil la Gemini.
-    if (!/[\p{L}\p{N}]/u.test(cleaned)) return '';
-    return cleaned;
-}
-
-// Interjecții românești pe care modelul le poate adăuga chiar dacă sursa a fost curățată.
-// Sunt filtrate doar în textul-țintă, niciodată din sursa engleză: „of” este o prepoziție
-// englezească foarte frecventă și nu trebuie eliminată din expresii precum „U of M”.
-const ROMANIAN_OUTPUT_INTERJECTIONS = new Set(['vai', 'uau', 'păi']);
-
-function stripRomanianOutputInterjections(text) {
-    let cleaned = String(text || '');
-
-    // „Mă rog...” folosit ca umplutură; nu atingem „mă rog la/pentru...” cu sens literal.
-    cleaned = cleaned.replace(
-        /(^|[.!?…]\s+)mă\s+rog(?=\s*(?:[,;:]|\.{2,}|[!?…]+|$))\s*(?:[,;:]|\.{2,}|[!?…]+)?/giu,
-        '$1'
-    );
-
-    // „Vai de mine!” este o reacție completă, nu păstrăm fragmentul „de mine!”.
-    cleaned = cleaned.replace(
-        /(^|[.!?…]\s*)(?:vai|aoleu)\s+de\s+mine[.!?…]*/giu,
-        '$1'
-    );
-
-    // „Of, ...” este o interjecție; nu atingem „of” în denumiri sau construcții ca „U of M”.
-    cleaned = cleaned.replace(
-        /(^|[.!?…;,]\s*)of(?=\s*[,;:!?…])[,;:!?…]*\s*/giu,
-        '$1'
-    );
-
-    cleaned = stripKnownInterjectionTokens(cleaned, ROMANIAN_OUTPUT_INTERJECTIONS);
-    cleaned = cleaned
-        .replace(/^[\s,;:]+/, '')
-        .replace(/[,;:]\s*([.!?…])/g, '$1')
-        .replace(/([,;:])\s*([,;:])/g, '$2')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-
-    // Dacă au rămas doar semne de punctuație după eliminarea vocalizărilor, blocul e gol.
-    if (!cleaned || /^[-–—\s.,;:!?…'"’]+$/.test(cleaned)) return '';
-    return cleaned;
-}
-
-function isOnlyStandaloneOutputInterjection(text) {
-    const raw = String(text || '').trim();
-    return raw.length > 0 && !stripRomanianOutputInterjections(raw).trim();
 }
 
 // ============================================================
@@ -876,14 +692,6 @@ function cleanTextForJson(text) {
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
-    // Elimină o linie alcătuită numai din vocalizări ÎNAINTE de a curăța tokenurile;
-    // altfel „Oh.” putea deveni temporar „.” și rămânea în lista trimisă lui Gemini.
-    // Pe liniile care conțin și dialog, eliminăm doar tokenul și păstrăm textul util.
-    clean = clean.split('\n').map(line => {
-        if (isOnlyStandaloneFillerSequence(line)) return '';
-        return stripKnownInterjectionTokens(line);
-    }).join('\n');
-
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
 
@@ -908,9 +716,25 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh|mwah|brr|ptiu)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
-    cleaned = cleaned.replace(/<[^>]+>/g, ' ');
-    cleaned = stripKnownInterjectionTokens(cleaned);
+    let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
+    // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație.
+    // IMPORTANT: includem și punctul în delimitatori; altfel „ăă...” / „mhm...”
+    // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
+    // „ă{2,}” prinde și forme precum „ăăă...”, nu doar exact „ăă”.
+    const hesitationToken = '(?:ă{1,}|îhî|mhm|a{1,}h{1,}|ahem|argh|aw+|ehm?|er+m?|gah|ha+|heh|hm+|hmph|huh|m+m+h?m?|oh+h?|ooh+|oops|ouch|ow|pff+t?|phew|psst|shh+|ugh|uh+m?|um+m?|whew|whoa|wow|yikes|aâ|aoleu)';
+
+    // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
+    // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
+    cleaned = cleaned.replace(
+        new RegExp('[,;:]\\s*' + hesitationToken + '[,;:.!?…]*\\s*$', 'gmi'),
+        '...'
+    );
+
+    cleaned = cleaned.replace(
+        new RegExp('(^|[\\s,;:.!?…])' + hesitationToken + '(?=[\\s,;:.!?…]|$)[,;:.!?…]*', 'gmi'),
+        '$1'
+    ).trim();
+
     // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
     cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț])-\1(?=[A-Za-zĂÂÎȘȚăâîșț])/gi, '$1');
 
@@ -1441,16 +1265,6 @@ function formatSubtitleLine(text) {
         text = text.replace(dictionar[i][0], dictionar[i][1]);
     }
 
-    // Ultimul filtru după toate corecțiile mecanice: nicio etapă de formatare/dicționar
-    // nu trebuie să reintroducă interjecții pe care utilizatorul a cerut să nu le afișăm.
-    text = stripRomanianOutputInterjections(text);
-    if (!text) return ' ';
-    // După eliminarea unei interjecții de la început, majuscula revine pe primul
-    // cuvânt real al replicii; pentru replicile marcate cu liniuță capitalizăm după separator.
-    text = text.replace(/^(\s*[-–—]\s*)([a-zăâîșț])/u,
-        (_, prefix, letter) => prefix + letter.toLocaleUpperCase('ro-RO'));
-    text = text.replace(/^([a-zăâîșț])/u, letter => letter.toLocaleUpperCase('ro-RO'));
-
     return formatSubtitleLayout(text);
 }
 
@@ -1493,12 +1307,10 @@ SUBTITLE FORMATTING
 - If two speakers share one source block, keep both under the SAME ID on separate lines, each with “- ” and a capitalized first word. Never move a speaker to another ID.
 - Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
-INTERJECTIONS AND FILLERS — STRICT OUTPUT RULE
-- Do NOT display sound-based reaction/filler interjections in Romanian subtitles. Remove standalone interjections and meaningless hesitation/vocalization tokens, including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Hmm”, “Mwah”, “Mm-hmm”, “Wow”, “Whoa”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”, “uff”, and similar sounds. Also omit attention markers “Hey/Hei” and conversational filler “na” when they add no content; keep the rest of the sentence.
-- If such a token appears inside a meaningful sentence, remove only the interjection and keep/rephrase the meaningful words; fix punctuation and capitalization. Never replace it with a Romanian filler or reaction (including “ă”, “ăă”, “ăăă”, “hmm”, “mhm”, “Păi”, “Vai”, “Uau” or “Mă rog”) when that word merely fills the pause.
-- If the source is an idiom or expressive phrase that would normally begin with an interjection (for example “Oh my God”), translate its intended meaning naturally without rendering an interjection literally. Do not discard the meaningful content of the phrase.
-- Do not create a subtitle block for a source line consisting only of non-semantic vocalization/reaction noise. Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise.
-- Keep meaningful spoken acknowledgements and dialogue words (for example “yes”, “no”, “sorry”, and “okay” meaning “Bine.”); these are content, not filler noises.
+INTERJECTIONS AND FILLERS
+- Remove standalone filler sounds and meaningless hesitation tokens (including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Wow”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”) from the subtitle.
+- Remove an embedded filler when it is only hesitation, then repair punctuation and capitalization. Do not delete a meaningful multi-word expression simply because it begins with an interjection; translate the expression by meaning.
+- Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise, not meaningful spoken dialogue.
 
 FINAL CHECK
 Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, dialogue format, filler cleanup, and one-to-one ID alignment. Correct clear errors without adding or deleting meaning.
@@ -2861,20 +2673,18 @@ function normalizeTranslationPayload(parsed) {
     return Object.create(null);
 }
 
-async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, alignmentRepair = false, deferred429Retry = false) {
+async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, alignmentRepair = false) {
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     let lastError = null;
 
-    // Un 429 afectează proiectul selectat, nu automat întregul pool. Încercăm
-    // proiectele configurate înainte să amânăm calupul; astfel o singură cotă
-    // atinsă nu abandonează traducerea dacă alt proiect poate răspunde.
-    const maxTransientAttempts = 8;
-    const maxRateLimitAttempts = Math.max(1, keyStates.length);
-    const maxAttempts = Math.max(maxTransientAttempts, maxRateLimitAttempts);
+    // 503 păstrează bugetul obișnuit de retry. După primul 429, permitem până
+    // la trei treceri prin pool (cel puțin 8 încercări), ca să poată fi încercate
+    // toate proiectele și să poată expira pauzele, fără split prematur al calupului.
+    const maxKeyAttempts = 8;
+    const maxRateLimitAttempts = Math.max(8, keyStates.length * 3);
     let sawRateLimit429 = false;
-    let rateLimitAttempts = 0;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for (let attempt = 1; attempt <= (sawRateLimit429 ? maxRateLimitAttempts : maxKeyAttempts); attempt++) {
         let keyState = null;
         try {
             // Alegem proiectul la nivel global, ținând cont de toate traducerile
@@ -3011,46 +2821,23 @@ ${JSON.stringify(missingItems, null, 2)}
             }
             const isDailyQuotaBlocked = error.isPermanentQuotaBlock === true;
             const is5xx = /status code 5\d\d/.test(error.message);
-            const isEmptyProviderResponse = /Gemini a returnat conținut gol|empty content/i.test(String(error.message || ''));
-            const isTransient = !isDailyQuotaBlocked && (is429 || is5xx || isEmptyProviderResponse);
-            if (is429) {
-                rateLimitAttempts++;
-                if (!deferred429Retry) {
-                    // În turul concurent doar marcăm proiectul și amânăm calupul;
-                    // rotația mai largă are loc secvențial, ca să nu declanșeze o furtună 429.
-                    console.log(`${c.yellow}⚠ [429] Calup ${globalChunkIndex + 1}/${totalChunks} amânat după limitarea proiectului selectat.${c.reset}`);
-                    break;
-                }
-                console.log(`${c.yellow}⚠ [429 Retry] Calup ${globalChunkIndex + 1}/${totalChunks}: proiect limitat; încerc alt proiect (${rateLimitAttempts}/${maxRateLimitAttempts}).${c.reset}`);
-                if (isDailyQuotaBlocked || rateLimitAttempts >= maxRateLimitAttempts || attempt >= maxAttempts) break;
-                continue;
-            }
-            console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}, încercarea ${attempt}/${maxAttempts}: ${error.message}${c.reset}`);
+            const isTransient = !isDailyQuotaBlocked && (is429 || is5xx);
+            console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1} eșuat (încercarea ${attempt}/${maxKeyAttempts}): ${error.message}${c.reset}`);
 
             if (!isTransient) break;
-            if (attempt < maxAttempts && is5xx) continue;
+            const retryLimit = sawRateLimit429 ? maxRateLimitAttempts : maxKeyAttempts;
+            if (attempt < retryLimit) {
+                // 429 pune în pauză doar proiectul care l-a primit. Dacă există
+                // alte proiecte eligibile, selectorul trece la ele; dacă toate
+                // sunt în pauză, getAvailableKey așteaptă primul proiect care revine.
+                // 503/5xx păstrează gate-ul global de serviciu.
+                if (is429 || is5xx) continue;
+            }
         }
     }
 
     if (lastError?.isPermanentQuotaBlock) {
         throw lastError;
-    }
-
-    if (sawRateLimit429 && lastError?.isRateLimit429) {
-        if (!deferred429Retry) {
-            if (!Array.isArray(keyStates._deferred429Chunks)) keyStates._deferred429Chunks = [];
-            if (!keyStates._deferred429Chunks.some(entry => entry.globalChunkIndex === globalChunkIndex && entry.chunkStart === chunkStart && entry.depth === depth)) {
-                keyStates._deferred429Chunks.push({
-                    chunk: [...chunk], allItems, chunkStart, chunkEnd,
-                    previousTranslatedContext: [...(previousTranslatedContext || [])],
-                    globalChunkIndex, totalChunks, depth, alignmentRepair
-                });
-            }
-            console.log(`${c.yellow}⏸ [429 Retry] Calup ${globalChunkIndex + 1}/${totalChunks} amânat; va primi o singură reîncercare secvențială după turul inițial.${c.reset}`);
-        } else {
-            console.log(`${c.yellow}⚠ [429 Retry] Calup ${globalChunkIndex + 1}/${totalChunks} a primit din nou 429 la reîncercarea amânată; nu mai rotesc prin alte proiecte. ID-urile goale vor fi raportate la QA FINAL.${c.reset}`);
-        }
-        return chunk.map(item => ({ id: item.id, text: ' ' }));
     }
 
     if (chunk.length > 20 && depth < 2) {
@@ -4144,14 +3931,15 @@ async function retryEmptyTranslationIndividually(item, translatedById, keyStates
     if (!(keyStates._emptyRecoveryAttemptedIds instanceof Set)) {
         keyStates._emptyRecoveryAttemptedIds = new Set();
     }
-    // Marcăm ID-ul înaintea apelului: Final Empty Recovery nu repetă aceleași cereri.
+    // Marcăm ID-ul înaintea apelului: aceeași replică nu va primi încă un retry
+    // automat în etapa Final Empty Recovery.
     keyStates._emptyRecoveryAttemptedIds.add(id);
 
-    const jsonPrompt = `
+    const prompt = `
 ${MASTER_TRANSLATION_PROMPT}
 
 RECUPERARE INDIVIDUALĂ PENTRU O SINGURĂ TRADUCERE GOALĂ.
-Tradu replica de mai jos în română naturală. Păstrează sensul, tonul și formatul de subtitrare.
+Tradu numai replica de mai jos în română naturală. Păstrează sensul, tonul și formatul de subtitrare.
 Nu omite ID-ul și nu returna text gol. Returnează doar un array JSON cu exact un obiect.
 
 ${JSON.stringify([{ id: item.id, text: item.text }], null, 2)}
@@ -4161,53 +3949,35 @@ Format obligatoriu:
   {"id": ${Number.parseInt(id, 10)}, "text": "traducerea română"}
 ]
 `;
-    const plainPrompt = `Tradu în română naturală replica de subtitrare de mai jos. Păstrează sensul exact, tonul și numele proprii. Nu explica, nu pune ghilimele și nu returna JSON. Returnează numai textul românesc al replicii. Nu lăsa răspunsul gol.
 
-ORIGINAL: ${String(item.text || '').trim()}`;
+    try {
+        const retryKey = await getAvailableKey(keyStates);
+        const retryRaw = await callGemini(prompt, retryKey, { timeout: 30000 });
+        const retryJson = safeJsonParse(retryRaw);
+        const retryDict = normalizeTranslationPayload(retryJson);
+        const assessment = assessEmptyRecoveryCandidate(item, retryDict[id]);
 
-    const maxAttempts = Math.min(3, Math.max(2, keyStates.length));
-    let lastReason = 'nu a fost obținută o traducere validă';
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        if (keyStates._emptyRecoveryQuotaBlocked) return false;
-        const plainTextMode = attempt === 1;
-        try {
-            const retryKey = await getAvailableKey(keyStates);
-            const retryRaw = await callGemini(
-                plainTextMode ? plainPrompt : jsonPrompt,
-                retryKey,
-                { timeout: 30000, ...(plainTextMode ? { plainText: true } : {}) }
-            );
-            let candidateRaw = '';
-            if (plainTextMode) {
-                candidateRaw = cleanPlainTextReviewResponse(retryRaw);
-            } else {
-                const retryJson = safeJsonParse(retryRaw);
-                const retryDict = normalizeTranslationPayload(retryJson);
-                candidateRaw = retryDict[id];
-            }
-
-            const assessment = assessEmptyRecoveryCandidate(item, candidateRaw);
-            if (assessment.ok) {
-                translatedById[id] = assessment.candidate;
-                return true;
-            }
-            lastReason = assessment.reason;
-        } catch (error) {
-            const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(String(error?.message || ''));
-            if (is429) {
-                register429(
-                    keyStates,
-                    Number(error.retryAfterMs) || 15000,
-                    error.isProjectQuota429 === true
-                );
-            }
-            const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
-            lastReason = String(error?.message || error || lastReason).slice(0, 180);
-            if (quotaBlocked || error?.isPermanentQuotaBlock) return false;
+        if (!assessment.ok) {
+            console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id} respins la retry individual: ${assessment.reason}.${c.reset}`);
+            return false;
         }
+
+        translatedById[id] = assessment.candidate;
+        console.log(`${c.green}✔ [${stageLabel} Retry] ID ${id} recuperat prin cerere individuală.${c.reset}`);
+        return true;
+    } catch (error) {
+        const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(String(error?.message || ''));
+        if (is429) {
+            register429(
+                keyStates,
+                Number(error.retryAfterMs) || 15000,
+                error.isProjectQuota429 === true
+            );
+        }
+        const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
+        console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id}: cererea individuală a eșuat: ${error.message}${quotaBlocked ? ' Oprind alte cereri de recuperare din cauza limitei Gemini.' : ''}${c.reset}`);
+        return false;
     }
-    console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id} nerecuperat după ${maxAttempts} încercări (${lastReason}).${c.reset}`);
-    return false;
 }
 
 async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
@@ -4408,9 +4178,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
         for (const batchResult of results) {
             const sourceChunk = chunks[batchResult.globalIndex];
             let chunkResult = batchResult.result;
-            const blankCount = chunkResult.filter(item => !String(item.text || '').trim()).length;
-            const isMostlyBlank = chunkResult.length > 0 && blankCount >= Math.ceil(chunkResult.length * 0.8);
-            const alignmentIssue = isMostlyBlank ? null : detectTranslationAlignmentShift(sourceChunk, chunkResult);
+            const alignmentIssue = detectTranslationAlignmentShift(sourceChunk, chunkResult);
             if (alignmentIssue) {
                 const suspectStart = Math.max(0, alignmentIssue.start - 2);
                 const suspectEnd = Math.min(sourceChunk.length - 1, alignmentIssue.end + 2);
@@ -4448,28 +4216,7 @@ async function translateSrtWithGemini(srtText, apiKeys) {
         }
     }
 
-    const deferred429Chunks = Array.isArray(keyStates._deferred429Chunks) ? keyStates._deferred429Chunks.splice(0) : [];
-    if (deferred429Chunks.length) {
-        console.log(`${c.yellow}[429 Retry] ${deferred429Chunks.length} calupuri amânate; reîncerc secvențial, câte unul, după turul inițial.${c.reset}`);
-        for (let index = 0; index < deferred429Chunks.length; index++) {
-            const task = deferred429Chunks[index];
-            await sleep(750);
-            console.log(`${c.cyan}[429 Retry] Calup ${task.globalChunkIndex + 1}/${task.totalChunks}, reîncercare amânată ${index + 1}/${deferred429Chunks.length}.${c.reset}`);
-            const retryResult = await processChunkWithRetry(
-                task.chunk, task.allItems, task.chunkStart, task.chunkEnd,
-                task.previousTranslatedContext, keyStates, task.globalChunkIndex,
-                task.totalChunks, task.depth, task.alignmentRepair, true
-            );
-            let recovered = 0;
-            for (const item of retryResult) {
-                translatedById[String(item.id)] = item.text;
-                if (String(item.text || '').trim()) recovered++;
-            }
-            console.log(`${recovered === retryResult.length ? c.green : c.yellow}[429 Retry] Calup ${task.globalChunkIndex + 1}/${task.totalChunks}: ${recovered}/${retryResult.length} replici cu text după reîncercarea amânată.${c.reset}`);
-        }
-    }
-
-    console.log(`${c.green}[Gemini] Calupuri inițiale finalizate: ${chunks.length}/${chunks.length}.${c.reset}`);
+    console.log(`${c.green}[Gemini] Calupuri finalizate: ${chunks.length}/${chunks.length}.${c.reset}`);
 
     let sourceGroundedCorrections = 0;
     for (const item of items) {
@@ -4758,27 +4505,13 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
     // Interjecțiile generate ca traducere izolată sunt eliminate din ieșire și
     // scoase din numitorul QA; nu trebuie raportate ca eroare de fidelitate.
-    // Ultima curățare înainte de export, după toate etapele care pot modifica textul.
-    // Dacă replica a rămas numai o interjecție/umplutură, o golim; altfel păstrăm restul.
-    for (const item of items) {
-        const id = String(item.id);
-        const current = String(translatedById[id] || '');
-        if (!current.trim()) continue;
-        const cleaned = formatSubtitleLine(current);
-        if (cleaned.trim()) {
-            translatedById[id] = cleaned;
-        } else if (isOnlyStandaloneFillerSequence(current) || isOnlyStandaloneOutputInterjection(current)) {
-            translatedById[id] = '';
-        }
-    }
-
     const suppressedFillerIds = items
         .filter(item => {
             const id = String(item.id);
             const translated = String(translatedById[id] || '').trim();
             // A source-only reaction/marker must not leak into the output, even if Gemini
             // returned an empty or non-empty paraphrase for it. Also suppress reaction-only translations.
-            return isJunkOrInterjection(item.text) || isOnlyStandaloneFillerSequence(translated) || isOnlyStandaloneOutputInterjection(translated);
+            return isJunkOrInterjection(item.text) || isOnlyStandaloneFillerSequence(translated);
         })
         .map(item => String(item.id));
     const suppressedFillerIdSet = new Set(suppressedFillerIds);
@@ -4818,54 +4551,17 @@ Returnează DOAR un ARRAY JSON valid în forma:
             hasLostExplicitSourceTerm(item.text, translated);
     });
 
-    // Numitorul QA include doar replicile-sursă care chiar trebuie să aibă text:
-    // exclude interjecțiile suprimate intenționat și blocurile-sursă goale/tehnice.
-    const qaEligibleItems = items.filter(item => {
-        const id = String(item.id);
-        const originalClean = isEffectivelyEmptySubtitleText(item.text)
-            ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
-        return Boolean(originalClean) &&
-            !suppressedFillerIdSet.has(id) &&
-            !isJunkOrInterjection(item.text);
-    });
-    const qaEligibleIds = new Set(qaEligibleItems.map(item => String(item.id)));
-    const unresolvedEmpty = qaEligibleItems.filter(item =>
-        !String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()
-    );
-    const remainingNonEmptySuspicious = finalSuspicious.filter(item => {
-        const id = String(item.id);
-        return !unresolvedEmpty.some(missing => String(missing.id) === id);
-    });
-    const emittedCount = qaEligibleItems.filter(item =>
-        String(translatedById[String(item.id)] ?? '').replace(/<[^>]+>/g, '').trim().length > 0
-    ).length;
-    const finalStatus = {
-        inputCount: items.length,
-        eligibleCount: qaEligibleItems.length,
-        emittedCount,
-        unresolvedEmptyCount: unresolvedEmpty.length,
-        unresolvedEmptyIds: unresolvedEmpty.map(item => String(item.id)),
-        remainingSuspiciousCount: remainingNonEmptySuspicious.length,
-        suppressedFillerCount: suppressedFillerIds.length
-    };
-    const logContext = translationLogContext.getStore();
-    if (logContext) logContext.finalStatus = finalStatus;
+    // Verificările finale rămân active intern, dar nu expun liste de suspiciuni
+    // sau un raport cu ceea ce filtrele automate nu au putut confirma.
+    console.log(`\n${c.green}[QA FINAL] Verificările de după traducere s-au încheiat.${c.reset}`);
 
-    const routineMetrics = logContext?.routineMetrics || { automatedInterventions: 0 };
-    const qaSummary = `[QA FINAL] Text: ${emittedCount}/${qaEligibleItems.length} | Goale: ${unresolvedEmpty.length} | Suspecte: ${remainingNonEmptySuspicious.length} | Suprimate: ${suppressedFillerIds.length} | Intervenții automate: ${routineMetrics.automatedInterventions}`;
-    if (unresolvedEmpty.length) {
-        console.log(`${c.yellow}${qaSummary}${c.reset}`);
-        console.log(`${c.yellow}[QA FINAL] ID-uri fără traducere: ${unresolvedEmpty.map(item => String(item.id)).join(', ')}${c.reset}`);
-    } else if (remainingNonEmptySuspicious.length) {
-        console.log(`${c.yellow}${qaSummary}${c.reset}`);
-    } else {
-        console.log(`${c.green}${qaSummary}${c.reset}`);
-    }
+    // Blocurile goale sunt omise în export conform protecției existente; nu afișăm liste de ID-uri.
+
 
     const output = items
         .filter(item => {
             const id = String(item.id);
-            return qaEligibleIds.has(id) && String(translatedById[id] ?? '').replace(/<[^>]+>/g, '').trim().length > 0;
+            return !suppressedFillerIdSet.has(id) && String(translatedById[id] ?? '').trim().length > 0;
         })
         .map(item => {
             const translated = String(translatedById[String(item.id)]);
@@ -5095,8 +4791,7 @@ app.get('/:configData/translate', async (req, res) => {
         } else {
             const startTime = Date.now();
             
-            const logContext = { mediaId: imdbId, finalStatus: null, routineMetrics: { automatedInterventions: 0 } };
-            processPromise = translationLogContext.run(logContext, async () => {
+            processPromise = (async () => {
                 const [srtRes, mediaTitle] = await Promise.all([
                     fetchValidatedSubtitleUrl(validatedTarget.url),
                     fetchMediaTitle(imdbId)
@@ -5106,7 +4801,7 @@ app.get('/:configData/translate', async (req, res) => {
                 logTranslationStart(imdbId, mediaTitle);
 
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys);
-            });
+            })();
             
             memoryCache.set(cacheKey, processPromise);
             cleanMemoryCache(cacheKey);
@@ -5123,13 +4818,7 @@ app.get('/:configData/translate', async (req, res) => {
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
-                const status = logContext.finalStatus;
-                const qaSuffix = status?.unresolvedEmptyCount
-                    ? ` | QA cu ${status.unresolvedEmptyCount} lipsuri`
-                    : status?.remainingSuspiciousCount
-                        ? ` | QA cu ${status.remainingSuspiciousCount} avertismente`
-                        : ' | QA OK';
-                console.log(`\x1b[96m[${imdbId}] [DONE] | 🕒 ${timeFormatted}${qaSuffix}\x1b[0m\n`);
+                console.log(`\x1b[96m[DONE] ${imdbId} | 🕒 ${timeFormatted}\x1b[0m\n`);
                 
             }).catch((err) => {
                 console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
@@ -5206,20 +4895,6 @@ function parseSrt(srt, stats = null) {
 
         let rawText = lines.slice(2).join('\n');
 
-        // Detectăm interjecțiile izolate pe sursa originală, înainte de orice normalizare.
-        // Curățăm pentru clasificare doar marcajele sonore uzuale, etichetele și parantezele,
-        // astfel încât „♪ Woo-hoo ♪” să fie tratat ca vocalizare, nu ca replică.
-        const sourceFillerProbe = rawText
-            .replace(/[♪♫♬♩#]/g, '')
-            .replace(/\{[^}]+\}/g, ' ')
-            .replace(/\[[^\]]*?\]/g, ' ')
-            .replace(/<[^>]+>/g, ' ');
-        const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(sourceFillerProbe);
-        if (sourceIsFillerOnly) {
-            if (stats) stats.fillerBlocksFiltered++;
-            continue;
-        }
-
         // Verificăm textul ORIGINAL înainte de cleanTextForJson(). Unele surse folosesc
         // entități HTML pentru spații/caractere invizibile, iar etapa de curățare poate
         // transforma aceste entități într-un fragment aparent nenul. Un astfel de bloc
@@ -5229,6 +4904,7 @@ function parseSrt(srt, stats = null) {
             continue;
         }
 
+        const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(rawText);
         const text = cleanTextForJson(rawText);
 
         if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) {
