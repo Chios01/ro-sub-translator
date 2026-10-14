@@ -108,33 +108,11 @@ function logTranslationStart(mediaId, mediaTitle) {
         .trim();
     const details = cleanTitle ? `${cleanId} — ${cleanTitle}` : cleanId;
 
-    // Antet compact: doar două linii orizontale; titlul rămâne aliniat la stânga.
-    // Titlurile lungi se împart pe rânduri suplimentare fără să centreze textul.
-    const lineWidth = 64;
-    const wrapText = (value, width) => {
-        const words = String(value).split(/\s+/).filter(Boolean);
-        const lines = [];
-        let line = '';
-        for (const word of words) {
-            if (!line) {
-                line = word;
-            } else if ((line + ' ' + word).length <= width) {
-                line += ' ' + word;
-            } else {
-                lines.push(line);
-                line = word;
-            }
-        }
-        if (line) lines.push(line);
-        return lines.length ? lines : [''];
-    };
-    const topBottom = '═'.repeat(lineWidth);
-    const detailLines = wrapText(details, lineWidth);
-
-    // Antetul și metadatele au culori diferite pentru a fi ușor de reperat în Render.
-    console.log(`\x1b[96m\n${topBottom}\n${headline}\x1b[0m`);
-    console.log(`\x1b[93m${detailLines.join('\n')}\x1b[0m`);
-    console.log(`\x1b[96m${topBottom}\x1b[0m`);
+    // Fiecare element colorat este emis pe propria linie, cu secvența ANSI
+    // în aceeași linie ca textul. Nu folosim separatoare decorative, care pe
+    // unele interfețe de log se împart pe două rânduri și colorează doar parțial.
+    console.log(`\x1b[96m${headline}\x1b[0m`);
+    console.log(`\x1b[93m${details}\x1b[0m`);
 }
 function rememberOriginalSource(key, text) {
     originalSources[key] = text;
@@ -175,7 +153,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.146',
+    version: '12.78.147',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
