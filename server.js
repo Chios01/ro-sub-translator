@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.151',
+    version: '12.78.152',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -649,9 +649,10 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const STANDALONE_SOURCE_FILLERS = new Set((
-    // Vocalizări/reacții fără conținut semantic; nu includem „ok/okay” deoarece
-    // „Bine.” este un răspuns real, nu un sunet de umplutură.
-    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oof aâ aoleu oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
+    // Vocalizări/reacții și marcatori de atenție folosiți ca umplutură; nu includem „ok/okay”
+    // deoarece „Bine.” este un răspuns real, nu un sunet de umplutură. „Hey/Hei” se elimină
+    // ca marcator de atenție; „na” se elimină ca tic conversațional, păstrând restul replicii.
+    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oof aâ aoleu oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe hey hei na ă ăă ăăă îhî ptiu brr'
 ).split(/\s+/));
 
 function isOnlyStandaloneFillerSequence(text) {
@@ -671,6 +672,7 @@ function isOnlyStandaloneFillerSequence(text) {
 // Elimină reacțiile/vocalizările cunoscute oriunde apar în text, inclusiv în
 // traducerea generată de AI. Păstrează cuvintele cu sens din aceeași replică.
 // „ok/okay” sunt intenționat excluse: ca răspuns, se traduc natural prin „Bine.”.
+// „hey/hei” și „na” sunt eliminate ca marcatori de umplutură; cuvintele următoare rămân.
 function stripKnownInterjectionTokens(text) {
     let cleaned = String(text || '');
     const escapedTokens = Array.from(STANDALONE_SOURCE_FILLERS)
@@ -684,10 +686,22 @@ function stripKnownInterjectionTokens(text) {
     ];
     const tokenPattern = [...variableSounds, ...escapedTokens].join('|');
     const re = new RegExp('(^|[,;:]\\s*|[.!?…]\\s*|\\s+)(?:' + tokenPattern + ')(?=$|[\\s,;:.!?…])[,;:.!?…]*', 'giu');
-    cleaned = cleaned.replace(re, (match, prefix) => {
+    const beforeTokenRemoval = cleaned;
+    cleaned = cleaned.replace(re, (match, prefix, offset, whole) => {
+        // Păstrează punctele de suspensie dacă tokenul eliminat este la finalul
+        // unei replici întrerupte („Nu știu, na...” -> „Nu știu...”).
+        const atEnd = offset + match.length >= whole.length;
+        const terminalPunctuation = atEnd ? ((match.match(/([.!?…]+)\s*$/) || [])[1] || '') : '';
+        // Dacă marcatorul era a doua replică după liniuță, eliminăm și separatorul
+        // său și nu transferăm exclamația vocalizării în replica precedentă.
+        if (atEnd && /(?:^|\s)[-–—]\s*$/.test(prefix)) return '';
+        if (atEnd && terminalPunctuation) {
+            if (/[,;:]\s*$/.test(prefix)) return ' ' + terminalPunctuation;
+            return (prefix || '') + terminalPunctuation;
+        }
         if (!prefix) return '';
-        // Păstrează finalul unei propoziții („! Oh, wait” -> „! wait”),
-        // dar elimină virgula care separă interjecția de cuvintele din jur.
+        // Păstrează punctuația dinaintea tokenului, dar elimină separatorul
+        // care lega interjecția de restul cuvintelor.
         if (/[.!?…]\s*$/.test(prefix)) return prefix;
         if (/[,;:]\s*$/.test(prefix)) return ' ';
         return prefix;
@@ -699,6 +713,10 @@ function stripKnownInterjectionTokens(text) {
         .replace(/[,;:]\s*([.!?…])/g, '$1')
         .replace(/\(\s*\)|\[\s*\]/g, '')
         .replace(/^\s+|\s+$/g, '');
+    // Dacă eliminăm toată a doua replică după separator, nu lăsăm o liniuță orfană.
+    if (cleaned !== beforeTokenRemoval) {
+        cleaned = cleaned.replace(/\s+[-–—]\s*[.!?…]*\s*$/g, '').trim();
+    }
     return cleaned;
 }
 
@@ -1328,7 +1346,7 @@ SUBTITLE FORMATTING
 - Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
 INTERJECTIONS AND FILLERS — STRICT OUTPUT RULE
-- Do NOT display sound-based reaction/filler interjections in Romanian subtitles. Remove standalone interjections and meaningless hesitation/vocalization tokens, including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Hmm”, “Mwah”, “Mm-hmm”, “Wow”, “Whoa”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”, “uff”, and similar sounds.
+- Do NOT display sound-based reaction/filler interjections in Romanian subtitles. Remove standalone interjections and meaningless hesitation/vocalization tokens, including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Hmm”, “Mwah”, “Mm-hmm”, “Wow”, “Whoa”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”, “uff”, and similar sounds. Also omit attention markers “Hey/Hei” and conversational filler “na” when they add no content; keep the rest of the sentence.
 - If such a token appears inside a meaningful sentence, remove only the interjection and keep/rephrase the meaningful words; fix punctuation and capitalization. Never reinsert a Romanian filler (for example “ă”, “ăă”, “ăăă”, “hmm”, “mhm”) in its place.
 - If the source is an idiom or expressive phrase that would normally begin with an interjection (for example “Oh my God”), translate its intended meaning naturally without rendering an interjection literally. Do not discard the meaningful content of the phrase.
 - Do not create a subtitle block for a source line consisting only of non-semantic vocalization/reaction noise. Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise.
