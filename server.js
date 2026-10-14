@@ -7,11 +7,73 @@ const dns = require('dns').promises;
 const net = require('net');
 const { AsyncLocalStorage } = require('async_hooks');
 
-// Asociază fiecare mesaj de log cu traducerea care l-a produs, inclusiv în operații async concurente.
+// Asociază logurile fiecărei traduceri cu titlul corect și ascunde mesajele de
+// succes repetitive. Erorile API, retry-urile importante și QA-ul final rămân vizibile.
 const translationLogContext = new AsyncLocalStorage();
 const nativeConsoleLog = console.log.bind(console);
+function getPlainLogMessage(args) {
+    return args.map(value => typeof value === 'string' ? value : String(value ?? ''))
+        .join(' ').replace(/\x1b\[[0-9;]*m/g, '').trim();
+}
+function recordRoutineTranslationMetrics(args, ctx) {
+    if (!ctx) return;
+    if (!ctx.routineMetrics) ctx.routineMetrics = { automatedInterventions: 0 };
+    const message = getPlainLogMessage(args);
+    const add = value => { ctx.routineMetrics.automatedInterventions += Math.max(0, Number(value) || 0); };
+    let match;
+    if ((match = message.match(/\[POST-CHECK\] Încheiat; (\d+) corectări aplicate\./))) add(match[1]);
+    else if ((match = message.match(/✔ \[Grammar Review\] Verificarea s-a încheiat; (\d+) corectări aplicate\./))) add(match[1]);
+    else if ((match = message.match(/\[GRAMATICĂ\] Verificare locală încheiată; (\d+) corecții directe aplicate\./))) add(match[1]);
+    else if ((match = message.match(/✔ \[Continuări\] (\d+) fragmente continuate au primit literă mică la început\./))) add(match[1]);
+    else if ((match = message.match(/\[RETRY FINAL\] (\d+) replici reparate\./))) add(match[1]);
+    else if ((match = message.match(/✔ \[Quality Retry\] (\d+) verificate punctual, (\d+) corectate\./))) add(match[2]);
+    else if ((match = message.match(/\[Quality Recheck\] (\d+) reverificate, (\d+) corectate la a doua verificare\./))) add(match[2]);
+    else if ((match = message.match(/\[Final Repair\] Verificare finală încheiată; (\d+) corectări aplicate\./))) add(match[1]);
+}
+function shouldSuppressRoutineTranslationLog(args) {
+    const message = getPlainLogMessage(args);
+    if (!message) return true;
+
+    // Pași normali/rezultate fără valoare operațională: sumarul numeric apare la final.
+    const routinePatterns = [
+        /➤ \[Gemini\] Traduc calup \d+\/\d+\.\.\./,
+        /✔ \[Gemini\] Calup \d+\/\d+ finalizat!/,
+        /\[Gemini\] Calupuri inițiale finalizate:/,
+        /✔ \[Gemini Control\] 3 cereri reușite; concurența crește controlat/,
+        /\[POST-CHECK\] Verificare contextuală după finalizarea calupurilor/,
+        /\[POST-CHECK\] Încheiat; \d+ corectări aplicate\./,
+        /✔ \[Grammar Review\] Calup \d+\/\d+: \d+ corectate/,
+        /✔ \[Grammar Review\] Verificarea s-a încheiat; \d+ corectări aplicate\./,
+        /🎯 VERIFICARE PUNCTUALĂ — GRAMATICĂ \+ TRADUCERE/,
+        /📝 VERIFICARE SUPLIMENTARĂ — GRAMATICĂ \+ TRADUCERE/,
+        /^Verificate: \d+ replici$/,
+        /✔ \[Continuări\] \d+ fragmente continuate au primit literă mică la început\./,
+        /\[GRAMATICĂ\] Verificare locală încheiată; \d+ corecții directe aplicate\./,
+        /\[Semantic Spot Check\] Verificare punctuală încheiată\./,
+        /\[RETRY FINAL\] \d+ replici reparate\./,
+        /✔ \[Quality Retry\] Nicio replică nu a declanșat verificarea AI punctuală/,
+        /✔ \[Quality Retry\] \d+ verificate punctual, \d+ corectate\./,
+        /\[Final Repair\] Corectare contextuală finală pentru \d+ replici candidate/,
+        /\[Final Repair\] Verificare finală încheiată;/,
+        /✔ \[Aliniere\].*(?:finalizat|nu mai detectează decalarea inițială)/,
+        /\[(?:(?:Final )?(?:Calup \d+ )?)?Empty Recovery Retry\] ID \d+ (?:respins|nerecuperat|recuperat|a eșuat)/,
+        /\[(?:Final )?Empty Recovery\] ID \d+ respins:/,
+        /\[Final Empty Recovery\].*(?:Toate cele \d+ traduceri goale au fost recuperate local|Nu repet retry-ul individual|Rămase goale după încercările anterioare|Recuperate:)/i,
+        /\[Empty Recovery\].*(?:traduceri goale detectate|replici nu au potrivire locală sigură|Gemini omis:|Recuperate:)/i,
+        /\[Gemini\] Calupul \d+: \d+ ID-uri (?:lipsă sau cu traducere goală|încă goale)|\[Gemini\] Calupul \d+: rămân \d+ traduceri goale/,
+        /\[QA FINAL\] Verificările de după traducere s-au încheiat\./,
+        /\[Gemini Diagnostic\] 429:/
+    ];
+
+    // Nu suprimăm nicio linie cu o eroare de transport/cotă; acestea trebuie să rămână vizibile.
+    const isOperationalError = /(?:status code 4\d\d|status code 5\d\d|\b429\b|\b503\b|timeout|timed out|eșuat|failed|eroare|invalid|quota|cotă zilnică|nu a putut|fără text)/i.test(message);
+    if (isOperationalError && /(?:429|503|timeout|timed out|status code|cotă zilnică|quota|eșuat definitiv|EROARE)/i.test(message)) return false;
+    return routinePatterns.some(pattern => pattern.test(message));
+}
 console.log = (...args) => {
     const ctx = translationLogContext.getStore();
+    recordRoutineTranslationMetrics(args, ctx);
+    if (shouldSuppressRoutineTranslationLog(args)) return;
     if (ctx && ctx.mediaId) nativeConsoleLog(`[${ctx.mediaId}]`, ...args);
     else nativeConsoleLog(...args);
 };
@@ -165,7 +227,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.154',
+    version: '12.78.156',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2803,13 +2865,16 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     let lastError = null;
 
-    // Erorile tranzitorii 5xx pot primi retry-uri obișnuite. La primul 429,
-    // nu rotim rapid aceeași cerere prin tot pool-ul: calupul este amânat pentru
-    // o singură reîncercare secvențială după terminarea calupurilor inițiale.
-    const maxKeyAttempts = 8;
+    // Un 429 afectează proiectul selectat, nu automat întregul pool. Încercăm
+    // proiectele configurate înainte să amânăm calupul; astfel o singură cotă
+    // atinsă nu abandonează traducerea dacă alt proiect poate răspunde.
+    const maxTransientAttempts = 8;
+    const maxRateLimitAttempts = Math.max(1, keyStates.length);
+    const maxAttempts = Math.max(maxTransientAttempts, maxRateLimitAttempts);
     let sawRateLimit429 = false;
+    let rateLimitAttempts = 0;
 
-    for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         let keyState = null;
         try {
             // Alegem proiectul la nivel global, ținând cont de toate traducerile
@@ -2946,15 +3011,24 @@ ${JSON.stringify(missingItems, null, 2)}
             }
             const isDailyQuotaBlocked = error.isPermanentQuotaBlock === true;
             const is5xx = /status code 5\d\d/.test(error.message);
-            const isTransient = !isDailyQuotaBlocked && (is429 || is5xx);
+            const isEmptyProviderResponse = /Gemini a returnat conținut gol|empty content/i.test(String(error.message || ''));
+            const isTransient = !isDailyQuotaBlocked && (is429 || is5xx || isEmptyProviderResponse);
             if (is429) {
-                console.log(`${c.yellow}⚠ [429] Calup ${globalChunkIndex + 1}/${totalChunks}: proiectul selectat este în pauză; opresc rotația pentru această încercare și amân calupul.${c.reset}`);
-                break;
+                rateLimitAttempts++;
+                if (!deferred429Retry) {
+                    // În turul concurent doar marcăm proiectul și amânăm calupul;
+                    // rotația mai largă are loc secvențial, ca să nu declanșeze o furtună 429.
+                    console.log(`${c.yellow}⚠ [429] Calup ${globalChunkIndex + 1}/${totalChunks} amânat după limitarea proiectului selectat.${c.reset}`);
+                    break;
+                }
+                console.log(`${c.yellow}⚠ [429 Retry] Calup ${globalChunkIndex + 1}/${totalChunks}: proiect limitat; încerc alt proiect (${rateLimitAttempts}/${maxRateLimitAttempts}).${c.reset}`);
+                if (isDailyQuotaBlocked || rateLimitAttempts >= maxRateLimitAttempts || attempt >= maxAttempts) break;
+                continue;
             }
-            console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}, încercarea ${attempt}/${maxKeyAttempts}: ${error.message}${c.reset}`);
+            console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}, încercarea ${attempt}/${maxAttempts}: ${error.message}${c.reset}`);
 
             if (!isTransient) break;
-            if (attempt < maxKeyAttempts && is5xx) continue;
+            if (attempt < maxAttempts && is5xx) continue;
         }
     }
 
@@ -4070,15 +4144,14 @@ async function retryEmptyTranslationIndividually(item, translatedById, keyStates
     if (!(keyStates._emptyRecoveryAttemptedIds instanceof Set)) {
         keyStates._emptyRecoveryAttemptedIds = new Set();
     }
-    // Marcăm ID-ul înaintea apelului: aceeași replică nu va primi încă un retry
-    // automat în etapa Final Empty Recovery.
+    // Marcăm ID-ul înaintea apelului: Final Empty Recovery nu repetă aceleași cereri.
     keyStates._emptyRecoveryAttemptedIds.add(id);
 
-    const prompt = `
+    const jsonPrompt = `
 ${MASTER_TRANSLATION_PROMPT}
 
 RECUPERARE INDIVIDUALĂ PENTRU O SINGURĂ TRADUCERE GOALĂ.
-Tradu numai replica de mai jos în română naturală. Păstrează sensul, tonul și formatul de subtitrare.
+Tradu replica de mai jos în română naturală. Păstrează sensul, tonul și formatul de subtitrare.
 Nu omite ID-ul și nu returna text gol. Returnează doar un array JSON cu exact un obiect.
 
 ${JSON.stringify([{ id: item.id, text: item.text }], null, 2)}
@@ -4088,35 +4161,53 @@ Format obligatoriu:
   {"id": ${Number.parseInt(id, 10)}, "text": "traducerea română"}
 ]
 `;
+    const plainPrompt = `Tradu în română naturală replica de subtitrare de mai jos. Păstrează sensul exact, tonul și numele proprii. Nu explica, nu pune ghilimele și nu returna JSON. Returnează numai textul românesc al replicii. Nu lăsa răspunsul gol.
 
-    try {
-        const retryKey = await getAvailableKey(keyStates);
-        const retryRaw = await callGemini(prompt, retryKey, { timeout: 30000 });
-        const retryJson = safeJsonParse(retryRaw);
-        const retryDict = normalizeTranslationPayload(retryJson);
-        const assessment = assessEmptyRecoveryCandidate(item, retryDict[id]);
+ORIGINAL: ${String(item.text || '').trim()}`;
 
-        if (!assessment.ok) {
-            console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id} respins la retry individual: ${assessment.reason}.${c.reset}`);
-            return false;
-        }
-
-        translatedById[id] = assessment.candidate;
-        console.log(`${c.green}✔ [${stageLabel} Retry] ID ${id} recuperat prin cerere individuală.${c.reset}`);
-        return true;
-    } catch (error) {
-        const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(String(error?.message || ''));
-        if (is429) {
-            register429(
-                keyStates,
-                Number(error.retryAfterMs) || 15000,
-                error.isProjectQuota429 === true
+    const maxAttempts = Math.min(3, Math.max(2, keyStates.length));
+    let lastReason = 'nu a fost obținută o traducere validă';
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (keyStates._emptyRecoveryQuotaBlocked) return false;
+        const plainTextMode = attempt === 1;
+        try {
+            const retryKey = await getAvailableKey(keyStates);
+            const retryRaw = await callGemini(
+                plainTextMode ? plainPrompt : jsonPrompt,
+                retryKey,
+                { timeout: 30000, ...(plainTextMode ? { plainText: true } : {}) }
             );
+            let candidateRaw = '';
+            if (plainTextMode) {
+                candidateRaw = cleanPlainTextReviewResponse(retryRaw);
+            } else {
+                const retryJson = safeJsonParse(retryRaw);
+                const retryDict = normalizeTranslationPayload(retryJson);
+                candidateRaw = retryDict[id];
+            }
+
+            const assessment = assessEmptyRecoveryCandidate(item, candidateRaw);
+            if (assessment.ok) {
+                translatedById[id] = assessment.candidate;
+                return true;
+            }
+            lastReason = assessment.reason;
+        } catch (error) {
+            const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(String(error?.message || ''));
+            if (is429) {
+                register429(
+                    keyStates,
+                    Number(error.retryAfterMs) || 15000,
+                    error.isProjectQuota429 === true
+                );
+            }
+            const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
+            lastReason = String(error?.message || error || lastReason).slice(0, 180);
+            if (quotaBlocked || error?.isPermanentQuotaBlock) return false;
         }
-        const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
-        console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id}: cererea individuală a eșuat: ${error.message}${quotaBlocked ? ' Oprind alte cereri de recuperare din cauza limitei Gemini.' : ''}${c.reset}`);
-        return false;
     }
+    console.log(`${c.yellow}⚠ [${stageLabel} Retry] ID ${id} nerecuperat după ${maxAttempts} încercări (${lastReason}).${c.reset}`);
+    return false;
 }
 
 async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
@@ -4727,45 +4818,54 @@ Returnează DOAR un ARRAY JSON valid în forma:
             hasLostExplicitSourceTerm(item.text, translated);
     });
 
-    const unresolvedEmpty = items.filter(item => {
+    // Numitorul QA include doar replicile-sursă care chiar trebuie să aibă text:
+    // exclude interjecțiile suprimate intenționat și blocurile-sursă goale/tehnice.
+    const qaEligibleItems = items.filter(item => {
         const id = String(item.id);
-        if (suppressedFillerIdSet.has(id) || isJunkOrInterjection(item.text)) return false;
         const originalClean = isEffectivelyEmptySubtitleText(item.text)
             ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
-        if (!originalClean) return false;
-        return !String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim();
+        return Boolean(originalClean) &&
+            !suppressedFillerIdSet.has(id) &&
+            !isJunkOrInterjection(item.text);
     });
+    const qaEligibleIds = new Set(qaEligibleItems.map(item => String(item.id)));
+    const unresolvedEmpty = qaEligibleItems.filter(item =>
+        !String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()
+    );
     const remainingNonEmptySuspicious = finalSuspicious.filter(item => {
         const id = String(item.id);
         return !unresolvedEmpty.some(missing => String(missing.id) === id);
     });
-    const emittedCount = items.filter(item => {
-        const id = String(item.id);
-        return !suppressedFillerIdSet.has(id) && String(translatedById[id] ?? '').trim().length > 0;
-    }).length;
+    const emittedCount = qaEligibleItems.filter(item =>
+        String(translatedById[String(item.id)] ?? '').replace(/<[^>]+>/g, '').trim().length > 0
+    ).length;
     const finalStatus = {
         inputCount: items.length,
+        eligibleCount: qaEligibleItems.length,
         emittedCount,
         unresolvedEmptyCount: unresolvedEmpty.length,
         unresolvedEmptyIds: unresolvedEmpty.map(item => String(item.id)),
-        remainingSuspiciousCount: remainingNonEmptySuspicious.length
+        remainingSuspiciousCount: remainingNonEmptySuspicious.length,
+        suppressedFillerCount: suppressedFillerIds.length
     };
     const logContext = translationLogContext.getStore();
     if (logContext) logContext.finalStatus = finalStatus;
 
+    const routineMetrics = logContext?.routineMetrics || { automatedInterventions: 0 };
+    const qaSummary = `[QA FINAL] Text: ${emittedCount}/${qaEligibleItems.length} | Goale: ${unresolvedEmpty.length} | Suspecte: ${remainingNonEmptySuspicious.length} | Suprimate: ${suppressedFillerIds.length} | Intervenții automate: ${routineMetrics.automatedInterventions}`;
     if (unresolvedEmpty.length) {
-        const ids = unresolvedEmpty.map(item => String(item.id));
-        console.log(`${c.yellow}[QA FINAL] COMPLETAT CU LIPSURI — ${emittedCount}/${items.length} blocuri cu text; ${unresolvedEmpty.length} ID-uri fără traducere: ${ids.join(', ')}. Aceste blocuri vor fi omise din SRT.${c.reset}`);
+        console.log(`${c.yellow}${qaSummary}${c.reset}`);
+        console.log(`${c.yellow}[QA FINAL] ID-uri fără traducere: ${unresolvedEmpty.map(item => String(item.id)).join(', ')}${c.reset}`);
     } else if (remainingNonEmptySuspicious.length) {
-        console.log(`${c.yellow}[QA FINAL] COMPLETAT CU AVERTISMENTE — ${emittedCount}/${items.length} blocuri cu text; ${remainingNonEmptySuspicious.length} replici rămân suspecte după verificările automate.${c.reset}`);
+        console.log(`${c.yellow}${qaSummary}${c.reset}`);
     } else {
-        console.log(`${c.green}[QA FINAL] COMPLETAT — ${emittedCount}/${items.length} blocuri cu text; fără traduceri goale sau suspiciuni rămase.${c.reset}`);
+        console.log(`${c.green}${qaSummary}${c.reset}`);
     }
 
     const output = items
         .filter(item => {
             const id = String(item.id);
-            return !suppressedFillerIdSet.has(id) && String(translatedById[id] ?? '').trim().length > 0;
+            return qaEligibleIds.has(id) && String(translatedById[id] ?? '').replace(/<[^>]+>/g, '').trim().length > 0;
         })
         .map(item => {
             const translated = String(translatedById[String(item.id)]);
@@ -4995,7 +5095,7 @@ app.get('/:configData/translate', async (req, res) => {
         } else {
             const startTime = Date.now();
             
-            const logContext = { mediaId: imdbId, finalStatus: null };
+            const logContext = { mediaId: imdbId, finalStatus: null, routineMetrics: { automatedInterventions: 0 } };
             processPromise = translationLogContext.run(logContext, async () => {
                 const [srtRes, mediaTitle] = await Promise.all([
                     fetchValidatedSubtitleUrl(validatedTarget.url),
@@ -5024,17 +5124,11 @@ app.get('/:configData/translate', async (req, res) => {
                 const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
                 const status = logContext.finalStatus;
-                let qaSuffix = '';
-                if (status?.unresolvedEmptyCount) {
-                    const ids = status.unresolvedEmptyIds || [];
-                    const shown = ids.slice(0, 12).join(', ');
-                    const extra = ids.length > 12 ? `, +${ids.length - 12} altele` : '';
-                    qaSuffix = ` | ⚠ ${status.unresolvedEmptyCount} ID-uri fără text (${shown}${extra})`;
-                } else if (status?.remainingSuspiciousCount) {
-                    qaSuffix = ` | ⚠ ${status.remainingSuspiciousCount} replici suspecte`;
-                } else {
-                    qaSuffix = ' | QA OK';
-                }
+                const qaSuffix = status?.unresolvedEmptyCount
+                    ? ` | QA cu ${status.unresolvedEmptyCount} lipsuri`
+                    : status?.remainingSuspiciousCount
+                        ? ` | QA cu ${status.remainingSuspiciousCount} avertismente`
+                        : ' | QA OK';
                 console.log(`\x1b[96m[${imdbId}] [DONE] | 🕒 ${timeFormatted}${qaSuffix}\x1b[0m\n`);
                 
             }).catch((err) => {
