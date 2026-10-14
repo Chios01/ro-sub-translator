@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.165',
+    version: '12.78.166',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1871,7 +1871,25 @@ async function getAvailableKey(keyStates) {
 }
 
 async function callGeminiWithKeyRotation(prompt, keyStates, options = {}) {
-    const maxAttempts = Math.max(1, Math.min(12, Array.isArray(keyStates) ? keyStates.length : 1));
+    // Recuperările auxiliare nu trebuie să rotească prin toate cele 10 proiecte
+    // când există o limitare 429 în lanț. După două proiecte, oprim retry-urile
+    // individuale; etapa Final Empty Recovery păstrează o singură cerere agregată.
+    const allowAfter429Hold = options.allowAfter429Hold === true;
+    if (keyStates._secondaryRecovery429Hold) {
+        if (!allowAfter429Hold || keyStates._finalRecoveryAfter429Attempted) {
+            const blockedError = new Error('429: recuperările Gemini auxiliare sunt oprite după răspunsuri 429 repetate; nu se pornesc alte cereri de reparație.');
+            blockedError.isRateLimit429 = true;
+            blockedError.isSecondaryRecoveryBlocked = true;
+            throw blockedError;
+        }
+        keyStates._finalRecoveryAfter429Attempted = true;
+    } else if (allowAfter429Hold) {
+        // Rezervăm etapa agregată finală o singură dată; dacă și ea întâlnește
+        // 429 repetat, nu va urma o altă serie de cereri în aceeași procesare.
+        keyStates._finalRecoveryAfter429Attempted = true;
+    }
+
+    const maxAttempts = Math.max(1, Math.min(2, Array.isArray(keyStates) ? keyStates.length : 1));
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -1883,11 +1901,22 @@ async function callGeminiWithKeyRotation(prompt, keyStates, options = {}) {
             const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(String(error?.message || ''));
             if (!is429) throw error;
 
-            // Un singur proiect cu 429 nu trebuie să oprească recuperarea ID-ului.
-            // getAvailableKey va evita proiectul pus în pauză și va alege altul.
+            // Un 429 izolat permite o singură schimbare de proiect pentru aceeași
+            // cerere auxiliară. Al doilea 429 oprește recuperările per-ID, altfel
+            // fiecare ID rămas gol ar putea porni încă o rotație de până la 10 chei.
             const allBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
-            if (allBlocked || attempt >= maxAttempts) throw error;
-            console.log(`${c.yellow}[Gemini Recovery] 429 pe un proiect; încerc următorul proiect disponibil (${attempt + 1}/${maxAttempts}).${c.reset}`);
+            if (allBlocked || (!allowAfter429Hold && keyStates._secondaryRecovery429Hold) || attempt >= maxAttempts) {
+                if (!allBlocked && attempt >= maxAttempts && (allowAfter429Hold || !keyStates._secondaryRecovery429Hold)) {
+                    keyStates._secondaryRecovery429Hold = true;
+                    keyStates._emptyRecoveryIndividualRetriesDisabled = true;
+                    const message = allowAfter429Hold
+                        ? '[Gemini Recovery] 429 repetat și în cererea agregată finală; opresc apelurile auxiliare pentru această procesare.'
+                        : '[Gemini Recovery] Două răspunsuri 429; opresc retry-urile individuale și păstrez o singură cerere agregată finală.';
+                    console.log(`${c.yellow}${message}${c.reset}`);
+                }
+                throw error;
+            }
+            console.log(`${c.yellow}[Gemini Recovery] 429 pe un proiect; încerc un singur proiect alternativ (${attempt + 1}/${maxAttempts}).${c.reset}`);
         }
     }
 
@@ -2810,10 +2839,10 @@ ${JSON.stringify(missingItems, null, 2)}
             // Dacă cererea punctuală pentru întregul set tot a lăsat unele texte goale,
             // încercăm fiecare ID separat. Nu retrimitem calupul întreg și oprim la primul 429.
             let stillMissing = chunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
-            if (stillMissing.length && !keyStates._emptyRecoveryQuotaBlocked) {
+            if (stillMissing.length && !keyStates._emptyRecoveryQuotaBlocked && !keyStates._emptyRecoveryIndividualRetriesDisabled) {
                 // Recuperare individuală fără avertismente per ID; QA FINAL rezumă numai ce nu s-a reparat.
                 for (const item of stillMissing) {
-                    if (keyStates._emptyRecoveryQuotaBlocked) break;
+                    if (keyStates._emptyRecoveryQuotaBlocked || keyStates._emptyRecoveryIndividualRetriesDisabled) break;
                     const singleResult = Object.create(null);
                     const recovered = await retryEmptyTranslationIndividually(
                         item, singleResult, keyStates, `Calup ${globalChunkIndex + 1} Empty Recovery`
@@ -4015,7 +4044,7 @@ function markEmptyRecoveryQuotaBlock(keyStates, error) {
 
 async function retryEmptyTranslationIndividually(item, translatedById, keyStates, stageLabel = 'Empty Recovery') {
     const id = String(item.id);
-    if (keyStates._emptyRecoveryQuotaBlocked) return false;
+    if (keyStates._emptyRecoveryQuotaBlocked || keyStates._emptyRecoveryIndividualRetriesDisabled) return false;
 
     if (!(keyStates._emptyRecoveryAttemptedIds instanceof Set)) {
         keyStates._emptyRecoveryAttemptedIds = new Set();
@@ -4131,7 +4160,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
     const failedIds = [];
     try {
-        const recoveryRaw = await callGeminiWithKeyRotation(recoveryPrompt, keyStates, { timeout: 20000 });
+        const recoveryRaw = await callGeminiWithKeyRotation(recoveryPrompt, keyStates, { timeout: 20000, allowAfter429Hold: true });
         const recoveryJson = safeJsonParse(recoveryRaw);
         const recoveryDict = normalizeTranslationPayload(recoveryJson);
 
@@ -4411,9 +4440,9 @@ Returnează DOAR un ARRAY JSON valid în forma:
             }
 
             // Doar ID-urile respinse de un răspuns utilizabil primesc un retry AI individual.
-            if (parsedInitialResponse && !keyStates._emptyRecoveryQuotaBlocked) {
+            if (parsedInitialResponse && !keyStates._emptyRecoveryQuotaBlocked && !keyStates._emptyRecoveryIndividualRetriesDisabled) {
                 for (const item of failedItems) {
-                    if (keyStates._emptyRecoveryQuotaBlocked) break;
+                    if (keyStates._emptyRecoveryQuotaBlocked || keyStates._emptyRecoveryIndividualRetriesDisabled) break;
                     const id = String(item.id);
                     const retriedSuccessfully = await retryEmptyTranslationIndividually(
                         item, translatedById, keyStates, 'Empty Recovery'
