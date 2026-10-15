@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.170',
+    version: '12.78.171',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5248,7 +5248,7 @@ app.get('/:configData/translate', async (req, res) => {
 
 function parseSrt(srt, stats = null) {
     const normalized = String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, '');
-    const blocks = normalized.split(/\n{2,}/);
+    const blocks = normalized.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
     const result = [];
     if (stats) {
         stats.fillerBlocksFiltered = 0;
