@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.172',
+    version: '12.78.173',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2344,12 +2344,11 @@ function chunkArray(array, size) {
     return chunks;
 }
 
-// Detectează local un tipar statistic puternic în care textele traduse ale mai
-// multor ID-uri seamănă, ca lungime și structură de cuvinte, cu replicile EN
-// imediat precedente/următoare, nu cu originalele lor. Este un semnal de alarmă,
-// nu o dovadă semantică; de aceea declanșează retraducere, nu mutarea textelor.
+// Detectează numai semnale statistice de aliniere susținute de măsurători independente.
+// Lungimea și numărul de cuvinte sunt euristici, nu dovezi semantice: o singură
+// fereastră poate doar avertiza, nu declanșa automat retraducerea unei zone.
 const ALIGNMENT_WINDOW_SIZE = 28;
-const ALIGNMENT_WINDOW_STEP = 8;
+const ALIGNMENT_WINDOW_STEP = ALIGNMENT_WINDOW_SIZE; // ferestre fără suprapunere în grila principală
 const ALIGNMENT_REPAIR_CHUNK_SIZE = 50;
 
 function alignmentTextMetrics(text) {
@@ -2396,73 +2395,137 @@ function scoreAlignmentWindow(sourceItems, targetById, start, end, offset) {
         wordPairs.push([sourceMetrics.words, targetMetrics.words]);
     }
 
-    if (charPairs.length < 18) return { score: null, pairs: charPairs.length };
-    const correlations = [alignmentPearson(charPairs), alignmentPearson(wordPairs)]
-        .filter(value => value !== null && Number.isFinite(value));
-    if (!correlations.length) return { score: null, pairs: charPairs.length };
+    if (charPairs.length < 18) {
+        return { score: null, charsScore: null, wordsScore: null, pairs: charPairs.length };
+    }
+    const charsScore = alignmentPearson(charPairs);
+    const wordsScore = alignmentPearson(wordPairs);
+    // Ambele măsurători trebuie disponibile. Nu mai permitem ca o singură
+    // corelație bună să mascheze lipsa de semnal în cealaltă.
+    if (charsScore === null || wordsScore === null ||
+        !Number.isFinite(charsScore) || !Number.isFinite(wordsScore)) {
+        return { score: null, charsScore, wordsScore, pairs: charPairs.length };
+    }
     return {
-        score: correlations.reduce((sum, value) => sum + value, 0) / correlations.length,
+        score: (charsScore + wordsScore) / 2,
+        charsScore,
+        wordsScore,
         pairs: charPairs.length
     };
 }
 
 function detectTranslationAlignmentShift(sourceItems, translatedItems) {
-    if (!Array.isArray(sourceItems) || sourceItems.length < ALIGNMENT_WINDOW_SIZE + ALIGNMENT_WINDOW_STEP) return null;
+    if (!Array.isArray(sourceItems) || sourceItems.length < ALIGNMENT_WINDOW_SIZE) return null;
     const targetById = new Map((translatedItems || []).map(item => [String(item.id), String(item.text || '')]));
     const offsets = [-2, -1, 0, 1, 2];
     const hits = [];
 
-    for (let start = 0; start + ALIGNMENT_WINDOW_SIZE <= sourceItems.length; start += ALIGNMENT_WINDOW_STEP) {
-        const end = start + ALIGNMENT_WINDOW_SIZE - 1;
-        const scores = Object.create(null);
-        for (const offset of offsets) {
-            scores[offset] = scoreAlignmentWindow(sourceItems, targetById, start, end, offset);
+    // Folosim două grile independente ca să nu depindă detectarea de locul
+    // în care cade limita unei ferestre. În fiecare grilă, ferestrele nu se
+    // suprapun; ferestrele din grile diferite nu se cumulează niciodată ca
+    // dovezi pentru confirmarea aceleiași deplasări.
+    const phases = [0, Math.floor(ALIGNMENT_WINDOW_SIZE / 2)];
+    for (const phase of phases) {
+        const starts = [];
+        for (let start = phase; start + ALIGNMENT_WINDOW_SIZE <= sourceItems.length; start += ALIGNMENT_WINDOW_STEP) {
+            starts.push(start);
         }
-        const baseline = scores[0].score;
-        const alternatives = offsets.filter(offset => offset !== 0 && scores[offset].score !== null);
-        if (!alternatives.length) continue;
-        alternatives.sort((a, b) => scores[b].score - scores[a].score);
-        const shift = alternatives[0];
-        const best = scores[shift].score;
-        const base = baseline === null ? 0 : baseline;
-        if (best >= 0.80 && best - base >= 0.35 && scores[shift].pairs >= 18) {
-            hits.push({ start, end, shift, score: best, baseline: base });
+        const finalStart = sourceItems.length - ALIGNMENT_WINDOW_SIZE;
+        const lastStart = starts.length ? starts[starts.length - 1] : -1;
+        // O fereastră terminală este permisă numai când suprapunerea față de
+        // ultima fereastră a aceleiași grile nu depășește 25% din fereastră.
+        if (finalStart >= phase && finalStart !== lastStart &&
+            (lastStart < 0 || finalStart - lastStart >= Math.ceil(ALIGNMENT_WINDOW_SIZE * 0.75))) {
+            starts.push(finalStart);
+        }
+
+        for (const start of starts) {
+            const end = start + ALIGNMENT_WINDOW_SIZE - 1;
+            const scores = Object.create(null);
+            for (const offset of offsets) {
+                scores[offset] = scoreAlignmentWindow(sourceItems, targetById, start, end, offset);
+            }
+            const baseline = scores[0];
+            if (baseline.score === null) continue;
+
+            const alternatives = offsets.filter(offset => offset !== 0 && scores[offset].score !== null);
+            if (!alternatives.length) continue;
+            alternatives.sort((a, b) => scores[b].score - scores[a].score);
+            const shift = alternatives[0];
+            const best = scores[shift];
+            const scoreGain = best.score - baseline.score;
+            const charsGain = best.charsScore - baseline.charsScore;
+            const wordsGain = best.wordsScore - baseline.wordsScore;
+
+            // Un semnal intră în analiză numai dacă ambele metrici susțin aceeași
+            // deplasare și fiecare o preferă clar față de alinierea normală.
+            if (best.score >= 0.80 && scoreGain >= 0.35 &&
+                best.charsScore >= 0.75 && best.wordsScore >= 0.75 &&
+                charsGain >= 0.25 && wordsGain >= 0.25 && best.pairs >= 18) {
+                hits.push({
+                    phase,
+                    start, end, shift,
+                    score: best.score,
+                    baseline: baseline.score,
+                    charsScore: best.charsScore,
+                    wordsScore: best.wordsScore,
+                    baselineChars: baseline.charsScore,
+                    baselineWords: baseline.wordsScore,
+                    scoreGain, charsGain, wordsGain,
+                    pairs: best.pairs
+                });
+            }
         }
     }
 
     if (!hits.length) return null;
     const clusters = [];
-    for (const hit of hits) {
-        const previous = clusters[clusters.length - 1];
-        if (previous && previous.shift === hit.shift && hit.start <= previous.end + ALIGNMENT_WINDOW_STEP) {
-            previous.start = Math.min(previous.start, hit.start);
-            previous.end = Math.max(previous.end, hit.end);
-            previous.hits.push(hit);
-        } else {
-            clusters.push({ start: hit.start, end: hit.end, shift: hit.shift, hits: [hit] });
+    for (const phase of phases) {
+        const phaseHits = hits.filter(hit => hit.phase === phase).sort((a, b) => a.start - b.start);
+        const phaseClusters = [];
+        for (const hit of phaseHits) {
+            const previous = phaseClusters[phaseClusters.length - 1];
+            // Confirmarea cere ferestre adiacente din aceeași grilă, deci date
+            // disjuncte (cu cel mult o suprapunere terminală de maximum 25%).
+            if (previous && previous.shift === hit.shift && hit.start <= previous.end + 1) {
+                previous.start = Math.min(previous.start, hit.start);
+                previous.end = Math.max(previous.end, hit.end);
+                previous.hits.push(hit);
+            } else {
+                phaseClusters.push({ phase, start: hit.start, end: hit.end, shift: hit.shift, hits: [hit] });
+            }
         }
+        clusters.push(...phaseClusters);
     }
 
-    const supported = clusters.filter(cluster => {
-        if (cluster.hits.length >= 2 && cluster.end - cluster.start + 1 >= 36) return true;
-        const hit = cluster.hits[0];
-        return cluster.hits.length === 1 && hit.score >= 0.94 && hit.score - hit.baseline >= 0.55;
+    const supported = clusters.filter(cluster => cluster.hits.length >= 2);
+    const summarize = (cluster, confirmed) => ({
+        confirmed,
+        start: cluster.start,
+        end: cluster.end,
+        shift: cluster.shift,
+        windows: cluster.hits.length,
+        score: cluster.hits.reduce((sum, hit) => sum + hit.score, 0) / cluster.hits.length,
+        baseline: cluster.hits.reduce((sum, hit) => sum + hit.baseline, 0) / cluster.hits.length,
+        charsScore: cluster.hits.reduce((sum, hit) => sum + hit.charsScore, 0) / cluster.hits.length,
+        wordsScore: cluster.hits.reduce((sum, hit) => sum + hit.wordsScore, 0) / cluster.hits.length,
+        baselineChars: cluster.hits.reduce((sum, hit) => sum + hit.baselineChars, 0) / cluster.hits.length,
+        baselineWords: cluster.hits.reduce((sum, hit) => sum + hit.baselineWords, 0) / cluster.hits.length
     });
-    if (!supported.length) return null;
-    supported.sort((a, b) => {
-        const spanA = a.end - a.start + 1;
-        const spanB = b.end - b.start + 1;
-        return (b.hits.length * spanB) - (a.hits.length * spanA);
-    });
-    const chosen = supported[0];
-    return {
-        start: chosen.start,
-        end: chosen.end,
-        shift: chosen.shift,
-        windows: chosen.hits.length,
-        score: chosen.hits.reduce((sum, hit) => sum + hit.score, 0) / chosen.hits.length,
-        baseline: chosen.hits.reduce((sum, hit) => sum + hit.baseline, 0) / chosen.hits.length
-    };
+
+    if (supported.length) {
+        supported.sort((a, b) => {
+            const strengthA = a.hits.length * (a.hits.reduce((sum, hit) => sum + hit.score, 0) / a.hits.length);
+            const strengthB = b.hits.length * (b.hits.reduce((sum, hit) => sum + hit.score, 0) / b.hits.length);
+            return strengthB - strengthA;
+        });
+        return summarize(supported[0], true);
+    }
+
+    // Un singur semnal statistic (chiar puternic) este doar diagnostic: nu
+    // declanșează apeluri Gemini suplimentare. Este returnat doar pentru log.
+    clusters.sort((a, b) => b.hits[0].score - a.hits[0].score);
+    return summarize(clusters[0], false);
 }
 
 function canRetranslateAlignmentItem(item) {
@@ -4501,12 +4564,16 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
             const sourceChunk = chunks[batchResult.globalIndex];
             let chunkResult = batchResult.result;
             const alignmentIssue = detectTranslationAlignmentShift(sourceChunk, chunkResult);
-            if (alignmentIssue) {
+            if (alignmentIssue && !alignmentIssue.confirmed) {
+                const signalStart = sourceChunk[alignmentIssue.start]?.id ?? alignmentIssue.start;
+                const signalEnd = sourceChunk[alignmentIssue.end]?.id ?? alignmentIssue.end;
+                console.log(`${c.yellow}ℹ [Aliniere] Semnal statistic izolat ${alignmentIssue.shift > 0 ? '+' : ''}${alignmentIssue.shift} în zona ID ${signalStart}–${signalEnd} (o singură fereastră; caractere ${alignmentIssue.charsScore.toFixed(2)}, cuvinte ${alignmentIssue.wordsScore.toFixed(2)}, bază ${alignmentIssue.baseline.toFixed(2)}). Nu retraduc automat fără confirmare în a doua fereastră independentă.${c.reset}`);
+            } else if (alignmentIssue && alignmentIssue.confirmed) {
                 const suspectStart = Math.max(0, alignmentIssue.start - 2);
                 const suspectEnd = Math.min(sourceChunk.length - 1, alignmentIssue.end + 2);
                 const startId = sourceChunk[suspectStart]?.id ?? sourceChunk[alignmentIssue.start]?.id;
                 const endId = sourceChunk[suspectEnd]?.id ?? sourceChunk[alignmentIssue.end]?.id;
-                console.log(`${c.yellow}⚠ [Aliniere] Posibilă decalare ${alignmentIssue.shift > 0 ? '+' : ''}${alignmentIssue.shift} replică detectată în zona ID ${startId}–${endId} (corelație ${alignmentIssue.score.toFixed(2)}, bază ${alignmentIssue.baseline.toFixed(2)}, ${alignmentIssue.windows} ferestre). Retraduc zona în segmente mai mici; nu mut automat textele între ID-uri.${c.reset}`);
+                console.log(`${c.yellow}⚠ [Aliniere] Posibilă decalare ${alignmentIssue.shift > 0 ? '+' : ''}${alignmentIssue.shift} replică detectată în zona ID ${startId}–${endId} (corelație ${alignmentIssue.score.toFixed(2)}, bază ${alignmentIssue.baseline.toFixed(2)}, caractere ${alignmentIssue.charsScore.toFixed(2)}, cuvinte ${alignmentIssue.wordsScore.toFixed(2)}, ${alignmentIssue.windows} ferestre independente). Retraduc zona în segmente mai mici; nu mut automat textele între ID-uri.${c.reset}`);
                 chunkResult = await repairTranslationAlignmentRange(
                     sourceChunk,
                     chunkResult,
@@ -4518,12 +4585,14 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
                     chunks.length
                 );
                 const residualIssue = detectTranslationAlignmentShift(sourceChunk, chunkResult);
-                if (residualIssue) {
+                if (residualIssue && residualIssue.confirmed) {
                     const residualStart = sourceChunk[Math.max(0, residualIssue.start - 2)]?.id ?? sourceChunk[residualIssue.start]?.id;
                     const residualEnd = sourceChunk[Math.min(sourceChunk.length - 1, residualIssue.end + 2)]?.id ?? sourceChunk[residualIssue.end]?.id;
-                    console.log(`${c.yellow}⚠ [Aliniere] După retraducere persistă un semnal statistic de posibilă decalare în zona ID ${residualStart}–${residualEnd}. Textele nu au fost mutate automat; zona merită verificată.${c.reset}`);
+                    console.log(`${c.yellow}⚠ [Aliniere] După retraducere persistă o confirmare statistică multi-fereastră în zona ID ${residualStart}–${residualEnd}. Textele nu au fost mutate automat; zona merită verificată.${c.reset}`);
+                } else if (residualIssue) {
+                    console.log(`${c.yellow}ℹ [Aliniere] După retraducere a rămas doar un semnal statistic izolat; nu este suficient pentru o nouă rundă automată de apeluri Gemini.${c.reset}`);
                 } else {
-                    console.log(`${c.green}✔ [Aliniere] Verificarea după retraducere nu mai detectează decalarea inițială.${c.reset}`);
+                    console.log(`${c.green}✔ [Aliniere] Confirmarea multi-fereastră nu mai persistă după retraducere.${c.reset}`);
                 }
                 batchResult.result = chunkResult;
             }
