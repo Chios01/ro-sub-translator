@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.173',
+    version: '12.78.174',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -332,21 +332,33 @@ async function handleSubtitles(req, res) {
 
         const results = await Promise.all(fetchPromises);
         
+        // Păstrăm proveniența fiecărui candidat; limita se aplică separat
+        // fiecărei surse, nu listei concatenate în ordinea furnizorilor.
+        const subtitleSourceNames = ['OpenSubtitles', 'YIFY Subtitles', 'SubDL'];
         let allSubs = [];
-        results.forEach(r => {
+        results.forEach((r, sourceIndex) => {
             if (r && r.data && Array.isArray(r.data.subtitles)) {
-                allSubs.push(...r.data.subtitles);
+                r.data.subtitles.forEach((sub, sourceOrder) => {
+                    allSubs.push({
+                        ...sub,
+                        _selectionSourceIndex: sourceIndex,
+                        _selectionSourceOrder: sourceOrder
+                    });
+                });
             }
         });
         
         let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
         
-        const uniqueUrls = new Set();
+        // Eliminăm duplicatele din fiecare sursă, dar nu deduplicăm încă
+        // între furnizori: fiecare sursă trebuie să-și poată completa top 15.
+        const uniqueUrlsBySource = urlsToFetch.map(() => new Set());
         engSubs = engSubs.filter(sub => {
-            if (uniqueUrls.has(sub.url)) return false;
-            uniqueUrls.add(sub.url);
+            const sourceSet = uniqueUrlsBySource[sub._selectionSourceIndex];
+            if (sourceSet.has(sub.url)) return false;
+            sourceSet.add(sub.url);
             return true;
-        }).slice(0, 35); 
+        });
 
         if (engSubs.length === 0) {
             console.log(`${c.yellow}⚠ Nu s-au găsit subtitrări sursă EN pentru: ${id}${c.reset}`);
@@ -359,7 +371,15 @@ async function handleSubtitles(req, res) {
         engSubs.forEach((sub, idx) => {
             let realName = sub.title || sub.id || `Varianta_${idx + 1}`;
             if (!trashRegex.test(realName)) {
-                diverseSubs.push({ originalUrl: sub.url, realName, index: idx, sourceData: sub });
+                diverseSubs.push({
+                    originalUrl: sub.url,
+                    realName,
+                    index: idx,
+                    sourceData: sub,
+                    sourceIndex: sub._selectionSourceIndex,
+                    sourceOrder: sub._selectionSourceOrder,
+                    sourceName: subtitleSourceNames[sub._selectionSourceIndex] || 'Unknown'
+                });
             }
         });
 
@@ -555,8 +575,33 @@ async function handleSubtitles(req, res) {
             if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
         });
 
-        diverseSubs.sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
-        diverseSubs = diverseSubs.slice(0, 15);
+        // Clasăm toți candidații eligibili din fiecare sursă, apoi păstrăm
+        // maximum 15 din fiecare. Astfel, o sursă nu poate ocupa bugetul înainte
+        // ca rezultatele celorlalte surse să fie evaluate.
+        const sourceBalancedCandidates = [];
+        for (let sourceIndex = 0; sourceIndex < urlsToFetch.length; sourceIndex++) {
+            const rankedSource = diverseSubs
+                .filter(s => s.sourceIndex === sourceIndex)
+                .sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
+            sourceBalancedCandidates.push(...rankedSource.slice(0, 15));
+        }
+
+        // Deduplicare globală după selecția per-sursă. Dacă același URL apare
+        // în mai mulți furnizori, păstrăm varianta cu scorul mai bun; la egalitate
+        // rămâne prima din ordinea deterministă a surselor.
+        const bestCandidateByUrl = new Map();
+        for (const candidate of sourceBalancedCandidates) {
+            const urlKey = String(candidate.originalUrl);
+            const existing = bestCandidateByUrl.get(urlKey);
+            if (!existing || candidate.score > existing.score ||
+                (candidate.score === existing.score && candidate._rankingOrder < existing._rankingOrder)) {
+                bestCandidateByUrl.set(urlKey, candidate);
+            }
+        }
+
+        diverseSubs = [...bestCandidateByUrl.values()]
+            .sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder))
+            .slice(0, 15);
         
 
         // ============================================================
