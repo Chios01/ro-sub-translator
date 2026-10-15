@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.183',
+    version: '12.78.184',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2268,7 +2268,7 @@ async function callGemini(prompt, keyState, options = {}) {
         }
     };
 
-    // RO Sub Translator folosește nivelul de gândire LOW pentru a reduce latența și tokenii de gândire.
+    // RO Sub Translator folosește nivelul de gândire MEDIUM pentru traduceri mai atente.
     // Gemini 3.5 Flash-Lite îl suportă; parametrul temperature este omis deoarece
     // documentația Gemini 3.5 îl marchează drept depreciat/ignorat pentru aceste modele.
     // Fallback-ul plainText este folosit numai când Grammar Review returnează
@@ -2280,11 +2280,11 @@ async function callGemini(prompt, keyState, options = {}) {
             responseMimeType: 'application/json',
             responseSchema
         };
-    // Nivelul implicit este LOW pentru traducere și verificările auxiliare.
+    // Nivelul implicit este MEDIUM pentru traducere și verificările auxiliare.
     // O etapă poate supraregla nivelul prin options.thinkingLevel când este necesar.
     const thinkingLevel = Object.prototype.hasOwnProperty.call(options, 'thinkingLevel')
         ? options.thinkingLevel
-        : 'LOW';
+        : 'MEDIUM';
     if (/^gemini-3(?:\.|-)/i.test(String(MODEL_NAME)) && typeof thinkingLevel === 'string' && thinkingLevel) {
         generationConfig.thinkingConfig = { thinkingLevel };
     }
@@ -4020,8 +4020,8 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     : prompt;
                 const raw = await callGemini(requestPrompt, keyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
-                    // Folosim LOW și pentru Grammar Review, pentru consum și latență mai mici.
-                    thinkingLevel: 'LOW',
+                    // Folosim MEDIUM și pentru Grammar Review, în acord cu nivelul general de gândire.
+                    thinkingLevel: 'MEDIUM',
                     responseSchema: {
                         type: 'ARRAY',
                         minItems: 0,
@@ -4182,7 +4182,7 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
                         const fallbackKey = await getAvailableKey(keyStates);
                         const fallbackRaw = await callGemini(fallbackPrompt, fallbackKey, {
                             timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
-                            thinkingLevel: 'LOW',
+                            thinkingLevel: 'MEDIUM',
                             plainText: true
                         });
                         const fallbackText = cleanPlainTextReviewResponse(fallbackRaw);
