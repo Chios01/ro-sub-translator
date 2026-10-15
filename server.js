@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.166',
+    version: '12.78.167',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1620,14 +1620,40 @@ function getNextPacificMidnightMs(nowMs = Date.now()) {
 }
 
 function classifyGeminiQuotaError(error) {
-    const providerError = error?.response?.data?.error || {};
-    const message = String(providerError.message || error?.response?.data?.message || '').replace(/\s+/g, ' ').trim();
+    const responseData = error?.response?.data || {};
+    const providerError = responseData.error || {};
+    const message = String(providerError.message || responseData.message || '').replace(/\s+/g, ' ').trim();
     const details = Array.isArray(providerError.details) ? providerError.details : [];
     const detailsText = details.map(detail => {
         if (!detail || typeof detail !== 'object') return String(detail || '');
-        return [detail.quotaMetric, detail.quotaId, detail.reason, detail.retryDelay,
-            detail.metadata ? JSON.stringify(detail.metadata) : ''].filter(Boolean).join(' ');
-    }).join(' ');
+        const pieces = [
+            detail['@type'] ? `type=${detail['@type']}` : '',
+            detail.quotaMetric ? `quotaMetric=${detail.quotaMetric}` : '',
+            detail.quotaId ? `quotaId=${detail.quotaId}` : '',
+            detail.reason ? `reason=${detail.reason}` : '',
+            detail.retryDelay ? `retryDelay=${detail.retryDelay}` : '',
+            detail.subject ? `subject=${detail.subject}` : '',
+            detail.description ? `description=${detail.description}` : ''
+        ];
+        if (Array.isArray(detail.violations)) {
+            for (const violation of detail.violations) {
+                if (!violation || typeof violation !== 'object') continue;
+                pieces.push([
+                    violation.quotaMetric ? `quotaMetric=${violation.quotaMetric}` : '',
+                    violation.quotaId ? `quotaId=${violation.quotaId}` : '',
+                    violation.subject ? `subject=${violation.subject}` : '',
+                    violation.description ? `description=${violation.description}` : ''
+                ].filter(Boolean).join(' '));
+            }
+        }
+        if (detail.metadata && typeof detail.metadata === 'object') {
+            const metadata = Object.entries(detail.metadata)
+                .filter(([key, value]) => /quota|metric|limit|retry|reason|resource|model/i.test(key) && value != null)
+                .map(([key, value]) => `${key}=${String(value).slice(0, 120)}`);
+            pieces.push(...metadata);
+        }
+        return pieces.filter(Boolean).join(' ');
+    }).join(' | ');
     const combined = `${message} ${detailsText}`;
     let kind = 'unknown';
     if (/(?:requests?|tokens?|generatecontent).{0,40}(?:per.?day|perday)|(?:per.?day).{0,30}(?:quota|project|model)|daily\s+quota/i.test(combined)) {
@@ -1636,7 +1662,14 @@ function classifyGeminiQuotaError(error) {
         kind = 'rate';
     }
     const diagnosticDetail = detailsText.replace(/\s+/g, ' ').trim().slice(0, 500);
-    return { kind, message: message.slice(0, 300), detailsText: diagnosticDetail };
+    return {
+        kind,
+        message: message.slice(0, 300),
+        detailsText: diagnosticDetail,
+        providerStatus: String(providerError.status || responseData.status || '').slice(0, 80),
+        providerCode: providerError.code ?? responseData.code ?? error?.response?.status ?? null,
+        responseDataKeys: Object.keys(responseData).slice(0, 12).join(',')
+    };
 }
 
 function parseRetryAfterMs(retryAfterHeader, fallbackMs = 30000) {
@@ -1786,6 +1819,26 @@ async function waitFor429Gate(keyStates) {
         // Recheck cel puțin o dată pe secundă: o cerere activă poate reuși între timp
         // și elibera un proiect, caz în care nu mai trebuie așteptată vechea poartă.
         await waitForGeminiRequestChange(Math.min(waitMs, 1000));
+    }
+}
+
+function getMaximumTransientPoolCooldownMs(keyStates, now = Date.now()) {
+    const snapshot = getGeminiPoolAvailability(keyStates, now);
+    if (snapshot.available.length) return 0;
+    const transient = snapshot.entries.filter(entry =>
+        !entry.state.disabled && !entry.lane?.disabled && entry.dailyUntil <= now && entry.pausedUntil > now
+    );
+    if (!transient.length) return 0;
+    return Math.max(...transient.map(entry => Math.max(0, entry.pausedUntil - now)));
+}
+
+function tripPrimary429Circuit(keyStates, reason) {
+    if (!keyStates._primary429CircuitOpen) {
+        keyStates._primary429CircuitOpen = true;
+        keyStates._secondaryRecovery429Hold = true;
+        keyStates._emptyRecoveryIndividualRetriesDisabled = true;
+        keyStates._primary429CircuitReason = String(reason || '429 repetat pe traducerea principală');
+        console.log(`${c.yellow}[Gemini Control] Circuit de protecție activat: ${keyStates._primary429CircuitReason}. Oprim cererile AI suplimentare; păstrăm traducerile existente și raportăm ID-urile nerezolvate.${c.reset}`);
     }
 }
 
@@ -2041,12 +2094,15 @@ async function callGemini(prompt, keyState, options = {}) {
             const providerMessage = quotaInfo.message;
             const details = providerMessage ? ` Detaliu Google: ${providerMessage}` : '';
             const structuredDetails = quotaInfo.detailsText ? ` Detalii cotă: ${quotaInfo.detailsText}` : '';
+            const responseShape = (!providerMessage && !structuredDetails)
+                ? ` Răspunsul nu conține mesaj/detalii de cotă utilizabile (HTTP ${status}; status=${quotaInfo.providerStatus || 'absent'}; code=${quotaInfo.providerCode ?? 'absent'}; câmpuri=${quotaInfo.responseDataKeys || 'niciunul'}).`
+                : '';
             const diagnosis = quotaInfo.kind === 'daily'
                 ? 'limită zilnică indicată explicit de metadatele Google'
                 : quotaInfo.kind === 'rate'
                     ? 'limită de frecvență indicată de metadatele Google'
                     : 'tipul exact al cotei nu este precizat de răspunsul Google';
-            console.log(`${c.yellow}ℹ [Gemini Diagnostic] 429: ${diagnosis}.${structuredDetails}${quotaInfo.kind === 'daily' ? ` Cheia curentă este pusă în pauză până la resetarea estimată ${new Date(keyState.dailyQuotaUntil).toISOString()}.` : ''}${c.reset}`);
+            console.log(`${c.yellow}ℹ [Gemini Diagnostic] 429: ${diagnosis}.${structuredDetails}${responseShape}${quotaInfo.kind === 'daily' ? ` Cheia curentă este pusă în pauză până la resetarea estimată ${new Date(keyState.dailyQuotaUntil).toISOString()}.` : ''}${c.reset}`);
 
             const retryError = new Error(`Limită Gemini 429; pauză ${Math.ceil(cooldownMs / 1000)}s.${details}${structuredDetails}`);
             retryError.isRateLimit429 = true;
@@ -2932,6 +2988,8 @@ ${JSON.stringify(missingItems, null, 2)}
                     globalChunkIndex, totalChunks, depth, alignmentRepair
                 });
             }
+        } else {
+            keyStates._deferred429RetryFailedCount = Number(keyStates._deferred429RetryFailedCount || 0) + 1;
         }
         return chunk.map(item => ({ id: item.id, text: ' ' }));
     }
@@ -2981,6 +3039,12 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
             hasCorruptedSubtitleText(translated, item.text) ||
             hasLostExplicitSourceTerm(item.text, translated);
     });
+
+    if (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) {
+        const remaining = findSuspicious();
+        console.log(`${c.yellow}[POST-CHECK] Omisă: circuitul 429 este deschis; nu trimitem traducerile lipsă la Grammar Review.${c.reset}`);
+        return { fixed: 0, remaining };
+    }
 
     console.log(`${c.cyan}[POST-CHECK] Verificare contextuală după finalizarea calupurilor...${c.reset}`);
     for (let pass = 1; pass <= maxPasses; pass++) {
@@ -3075,6 +3139,14 @@ function cleanPlainTextReviewResponse(rawText) {
 }
 
 async function grammarTranslationReview(items, translatedById, keyStates, options = {}) {
+    if (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) {
+        if (!keyStates._grammarReview429SkipLogged) {
+            keyStates._grammarReview429SkipLogged = true;
+            console.log(`${c.yellow}[Grammar Review] Sărită: serviciul Gemini a returnat 429 repetat; nu trimitem loturi goale sau cereri suplimentare.${c.reset}`);
+        }
+        return { checked: 0, fixed: 0, rejectedQualityReasonsById: Object.create(null) };
+    }
+
     const contextItems = options.contextItems || items;
     const isTargetedReview = options.mode === 'targeted';
 
@@ -3108,6 +3180,9 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     const rateLimitFailedQueue = [];
 
     const processGrammarBatch = async (batch, batchIndex, label) => {
+        if (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) {
+            return { success: false, is429: true, halted: true };
+        }
         const batchFixedBefore = fixed;
 
         const payload = batch.map(item => {
@@ -3295,7 +3370,9 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                         const providerDetails = String(error?.providerMessage || message || 'fără detalii suplimentare')
                             .replace(/\s+/g, ' ').trim().slice(0, 300);
                         console.log(`${c.yellow}⚠ [Gemini 429] Limită/quota atinsă; pauză ${Math.ceil(cooldownMs / 1000)}s. Detaliu Google: ${providerDetails}${c.reset}`);
-                        return { success: false, is429: true };
+                        keyStates._secondaryRecovery429Hold = true;
+                        keyStates._emptyRecoveryIndividualRetriesDisabled = true;
+                        return { success: false, is429: true, halted: true };
                     }
 
                     // Timeout pe calup mic: păstrăm comportamentul existent.
@@ -3412,20 +3489,21 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
     // Îl punem la coadă și îl reîncercăm după ce terminăm toate calupurile normale.
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
+        if (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) break;
         const result = await processGrammarBatch(
             batch,
             batchIndex,
             `Calup ${batchIndex + 1}/${batches.length}`
         );
 
-        if (result.is429) {
+        if (result.is429 && !result.halted) {
             rateLimitRetryQueue.push({ batch, batchIndex });
         }
     }
 
     // Maximum 2 reîncercări suplimentare DOAR pentru calupurile care au eșuat cu 429.
     // Nu modificăm aici logica 429 a traducerii principale sau a altor etape.
-    for (let retryRound = 1; retryRound <= 2 && rateLimitRetryQueue.length; retryRound++) {
+    for (let retryRound = 1; retryRound <= 2 && rateLimitRetryQueue.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold; retryRound++) {
         const pending = rateLimitRetryQueue.splice(0);
         console.log(`${c.cyan}🔄 [Grammar Review] Reîncerc 429: ${pending.length} calupuri (runda ${retryRound}/2)...${c.reset}`);
 
@@ -4126,8 +4204,12 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
         return { detected: detectedEmptyTranslations.length, recovered: recoveredCount };
     }
 
-    // Abia acum oprim apelurile AI după eroare de cotă; etapa locală a rulat deja.
-    if (keyStates._emptyRecoveryQuotaBlocked) {
+    // După o blocare 429, etapa locală a rulat deja; nu pornim alt apel AI.
+    if (keyStates._emptyRecoveryQuotaBlocked || keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) {
+        if ((keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) && !keyStates._finalRecoveryAiSkipLogged) {
+            keyStates._finalRecoveryAiSkipLogged = true;
+            console.log(`${c.yellow}[Final Empty Recovery] Recuperarea locală s-a încheiat; apelul AI este omis deoarece circuitul 429 este deschis.${c.reset}`);
+        }
         return { detected: detectedEmptyTranslations.length, recovered: recoveredCount };
     }
 
@@ -4335,34 +4417,72 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         ? keyStates._deferred429Chunks.splice(0)
         : [];
     if (deferred429Chunks.length) {
-        console.log(`${c.cyan}[429 Retry] ${deferred429Chunks.length} calupuri/segmente; reîncercare secvențială unică după tura inițială.${c.reset}`);
-        for (const task of deferred429Chunks) {
-            await sleep(750);
-            const retryResult = await processChunkWithRetry(
-                task.chunk,
-                task.allItems,
-                task.chunkStart,
-                task.chunkEnd,
-                task.previousTranslatedContext,
-                keyStates,
-                task.globalChunkIndex,
-                task.totalChunks,
-                task.depth,
-                task.alignmentRepair,
-                true
-            );
-            const taskItemsById = new Map(task.chunk.map(item => [String(item.id), item]));
-            for (const item of retryResult) {
-                const id = String(item.id);
-                // Un segment de aliniere poate include ID-uri pe care formatterul
-                // le exclude din retraducere. Nu suprascriem traducerea lor existentă.
-                if (task.alignmentRepair && !canRetranslateAlignmentItem(taskItemsById.get(id))) continue;
-                translatedById[id] = item.text;
+        const high429Queue = deferred429Chunks.length >= Math.max(1, Math.ceil(chunks.length * 0.5));
+        console.log(`${c.cyan}[429 Retry] ${deferred429Chunks.length} calupuri/segmente amânate; coadă ${high429Queue ? 'mare' : 'limitată'}.${c.reset}`);
+
+        // Când jumătate sau mai multe calupuri au primit 429, nu le lovim pe rând
+        // imediat ce se eliberează primul proiect. Așteptăm o singură fereastră de
+        // cooldown (maximul temporar curent), apoi testăm recuperarea cu primul calup.
+        // Dacă și proba eșuează, circuitul se deschide și restul cozii este abandonat.
+        if (high429Queue) {
+            const availableBeforeProbe = getGeminiPoolAvailability(keyStates);
+            if (!availableBeforeProbe.available.length) {
+                const waitMs = getMaximumTransientPoolCooldownMs(keyStates);
+                if (waitMs > 0 && waitMs <= 60000) {
+                    console.log(`${c.yellow}[429 Retry] ${Math.ceil(waitMs / 1000)}s pauză unică înaintea probei; nu testăm proiectele unul câte unul în cooldown.${c.reset}`);
+                    await sleep(waitMs + 250);
+                } else {
+                    tripPrimary429Circuit(keyStates, 'majoritatea calupurilor au primit 429, iar pool-ul nu are o fereastră temporară de recuperare utilizabilă');
+                }
+            }
+        }
+
+        if (!keyStates._primary429CircuitOpen) {
+            for (let taskIndex = 0; taskIndex < deferred429Chunks.length; taskIndex++) {
+                const task = deferred429Chunks[taskIndex];
+                await sleep(taskIndex === 0 ? 0 : 1000);
+                const failuresBefore = Number(keyStates._deferred429RetryFailedCount || 0);
+                const retryResult = await processChunkWithRetry(
+                    task.chunk,
+                    task.allItems,
+                    task.chunkStart,
+                    task.chunkEnd,
+                    task.previousTranslatedContext,
+                    keyStates,
+                    task.globalChunkIndex,
+                    task.totalChunks,
+                    task.depth,
+                    task.alignmentRepair,
+                    true
+                );
+                const taskItemsById = new Map(task.chunk.map(item => [String(item.id), item]));
+                for (const item of retryResult) {
+                    const id = String(item.id);
+                    if (task.alignmentRepair && !canRetranslateAlignmentItem(taskItemsById.get(id))) continue;
+                    translatedById[id] = item.text;
+                }
+
+                const thisRetryFailedWith429 = Number(keyStates._deferred429RetryFailedCount || 0) > failuresBefore;
+                if (thisRetryFailedWith429) {
+                    if (high429Queue) {
+                        tripPrimary429Circuit(keyStates, 'proba după cooldown a primit din nou 429; restul calupurilor amânate nu vor fi bombardate cu cereri');
+                    } else {
+                        console.log(`${c.yellow}[429 Retry] Un calup a primit din nou 429; opresc coada amânată și las recuperarea limitată să decidă dacă mai există acces la Gemini.${c.reset}`);
+                    }
+                    break;
+                }
             }
         }
     }
 
-    console.log(`${c.green}[Gemini] Calupuri finalizate: ${chunks.length}/${chunks.length}.${c.reset}`);
+    const eligibleMainItems = items.filter(item => {
+        const source = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        return Boolean(source) && !isJunkOrInterjection(item.text);
+    });
+    const populatedMainCount = eligibleMainItems.filter(item =>
+        String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()
+    ).length;
+    console.log(`${c.green}[Gemini] Calupuri procesate: ${chunks.length}/${chunks.length}; traduceri utilizabile ${populatedMainCount}/${eligibleMainItems.length}.${c.reset}`);
 
     let sourceGroundedCorrections = 0;
     for (const item of items) {
@@ -4397,7 +4517,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         let parsedInitialResponse = false;
         const pendingEmptyTranslations = localRecovery.remaining;
 
-        if (pendingEmptyTranslations.length && !keyStates._emptyRecoveryQuotaBlocked) {
+        if (pendingEmptyTranslations.length && !keyStates._emptyRecoveryQuotaBlocked && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
             console.log(`${c.cyan}[Empty Recovery] Cerere Gemini pentru ${pendingEmptyTranslations.length} replici fără potrivire locală sigură.${c.reset}`);
             const recoveryPrompt = `
 ${MASTER_TRANSLATION_PROMPT}
@@ -4457,6 +4577,11 @@ Returnează DOAR un ARRAY JSON valid în forma:
             }
         }
 
+        if (pendingEmptyTranslations.length && (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) && !keyStates._emptyRecoveryAiSkipLogged) {
+            keyStates._emptyRecoveryAiSkipLogged = true;
+            console.log(`${c.yellow}[Empty Recovery] Recuperarea AI a fost sărită: circuitul 429 este deschis; liniile rămân pentru QA FINAL, fără cereri repetate.${c.reset}`);
+        }
+
         // Raportăm ID-urile încă goale după toate încercările, inclusiv fallback-ul local.
         const stillEmpty = emptyTranslations.filter(item =>
             !String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()
@@ -4500,7 +4625,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
     const targetedQualityCandidates = items.filter(item => targetedQualityIds.has(String(item.id)));
     const MAX_TARGETED_QUALITY_REVIEW_ITEMS = 30;
     let firstQualityReview = { checked: 0, fixed: 0, rejectedQualityReasonsById: Object.create(null) };
-    if (targetedQualityCandidates.length) {
+    if (targetedQualityCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
         const reviewItems = targetedQualityCandidates.slice(0, MAX_TARGETED_QUALITY_REVIEW_ITEMS);
         console.log(`${c.cyan}🎯 [Quality Retry] Verificare AI punctuală pentru ${reviewItems.length} replici.${c.reset}`);
         firstQualityReview = await grammarTranslationReview(reviewItems, translatedById, keyStates, {
@@ -4509,6 +4634,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
             reasonById: targetedReasonById
         });
         console.log(`${c.green}✔ [Quality Retry] ${firstQualityReview.checked} verificate punctual, ${firstQualityReview.fixed} corectate.${c.reset}`);
+    } else if (targetedQualityCandidates.length && (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold)) {
+        console.log(`${c.yellow}⚠ [Quality Retry] Omisă: circuitul 429 este deschis; nu pornim corecturi AI după eșecul traducerii.${c.reset}`);
     } else {
         console.log(`${c.green}✔ [Quality Retry] Nicio replică nu a declanșat verificarea AI punctuală; nu s-a adăugat o cerere Gemini.${c.reset}`);
     }
@@ -4532,7 +4659,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
         else unresolvedQualityMap.set(id, { item: issue.item, reasons: [issue.reason] });
     }
 
-    if (unresolvedQualityMap.size && targetedQualityCandidates.length) {
+    if (unresolvedQualityMap.size && targetedQualityCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
         const retryCandidates = items.filter(item => unresolvedQualityMap.has(String(item.id))).slice(0, 15);
         const retryReasonById = Object.fromEntries(retryCandidates.map(item => {
             const id = String(item.id);
@@ -4620,7 +4747,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
         finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
     }
 
-    if (finalRepairCandidates.length) {
+    if (finalRepairCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
         const beforeFinalRepair = new Map(finalRepairCandidates.map(item => [
             String(item.id), String(translatedById[String(item.id)] || '')
         ]));
@@ -4646,6 +4773,8 @@ Returnează DOAR un ARRAY JSON valid în forma:
         applyContinuationCase(items, translatedById);
         applyDeterministicBoundaryConnectorFixes(items, translatedById);
         console.log(`${c.green}[Final Repair] Verificare finală încheiată; ${Number(finalReview?.fixed || 0)} corectări aplicate.${c.reset}`);
+    } else if (finalRepairCandidates.length && (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold)) {
+        console.log(`${c.yellow}[Final Repair] Omisă pentru ${finalRepairCandidates.length} candidate: circuitul 429 este deschis; nu înlocuim o lipsă de traducere cu cereri Grammar Review.${c.reset}`);
     }
 
     // Interjecțiile generate ca traducere izolată sunt eliminate din ieșire și
@@ -4969,7 +5098,11 @@ app.get('/:configData/translate', async (req, res) => {
                 // accidental o intrare mai nouă dacă logica cache-ului se schimbă ulterior.
                 if (memoryCache.get(cacheKey) === processPromise) {
                     memoryCache.delete(cacheKey);
-                    memoryCache.set(cacheKey, translatedSrtString);
+                    if (!qaStatus.hasErrors && String(translatedSrtString || '').trim()) {
+                        memoryCache.set(cacheKey, translatedSrtString);
+                    } else {
+                        console.log(`${c.yellow}[Cache] Rezultatul nu este memorat: traducerea este goală sau QA FINAL a raportat erori. O cerere ulterioară va putea reîncerca.${c.reset}`);
+                    }
                 }
                 cleanMemoryCache(cacheKey); 
                 
@@ -4989,7 +5122,7 @@ app.get('/:configData/translate', async (req, res) => {
 
         const finalSrt = await processPromise;
         
-        if (finalSrt && finalSrt.trim().length > 0) {
+        if (finalSrt && finalSrt.trim().length > 0 && !qaStatus.hasErrors) {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
             
