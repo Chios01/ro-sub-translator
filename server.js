@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.179',
+    version: '12.78.180',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1637,11 +1637,14 @@ function detectAndApplyGlobal429Wave(lane, quotaKind = 'unknown', requestStarted
     control.global429LastTriggerAt = now;
     control.global429PauseUntil = pauseUntil;
     control.cooldownUntil = Math.max(Number(control.cooldownUntil || 0), pauseUntil);
-    control.maxConcurrent = Math.max(1, Math.min(Number(control.maxConcurrent || 1), 2));
+    // Un val global înseamnă că mai multe proiecte au fost limitate aproape simultan.
+    // După pauză pornim prudent cu un singur apel; noteGeminiRequestSuccess ridică
+    // concurența cu câte o treaptă după fiecare grup de 3 succese.
+    control.maxConcurrent = 1;
     control.successesSinceThrottle = 0;
     events.clear();
 
-    console.log(`${c.yellow}⏸ [Gemini Control] Val global 429: cel puțin 2 proiecte distincte în 5s. Pauză comună ${Math.ceil(pauseMs / 1000)}s (nivel ${Math.min(waveNumber, 4)}/4); concurență ${previousLimit}→${control.maxConcurrent}/${control.targetConcurrent}. Cererile noi așteaptă pauza, apoi concurența revine gradual după succese.${c.reset}`);
+    console.log(`${c.yellow}⏸ [Gemini Control] Val global 429: cel puțin 2 proiecte distincte în 5s. Pauză comună ${Math.ceil(pauseMs / 1000)}s (nivel ${Math.min(waveNumber, 4)}/4); concurență ${previousLimit}→${control.maxConcurrent}/${control.targetConcurrent}. După pauză, recuperarea pornește cu un singur apel și concurența revine gradual după succese.${c.reset}`);
     notifyGeminiRequestWaiters();
     return { triggered: true, waveNumber, pauseMs, pauseUntil, previousLimit, currentLimit: control.maxConcurrent };
 }
@@ -5272,20 +5275,36 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         const high429Queue = deferred429Chunks.length >= Math.max(1, Math.ceil(chunks.length * 0.5));
         console.log(`${c.cyan}[429 Retry] ${deferred429Chunks.length} calupuri/segmente amânate; coadă ${high429Queue ? 'mare' : 'limitată'}.${c.reset}`);
 
-        // După epuizarea rundei de proiecte, nu reluăm cererile doar pentru prima
-        // cheie eliberată. Așteptăm o singură dată până expiră cel mai lung cooldown
-        // temporar (dacă este rezonabil), apoi facem o singură rotație nouă prin pool.
-        // Se aplică atât unei cozi mici, cât și uneia mari: cheia următoare nu trebuie
-        // reîncercată înainte ca pool-ul să fi avut șansa să se elibereze.
-        const availableBeforeProbe = getGeminiPoolAvailability(keyStates);
-        const waitMs = getMaximumTransientPoolCooldownMs(keyStates, Date.now(), true);
-        if (waitMs > 0 && waitMs <= 60000) {
-            console.log(`${c.yellow}[429 Retry] ${Math.ceil(waitMs / 1000)}s pauză unică înaintea unei rotații de recuperare; aștept expirarea cooldown-urilor temporare pentru a putea încerca pool-ul fără să repet cheile prematur.${c.reset}`);
+        // Nu reluăm coada cât timp poarta globală mai este închisă. Înainte,
+        // așteptam doar cooldown-urile proiectelor (de ex. 31s) deși valul global
+        // putea avea 60s; calupurile rămâneau blocate în poartă și porneau împreună
+        // la expirarea ei. Așteptăm separat și pauza globală, plus cooldown-urile
+        // proiectelor până la maximum 60s, apoi verificăm din nou disponibilitatea.
+        const waitStartedAt = Date.now();
+        const poolGateWaitMs = Math.min(
+            60000,
+            Math.max(0, getGlobal429Until(keyStates) - waitStartedAt)
+        );
+        const globalWaitMs = Math.max(
+            0,
+            Number(geminiRequestControl.cooldownUntil || 0) - waitStartedAt,
+            Number(geminiRequestControl.global429PauseUntil || 0) - waitStartedAt,
+            poolGateWaitMs
+        );
+        const projectCooldownMs = getMaximumTransientPoolCooldownMs(keyStates, waitStartedAt, true);
+        const waitMs = Math.max(globalWaitMs, Math.min(projectCooldownMs, 60000));
+        if (waitMs > 0) {
+            const waitReason = globalWaitMs >= Math.min(projectCooldownMs, 60000)
+                ? 'pauza globală și poarta pool-ului'
+                : 'cooldown-urile temporare ale proiectelor';
+            console.log(`${c.yellow}[429 Retry] ${Math.ceil(waitMs / 1000)}s pauză înaintea recuperării; aștept ${waitReason}, apoi verific din nou proiectele eligibile.${c.reset}`);
             await sleep(waitMs + 250);
-        } else if (!availableBeforeProbe.available.length) {
+        }
+        const availabilityAfterWait = getGeminiPoolAvailability(keyStates);
+        if (!availabilityAfterWait.available.length) {
             tripPrimary429Circuit(keyStates, high429Queue
-                ? 'majoritatea calupurilor au primit 429, iar pool-ul nu are o fereastră temporară de recuperare utilizabilă'
-                : 'pool-ul nu are proiecte disponibile și nici o fereastră temporară de recuperare utilizabilă');
+                ? 'majoritatea calupurilor au primit 429, iar după pauza de recuperare nu există proiect eligibil'
+                : 'după pauza de recuperare nu există proiecte disponibile și nici o fereastră temporară utilizabilă');
         }
 
         if (!keyStates._primary429CircuitOpen) {
@@ -5294,16 +5313,20 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
             keyStates._429WaveFailedProjects = new Set();
             keyStates._429WaveExhaustionLogged = false;
 
-            // Recuperarea nu trebuie să devină serială după un val de 429.
-            // Reluăm calupurile în loturi de până la concurența globală permisă,
-            // care poate reveni gradual la 3 după succes (mai ales după erori 5xx).
+            // După proba unică, restul cozii folosește concurența adaptivă.
+            // După un val global, aceasta pornește de la 1 și crește gradual după succese.
             let taskIndex = 0;
+            let recoveryProbePending = true;
             while (taskIndex < deferred429Chunks.length) {
-                const currentLimit = Math.max(1, Math.min(
+                const adaptiveLimit = Math.max(1, Math.min(
                     CONCURRENCY_LIMIT,
                     Number(geminiRequestControl.maxConcurrent || 1),
                     deferred429Chunks.length - taskIndex
                 ));
+                // Prima reluare este întotdeauna un singur calup de probă. Dacă
+                // reușește, continuăm cu limita adaptivă; după un val global aceasta
+                // pornește de la 1 și crește la 2/3 numai după succese consecutive.
+                const currentLimit = recoveryProbePending ? 1 : adaptiveLimit;
                 const retryBatch = deferred429Chunks.slice(taskIndex, taskIndex + currentLimit);
                 const failuresBeforeBatch = Number(keyStates._deferred429RetryFailedCount || 0);
                 console.log(`${c.cyan}[429 Retry] Relansez ${retryBatch.length} calupuri în paralel; concurență ${currentLimit}/${geminiRequestControl.targetConcurrent}.${c.reset}`);
@@ -5343,12 +5366,13 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
                 taskIndex += retryBatch.length;
                 if (batchFailedWith429) {
                     if (high429Queue) {
-                        tripPrimary429Circuit(keyStates, 'proba paralelă după cooldown a primit din nou 429; restul calupurilor amânate nu vor fi bombardate cu cereri');
+                        tripPrimary429Circuit(keyStates, 'calupul de probă după cooldown a primit din nou 429; restul calupurilor amânate nu vor fi bombardate cu cereri');
                     } else {
-                        console.log(`${c.yellow}[429 Retry] Un calup din lotul paralel a primit din nou 429; opresc restul cozii amânate pentru a păstra recuperarea limitată.${c.reset}`);
+                        console.log(`${c.yellow}[429 Retry] Calupul de probă a primit din nou 429; opresc restul cozii amânate pentru a păstra recuperarea limitată.${c.reset}`);
                     }
                     break;
                 }
+                recoveryProbePending = false;
             }
         }
     }
