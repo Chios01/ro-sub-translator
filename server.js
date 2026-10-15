@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.182',
+    version: '12.78.183',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1471,7 +1471,7 @@ async function acquireGeminiRequestSlot() {
 
         if (cooldownMs <= 0 && pacingMs <= 0 && geminiRequestControl.active < geminiRequestControl.maxConcurrent) {
             geminiRequestControl.active++;
-            geminiRequestControl.nextStartAt = Date.now() + 200;
+            geminiRequestControl.nextStartAt = Date.now() + 1200;
             let released = false;
             return () => {
                 if (released) return;
@@ -2145,7 +2145,9 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
         ? 1
         : Math.max(1, Array.isArray(keyStates) ? keyStates.length : 1);
     const maxTransientAttempts = 8;
+    const maxFast429Attempts = 2;
     const attemptedKeyStates = new Set();
+    let rateLimitAttempts = 0;
     let fiveXxAttempts = 0;
     let lastError = null;
 
@@ -2177,8 +2179,9 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
             const is5xx = (status >= 500 && status <= 599) || /status code 5\d\d/i.test(message);
 
             if (is429) {
+                rateLimitAttempts++;
                 if (markEmptyRecoveryQuotaBlock(keyStates, error)) throw error;
-                if (error?.isPoolRotationExhausted || attemptedKeyStates.size >= maxKeyAttempts || attempt >= maxKeyAttempts) {
+                if (error?.isPoolRotationExhausted || rateLimitAttempts >= maxFast429Attempts || attemptedKeyStates.size >= maxKeyAttempts || attempt >= maxKeyAttempts) {
                     keyStates._secondaryRecovery429Hold = true;
                     keyStates._emptyRecoveryIndividualRetriesDisabled = true;
                     const label = allowAfter429Hold
@@ -2187,8 +2190,8 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
                     console.log(`${c.yellow}${label}${c.reset}`);
                     throw error;
                 }
-                console.log(`${c.yellow}[Gemini Recovery] 429; proiectul intră în cooldown. Încerc următorul proiect eligibil (${attemptedKeyStates.size}/${maxKeyAttempts}).${c.reset}`);
-                await sleep(250 + Math.floor(Math.random() * 251));
+                console.log(`${c.yellow}[Gemini Recovery] 429; proiectul intră în cooldown. Pauză de aproximativ 3s înaintea următorului proiect eligibil (${rateLimitAttempts}/${maxFast429Attempts} încercări rapide).${c.reset}`);
+                await sleep(3000 + Math.floor(Math.random() * 501));
                 continue;
             }
 
@@ -2265,7 +2268,7 @@ async function callGemini(prompt, keyState, options = {}) {
         }
     };
 
-    // SubStudio folosește nivelul de gândire MEDIUM pentru motoarele Gemini 3.
+    // RO Sub Translator folosește nivelul de gândire LOW pentru a reduce latența și tokenii de gândire.
     // Gemini 3.5 Flash-Lite îl suportă; parametrul temperature este omis deoarece
     // documentația Gemini 3.5 îl marchează drept depreciat/ignorat pentru aceste modele.
     // Fallback-ul plainText este folosit numai când Grammar Review returnează
@@ -2277,12 +2280,11 @@ async function callGemini(prompt, keyState, options = {}) {
             responseMimeType: 'application/json',
             responseSchema
         };
-    // Implicit, păstrăm MEDIUM pentru apelurile normale (în special traducere).
-    // O etapă poate trece thinkingLevel: null pentru a lăsa modelul să folosească
-    // nivelul implicit. Grammar Review folosește această excepție.
+    // Nivelul implicit este LOW pentru traducere și verificările auxiliare.
+    // O etapă poate supraregla nivelul prin options.thinkingLevel când este necesar.
     const thinkingLevel = Object.prototype.hasOwnProperty.call(options, 'thinkingLevel')
         ? options.thinkingLevel
-        : 'MEDIUM';
+        : 'LOW';
     if (/^gemini-3(?:\.|-)/i.test(String(MODEL_NAME)) && typeof thinkingLevel === 'string' && thinkingLevel) {
         generationConfig.thinkingConfig = { thinkingLevel };
     }
@@ -3487,10 +3489,14 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     // 5xx păstrează un buget inițial de 8 încercări și backoff-ul global.
     const maxKeyAttempts = Math.max(1, Array.isArray(keyStates) ? keyStates.length : 1);
     const maxTransientAttempts = 8;
+    // Ca în v148, după 429 păstrăm un buget real de recuperare (până la 3 ture prin pool).
+    // Pentru tura rapidă, permitem doar două proiecte încercate înainte de a pune calupul în coada coordonată.
     const maxRateLimitAttempts = Math.max(8, Array.isArray(keyStates) ? keyStates.length * 3 : 8);
+    const maxFast429Attempts = 2;
     const maxAttemptsThisPass = deferred429Retry ? maxRateLimitAttempts : maxKeyAttempts;
     const attemptedKeyStates = new Set();
     let sawRateLimit429 = false;
+    let rateLimitAttempts = 0;
 
     let attempt = 0; // numărul de apeluri API reale; selectarea/așteptarea nu consumă bugetul
     let transientAttempts = 0;
@@ -3626,7 +3632,10 @@ ${JSON.stringify(missingItems, null, 2)}
         } catch (error) {
             lastError = error;
             const is429 = error.isRateLimit429 === true || error.message.includes('429');
-            if (is429) sawRateLimit429 = true;
+            if (is429) {
+                sawRateLimit429 = true;
+                rateLimitAttempts++;
+            }
             if (is429 && keyState) {
                 register429(
                     keyStates,
@@ -3678,9 +3687,13 @@ ${JSON.stringify(missingItems, null, 2)}
                     keyStates._429WaveExhaustionLogged = false;
                     continue;
                 }
+                if (!deferred429Retry && rateLimitAttempts >= maxFast429Attempts) {
+                    console.log(`${c.yellow}[Gemini Recovery] Două încercări rapide au primit 429; pun calupul în coada coordonată pentru retry extins după cooldown (${rateLimitAttempts}/${maxFast429Attempts}).${c.reset}`);
+                    break;
+                }
                 if (!error?.isPoolRotationExhausted && attempt < retryLimit) {
-                    console.log(`${c.yellow}[Gemini Recovery] 429; proiectul intră în cooldown, apoi încerc următorul proiect eligibil (${attemptedKeyStates.size}/${retryLimit} încercări pentru acest calup).${c.reset}`);
-                    await sleep(250 + Math.floor(Math.random() * 251));
+                    console.log(`${c.yellow}[Gemini Recovery] 429; proiectul intră în cooldown. Pauză de aproximativ 3s înaintea următorului proiect eligibil (${deferred429Retry ? `${attempt}/${retryLimit}` : `${rateLimitAttempts}/${maxFast429Attempts}`} încercări 429).${c.reset}`);
+                    await sleep(3000 + Math.floor(Math.random() * 501));
                     continue;
                 }
                 if (error?.isPoolRotationExhausted) {
@@ -4007,9 +4020,8 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     : prompt;
                 const raw = await callGemini(requestPrompt, keyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
-                    // Grammar Review lasă thinkingConfig nedefinit pentru ca modelul
-                    // să folosească nivelul implicit; traducerea rămâne MEDIUM.
-                    thinkingLevel: null,
+                    // Folosim LOW și pentru Grammar Review, pentru consum și latență mai mici.
+                    thinkingLevel: 'LOW',
                     responseSchema: {
                         type: 'ARRAY',
                         minItems: 0,
@@ -4170,7 +4182,7 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
                         const fallbackKey = await getAvailableKey(keyStates);
                         const fallbackRaw = await callGemini(fallbackPrompt, fallbackKey, {
                             timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
-                            thinkingLevel: null,
+                            thinkingLevel: 'LOW',
                             plainText: true
                         });
                         const fallbackText = cleanPlainTextReviewResponse(fallbackRaw);
