@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.177',
+    version: '12.78.178',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -694,7 +694,9 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const STANDALONE_SOURCE_FILLERS = new Set((
-    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mwah oh ohh ohhh oo ooh ooh-la-la oooh ok okay oops ops ouch ow oww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whoop whoops whup wooh wow yikes yoo yoo-hoo haha hehe ă ăă ăăă îhî ptiu brr'
+    // Doar ezitări/vocalizări cu risc mic de a fi răspunsuri sau reacții semantice.
+    // „Oh”, „Hmm”, „Mhm”, „Mm-hmm” și reacțiile clare merg la Gemini pentru decizie contextuală.
+    'aaaa aaaaah aaaah aaah ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu'
 ).split(/\s+/));
 
 function isOnlyStandaloneFillerSequence(text) {
@@ -724,7 +726,7 @@ function cleanTextForJson(text) {
     clean = clean.replace(/â™ª/gi, '');
     clean = clean.replace(/â™«/gi, '');
 
-    clean = clean.replace(/<[iIbBuU]>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
+    clean = clean.replace(/<[iIbBuU]>\s*(?:uh|uhh|uhhh|uhm|uhmm|um|umm|ehm|erm|err|mwah|ă|ăă|ăăă|uu)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
@@ -761,12 +763,13 @@ function deepCleanSubtitleText(text) {
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    let cleaned = text.replace(/^<[^>]+>\s*(?:ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
+    let cleaned = text.replace(/^<[^>]+>\s*(?:uh|uhh|uhhh|uhm|uhmm|um|umm|ehm|erm|err|mwah|ă|ăă|ăăă|uu)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
     // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație.
     // IMPORTANT: includem și punctul în delimitatori; altfel „ăă...” / „mhm...”
     // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
     // „ă{2,}” prinde și forme precum „ăăă...”, nu doar exact „ăă”.
-    const hesitationToken = '(?:mm[-–—]h+m+|uh[-–—]huh|mwah|ă{1,}|îhî|mhm|a{1,}h{1,}|ahem|argh|aw+|ehm?|er+m?|gah|ha+|heh|hm+|hmph|huh|m+m+h?m?|oh+h?|ooh+|oops|ouch|ow|pff+t?|phew|psst|shh+|ugh|uh+m?|um+m?|whew|whoa|wow|yikes|aâ|aoleu)';
+    // Eliminăm doar ezitări evidente; reacțiile ambigue rămân sub controlul promptului contextual.
+    const hesitationToken = '(?:mwah|ă{1,}|ehm|er+m?|um+m?|uh+m?)';
 
     // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
     // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
@@ -800,7 +803,6 @@ function deepCleanSubtitleText(text) {
     // Nu forța majuscula după „...” (propoziția continuă) și nici după abrevieri uzuale (dl., dna, nr., etc.).
     cleaned = cleaned.replace(/(^|(?<!\.)(?<!\b(?:[Dd]l|[Dd]na|[Dd]r|[Nn]r|[Ee]tc|[Ee]x))[.!?]\s+)([a-zăâîșț])/g, (m, prefix, letter) => prefix + letter.toUpperCase());
     
-    if (/^(ah|oh|uh|agh|aâ|aoleu|ăă|ugh|argh|aah|oof|uf)[!.]*$/gmi.test(cleaned)) return '';
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
     cleaned = cleaned.replace(/\\+/g, ' ');
@@ -1168,7 +1170,8 @@ function formatSubtitleLine(text) {
         [/\bse bucură de prea multă binefacere\b/gi, 'sunt bineveniți'],
         [/\bce-ți veni\b/gi, 'ce-ai pățit'],
         [/(?<![A-Za-zĂÂÎȘȚăâîșț])marșă de manevră(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'marjă de manevră'],
-        [/\b(Ah|Oh|Uh|Agh|Aoleu)[!.]+$/gmi, ''],
+        // Nu șterge automat reacții de sine stătătoare („Ah!”, „Oh!”, „Aoleu!”);
+        // eliminarea vocalizărilor fără sens este tratată contextual în filtrul dedicat.
         [/\bV Dumneata\b/gi, 'Dumneata'],
         [/\bnăscut Borden\b/gi, 'pe nume Borden'],
         [/\bca să o demonstr\b/gi, 'ca să o demonstrăm'],
@@ -1353,8 +1356,10 @@ SUBTITLE FORMATTING
 - Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
 INTERJECTIONS AND FILLERS
-- Remove standalone filler sounds and meaningless hesitation tokens (including “Ah”, “Eh”, “Uh”, “Um”, “Oh”, “Wow”, “Oops”, “Ouch”, “ă”, “ăă”, “mhm”) from the subtitle.
-- Remove an embedded filler when it is only hesitation, then repair punctuation and capitalization. Do not delete a meaningful multi-word expression simply because it begins with an interjection; translate the expression by meaning.
+- Remove standalone filler sounds and meaningless hesitation tokens only when they are genuinely non-informative in context. Typical disposable examples include “Um”, “Erm”, “Mwah”, “ă”, and “ăă” when they function only as hesitation/noise.
+- Do NOT automatically delete meaningful acknowledgments, questions, reactions, or commands. Preserve and translate “Okay”, “Mhm/Mm-hmm” when they express agreement, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief, and “Aha” when expressing realization.
+- Use neighboring subtitles and the scene context to distinguish a meaningless filler from a meaningful reaction. If the function is ambiguous, prefer preserving its communicative/emotional meaning in concise Romanian rather than deleting it automatically.
+- Remove an embedded filler only when it is clearly hesitation and not part of a meaningful expression; then repair punctuation and capitalization. Do not delete a meaningful multi-word expression simply because it begins with an interjection; translate the expression by meaning.
 - Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise, not meaningful spoken dialogue.
 
 FINAL CHECK
@@ -2957,7 +2962,6 @@ function isJunkOrInterjection(text) {
     // complet de verificările de traducere, ca să nu apară în loguri ca suspecți.
     if (/^[\s\-–—._,;:!?…'"~^`´‚„“”‘’()\[\]{}|\\/♪♫♬♩#]+$/.test(clean)) return true;
 
-    if (/^(?:[-–—\s]*)(ah|oh|uh|agh|aâ|aoleu|ăă|mhm|îhî|ugh|argh|aah|oof|uf|shh|psst|sh)[!.,?\s-]*$/i.test(clean)) return true;
     if (isOnlyStandaloneFillerSequence(clean)) return true;
     return false;
 }
@@ -3776,6 +3780,7 @@ VERIFICĂ ÎN ORDINE
 7. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
 8. Dacă avertismentul menționează un conector repetat între două subtitrări consecutive, compară ambele originale și ambele traduceri din context. Păstrează conectorul în fragmentul al cărui original îl conține. Dacă originalul fragmentului curent NU începe/nu se termină cu acel conector, dar traducerea îl adaugă la limită, elimină doar conectorul adăugat inutil din replica curentă; nu șterge conectorul justificat de următorul/precedentul original. Dacă dovezile nu sunt clare, nu rescrie.
 9. Dacă avertismentul indică un fragment englezesc netradus, o secvență englezească deteriorată sau un text corupt și originalul/contextul permit stabilirea sensului, corectează efectiv fragmentul în română. Nu lăsa secvența deteriorată în text și nu omite corectura doar pentru că restul replicii este românește. Dacă semnalul este un fals pozitiv și formularea românească transmite deja sensul originalului, păstreaz-o.
+10. Dacă avertismentul indică aceeași traducere românească pentru două originale englezești diferite, compară separat sensul fiecărui original cu traducerea lui și folosește contextul ambelor replici. Nu păstra automat traducerea duplicată, dar nici nu schimba o replică doar pentru a evita repetiția. Corectează doar ID-ul/ID-urile pentru care există o nepotrivire demonstrabilă; nu muta textul între ID-uri.
 
 REGULĂ DE PRUDENȚĂ
 Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
@@ -4310,6 +4315,87 @@ function collectQualityReviewReasons(item, translation, contextItems, translated
     ];
 }
 
+function normalizeRepeatedTranslationCheckText(text) {
+    return String(text || '')
+        .replace(/<[^>]+>/g, ' ')
+        .normalize('NFC')
+        .toLocaleLowerCase('ro-RO')
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function repeatedTranslationSourceSimilarity(firstSource, secondSource) {
+    const tokenize = value => new Set(
+        (String(value || '').toLocaleLowerCase('en-US').match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [])
+    );
+    const first = tokenize(firstSource);
+    const second = tokenize(secondSource);
+    const union = new Set([...first, ...second]);
+    if (!union.size) return 1;
+    let intersection = 0;
+    for (const token of first) if (second.has(token)) intersection++;
+    return intersection / union.size;
+}
+
+// Semnal conservator pentru două traduceri consecutive identice când originalele
+// au vocabular semnificativ diferit. Nu modifică textele: cere verificare contextuală.
+function findRepeatedTranslationIssues(items, translatedById) {
+    const issues = [];
+    const MAX_SOURCE_TOKEN_SIMILARITY = 0.25;
+
+    for (let i = 0; i < items.length - 1; i++) {
+        const first = items[i];
+        const second = items[i + 1];
+        if (isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
+
+        const firstId = String(first.id);
+        const secondId = String(second.id);
+        // Dacă un ID a fost eliminat de filtrul de sursă, cele două elemente
+        // pot fi vecine în `items` fără să fie vecine în SRT-ul original.
+        const firstNumericId = Number(firstId);
+        const secondNumericId = Number(secondId);
+        if (Number.isFinite(firstNumericId) && Number.isFinite(secondNumericId) && secondNumericId !== firstNumericId + 1) continue;
+        const firstTarget = normalizeRepeatedTranslationCheckText(translatedById[firstId]);
+        const secondTarget = normalizeRepeatedTranslationCheckText(translatedById[secondId]);
+        if (!firstTarget || firstTarget !== secondTarget) continue;
+
+        const firstSource = normalizeRepeatedTranslationCheckText(first.text);
+        const secondSource = normalizeRepeatedTranslationCheckText(second.text);
+        if (!firstSource || !secondSource || firstSource === secondSource) continue;
+
+        // Fragmente foarte scurte („Here's...”) pot avea legitim aceeași
+        // traducere ca replica următoare („There you go.”). Evităm alarmele
+        // slabe dacă unul dintre originale are mai puțin de două cuvinte.
+        const sourceWordCount = value => (String(value || '').match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || []).length;
+        if (sourceWordCount(first.text) < 2 || sourceWordCount(second.text) < 2) continue;
+
+        const similarity = repeatedTranslationSourceSimilarity(first.text, second.text);
+        if (similarity >= MAX_SOURCE_TOKEN_SIMILARITY) continue;
+
+        const score = similarity.toFixed(2);
+        issues.push({
+            item: first,
+            pairedItem: second,
+            reason: `traducere identică cu ID ${secondId}, deși originalele EN diferă semnificativ (similaritate lexicală ${score}); verifică sensul ambelor replici`
+        });
+        issues.push({
+            item: second,
+            pairedItem: first,
+            reason: `traducere identică cu ID ${firstId}, deși originalele EN diferă semnificativ (similaritate lexicală ${score}); verifică sensul ambelor replici`
+        });
+    }
+
+    for (let i = 0; i < issues.length; i += 2) {
+        const issue = issues[i];
+        const paired = issue?.pairedItem;
+        if (!issue || !paired) continue;
+        console.log(`${c.yellow}⚠ [QA Traducere duplicată] ID ${issue.item.id} și ${paired.id}: traducere identică pe originale diferite; ambele merg la verificare contextuală.${c.reset}`);
+    }
+
+    return issues;
+}
+
 function findRepeatedBoundaryConnectorIssues(items, translatedById) {
     const issues = [];
     const seen = new Set();
@@ -4469,6 +4555,19 @@ async function runLocalGrammarQualityPass(items, translatedById) {
             flagged.push({ item: boundaryIssue.item, reasons: [boundaryIssue.reason] });
         }
     }
+
+    // Două traduceri consecutive identice pe surse lexical diferite sunt trimise
+    // împreună la același review punctual; nu facem înlocuiri automate de ID-uri.
+    for (const duplicateIssue of findRepeatedTranslationIssues(items, translatedById)) {
+        const id = String(duplicateIssue.item.id);
+        const existing = flagged.find(entry => String(entry.item.id) === id);
+        if (existing) {
+            if (!existing.reasons.includes(duplicateIssue.reason)) existing.reasons.push(duplicateIssue.reason);
+        } else {
+            flagged.push({ item: duplicateIssue.item, reasons: [duplicateIssue.reason] });
+        }
+    }
+
     flagged.sort((a, b) => items.findIndex(item => String(item.id) === String(a.item.id)) - items.findIndex(item => String(item.id) === String(b.item.id)));
 
     console.log(`${c.green}[GRAMATICĂ] Verificare locală încheiată; ${autoFixed} corecții directe aplicate.${c.reset}`);
