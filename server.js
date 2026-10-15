@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.171',
+    version: '12.78.172',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1382,7 +1382,15 @@ const geminiRequestControl = {
     waiters: new Set(),
     consecutive429: 0,
     consecutive5xx: 0,
-    successesSinceThrottle: 0
+    successesSinceThrottle: 0,
+    // Detectează un val global numai când două proiecte DISTINCTE primesc 429
+    // într-o fereastră de 5 secunde. Timestampul cererii separă răspunsurile
+    // întârziate ale cererilor deja active de un val nou, după pauză.
+    recent429Projects: new Map(),
+    global429PauseUntil: 0,
+    global429LastTriggerAt: 0,
+    global429LastWaveAt: 0,
+    global429WaveCount: 0
 };
 
 function notifyGeminiRequestWaiters() {
@@ -1536,7 +1544,59 @@ function updateGlobal429GateIfPoolExhausted(keyStates, options = {}) {
     return { allBlocked: true, available: 0 };
 }
 
-function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = null) {
+function detectAndApplyGlobal429Wave(lane, quotaKind = 'unknown', requestStartedAt = 0, now = Date.now()) {
+    // Cotele zilnice nu se rezolvă printr-o pauză scurtă comună.
+    if (!lane || quotaKind === 'daily') return { triggered: false, reason: 'not-transient' };
+
+    const control = geminiRequestControl;
+    const previousTriggerAt = Number(control.global429LastTriggerAt || 0);
+
+    // Răspunsurile sosite în timpul pauzei sau de la cereri pornite înaintea
+    // ultimului val nu au voie să declanșeze/escaladeze artificial un alt val.
+    if (now < Number(control.global429PauseUntil || 0)) {
+        control.recent429Projects.clear();
+        return { triggered: false, reason: 'pause-active' };
+    }
+    if (previousTriggerAt && Number(requestStartedAt || 0) > 0 && Number(requestStartedAt) <= previousTriggerAt) {
+        return { triggered: false, reason: 'request-started-before-last-wave' };
+    }
+
+    const events = control.recent429Projects;
+    for (const [fingerprint, timestamp] of events) {
+        if (now - timestamp >= 5000) events.delete(fingerprint);
+    }
+    events.set(lane.fingerprint, now);
+    if (events.size < 2) return { triggered: false, distinctProjects: events.size };
+
+    // După 10 minute fără alt val global, următorul este tratat ca primul.
+    if (control.global429LastWaveAt && now - control.global429LastWaveAt >= 10 * 60 * 1000) {
+        control.global429WaveCount = 0;
+    }
+
+    const waveNumber = Number(control.global429WaveCount || 0) + 1;
+    let pauseMs;
+    if (waveNumber === 1) pauseMs = 16000 + Math.floor(Math.random() * 2001); // 16–18s
+    else if (waveNumber === 2) pauseMs = 20000;
+    else if (waveNumber === 3) pauseMs = 33000;
+    else pauseMs = 60000;
+
+    const previousLimit = control.maxConcurrent;
+    const pauseUntil = now + pauseMs;
+    control.global429WaveCount = waveNumber;
+    control.global429LastWaveAt = now;
+    control.global429LastTriggerAt = now;
+    control.global429PauseUntil = pauseUntil;
+    control.cooldownUntil = Math.max(Number(control.cooldownUntil || 0), pauseUntil);
+    control.maxConcurrent = Math.max(1, Math.min(Number(control.maxConcurrent || 1), 2));
+    control.successesSinceThrottle = 0;
+    events.clear();
+
+    console.log(`${c.yellow}⏸ [Gemini Control] Val global 429: cel puțin 2 proiecte distincte în 5s. Pauză comună ${Math.ceil(pauseMs / 1000)}s (nivel ${Math.min(waveNumber, 4)}/4); concurență ${previousLimit}→${control.maxConcurrent}/${control.targetConcurrent}. Cererile noi așteaptă pauza, apoi concurența revine gradual după succese.${c.reset}`);
+    notifyGeminiRequestWaiters();
+    return { triggered: true, waveNumber, pauseMs, pauseUntil, previousLimit, currentLimit: control.maxConcurrent };
+}
+
+function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = null, requestStartedAt = 0) {
     const now = Date.now();
     const pauseMs = Math.max(1000, Number(cooldownMs) || 15000);
     const lane = getLaneForKeyState(keyState);
@@ -1567,11 +1627,14 @@ function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = n
         if (!(pool._429WaveFailedProjects instanceof Set)) pool._429WaveFailedProjects = new Set();
         pool._429WaveFailedProjects.add(lane.fingerprint);
     }
+    // Acest circuit este la nivel de proces, nu doar pentru un singur SRT/pool:
+    // două proiecte distincte care răspund rapid cu 429 opresc toate cererile noi.
+    detectAndApplyGlobal429Wave(lane, quotaKind, requestStartedAt, now);
     const poolStatus = updateGlobal429GateIfPoolExhausted(pool, { log: true });
     const projectLabel = lane ? lane.fingerprint.slice(0, 8) : 'necunoscut';
     const previousLimit = geminiRequestControl.maxConcurrent;
     const availableText = poolStatus.available > 0
-        ? ` Rămân ${poolStatus.available} proiecte disponibile; concurența globală rămâne ${previousLimit}/${geminiRequestControl.targetConcurrent}.`
+        ? ` Rămân ${poolStatus.available} proiecte disponibile; concurența globală este ${previousLimit}/${geminiRequestControl.targetConcurrent}.`
         : poolStatus.dailyOnly
             ? ' Toate proiectele din pool au cotă zilnică epuizată.'
             : poolStatus.allBlocked
@@ -2072,6 +2135,7 @@ async function callGemini(prompt, keyState, options = {}) {
     let releaseGeminiSlot = null;
     let lane = getLaneForKeyState(keyState);
     let laneRequestStarted = false;
+    let laneRequestStartedAt = 0;
     try {
         releaseGeminiSlot = await acquireGeminiRequestSlot();
         lane = getLaneForKeyState(keyState);
@@ -2094,7 +2158,8 @@ async function callGemini(prompt, keyState, options = {}) {
         consumeGlobalKeyReservation(keyState);
         if (lane) {
             lane.activeRequests++;
-            lane.lastRequestAt = Date.now();
+            laneRequestStartedAt = Date.now();
+            lane.lastRequestAt = laneRequestStartedAt;
             lane.lastTouchedAt = lane.lastRequestAt;
             lane.recentRequestStarts.push(lane.lastRequestAt);
             getRecentProjectRequestCount(lane, lane.lastRequestAt);
@@ -2139,7 +2204,7 @@ async function callGemini(prompt, keyState, options = {}) {
             const cooldownMs = extractGeminiRetryDelayMs(error, fallbackCooldown);
             keyState.pausedUntil = Math.max(Number(keyState.pausedUntil || 0), Date.now() + cooldownMs);
             if (quotaInfo.kind === 'daily') keyState.dailyQuotaUntil = Math.max(Number(keyState.dailyQuotaUntil || 0), getNextPacificMidnightMs());
-            registerGlobalGemini429(cooldownMs, quotaInfo.kind, keyState);
+            registerGlobalGemini429(cooldownMs, quotaInfo.kind, keyState, laneRequestStartedAt);
 
             const providerMessage = quotaInfo.message;
             const details = providerMessage ? ` Detaliu Google: ${providerMessage}` : '';
