@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.167',
+    version: '12.78.168',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5071,12 +5071,15 @@ app.get('/:configData/translate', async (req, res) => {
 
     try {
         let processPromise;
+        // QA status belongs to the shared translation promise, not only to the
+        // request that created it. This keeps concurrent requests in the same scope.
+        let qaStatus = { hasErrors: false, unresolvedIds: [] };
 
         if (cachedEntry && typeof cachedEntry !== 'string') {
             processPromise = cachedEntry;
+            qaStatus = processPromise.qaStatus || qaStatus;
         } else {
             const startTime = Date.now();
-            const qaStatus = { hasErrors: false, unresolvedIds: [] };
             
             processPromise = (async () => {
                 const [srtRes, mediaTitle] = await Promise.all([
@@ -5089,6 +5092,8 @@ app.get('/:configData/translate', async (req, res) => {
 
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys, qaStatus);
             })();
+            // Attach the shared QA state before publishing the promise to the cache.
+            processPromise.qaStatus = qaStatus;
             
             memoryCache.set(cacheKey, processPromise);
             cleanMemoryCache(cacheKey);
