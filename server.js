@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.174',
+    version: '12.78.176',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2573,6 +2573,166 @@ function detectTranslationAlignmentShift(sourceItems, translatedItems) {
     return summarize(clusters[0], false);
 }
 
+// ============================================================
+// DETECTOR LOCAL DE ANOMALII DE ALINIERE PE REPLICĂ
+// Cost local foarte mic, fără apeluri API. Nu deduce și nu mută traduceri;
+// identifică doar tipare structurale puternice pentru o retraducere țintită.
+// ============================================================
+const LOCAL_ALIGNMENT_MAX_GAP = 6;
+const LOCAL_ALIGNMENT_MAX_REPAIRS_PER_CHUNK = 2;
+// Buget global per subtitrare: limitează riscul de 429 și timpul pe episoade lungi.
+const LOCAL_ALIGNMENT_MAX_REPAIRS_PER_SUBTITLE = 2;
+
+function localAlignmentCleanText(value) {
+    return String(value || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function localAlignmentWords(value) {
+    return (localAlignmentCleanText(value).match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || []).length;
+}
+
+function localAlignmentSentenceCount(value) {
+    const text = localAlignmentCleanText(value);
+    if (!text) return 0;
+    // Interogațiile/exclamațiile și punctele de final sunt semnale aproximative;
+    // nu sunt folosite separat pentru a declanșa repararea.
+    return (text.match(/[.!?…]+(?=\s|$)/gu) || []).length;
+}
+
+function localAlignmentNormalize(value) {
+    return localAlignmentCleanText(value)
+        .toLocaleLowerCase('ro-RO')
+        .replace(/[„”“"'’`]/g, '')
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) {
+    if (!Array.isArray(sourceItems) || sourceItems.length < 3) return [];
+    const targetById = new Map((translatedItems || []).map(item => [String(item.id), String(item.text || '')]));
+    const hitsByIndex = new Map();
+
+    const addHit = (index, reason, strength = 1) => {
+        if (!hitsByIndex.has(index)) hitsByIndex.set(index, { index, reasons: [], strength: 0 });
+        const hit = hitsByIndex.get(index);
+        if (!hit.reasons.includes(reason)) hit.reasons.push(reason);
+        hit.strength += strength;
+    };
+
+    const normalizedSources = [];
+    const normalizedTargets = [];
+    for (let index = 0; index < sourceItems.length; index++) {
+        const source = sourceItems[index];
+        const id = String(source?.id ?? '');
+        const original = localAlignmentCleanText(source?.text || '');
+        const translated = localAlignmentCleanText(targetById.get(id) || '');
+        normalizedSources[index] = localAlignmentNormalize(original);
+        normalizedTargets[index] = localAlignmentNormalize(translated);
+
+        if (!original || !translated || isJunkOrInterjection(original) || isJunkOrInterjection(translated)) continue;
+
+        const sourceWords = localAlignmentWords(original);
+        const targetWords = localAlignmentWords(translated);
+        const sourceChars = original.length;
+        const targetChars = translated.length;
+        if (!sourceWords || !targetWords) continue;
+
+        // Semnal A: o replică-sursă normală a devenit neobișnuit de scurtă.
+        // Sunt necesare praguri stricte; raportul singur nu decide corectitudinea.
+        if (sourceWords >= 7 && targetWords <= 4 && targetWords / sourceWords <= 0.45) {
+            addHit(index, `traducere neobișnuit de scurtă (${sourceWords}→${targetWords} cuvinte)`, 2);
+        }
+
+        // Semnal B: o replică foarte scurtă a primit prea mult text românesc,
+        // semn compatibil cu alipirea accidentală a replicii următoare.
+        if (sourceWords <= 4 && targetWords >= 8 && targetWords / sourceWords >= 2) {
+            addHit(index, `traducere neobișnuit de lungă (${sourceWords}→${targetWords} cuvinte)`, 2);
+        } else if (sourceWords <= 2 && targetWords >= 6 && targetWords / sourceWords >= 2.5) {
+            addHit(index, `expansiune extremă pentru o replică foarte scurtă (${sourceWords}→${targetWords} cuvinte)`, 2);
+        }
+
+        if (sourceChars <= 25 && targetChars >= 48 && targetChars / Math.max(1, sourceChars) >= 2.2) {
+            addHit(index, `expansiune de caractere (${sourceChars}→${targetChars})`, 2);
+        }
+
+        const sourceSentences = localAlignmentSentenceCount(original);
+        const targetSentences = localAlignmentSentenceCount(translated);
+        if (sourceSentences <= 1 && targetSentences >= 3 && targetChars >= 45) {
+            addHit(index, `mai multe propoziții în traducere decât sugerează replica-sursă (${sourceSentences}→${targetSentences})`, 2);
+        }
+    }
+
+    // Semnal C: două traduceri consecutive, suficient de lungi, sunt identice,
+    // dar originalele diferă. Este doar indiciu: replicile repetitive scurte
+    // sunt excluse ca să nu retraducem răspunsuri uzuale precum „Da”.
+    for (let index = 0; index < sourceItems.length - 1; index++) {
+        const firstSource = String(sourceItems[index]?.text || '');
+        const secondSource = String(sourceItems[index + 1]?.text || '');
+        const firstTarget = normalizedTargets[index] || '';
+        const secondTarget = normalizedTargets[index + 1] || '';
+        if (!firstTarget || firstTarget !== secondTarget) continue;
+        if (normalizedSources[index] === normalizedSources[index + 1]) continue;
+        if (isJunkOrInterjection(firstSource) || isJunkOrInterjection(secondSource)) continue;
+        if (localAlignmentWords(firstTarget) < 4 || firstTarget.length < 18) continue;
+        addHit(index, 'traduceri consecutive identice pentru originale diferite', 3);
+        addHit(index + 1, 'traduceri consecutive identice pentru originale diferite', 3);
+    }
+
+    const hits = [...hitsByIndex.values()].sort((a, b) => a.index - b.index);
+    if (!hits.length) return [];
+
+    const clusters = [];
+    for (const hit of hits) {
+        const previous = clusters[clusters.length - 1];
+        if (previous && hit.index - previous.end <= LOCAL_ALIGNMENT_MAX_GAP) {
+            previous.end = hit.index;
+            previous.hits.push(hit);
+            previous.strength += hit.strength;
+            for (const reason of hit.reasons) {
+                if (!previous.reasons.includes(reason)) previous.reasons.push(reason);
+            }
+        } else {
+            clusters.push({
+                start: hit.index,
+                end: hit.index,
+                hits: [hit],
+                strength: hit.strength,
+                reasons: [...hit.reasons]
+            });
+        }
+    }
+
+    // Cerem mai multe indicii locale în aceeași zonă. O singură replică atipică
+    // poate fi o traducere validă și nu trebuie să coste un apel suplimentar.
+    return clusters
+        .filter(cluster => {
+            const structuralHits = cluster.hits.filter(hit =>
+                hit.reasons.some(reason => !reason.startsWith('traduceri consecutive identice'))
+            );
+            const duplicateHits = cluster.hits.filter(hit =>
+                hit.reasons.some(reason => reason.startsWith('traduceri consecutive identice'))
+            );
+            // Două traduceri identice pot fi un refren/replică repetată; duplicarea
+            // singură nu declanșează apel API fără și alt indiciu structural.
+            return (structuralHits.length >= 2 && cluster.strength >= 4) ||
+                (structuralHits.length >= 1 && duplicateHits.length >= 2 && cluster.strength >= 6);
+        })
+        .sort((a, b) => b.strength - a.strength || a.start - b.start)
+        .map(cluster => ({
+            start: cluster.start,
+            end: cluster.end,
+            evidenceCount: cluster.hits.length,
+            strength: cluster.strength,
+            reasons: cluster.reasons
+        }));
+}
+
 function canRetranslateAlignmentItem(item) {
     const source = String(item?.text || '').trim();
     if (!source || isEffectivelyEmptySubtitleText(source) || isJunkOrInterjection(source)) return false;
@@ -4641,6 +4801,61 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
                 }
                 batchResult.result = chunkResult;
             }
+
+            // Aliniere locală cu cost zero: caută numai tipare structurale puternice
+            // (replici disproporționat de scurte/lungi sau duplicate consecutive).
+            // Gemini este apelat doar pentru zonele suspecte, cu plafon de două zone
+            // per calup. Nu mutăm niciodată texte între ID-uri.
+            if (!alignmentIssue?.confirmed) {
+                const localAlignmentIssues = detectLocalTranslationAlignmentAnomalies(sourceChunk, chunkResult);
+                const localRepairsUsed = Math.max(0, Number(keyStates._localAlignmentRepairCount) || 0);
+                const localRepairsRemaining = Math.max(0, LOCAL_ALIGNMENT_MAX_REPAIRS_PER_SUBTITLE - localRepairsUsed);
+                const localRepairBudget = Math.min(LOCAL_ALIGNMENT_MAX_REPAIRS_PER_CHUNK, localRepairsRemaining);
+                const selectedLocalIssues = localAlignmentIssues
+                    .slice(0, localRepairBudget)
+                    .sort((a, b) => a.start - b.start);
+
+                if (localAlignmentIssues.length > selectedLocalIssues.length) {
+                    console.log(`${c.yellow}[Aliniere locală] ${localAlignmentIssues.length} zone suspecte găsite; ${selectedLocalIssues.length} selectate. Bugetul de corectare locală este de maximum ${LOCAL_ALIGNMENT_MAX_REPAIRS_PER_SUBTITLE} zone pentru întreaga subtitrare, indiferent de lungime.${c.reset}`);
+                }
+
+                if (selectedLocalIssues.length && (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold)) {
+                    console.log(`${c.yellow}[Aliniere locală] ${selectedLocalIssues.length} zone suspecte detectate, dar retraducerea este omisă cât timp circuitul 429 este în pauză. Nu se lansează apeluri suplimentare.${c.reset}`);
+                } else {
+                    for (const localIssue of selectedLocalIssues) {
+                        const startId = sourceChunk[localIssue.start]?.id ?? localIssue.start;
+                        const endId = sourceChunk[localIssue.end]?.id ?? localIssue.end;
+                        const reasonText = localIssue.reasons.slice(0, 3).join('; ');
+                        console.log(`${c.yellow}⚠ [Aliniere locală] ${localIssue.evidenceCount} indicii structurale în zona ID ${startId}–${endId}: ${reasonText}. Retraduc numai zona suspectă.${c.reset}`);
+
+                        // Numărăm încercarea înainte de apel, inclusiv dacă API-ul eșuează,
+                        // astfel încât retry-urile și calupurile următoare să nu depășească bugetul.
+                        keyStates._localAlignmentRepairCount = (Number(keyStates._localAlignmentRepairCount) || 0) + 1;
+                        chunkResult = await repairTranslationAlignmentRange(
+                            sourceChunk,
+                            chunkResult,
+                            localIssue,
+                            items,
+                            batchResult.globalIndex * CHUNK_SIZE,
+                            keyStates,
+                            batchResult.globalIndex,
+                            chunks.length
+                        );
+
+                        const residualLocalIssues = detectLocalTranslationAlignmentAnomalies(sourceChunk, chunkResult);
+                        const marginStart = Math.max(0, localIssue.start - 2);
+                        const marginEnd = Math.min(sourceChunk.length - 1, localIssue.end + 2);
+                        const residual = residualLocalIssues.find(issue => issue.start <= marginEnd && issue.end >= marginStart);
+                        if (residual) {
+                            console.log(`${c.yellow}ℹ [Aliniere locală] După retraducere mai există indicii structurale în/în jurul ID ${sourceChunk[residual.start]?.id ?? residual.start}–${sourceChunk[residual.end]?.id ?? residual.end}. Nu repet automat încă o cerere pentru aceeași zonă.${c.reset}`);
+                        } else {
+                            console.log(`${c.green}✔ [Aliniere locală] Indiciile structurale care au declanșat retraducerea nu mai sunt detectate. Acesta este un semnal structural, nu o garanție semantică absolută.${c.reset}`);
+                        }
+                    }
+                    if (selectedLocalIssues.length) batchResult.result = chunkResult;
+                }
+            }
+
             for (const item of batchResult.result) {
                 translatedById[String(item.id)] = item.text;
             }
