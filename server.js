@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.178',
+    version: '12.78.179',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3781,6 +3781,7 @@ VERIFICĂ ÎN ORDINE
 8. Dacă avertismentul menționează un conector repetat între două subtitrări consecutive, compară ambele originale și ambele traduceri din context. Păstrează conectorul în fragmentul al cărui original îl conține. Dacă originalul fragmentului curent NU începe/nu se termină cu acel conector, dar traducerea îl adaugă la limită, elimină doar conectorul adăugat inutil din replica curentă; nu șterge conectorul justificat de următorul/precedentul original. Dacă dovezile nu sunt clare, nu rescrie.
 9. Dacă avertismentul indică un fragment englezesc netradus, o secvență englezească deteriorată sau un text corupt și originalul/contextul permit stabilirea sensului, corectează efectiv fragmentul în română. Nu lăsa secvența deteriorată în text și nu omite corectura doar pentru că restul replicii este românește. Dacă semnalul este un fals pozitiv și formularea românească transmite deja sensul originalului, păstreaz-o.
 10. Dacă avertismentul indică aceeași traducere românească pentru două originale englezești diferite, compară separat sensul fiecărui original cu traducerea lui și folosește contextul ambelor replici. Nu păstra automat traducerea duplicată, dar nici nu schimba o replică doar pentru a evita repetiția. Corectează doar ID-ul/ID-urile pentru care există o nepotrivire demonstrabilă; nu muta textul între ID-uri.
+11. Dacă avertismentul indică o posibilă suprapunere de sens între două subtitrări consecutive, verifică dacă originalul englezesc al primei replici continuă în următorul ID și dacă traducerea română a primei replici a anticipat deja o expresie care aparține semantic următoarei. Dacă prima traducere adaugă sensul următoarei replici, rescrie numai ID-ul pentru care surplusul este demonstrabil, astfel încât fiecare ID să exprime doar conținutul justificat de propriul original și context. Nu elimina o repetiție firească, nu muta text între ID-uri și nu forța diferențe stilistice când ambele traduceri sunt valide.
 
 REGULĂ DE PRUDENȚĂ
 Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
@@ -4396,6 +4397,126 @@ function findRepeatedTranslationIssues(items, translatedById) {
     return issues;
 }
 
+// Detectează suprapunerea posibilă a sensului între două subtitrări consecutive.
+// Este strict un semnal pentru QA: nu rescrie automat traducerile.
+function findAdjacentSemanticOverlapIssues(items, translatedById) {
+    const issues = [];
+    const seenPairs = new Set();
+    const lowInformationWords = new Set([
+        'a', 'ai', 'al', 'ale', 'am', 'ar', 'are', 'as', 'au', 'avea', 'avem', 'aveți', 'aveau',
+        'ca', 'că', 'ce', 'cel', 'cea', 'cei', 'cele', 'ceva', 'cu', 'da', 'dar', 'de', 'din',
+        'doar', 'dupa', 'după', 'e', 'ea', 'ei', 'el', 'ele', 'era', 'eram', 'erau', 'este',
+        'eu', 'fie', 'fi', 'fii', 'fim', 'fiți', 'la', 'le', 'li', 'lui', 'lor', 'mai', 'mă',
+        'mi', 'mie', 'ne', 'ni', 'nici', 'nu', 'o', 'or', 'ori', 'pe', 'pentru', 'poate',
+        'pot', 'sa', 'să', 'se', 'și', 'sînt', 'sunt', 'te', 'tu', 'un', 'una', 'unei', 'unui',
+        'vă', 'vi', 'voi', 'vor', 'vrea', 'vreau', 'vrei', 'în', 'între', 'îți', 'îl', 'îmi',
+        'își', 'acest', 'aceasta', 'acesta', 'asta', 'ăsta', 'aici', 'acolo', 'bine', 'foarte',
+        'tot', 'toate', 'toți', 'toate', 'lucru', 'lucruri'
+    ]);
+
+    const clean = value => String(value || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\|/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const words = value => clean(value)
+        .normalize('NFC')
+        .toLocaleLowerCase('ro-RO')
+        .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
+    const hasTerminalPunctuation = value => /[.!?…]["”’')\]]*\s*$/u.test(clean(value));
+    const sourceBeginsLowercase = value => /^[\s"“”'‘’([{—–-]*\p{Ll}/u.test(clean(value));
+    const sourceLooksLikeContinuation = (firstSource, secondSource) =>
+        Boolean(clean(firstSource) && clean(secondSource)) &&
+        !hasTerminalPunctuation(firstSource) &&
+        sourceBeginsLowercase(secondSource);
+
+    // Expresiile comune se caută doar în ultimele șapte cuvinte ale primei
+    // traduceri; astfel țintim sensul anticipat spre limita dintre două cue-uri,
+    // nu repetițiile îndepărtate din două propoziții mai lungi.
+    const findSharedPhraseNearBoundary = (firstTarget, secondTarget) => {
+        const firstWords = words(firstTarget);
+        const secondWords = words(secondTarget);
+        if (firstWords.length < 2 || secondWords.length < 2) return null;
+
+        const firstStart = Math.max(0, firstWords.length - 7);
+        const candidates = [];
+        for (let length = Math.min(4, firstWords.length, secondWords.length); length >= 2; length--) {
+            for (let i = firstStart; i <= firstWords.length - length; i++) {
+                const phraseWords = firstWords.slice(i, i + length);
+                const meaningfulWords = phraseWords.filter(word =>
+                    word.length >= 4 && !lowInformationWords.has(word)
+                );
+                if (!meaningfulWords.length) continue;
+
+                for (let j = 0; j <= secondWords.length - length; j++) {
+                    const secondPhrase = secondWords.slice(j, j + length);
+                    if (phraseWords.every((word, index) => word === secondPhrase[index])) {
+                        candidates.push({
+                            phrase: phraseWords.join(' '),
+                            length,
+                            firstStart: i,
+                            secondStart: j,
+                            secondDistanceToEdge: Math.min(j, secondWords.length - (j + length))
+                        });
+                    }
+                }
+            }
+            if (candidates.length) break;
+        }
+        if (!candidates.length) return null;
+        candidates.sort((a, b) =>
+            b.length - a.length ||
+            a.secondDistanceToEdge - b.secondDistanceToEdge ||
+            b.firstStart - a.firstStart
+        );
+        return candidates[0];
+    };
+
+    for (let i = 0; i < items.length - 1; i++) {
+        const first = items[i];
+        const second = items[i + 1];
+        if (isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
+
+        const firstId = String(first.id);
+        const secondId = String(second.id);
+        const firstNumericId = Number(firstId);
+        const secondNumericId = Number(secondId);
+        // Nu traversăm ID-uri eliminate de filtrul de interjecții sau lipsă din SRT.
+        if (!Number.isFinite(firstNumericId) || !Number.isFinite(secondNumericId) || secondNumericId !== firstNumericId + 1) continue;
+
+        const firstSource = clean(first.text);
+        const secondSource = clean(second.text);
+        if (!sourceLooksLikeContinuation(firstSource, secondSource)) continue;
+
+        const firstTarget = clean(translatedById[firstId]);
+        const secondTarget = clean(translatedById[secondId]);
+        if (!firstTarget || !secondTarget || !hasTerminalPunctuation(firstTarget)) continue;
+
+        const overlap = findSharedPhraseNearBoundary(firstTarget, secondTarget);
+        if (!overlap) continue;
+
+        const pairKey = `${firstId}:${secondId}:${overlap.phrase}`;
+        if (seenPairs.has(pairKey)) continue;
+        seenPairs.add(pairKey);
+
+        const reason = `posibilă suprapunere de sens între ID ${firstId} și ${secondId}: expresia „${overlap.phrase}” apare în ambele traduceri; originalul EN al ID ${firstId} continuă fără punctuație, dar traducerea lui încheie o propoziție. Verifică dacă ID ${firstId} anticipează sensul din ID ${secondId}; corectează numai redundanța demonstrabilă, fără a muta text între ID-uri`;
+        issues.push({ item: first, pairedItem: second, reason });
+        issues.push({
+            item: second,
+            pairedItem: first,
+            reason: `posibilă suprapunere de sens cu ID ${firstId}: expresia „${overlap.phrase}” apare în ambele traduceri; compară sursa și contextul înainte să păstrezi sau să corectezi textul`
+        });
+    }
+
+    for (let i = 0; i < issues.length; i += 2) {
+        const issue = issues[i];
+        const paired = issue?.pairedItem;
+        if (!issue || !paired) continue;
+        console.log(`${c.yellow}⚠ [QA Suprapunere semantică] ID ${issue.item.id} și ${paired.id}: expresie românească repetată la limita dintre cue-uri („${issue.reason.match(/„([^”]+)”/)?.[1] || 'expresie'}”); verificare contextuală.${c.reset}`);
+    }
+    return issues;
+}
+
 function findRepeatedBoundaryConnectorIssues(items, translatedById) {
     const issues = [];
     const seen = new Set();
@@ -4565,6 +4686,18 @@ async function runLocalGrammarQualityPass(items, translatedById) {
             if (!existing.reasons.includes(duplicateIssue.reason)) existing.reasons.push(duplicateIssue.reason);
         } else {
             flagged.push({ item: duplicateIssue.item, reasons: [duplicateIssue.reason] });
+        }
+    }
+
+    // Semnal separat pentru sens anticipat în traducerea precedentă (ex. EN cue 130
+    // continuă în 131, dar RO 130 încheie fraza și repetă „în comun” din RO 131).
+    for (const overlapIssue of findAdjacentSemanticOverlapIssues(items, translatedById)) {
+        const id = String(overlapIssue.item.id);
+        const existing = flagged.find(entry => String(entry.item.id) === id);
+        if (existing) {
+            if (!existing.reasons.includes(overlapIssue.reason)) existing.reasons.push(overlapIssue.reason);
+        } else {
+            flagged.push({ item: overlapIssue.item, reasons: [overlapIssue.reason] });
         }
     }
 
@@ -5403,7 +5536,6 @@ Returnează DOAR un ARRAY JSON valid în forma:
         if (existing) existing.reasons.push(issue.reason);
         else unresolvedQualityMap.set(id, { item: issue.item, reasons: [issue.reason] });
     }
-
     if (unresolvedQualityMap.size && targetedQualityCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
         const retryCandidates = items.filter(item => unresolvedQualityMap.has(String(item.id))).slice(0, 15);
         const retryReasonById = Object.fromEntries(retryCandidates.map(item => {
@@ -5485,6 +5617,13 @@ Returnează DOAR un ARRAY JSON valid în forma:
         }
     }
     for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
+        const id = String(issue.item.id);
+        if (!finalRepairCandidates.some(item => String(item.id) === id)) {
+            finalRepairCandidates.push(issue.item);
+        }
+        finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
+    }
+    for (const issue of findAdjacentSemanticOverlapIssues(items, translatedById)) {
         const id = String(issue.item.id);
         if (!finalRepairCandidates.some(item => String(item.id) === id)) {
             finalRepairCandidates.push(issue.item);
