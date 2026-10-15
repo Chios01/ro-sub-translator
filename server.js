@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.169',
+    version: '12.78.170',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4501,36 +4501,59 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
             // Resetăm marcajele 429 ale rundei inițiale, nu pauzele pe fiecare proiect.
             keyStates._429WaveFailedProjects = new Set();
             keyStates._429WaveExhaustionLogged = false;
-            for (let taskIndex = 0; taskIndex < deferred429Chunks.length; taskIndex++) {
-                const task = deferred429Chunks[taskIndex];
-                await sleep(taskIndex === 0 ? 0 : 1000);
-                const failuresBefore = Number(keyStates._deferred429RetryFailedCount || 0);
-                const retryResult = await processChunkWithRetry(
-                    task.chunk,
-                    task.allItems,
-                    task.chunkStart,
-                    task.chunkEnd,
-                    task.previousTranslatedContext,
-                    keyStates,
-                    task.globalChunkIndex,
-                    task.totalChunks,
-                    task.depth,
-                    task.alignmentRepair,
-                    true
-                );
-                const taskItemsById = new Map(task.chunk.map(item => [String(item.id), item]));
-                for (const item of retryResult) {
-                    const id = String(item.id);
-                    if (task.alignmentRepair && !canRetranslateAlignmentItem(taskItemsById.get(id))) continue;
-                    translatedById[id] = item.text;
+
+            // Recuperarea nu trebuie să devină serială după un val de 429.
+            // Reluăm calupurile în loturi de până la concurența globală permisă,
+            // care poate reveni gradual la 3 după succes (mai ales după erori 5xx).
+            let taskIndex = 0;
+            while (taskIndex < deferred429Chunks.length) {
+                const currentLimit = Math.max(1, Math.min(
+                    CONCURRENCY_LIMIT,
+                    Number(geminiRequestControl.maxConcurrent || 1),
+                    deferred429Chunks.length - taskIndex
+                ));
+                const retryBatch = deferred429Chunks.slice(taskIndex, taskIndex + currentLimit);
+                const failuresBeforeBatch = Number(keyStates._deferred429RetryFailedCount || 0);
+                console.log(`${c.cyan}[429 Retry] Relansez ${retryBatch.length} calupuri în paralel; concurență ${currentLimit}/${geminiRequestControl.targetConcurrent}.${c.reset}`);
+
+                const retryResults = await Promise.all(retryBatch.map(async (task, localIndex) => {
+                    // Decalaj mic pentru a evita pornirea simultană în aceeași milisecundă,
+                    // fără a transforma coada de recuperare într-o procesare secvențială.
+                    if (localIndex > 0) await sleep(250 * localIndex);
+                    const retryResult = await processChunkWithRetry(
+                        task.chunk,
+                        task.allItems,
+                        task.chunkStart,
+                        task.chunkEnd,
+                        task.previousTranslatedContext,
+                        keyStates,
+                        task.globalChunkIndex,
+                        task.totalChunks,
+                        task.depth,
+                        task.alignmentRepair,
+                        true
+                    );
+                    return { task, retryResult };
+                }));
+
+                // Aplicăm rezultatele în ordinea originală; Promise.all păstrează ordinea
+                // de intrare chiar dacă răspunsurile Gemini se termină în altă ordine.
+                for (const entry of retryResults) {
+                    const taskItemsById = new Map(entry.task.chunk.map(item => [String(item.id), item]));
+                    for (const item of entry.retryResult) {
+                        const id = String(item.id);
+                        if (entry.task.alignmentRepair && !canRetranslateAlignmentItem(taskItemsById.get(id))) continue;
+                        translatedById[id] = item.text;
+                    }
                 }
 
-                const thisRetryFailedWith429 = Number(keyStates._deferred429RetryFailedCount || 0) > failuresBefore;
-                if (thisRetryFailedWith429) {
+                const batchFailedWith429 = Number(keyStates._deferred429RetryFailedCount || 0) > failuresBeforeBatch;
+                taskIndex += retryBatch.length;
+                if (batchFailedWith429) {
                     if (high429Queue) {
-                        tripPrimary429Circuit(keyStates, 'proba după cooldown a primit din nou 429; restul calupurilor amânate nu vor fi bombardate cu cereri');
+                        tripPrimary429Circuit(keyStates, 'proba paralelă după cooldown a primit din nou 429; restul calupurilor amânate nu vor fi bombardate cu cereri');
                     } else {
-                        console.log(`${c.yellow}[429 Retry] Un calup a primit din nou 429; opresc coada amânată și las recuperarea limitată să decidă dacă mai există acces la Gemini.${c.reset}`);
+                        console.log(`${c.yellow}[429 Retry] Un calup din lotul paralel a primit din nou 429; opresc restul cozii amânate pentru a păstra recuperarea limitată.${c.reset}`);
                     }
                     break;
                 }
