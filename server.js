@@ -155,7 +155,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.168',
+    version: '12.78.169',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1563,6 +1563,10 @@ function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = n
     }
 
     const pool = keyState?._keyPool;
+    if (pool && lane) {
+        if (!(pool._429WaveFailedProjects instanceof Set)) pool._429WaveFailedProjects = new Set();
+        pool._429WaveFailedProjects.add(lane.fingerprint);
+    }
     const poolStatus = updateGlobal429GateIfPoolExhausted(pool, { log: true });
     const projectLabel = lane ? lane.fingerprint.slice(0, 8) : 'necunoscut';
     const previousLimit = geminiRequestControl.maxConcurrent;
@@ -1574,6 +1578,16 @@ function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = n
                 ? ' Nu mai există proiecte eligibile momentan; selectorul va aștepta primul proiect disponibil.'
                 : '';
     console.log(`${c.yellow}⚠ [Gemini Control] 429 pe proiectul ${projectLabel} (${quotaKind}); doar acest proiect intră în pauză ${quotaKind === 'daily' ? 'până la resetarea cotei' : `${Math.ceil(pauseMs / 1000)}s`}.${availableText}${c.reset}`);
+    if (Array.isArray(pool)) {
+        const activeProjects = new Set(pool.filter(state => {
+            const currentLane = getLaneForKeyState(state);
+            return !state.disabled && !currentLane.disabled;
+        }).map(state => getLaneForKeyState(state)?.fingerprint).filter(Boolean));
+        if (activeProjects.size && pool._429WaveFailedProjects.size >= activeProjects.size && !pool._429WaveExhaustionLogged) {
+            pool._429WaveExhaustionLogged = true;
+            console.log(`${c.yellow}[Gemini Control] Toate cele ${activeProjects.size} proiecte au răspuns 429 în runda curentă. Nu le reîncercăm în paralel; traducerile lipsă intră în recuperarea limitată.${c.reset}`);
+        }
+    }
     notifyGeminiRequestWaiters();
 }
 
@@ -1822,9 +1836,9 @@ async function waitFor429Gate(keyStates) {
     }
 }
 
-function getMaximumTransientPoolCooldownMs(keyStates, now = Date.now()) {
+function getMaximumTransientPoolCooldownMs(keyStates, now = Date.now(), includeAvailableProjects = false) {
     const snapshot = getGeminiPoolAvailability(keyStates, now);
-    if (snapshot.available.length) return 0;
+    if (snapshot.available.length && !includeAvailableProjects) return 0;
     const transient = snapshot.entries.filter(entry =>
         !entry.state.disabled && !entry.lane?.disabled && entry.dailyUntil <= now && entry.pausedUntil > now
     );
@@ -1842,13 +1856,24 @@ function tripPrimary429Circuit(keyStates, reason) {
     }
 }
 
-async function getAvailableKey(keyStates) {
+async function getAvailableKey(keyStates, options = {}) {
+    const excludedStates = options.excludeStates instanceof Set ? options.excludeStates : null;
+    const exclude429WaveFailures = options.exclude429WaveFailures === true;
+    const failed429Projects = exclude429WaveFailures && keyStates._429WaveFailedProjects instanceof Set
+        ? keyStates._429WaveFailedProjects
+        : null;
+    const failFastIfNoAvailable = options.failFastIfNoAvailable === true;
     while (true) {
-        await waitFor429Gate(keyStates);
+        // În rotația 429, nu așteptăm ca un proiect deja limitat să redevină
+        // eligibil înainte să încercăm proiectele disponibile. Pentru o probă
+        // amânată, apelantul poate permite așteptarea primei chei eliberate.
+        if (!failFastIfNoAvailable) await waitFor429Gate(keyStates);
         const now = Date.now();
         const nonDisabled = keyStates.filter(state => {
             const lane = getLaneForKeyState(state);
-            return !state.disabled && !lane.disabled;
+            return !state.disabled && !lane.disabled &&
+                !(excludedStates && excludedStates.has(state)) &&
+                !(failed429Projects && failed429Projects.has(lane.fingerprint));
         });
         const statusFor = state => {
             const lane = getLaneForKeyState(state);
@@ -1894,6 +1919,20 @@ async function getAvailableKey(keyStates) {
             return selected;
         }
 
+        if (failFastIfNoAvailable) {
+            const error = new Error('429: Nu mai există proiecte Gemini neîncercate și eligibile momentan pentru această cerere.');
+            error.isRateLimit429 = true;
+            error.isPoolRotationExhausted = true;
+            const nextTransient = nonDisabled
+                .map(state => {
+                    const lane = getLaneForKeyState(state);
+                    return Math.max(Number(state.pausedUntil || 0), Number(lane?.cooldownUntil || 0));
+                })
+                .filter(until => until > now);
+            if (nextTransient.length) error.retryAfterMs = Math.max(1000, Math.min(...nextTransient) - now);
+            throw error;
+        }
+
         const dailyBlocked = nonDisabled
             .map(state => ({ state, ...statusFor(state) }))
             .filter(entry => entry.dailyUntil > now);
@@ -1924,52 +1963,63 @@ async function getAvailableKey(keyStates) {
 }
 
 async function callGeminiWithKeyRotation(prompt, keyStates, options = {}) {
-    // Recuperările auxiliare nu trebuie să rotească prin toate cele 10 proiecte
-    // când există o limitare 429 în lanț. După două proiecte, oprim retry-urile
-    // individuale; etapa Final Empty Recovery păstrează o singură cerere agregată.
+    // O cerere auxiliară poate rota prin fiecare proiect eligibil, fără să
+    // reîncerce aceeași cheie. Oprirea globală a recuperărilor se activează numai
+    // după epuizarea proiectelor eligibile sau după detectarea exclusivă a cotelor zilnice.
     const allowAfter429Hold = options.allowAfter429Hold === true;
     if (keyStates._secondaryRecovery429Hold) {
         if (!allowAfter429Hold || keyStates._finalRecoveryAfter429Attempted) {
-            const blockedError = new Error('429: recuperările Gemini auxiliare sunt oprite după răspunsuri 429 repetate; nu se pornesc alte cereri de reparație.');
+            const blockedError = new Error('429: pool-ul Gemini a fost epuizat în recuperările anterioare; nu se pornesc alte cereri auxiliare.');
             blockedError.isRateLimit429 = true;
             blockedError.isSecondaryRecoveryBlocked = true;
             throw blockedError;
         }
         keyStates._finalRecoveryAfter429Attempted = true;
     } else if (allowAfter429Hold) {
-        // Rezervăm etapa agregată finală o singură dată; dacă și ea întâlnește
-        // 429 repetat, nu va urma o altă serie de cereri în aceeași procesare.
+        // Cererea agregată finală este permisă cel mult o dată după circuitul 429.
         keyStates._finalRecoveryAfter429Attempted = true;
     }
 
-    const maxAttempts = Math.max(1, Math.min(2, Array.isArray(keyStates) ? keyStates.length : 1));
+    const maxAttempts = Math.max(1, Array.isArray(keyStates) ? keyStates.length : 1);
+    const attemptedKeyStates = new Set();
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        let keyState = null;
         try {
-            const keyState = await getAvailableKey(keyStates);
+            keyState = await getAvailableKey(keyStates, {
+                excludeStates: attemptedKeyStates,
+                exclude429WaveFailures: true,
+                failFastIfNoAvailable: true
+            });
+            attemptedKeyStates.add(keyState);
             return await callGemini(prompt, keyState, options);
         } catch (error) {
             lastError = error;
             const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(String(error?.message || ''));
             if (!is429) throw error;
 
-            // Un 429 izolat permite o singură schimbare de proiect pentru aceeași
-            // cerere auxiliară. Al doilea 429 oprește recuperările per-ID, altfel
-            // fiecare ID rămas gol ar putea porni încă o rotație de până la 10 chei.
             const allBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
-            if (allBlocked || (!allowAfter429Hold && keyStates._secondaryRecovery429Hold) || attempt >= maxAttempts) {
-                if (!allBlocked && attempt >= maxAttempts && (allowAfter429Hold || !keyStates._secondaryRecovery429Hold)) {
-                    keyStates._secondaryRecovery429Hold = true;
-                    keyStates._emptyRecoveryIndividualRetriesDisabled = true;
-                    const message = allowAfter429Hold
-                        ? '[Gemini Recovery] 429 repetat și în cererea agregată finală; opresc apelurile auxiliare pentru această procesare.'
-                        : '[Gemini Recovery] Două răspunsuri 429; opresc retry-urile individuale și păstrez o singură cerere agregată finală.';
-                    console.log(`${c.yellow}${message}${c.reset}`);
-                }
+            if (allBlocked) throw error;
+
+            if (error?.isPoolRotationExhausted) {
+                keyStates._secondaryRecovery429Hold = true;
+                keyStates._emptyRecoveryIndividualRetriesDisabled = true;
+                console.log(`${c.yellow}[Gemini Recovery] Nu mai există proiecte neîncercate și eligibile; opresc recuperările individuale și păstrez traducerile deja obținute.${c.reset}`);
+                throw lastError;
+            }
+
+            if (attempt >= maxAttempts) {
+                keyStates._secondaryRecovery429Hold = true;
+                keyStates._emptyRecoveryIndividualRetriesDisabled = true;
+                const message = allowAfter429Hold
+                    ? '[Gemini Recovery] Toate proiectele eligibile au fost încercate și au răspuns 429 inclusiv în recuperarea agregată finală.'
+                    : `[Gemini Recovery] Toate proiectele eligibile au fost încercate (${attemptedKeyStates.size}/${maxAttempts}); opresc recuperările individuale.`;
+                console.log(`${c.yellow}${message}${c.reset}`);
                 throw error;
             }
-            console.log(`${c.yellow}[Gemini Recovery] 429 pe un proiect; încerc un singur proiect alternativ (${attempt + 1}/${maxAttempts}).${c.reset}`);
+
+            console.log(`${c.yellow}[Gemini Recovery] 429; trec la următorul proiect eligibil (${attemptedKeyStates.size}/${maxAttempts} proiecte încercate pentru această cerere).${c.reset}`);
         }
     }
 
@@ -2797,19 +2847,25 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
     let lastError = null;
 
-    // 5xx păstrează retry-ul limitat. Pentru 429 încercăm imediat o singură
-    // cheie alternativă; dacă și aceea este limitată, amânăm calupul pentru o
-    // singură reîncercare secvențială după terminarea turei inițiale.
-    const maxKeyAttempts = 8;
+    // Pentru 429, fiecare cerere poate încerca o singură dată fiecare proiect
+    // disponibil din pool. Proiectele deja limitate de alte calupuri sunt sărite;
+    // calupul intră în coada limitată dacă nu mai există o cheie eligibilă.
+    // Erorile 5xx păstrează aceeași politică de retry limitat prin acest loop.
+    const maxKeyAttempts = Math.max(1, Array.isArray(keyStates) ? keyStates.length : 1);
+    const attemptedKeyStates = new Set();
     let sawRateLimit429 = false;
-    let immediate429RetryUsed = false;
 
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
         let keyState = null;
         try {
-            // Alegem proiectul la nivel global, ținând cont de toate traducerile
-            // active în acest proces și evitând proiectele aflate în pauză după 429.
-            keyState = await getAvailableKey(keyStates);
+            keyState = await getAvailableKey(keyStates, {
+                excludeStates: attemptedKeyStates,
+                exclude429WaveFailures: true,
+                // O singură probă amânată poate aștepta eliberarea pool-ului;
+                // în tura inițială evităm ca fiecare calup concurent să aștepte separat.
+                failFastIfNoAvailable: !(deferred429Retry && attemptedKeyStates.size === 0)
+            });
+            attemptedKeyStates.add(keyState);
 
             if (alignmentRepair) {
                 console.log(`${c.cyan}➤ [Aliniere] Retraduc segment punctual (${chunk.length} replici)...${c.reset}`);
@@ -2943,13 +2999,17 @@ ${JSON.stringify(missingItems, null, 2)}
             const is5xx = /status code 5\d\d/.test(error.message);
             const isTransient = !isDailyQuotaBlocked && (is429 || is5xx);
 
-            // callGemini a înregistrat deja detaliile 429. Nu mai rotim în buclă
-            // prin toate proiectele: cel mult o trecere imediată pe alt proiect.
+            // callGemini a înregistrat deja detaliile 429. Trecem la următorul
+            // proiect neîncercat; ne oprim când pool-ul nu mai are alternative eligibile.
             if (is429 && !isDailyQuotaBlocked) {
-                if (!deferred429Retry && !immediate429RetryUsed && attempt < maxKeyAttempts) {
-                    immediate429RetryUsed = true;
-                    console.log(`${c.yellow}[Gemini Recovery] 429; încerc imediat un alt proiect pentru același calup (o singură schimbare de proiect).${c.reset}`);
+                if (!error?.isPoolRotationExhausted && attempt < maxKeyAttempts) {
+                    console.log(`${c.yellow}[Gemini Recovery] 429; trec la următorul proiect eligibil (${attemptedKeyStates.size}/${maxKeyAttempts} proiecte încercate pentru acest calup).${c.reset}`);
                     continue;
+                }
+                if (error?.isPoolRotationExhausted) {
+                    console.log(`${c.yellow}[Gemini Recovery] Rotație oprită: nu mai există proiecte neîncercate și eligibile pentru acest calup.${c.reset}`);
+                } else if (attempt >= maxKeyAttempts) {
+                    console.log(`${c.yellow}[Gemini Recovery] Toate proiectele din pool au fost încercate pentru acest calup; îl trimit în coada limitată de retry.${c.reset}`);
                 }
                 break;
             }
@@ -4420,24 +4480,27 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         const high429Queue = deferred429Chunks.length >= Math.max(1, Math.ceil(chunks.length * 0.5));
         console.log(`${c.cyan}[429 Retry] ${deferred429Chunks.length} calupuri/segmente amânate; coadă ${high429Queue ? 'mare' : 'limitată'}.${c.reset}`);
 
-        // Când jumătate sau mai multe calupuri au primit 429, nu le lovim pe rând
-        // imediat ce se eliberează primul proiect. Așteptăm o singură fereastră de
-        // cooldown (maximul temporar curent), apoi testăm recuperarea cu primul calup.
-        // Dacă și proba eșuează, circuitul se deschide și restul cozii este abandonat.
-        if (high429Queue) {
-            const availableBeforeProbe = getGeminiPoolAvailability(keyStates);
-            if (!availableBeforeProbe.available.length) {
-                const waitMs = getMaximumTransientPoolCooldownMs(keyStates);
-                if (waitMs > 0 && waitMs <= 60000) {
-                    console.log(`${c.yellow}[429 Retry] ${Math.ceil(waitMs / 1000)}s pauză unică înaintea probei; nu testăm proiectele unul câte unul în cooldown.${c.reset}`);
-                    await sleep(waitMs + 250);
-                } else {
-                    tripPrimary429Circuit(keyStates, 'majoritatea calupurilor au primit 429, iar pool-ul nu are o fereastră temporară de recuperare utilizabilă');
-                }
-            }
+        // După epuizarea rundei de proiecte, nu reluăm cererile doar pentru prima
+        // cheie eliberată. Așteptăm o singură dată până expiră cel mai lung cooldown
+        // temporar (dacă este rezonabil), apoi facem o singură rotație nouă prin pool.
+        // Se aplică atât unei cozi mici, cât și uneia mari: cheia următoare nu trebuie
+        // reîncercată înainte ca pool-ul să fi avut șansa să se elibereze.
+        const availableBeforeProbe = getGeminiPoolAvailability(keyStates);
+        const waitMs = getMaximumTransientPoolCooldownMs(keyStates, Date.now(), true);
+        if (waitMs > 0 && waitMs <= 60000) {
+            console.log(`${c.yellow}[429 Retry] ${Math.ceil(waitMs / 1000)}s pauză unică înaintea unei rotații de recuperare; aștept expirarea cooldown-urilor temporare pentru a putea încerca pool-ul fără să repet cheile prematur.${c.reset}`);
+            await sleep(waitMs + 250);
+        } else if (!availableBeforeProbe.available.length) {
+            tripPrimary429Circuit(keyStates, high429Queue
+                ? 'majoritatea calupurilor au primit 429, iar pool-ul nu are o fereastră temporară de recuperare utilizabilă'
+                : 'pool-ul nu are proiecte disponibile și nici o fereastră temporară de recuperare utilizabilă');
         }
 
         if (!keyStates._primary429CircuitOpen) {
+            // Începe o singură rundă de recuperare după fereastra de cooldown.
+            // Resetăm marcajele 429 ale rundei inițiale, nu pauzele pe fiecare proiect.
+            keyStates._429WaveFailedProjects = new Set();
+            keyStates._429WaveExhaustionLogged = false;
             for (let taskIndex = 0; taskIndex < deferred429Chunks.length; taskIndex++) {
                 const task = deferred429Chunks[taskIndex];
                 await sleep(taskIndex === 0 ? 0 : 1000);
