@@ -49,6 +49,8 @@ const SUBTITLE_PREFLIGHT_MAX_BYTES = 1_500_000;
 const MEDIA_RUNTIME_CACHE_TTL_MS = 30 * 60 * 1000;
 const LAST_SUBTITLE_CHOICE_CACHE_MAX_ENTRIES = 100;
 const LAST_SUBTITLE_CHOICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const TRANSLATED_SUBTITLE_FINGERPRINT_CACHE_MAX_ENTRIES = 500;
+const TRANSLATED_SUBTITLE_FINGERPRINT_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
@@ -85,6 +87,9 @@ const mediaTitleCache = Object.create(null);
 const subtitlePreflightCache = new Map();
 const mediaRuntimeCache = new Map();
 const lastSubtitleChoiceCache = new Map();
+// Amprentele subtitrărilor-sursă traduse cu succes, ca să nu fie oferite din nou
+// când același SRT apare prin alt URL/proxy. Cache-ul este în memorie, limitat și cu TTL.
+const translatedSubtitleFingerprintCache = new Map();
 
 // Rezolvă numele filmului/serialului din Cinemeta pentru antetul de început.
 // Dacă metadatele lipsesc, traducerea continuă folosind ID-ul.
@@ -248,6 +253,116 @@ function isSubtitleTranslationCached(subtitleUrl) {
     return false;
 }
 
+function normalizeSubtitleCueForFingerprint(rawText) {
+    return String(rawText || '')
+        .replace(/\{\\[^}]*\}/g, ' ')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;|&#160;?/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;|&apos;/gi, "'")
+        .replace(/[’‘`]/g, "'")
+        .normalize('NFKC')
+        .toLowerCase()
+        // Ignorăm diferențele cosmetice de punctuație/capitalizare, dar păstrăm cuvintele.
+        .replace(/[^\p{L}\p{N}']+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function createSubtitleContentFingerprint(rawText) {
+    const text = String(rawText || '').replace(/^\uFEFF/, '').replace(/\r/g, '');
+    if (!text.trim() || /<(?:html|head|body)\b|access denied|404 not found|cloudflare|captcha/i.test(text.slice(0, 12000))) return '';
+
+    const blocks = text.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
+    const cues = [];
+    let wordCount = 0;
+    const timingPattern = /((?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{3})\s*-->\s*((?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{3})/;
+
+    for (const block of blocks) {
+        const lines = block.split('\n');
+        let timingIndex = -1;
+        let timingMatch = null;
+        for (let i = 0; i < lines.length; i++) {
+            const candidate = lines[i].match(timingPattern);
+            if (candidate) {
+                timingIndex = i;
+                timingMatch = candidate;
+                break;
+            }
+        }
+        if (timingIndex < 0 || !timingMatch) continue;
+
+        const startMs = subtitleTimeToMs(timingMatch[1]);
+        const endMs = subtitleTimeToMs(timingMatch[2]);
+        if (startMs === null || endMs === null || endMs < startMs) continue;
+
+        const body = normalizeSubtitleCueForFingerprint(lines.slice(timingIndex + 1).join(' '));
+        if (!body) continue;
+        wordCount += body.split(/\s+/).filter(Boolean).length;
+        // Include timing to avoid merging the same dialogue synced for different cuts/editions.
+        cues.push(`${startMs}|${endMs}|${body}`);
+    }
+
+    // Too little content is not a reliable fingerprint for a whole subtitle file.
+    if (cues.length < 20 || wordCount < 60) return '';
+    return crypto.createHash('sha256').update(cues.join('\n'), 'utf8').digest('hex');
+}
+
+function trimTranslatedSubtitleFingerprintCache() {
+    const now = Date.now();
+    for (const [fingerprint, entry] of translatedSubtitleFingerprintCache) {
+        if (!entry || entry.expiresAt <= now) translatedSubtitleFingerprintCache.delete(fingerprint);
+    }
+    while (translatedSubtitleFingerprintCache.size > TRANSLATED_SUBTITLE_FINGERPRINT_CACHE_MAX_ENTRIES) {
+        translatedSubtitleFingerprintCache.delete(translatedSubtitleFingerprintCache.keys().next().value);
+    }
+}
+
+function rememberTranslatedSubtitleFingerprint(fingerprint, sourceUrl = '') {
+    if (!fingerprint) return;
+    translatedSubtitleFingerprintCache.delete(fingerprint);
+    translatedSubtitleFingerprintCache.set(fingerprint, {
+        sourceUrl: normalizeSubtitleCacheUrl(sourceUrl),
+        expiresAt: Date.now() + TRANSLATED_SUBTITLE_FINGERPRINT_CACHE_TTL_MS
+    });
+    trimTranslatedSubtitleFingerprintCache();
+}
+
+function isKnownTranslatedSubtitleFingerprint(fingerprint) {
+    if (!fingerprint) return false;
+    const entry = translatedSubtitleFingerprintCache.get(fingerprint);
+    if (!entry) return false;
+    if (entry.expiresAt <= Date.now()) {
+        translatedSubtitleFingerprintCache.delete(fingerprint);
+        return false;
+    }
+    // LRU bump while preserving the original expiry.
+    translatedSubtitleFingerprintCache.delete(fingerprint);
+    translatedSubtitleFingerprintCache.set(fingerprint, entry);
+    return true;
+}
+
+function seedTranslatedSubtitleFingerprintsFromMemory() {
+    // Backfill și pentru traducerile în cache din această sesiune, create înaintea amprentei.
+    for (const [cacheKey, translatedText] of memoryCache) {
+        if (typeof translatedText !== 'string') continue;
+        let originalText = originalSources[cacheKey];
+        if (!originalText) {
+            const normalizedKey = normalizeSubtitleCacheUrl(cacheKey);
+            for (const [sourceKey, sourceText] of Object.entries(originalSources)) {
+                if (normalizeSubtitleCacheUrl(sourceKey) === normalizedKey) {
+                    originalText = sourceText;
+                    break;
+                }
+            }
+        }
+        if (!originalText) continue;
+        const fingerprint = createSubtitleContentFingerprint(originalText);
+        if (fingerprint) rememberTranslatedSubtitleFingerprint(fingerprint, cacheKey);
+    }
+}
+
 function logTranslationStart(mediaId, mediaTitle) {
     const headline = '🎬 ÎNCEPE TRADUCEREA';
     const cleanId = String(mediaId || 'ID necunoscut')
@@ -307,7 +422,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.187',
+    version: '12.78.188',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -542,6 +657,19 @@ async function handleSubtitles(req, res) {
             }
         });
 
+        // Nu mai afișăm URL-uri pentru care traducerea există deja în cache.
+        // Se face înainte de scorare/preflight, ca să nu consumăm sloturi din cele 6 verificări.
+        const alreadyTranslatedUrlCount = diverseSubs.filter(candidate =>
+            isSubtitleTranslationCached(candidate.originalUrl)
+        ).length;
+        diverseSubs = diverseSubs.filter(candidate =>
+            !isSubtitleTranslationCached(candidate.originalUrl)
+        );
+        if (!diverseSubs.length) {
+            console.log(`[Subtitles] Toate candidatele găsite pentru ${id} au deja traducere în cache; nu afișez variante traduse.`);
+            return res.json({ subtitles: [] });
+        }
+
         const fNameLower = userFilename.toLowerCase();
 
         // ============================================================
@@ -750,15 +878,15 @@ async function handleSubtitles(req, res) {
             if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
         });
 
-        // Prioritizăm variantele deja traduse, apoi ultima alegere pentru același film/fișier.
+        // Nu prioritizăm rezultatele deja traduse: acestea au fost eliminate mai sus.
+        // Se poate prefera ultima alegere numai dacă ea nu mai are traducere disponibilă în cache.
         const candidatePreferenceRank = candidate => {
-            if (isSubtitleTranslationCached(candidate.originalUrl)) return 2;
             if (lastChosenSubtitleUrl && normalizeSubtitleCacheUrl(candidate.originalUrl) === normalizeSubtitleCacheUrl(lastChosenSubtitleUrl)) return 1;
             return 0;
         };
         diverseSubs.forEach(candidate => {
             candidate._preferenceRank = candidatePreferenceRank(candidate);
-            candidate._isCachedTranslation = candidate._preferenceRank === 2;
+            candidate._isCachedTranslation = false;
             candidate._isLastChoice = candidate._preferenceRank === 1;
         });
         const compareCandidates = (a, b) =>
@@ -795,18 +923,64 @@ async function handleSubtitles(req, res) {
         ));
         const runtimeMinutes = await runtimePromise;
         let preflightVerifiedCount = 0;
+        let duplicateContentCount = 0;
+        let alreadyTranslatedContentCount = 0;
+        let unusablePreflightCount = 0;
+
         for (let i = 0; i < preflightCandidates.length; i++) {
             const candidate = preflightCandidates[i];
             const text = preflightTexts[i];
-            if (typeof text !== 'string' || !text.trim()) continue;
+            if (typeof text !== 'string' || !text.trim()) {
+                candidate._skipFromResults = true;
+                unusablePreflightCount++;
+                continue;
+            }
             const diagnostics = analyzeSubtitleCandidateText(text);
             candidate._preflight = diagnostics;
             candidate._preflightVerified = true;
             candidate.score += diagnostics.score + scoreSubtitleRuntimeFit(diagnostics, runtimeMinutes);
+            candidate._contentFingerprint = createSubtitleContentFingerprint(text);
             preflightVerifiedCount++;
         }
+
+        // Înregistrează amprentele traducerilor deja reușite în această sesiune.
+        // Apoi ascunde și URL-urile alternative care livrează același SRT deja tradus.
+        seedTranslatedSubtitleFingerprintsFromMemory();
+        const candidateByFingerprint = new Map();
+        for (const candidate of preflightCandidates) {
+            if (candidate._skipFromResults) continue;
+            if (!candidate._contentFingerprint) {
+                candidate._skipFromResults = true;
+                unusablePreflightCount++;
+                continue;
+            }
+            if (isKnownTranslatedSubtitleFingerprint(candidate._contentFingerprint)) {
+                candidate._skipFromResults = true;
+                alreadyTranslatedContentCount++;
+                continue;
+            }
+
+            const existing = candidateByFingerprint.get(candidate._contentFingerprint);
+            if (!existing) {
+                candidateByFingerprint.set(candidate._contentFingerprint, candidate);
+                continue;
+            }
+
+            // Păstrăm un singur URL pentru conținut identic: câștigă varianta cu scorul mai bun.
+            duplicateContentCount++;
+            if (compareCandidates(candidate, existing) < 0) {
+                existing._skipFromResults = true;
+                candidateByFingerprint.set(candidate._contentFingerprint, candidate);
+            } else {
+                candidate._skipFromResults = true;
+            }
+        }
+
+        diverseSubs = preflightCandidates.filter(candidate =>
+            candidate._preflightVerified && candidate._contentFingerprint && !candidate._skipFromResults
+        );
         if (preflightCandidates.length) {
-            console.log(`[Subtitles] Verificare locală: ${preflightVerifiedCount}/${preflightCandidates.length} candidați analizați; runtime Cinemeta ${runtimeMinutes ? `${Math.round(runtimeMinutes)} min` : 'indisponibil'}; fără AI.`);
+            console.log(`[Subtitles] Filtrare locală pentru ${id}: analizate ${preflightVerifiedCount}/${preflightCandidates.length}; eliminate ${alreadyTranslatedUrlCount} deja traduse după URL, ${alreadyTranslatedContentCount} deja traduse după conținut, ${duplicateContentCount} duplicate, ${unusablePreflightCount} neverificabile; rămân ${diverseSubs.length} surse unice netraduse. Runtime Cinemeta ${runtimeMinutes ? `${Math.round(runtimeMinutes)} min` : 'indisponibil'}; fără AI.`);
         }
 
         diverseSubs.sort(compareCandidates);
@@ -847,9 +1021,7 @@ async function handleSubtitles(req, res) {
             }
 
             let labelName = `🇷🇴 RO AI [${index + 1}]`;
-            if (s._isCachedTranslation || isSubtitleTranslationCached(s.originalUrl)) {
-                labelName = `🇷🇴 RO AI ✓ TRADUSĂ [${index + 1}]`;
-            } else if (s._isLastChoice) {
+            if (s._isLastChoice) {
                 labelName = `🇷🇴 RO AI ✓ ALEASĂ [${index + 1}]`;
             }
             if (foundTags.length > 0) labelName += ` • ${foundTags.join(' | ')}`;
@@ -6662,6 +6834,10 @@ app.get('/:configData/translate', async (req, res) => {
         const finalSrt = await processPromise;
         
         if (finalSrt && finalSrt.trim().length > 0 && !qaStatus.hasErrors) {
+            // Memorăm amprenta sursei doar după o traducere reușită, ca duplicatele cu alt URL
+            // să poată fi ascunse la căutările următoare din aceeași sesiune a serverului.
+            const sourceFingerprint = createSubtitleContentFingerprint(originalSources[cacheKey] || '');
+            if (sourceFingerprint) rememberTranslatedSubtitleFingerprint(sourceFingerprint, cacheKey);
             // Memorăm ultima alegere numai după o traducere utilizabilă, asociată filmului/fișierului.
             rememberLastSubtitleChoice(choiceKey, cacheKey);
             const now = new Date();
