@@ -34,6 +34,11 @@ const CONCURRENCY_LIMIT = 3;
 // Pauzele Retry-After/cooldown ale proiectului rămân separate și pot fi mai lungi.
 const GEMINI_429_INTER_REQUEST_PAUSE_MS = 5000;
 
+// După calupul 12, spațiem pornirile cererilor aferente calupurilor 13+ la 2 secunde.
+const GEMINI_DEFAULT_REQUEST_START_INTERVAL_MS = 1200;
+const GEMINI_LATER_CHUNK_START_INTERVAL_MS = 2000;
+const GEMINI_LATER_CHUNK_PACING_START_CHUNK = 13;
+
 const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
 const PREVIOUS_TRANSLATION_CONTEXT = 8;
@@ -159,7 +164,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.185',
+    version: '12.78.186',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1433,6 +1438,7 @@ const geminiRequestControl = {
     targetConcurrent: CONCURRENCY_LIMIT,
     cooldownUntil: 0,
     nextStartAt: 0,
+    lastStartAt: 0,
     waiters: new Set(),
     consecutive429: 0,
     consecutive5xx: 0,
@@ -1467,15 +1473,27 @@ function waitForGeminiRequestChange(timeoutMs = 250) {
     });
 }
 
-async function acquireGeminiRequestSlot() {
+async function acquireGeminiRequestSlot(requestStartIntervalMs = GEMINI_DEFAULT_REQUEST_START_INTERVAL_MS) {
+    const requiredIntervalMs = Math.max(
+        GEMINI_DEFAULT_REQUEST_START_INTERVAL_MS,
+        Number(requestStartIntervalMs) || GEMINI_DEFAULT_REQUEST_START_INTERVAL_MS
+    );
     while (true) {
         const now = Date.now();
         const cooldownMs = Math.max(0, geminiRequestControl.cooldownUntil - now);
-        const pacingMs = Math.max(0, geminiRequestControl.nextStartAt - now);
+        const lastStartAt = Number(geminiRequestControl.lastStartAt || 0);
+        // Intervalul cerut de apelul curent este respectat și față de ultima pornire,
+        // chiar dacă cererea anterioară avea intervalul normal de 1200 ms.
+        const requestSpecificPacingMs = lastStartAt > 0
+            ? Math.max(0, lastStartAt + requiredIntervalMs - now)
+            : 0;
+        const pacingMs = Math.max(0, geminiRequestControl.nextStartAt - now, requestSpecificPacingMs);
 
         if (cooldownMs <= 0 && pacingMs <= 0 && geminiRequestControl.active < geminiRequestControl.maxConcurrent) {
             geminiRequestControl.active++;
-            geminiRequestControl.nextStartAt = Date.now() + 1200;
+            const requestStartedAt = Date.now();
+            geminiRequestControl.lastStartAt = requestStartedAt;
+            geminiRequestControl.nextStartAt = requestStartedAt + requiredIntervalMs;
             let released = false;
             return () => {
                 if (released) return;
@@ -2243,6 +2261,14 @@ function createGlobal429DeferralError() {
     return error;
 }
 
+function getRequestStartIntervalMs(requestLabel) {
+    const match = String(requestLabel || '').match(/\bcalup\s+(\d+)/i);
+    const chunkNumber = match ? Number(match[1]) : 0;
+    return chunkNumber >= GEMINI_LATER_CHUNK_PACING_START_CHUNK
+        ? GEMINI_LATER_CHUNK_START_INTERVAL_MS
+        : GEMINI_DEFAULT_REQUEST_START_INTERVAL_MS;
+}
+
 async function callGemini(prompt, keyState, options = {}) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
     const timeout = Number.isInteger(options.timeout) ? options.timeout : 120000;
@@ -2296,7 +2322,7 @@ async function callGemini(prompt, keyState, options = {}) {
         if (Date.now() < Number(geminiRequestControl.global429PauseUntil || 0)) {
             throw createGlobal429DeferralError();
         }
-        releaseGeminiSlot = await acquireGeminiRequestSlot();
+        releaseGeminiSlot = await acquireGeminiRequestSlot(getRequestStartIntervalMs(options.requestLabel));
         // Un val poate începe cât timp cererea așteaptă un slot. În acel caz nu trimitem
         // apelul preselectat după cooldown; lăsăm coada să facă o singură probă controlată.
         if (Number(geminiRequestControl.global429LastTriggerAt || 0) > global429WaveAtCallStart) {
