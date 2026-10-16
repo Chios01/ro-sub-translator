@@ -30,6 +30,10 @@ const BROWSER_USER_AGENT =
 const CHUNK_SIZE = 165;
 const CONCURRENCY_LIMIT = 3;
 
+// După orice răspuns HTTP 429, nu pornim alte cereri Gemini timp de 5 secunde.
+// Pauzele Retry-After/cooldown ale proiectului rămân separate și pot fi mai lungi.
+const GEMINI_429_INTER_REQUEST_PAUSE_MS = 5000;
+
 const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
 const PREVIOUS_TRANSLATION_CONTEXT = 8;
@@ -155,7 +159,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.184',
+    version: '12.78.185',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1660,7 +1664,6 @@ function detectAndApplyGlobal429Wave(lane, quotaKind = 'unknown', requestStarted
     control.successesSinceThrottle = 0;
     control.recent429Projects.clear();
 
-    console.log(`${c.yellow}⏸ [Gemini Control] Limită comună 429 confirmată de mesajul Google. Pauză comună ${Math.ceil(pauseMs / 1000)}s (nivel ${Math.min(waveNumber, 4)}/4); concurență ${previousLimit}→${control.maxConcurrent}/${control.targetConcurrent}. După pauză, recuperarea pornește cu un singur apel și concurența revine gradual după succese.${c.reset}`);
     notifyGeminiRequestWaiters();
     return { triggered: true, waveNumber, pauseMs, pauseUntil, previousLimit, currentLimit: control.maxConcurrent, explicitSharedLimit };
 }
@@ -1668,6 +1671,10 @@ function detectAndApplyGlobal429Wave(lane, quotaKind = 'unknown', requestStarted
 function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = null, requestStartedAt = 0) {
     const now = Date.now();
     const pauseMs = Math.max(1000, Number(cooldownMs) || 15000);
+    geminiRequestControl.nextStartAt = Math.max(
+        Number(geminiRequestControl.nextStartAt || 0),
+        now + GEMINI_429_INTER_REQUEST_PAUSE_MS
+    );
     const lane = getLaneForKeyState(keyState);
     geminiRequestControl.consecutive429++;
     geminiRequestControl.consecutive5xx = 0;
@@ -1701,18 +1708,13 @@ function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = n
         : 1;
     // Un proiect limitat nu blochează celelalte proiecte. Pauza comună este
     // rezervată unei limite comune identificate explicit în răspunsul Google.
-    detectAndApplyGlobal429Wave(lane, quotaKind, requestStartedAt, now, activeProjectCount, pauseMs);
-    const poolStatus = updateGlobal429GateIfPoolExhausted(pool, { log: true });
-    const projectLabel = lane ? lane.fingerprint.slice(0, 8) : 'necunoscut';
-    const previousLimit = geminiRequestControl.maxConcurrent;
-    const availableText = poolStatus.available > 0
-        ? ` Rămân ${poolStatus.available} proiecte disponibile; concurența globală este ${previousLimit}/${geminiRequestControl.targetConcurrent}.`
-        : poolStatus.dailyOnly
-            ? ' Toate proiectele din pool au cotă zilnică epuizată.'
-            : poolStatus.allBlocked
-                ? ' Nu mai există proiecte eligibile momentan; selectorul va aștepta primul proiect disponibil.'
-                : '';
-    console.log(`${c.yellow}⚠ [Gemini Control] 429 pe proiectul ${projectLabel} (${quotaKind}); doar acest proiect intră în pauză ${quotaKind === 'daily' ? 'până la resetarea cotei' : `${Math.ceil(pauseMs / 1000)}s`}.${availableText}${c.reset}`);
+    const globalWave = detectAndApplyGlobal429Wave(lane, quotaKind, requestStartedAt, now, activeProjectCount, pauseMs);
+    const poolStatus = updateGlobal429GateIfPoolExhausted(pool, { log: false });
+    const projectIndex = Array.isArray(pool) ? pool.indexOf(keyState) : -1;
+    const projectLabel = lane
+        ? `${projectIndex >= 0 ? `${projectIndex + 1}/${pool.length} ` : ''}[${lane.fingerprint.slice(0, 8)}]`
+        : 'necunoscut';
+    let waveExhausted = false;
     if (Array.isArray(pool)) {
         const activeProjects = new Set(pool.filter(state => {
             const currentLane = getLaneForKeyState(state);
@@ -1720,10 +1722,11 @@ function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = n
         }).map(state => getLaneForKeyState(state)?.fingerprint).filter(Boolean));
         if (activeProjects.size && pool._429WaveFailedProjects.size >= activeProjects.size && !pool._429WaveExhaustionLogged) {
             pool._429WaveExhaustionLogged = true;
-            console.log(`${c.yellow}[Gemini Control] Toate cele ${activeProjects.size} proiecte au răspuns 429 în runda curentă. Fiecare rămâne în cooldown-ul propriu; replicile lipsă intră în recuperarea limitată după ce primul proiect devine eligibil.${c.reset}`);
+            waveExhausted = true;
         }
     }
     notifyGeminiRequestWaiters();
+    return { poolStatus, globalWave, projectLabel, waveExhausted, pauseMs };
 }
 
 function registerGlobalGemini5xx(status) {
@@ -1962,15 +1965,9 @@ function register429(keyStates, cooldownMs, forceGlobal = false) {
 }
 
 async function waitFor429Gate(keyStates) {
-    let lastLoggedUntil = 0;
     while (true) {
         const waitMs = getGlobal429Until(keyStates) - Date.now();
         if (waitMs <= 0) return;
-        const gateUntil = getGlobal429Until(keyStates);
-        if (gateUntil !== lastLoggedUntil) {
-            console.log(`${c.yellow}⏳ [429 Gate] Toate proiectele din acest pool sunt temporar indisponibile. Aștept aproximativ ${Math.ceil(waitMs / 1000)}s până la primul proiect disponibil.${c.reset}`);
-            lastLoggedUntil = gateUntil;
-        }
         // Recheck cel puțin o dată pe secundă: o cerere activă poate reuși între timp
         // și elibera un proiect, caz în care nu mai trebuie așteptată vechea poartă.
         await waitForGeminiRequestChange(Math.min(waitMs, 1000));
@@ -2106,7 +2103,7 @@ async function getAvailableKey(keyStates, options = {}) {
 
         // Pauza globală este justificată numai după ce NU mai există niciun
         // proiect eligibil în pool. O singură cheie limitată nu oprește celelalte.
-        updateGlobal429GateIfPoolExhausted(keyStates, { log: true });
+        updateGlobal429GateIfPoolExhausted(keyStates, { log: false });
         const nextAvailableAt = Math.min(...waitingEntries.map(entry => entry.pausedUntil));
         keyStates._global429Until = nextAvailableAt;
         await waitFor429Gate(keyStates);
@@ -2184,14 +2181,9 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
                 if (error?.isPoolRotationExhausted || rateLimitAttempts >= maxFast429Attempts || attemptedKeyStates.size >= maxKeyAttempts || attempt >= maxKeyAttempts) {
                     keyStates._secondaryRecovery429Hold = true;
                     keyStates._emptyRecoveryIndividualRetriesDisabled = true;
-                    const label = allowAfter429Hold
-                        ? '[Gemini Recovery] Rotația 429 a fost epuizată și pentru recuperarea agregată finală.'
-                        : `[Gemini Recovery] Rotația auxiliară a epuizat proiectele eligibile (${attemptedKeyStates.size}/${maxKeyAttempts}); opresc recuperările punctuale suplimentare.`;
-                    console.log(`${c.yellow}${label}${c.reset}`);
                     throw error;
                 }
-                console.log(`${c.yellow}[Gemini Recovery] 429; proiectul intră în cooldown. Pauză de aproximativ 3s înaintea următorului proiect eligibil (${rateLimitAttempts}/${maxFast429Attempts} încercări rapide).${c.reset}`);
-                await sleep(3000 + Math.floor(Math.random() * 501));
+                await sleep(GEMINI_429_INTER_REQUEST_PAUSE_MS + Math.floor(Math.random() * 501));
                 continue;
             }
 
@@ -2376,33 +2368,30 @@ async function callGemini(prompt, keyState, options = {}) {
             const cooldownMs = extractGeminiRetryDelayMs(error, fallbackCooldown);
             keyState.pausedUntil = Math.max(Number(keyState.pausedUntil || 0), Date.now() + cooldownMs);
             if (quotaInfo.kind === 'daily') keyState.dailyQuotaUntil = Math.max(Number(keyState.dailyQuotaUntil || 0), getNextPacificMidnightMs());
-            registerGlobalGemini429(cooldownMs, quotaInfo.kind, keyState, laneRequestStartedAt);
+            const registration = registerGlobalGemini429(cooldownMs, quotaInfo.kind, keyState, laneRequestStartedAt);
 
-            const providerMessage = quotaInfo.message;
+            const providerMessage = String(quotaInfo.message || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 260);
+            const requestLabel = String(options.requestLabel || 'Cerere Gemini')
+                .replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
+            const projectLabel = registration?.projectLabel || (lane ? `[${lane.fingerprint.slice(0, 8)}]` : 'necunoscut');
+            const projectPause = quotaInfo.kind === 'daily'
+                ? `până la resetarea estimată ${new Date(keyState.dailyQuotaUntil).toISOString()}`
+                : `${Math.ceil(cooldownMs / 1000)}s`;
+            const poolStatus = registration?.poolStatus || {};
+            const poolNote = poolStatus.dailyOnly
+                ? ' Toate proiectele active sunt marcate cu cotă zilnică epuizată.'
+                : poolStatus.allBlocked && poolStatus.resumeAt
+                    ? ` Niciun proiect eligibil acum; următoarea probă este estimată în ${Math.max(1, Math.ceil((poolStatus.resumeAt - Date.now()) / 1000))}s.`
+                    : poolStatus.available > 0
+                        ? ` Alte proiecte eligibile: ${poolStatus.available}.`
+                        : '';
+            const sharedNote = registration?.globalWave?.triggered
+                ? ` Limită comună confirmată; pauză globală ${Math.ceil(registration.globalWave.pauseMs / 1000)}s.`
+                : '';
+            const providerNote = providerMessage ? ` Detaliu Google: ${providerMessage}` : ' Detaliul exact al cotei nu a fost furnizat de Google.';
             const details = providerMessage ? ` Detaliu Google: ${providerMessage}` : '';
             const structuredDetails = quotaInfo.detailsText ? ` Detalii cotă: ${quotaInfo.detailsText}` : '';
-            const responseShape = (!providerMessage && !structuredDetails)
-                ? ` Răspunsul nu conține mesaj/detalii de cotă utilizabile (HTTP ${status}; status=${quotaInfo.providerStatus || 'absent'}; code=${quotaInfo.providerCode ?? 'absent'}; câmpuri=${quotaInfo.responseDataKeys || 'niciunul'}).`
-                : '';
-            const diagnosis = quotaInfo.kind === 'daily'
-                ? 'limită zilnică indicată de Google'
-                : quotaInfo.kind === 'rate'
-                    ? 'limită de frecvență indicată de Google'
-                    : quotaInfo.kind === 'shared'
-                        ? 'limită comună de cont/spend indicată de Google'
-                        : 'tipul exact al cotei nu a putut fi clasificat';
-            const recentCalls = lane ? getRecentProjectRequestCount(lane, Date.now()) : 0;
-            const diagnosticParts = [
-                `tip=${quotaInfo.kind}`,
-                quotaInfo.message ? `mesaj Google=${quotaInfo.message}` : 'mesaj Google absent',
-                quotaInfo.detailsText ? `detalii=${quotaInfo.detailsText}` : '',
-                `status=${quotaInfo.providerStatus || 'absent'}`,
-                `cod=${quotaInfo.providerCode ?? 'absent'}`,
-                `cereri proiect/60s=${recentCalls}`,
-                `răspunsuri 429 consecutive pe proiect=${Number(lane?.consecutive429 || 0)}`,
-                `retry=${Math.ceil(cooldownMs / 1000)}s`
-            ].filter(Boolean).join('; ').slice(0, 1100);
-            console.log(`${c.yellow}ℹ [Gemini Diagnostic] 429: ${diagnosis}; ${diagnosticParts}.${responseShape}${quotaInfo.kind === 'daily' ? ` Proiectul este pus în pauză până la resetarea estimată ${new Date(keyState.dailyQuotaUntil).toISOString()}.` : ''}${c.reset}`);
+            console.log(`${c.yellow}⚠ [429] ${requestLabel} — proiect ${projectLabel}; tip=${quotaInfo.kind}; pauză proiect ${projectPause}; următoarea cerere Gemini nu pornește timp de minimum ${Math.ceil(GEMINI_429_INTER_REQUEST_PAUSE_MS / 1000)}s.${poolNote}${sharedNote}${providerNote}${c.reset}`);
 
             const retryError = new Error(`Limită Gemini 429; pauză ${Math.ceil(cooldownMs / 1000)}s.${details}${structuredDetails}`);
             retryError.isRateLimit429 = true;
@@ -3518,7 +3507,10 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks}...${c.reset}`);
             }
 
-            const raw = await callGemini(prompt, keyState);
+            const requestLabel = alignmentRepair
+                ? `Segment aliniere pentru calup ${globalChunkIndex + 1}/${totalChunks}`
+                : `Calup ${globalChunkIndex + 1}/${totalChunks}`;
+            const raw = await callGemini(prompt, keyState, { requestLabel });
             const parsed = JSON.parse(String(raw).trim());
             const dict = normalizeTranslationPayload(parsed);
 
@@ -3570,7 +3562,7 @@ LINIILE LIPSĂ SAU GOALE:
 ${JSON.stringify(missingItems, null, 2)}
 `;
                 try {
-                    const missingRaw = await callGeminiWithKeyRotation(missingPrompt, keyStates, { timeout: 20000 });
+                    const missingRaw = await callGeminiWithKeyRotation(missingPrompt, keyStates, { timeout: 20000, requestLabel: `Calup ${globalChunkIndex + 1}/${totalChunks} — recuperare linii lipsă` });
                     const missingJson = JSON.parse(String(missingRaw).trim());
                     const missingDict = normalizeTranslationPayload(missingJson);
                     for (const obj of missingItems) {
@@ -3636,13 +3628,6 @@ ${JSON.stringify(missingItems, null, 2)}
                 sawRateLimit429 = true;
                 rateLimitAttempts++;
             }
-            if (is429 && keyState) {
-                register429(
-                    keyStates,
-                    Number(error.retryAfterMs) || 15000,
-                    error.isProjectQuota429 === true
-                );
-            }
             const isDailyQuotaBlocked = error.isPermanentQuotaBlock === true;
             const errorMessage = String(error?.message || error);
             const status = Number(error?.response?.status || 0);
@@ -3666,8 +3651,7 @@ ${JSON.stringify(missingItems, null, 2)}
                     if (!availability.available.length && !availability.temporarilyPaused.length) {
                         keyStates._secondaryRecovery429Hold = true;
                         keyStates._emptyRecoveryIndividualRetriesDisabled = true;
-                        console.log(`${c.yellow}[429 Retry] Nu există proiecte cu cooldown temporar care să poată reveni; opresc recuperarea fără alte apeluri API.${c.reset}`);
-                        break;
+                            break;
                     }
                     const globalUntil = Math.max(
                         Number(geminiRequestControl.cooldownUntil || 0),
@@ -3679,7 +3663,6 @@ ${JSON.stringify(missingItems, null, 2)}
                         ? Math.max(0, globalUntil - now)
                         : Math.max(Math.max(0, globalUntil - now), projectWait);
                     if (waitMs > 0) {
-                        console.log(`${c.yellow}[429 Retry] Rotația a epuizat proiectele eligibile; aștept aproximativ ${Math.ceil(waitMs / 1000)}s înaintea următoarei ture (${attempt}/${retryLimit}).${c.reset}`);
                         await sleep(Math.min(waitMs, 120000) + 250);
                     }
                     attemptedKeyStates.clear();
@@ -3688,17 +3671,13 @@ ${JSON.stringify(missingItems, null, 2)}
                     continue;
                 }
                 if (!deferred429Retry && rateLimitAttempts >= maxFast429Attempts) {
-                    console.log(`${c.yellow}[Gemini Recovery] Două încercări rapide au primit 429; pun calupul în coada coordonată pentru retry extins după cooldown (${rateLimitAttempts}/${maxFast429Attempts}).${c.reset}`);
                     break;
                 }
                 if (!error?.isPoolRotationExhausted && attempt < retryLimit) {
-                    console.log(`${c.yellow}[Gemini Recovery] 429; proiectul intră în cooldown. Pauză de aproximativ 3s înaintea următorului proiect eligibil (${deferred429Retry ? `${attempt}/${retryLimit}` : `${rateLimitAttempts}/${maxFast429Attempts}`} încercări 429).${c.reset}`);
-                    await sleep(3000 + Math.floor(Math.random() * 501));
+                    await sleep(GEMINI_429_INTER_REQUEST_PAUSE_MS + Math.floor(Math.random() * 501));
                     continue;
                 }
-                if (error?.isPoolRotationExhausted) {
-                    console.log(`${c.yellow}[Gemini Recovery] Nu există încă un proiect neîncercat și eligibil${deferred429Retry ? '; se încheie bugetul de recuperare doar dacă s-au epuizat toate turele.' : '; calupul va aștepta în coada de recuperare.'}${c.reset}`);
-                } else if (attempt >= retryLimit) {
+                if (attempt >= retryLimit) {
                     console.log(`${c.yellow}[Gemini Recovery] Bugetul 429 a fost epuizat (${attempt}/${retryLimit}); păstrez replicile nerezolvate pentru QA FINAL.${c.reset}`);
                 }
                 break;
@@ -4020,6 +3999,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     : prompt;
                 const raw = await callGemini(requestPrompt, keyState, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
+                    requestLabel: `Grammar Review — ${label || `calup ${batchIndex + 1}/${batches.length}`}`,
                     // Folosim MEDIUM și pentru Grammar Review, în acord cu nivelul general de gândire.
                     thinkingLevel: 'MEDIUM',
                     responseSchema: {
@@ -4132,9 +4112,6 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     if (is429) {
                         const cooldownMs = Number(error?.retryAfterMs) || 30000;
                         register429(keyStates, cooldownMs);
-                        const providerDetails = String(error?.providerMessage || message || 'fără detalii suplimentare')
-                            .replace(/\s+/g, ' ').trim().slice(0, 300);
-                        console.log(`${c.yellow}⚠ [Gemini 429] Limită/quota atinsă; pauză ${Math.ceil(cooldownMs / 1000)}s. Detaliu Google: ${providerDetails}${c.reset}`);
                         keyStates._secondaryRecovery429Hold = true;
                         keyStates._emptyRecoveryIndividualRetriesDisabled = true;
                         return { success: false, is429: true, halted: true };
@@ -4182,6 +4159,7 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
                         const fallbackKey = await getAvailableKey(keyStates);
                         const fallbackRaw = await callGemini(fallbackPrompt, fallbackKey, {
                             timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
+                            requestLabel: `Grammar Review — ${label || `calup ${batchIndex + 1}/${batches.length}`} — fallback text`,
                             thinkingLevel: 'MEDIUM',
                             plainText: true
                         });
@@ -5138,7 +5116,7 @@ Format obligatoriu:
 `;
 
     try {
-        const retryRaw = await callGeminiWithKeyRotation(prompt, keyStates, { timeout: 30000 });
+        const retryRaw = await callGeminiWithKeyRotation(prompt, keyStates, { timeout: 30000, requestLabel: `${stageLabel} — ID ${id}` });
         const retryJson = safeJsonParse(retryRaw);
         const retryDict = normalizeTranslationPayload(retryJson);
         const assessment = assessEmptyRecoveryCandidate(item, retryDict[id]);
@@ -5233,7 +5211,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
 
     const failedIds = [];
     try {
-        const recoveryRaw = await callGeminiWithKeyRotation(recoveryPrompt, keyStates, { timeout: 20000, allowAfter429Hold: true });
+        const recoveryRaw = await callGeminiWithKeyRotation(recoveryPrompt, keyStates, { timeout: 20000, allowAfter429Hold: true, requestLabel: 'Final Empty Recovery' });
         const recoveryJson = safeJsonParse(recoveryRaw);
         const recoveryDict = normalizeTranslationPayload(recoveryJson);
 
@@ -5637,7 +5615,7 @@ Returnează DOAR un ARRAY JSON valid în forma:
 `;
 
             try {
-                const recoveryRaw = await callGeminiWithKeyRotation(recoveryPrompt, keyStates);
+                const recoveryRaw = await callGeminiWithKeyRotation(recoveryPrompt, keyStates, { requestLabel: 'Empty Recovery' });
                 const recoveryJson = safeJsonParse(recoveryRaw);
                 const recoveryDict = normalizeTranslationPayload(recoveryJson);
                 parsedInitialResponse = true;
