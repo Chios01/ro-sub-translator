@@ -39,19 +39,6 @@ const GEMINI_DEFAULT_REQUEST_START_INTERVAL_MS = 1200;
 const GEMINI_LATER_CHUNK_START_INTERVAL_MS = 2000;
 const GEMINI_LATER_CHUNK_PACING_START_CHUNK = 13;
 
-// Selecția subtitrării: verificare locală pentru maximum 6 candidați și maximum 5 opțiuni afișate.
-const SUBTITLE_PREFLIGHT_CANDIDATE_LIMIT = 6;
-const SUBTITLE_RESULT_LIMIT = 5;
-const SUBTITLE_PREFLIGHT_CACHE_TTL_MS = 15 * 60 * 1000;
-const SUBTITLE_PREFLIGHT_CACHE_MAX_ENTRIES = 24;
-const SUBTITLE_PREFLIGHT_TIMEOUT_MS = 3500;
-const SUBTITLE_PREFLIGHT_MAX_BYTES = 1_500_000;
-const MEDIA_RUNTIME_CACHE_TTL_MS = 30 * 60 * 1000;
-const LAST_SUBTITLE_CHOICE_CACHE_MAX_ENTRIES = 100;
-const LAST_SUBTITLE_CHOICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const TRANSLATED_SUBTITLE_FINGERPRINT_CACHE_MAX_ENTRIES = 500;
-const TRANSLATED_SUBTITLE_FINGERPRINT_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
 const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
 const PREVIOUS_TRANSLATION_CONTEXT = 8;
@@ -84,12 +71,6 @@ const secretArchive = [];
 // Textul englez sursă, păstrat temporar ca să poată fi descărcat din arhivă (comparație calitate).
 const originalSources = Object.create(null);
 const mediaTitleCache = Object.create(null);
-const subtitlePreflightCache = new Map();
-const mediaRuntimeCache = new Map();
-const lastSubtitleChoiceCache = new Map();
-// Amprentele subtitrărilor-sursă traduse cu succes, ca să nu fie oferite din nou
-// când același SRT apare prin alt URL/proxy. Cache-ul este în memorie, limitat și cu TTL.
-const translatedSubtitleFingerprintCache = new Map();
 
 // Rezolvă numele filmului/serialului din Cinemeta pentru antetul de început.
 // Dacă metadatele lipsesc, traducerea continuă folosind ID-ul.
@@ -121,245 +102,6 @@ async function fetchMediaTitle(mediaId) {
         // O eroare la preluarea numelui nu trebuie să oprească traducerea.
         mediaTitleCache[cacheKey] = '';
         return '';
-    }
-}
-
-
-// Runtime Cinemeta este folosit numai ca semnal de clasare, nu drept motiv unic de excludere.
-function parseMediaRuntimeMinutes(value) {
-    if (value === null || value === undefined) return 0;
-    if (typeof value === 'number' && Number.isFinite(value)) return value > 0 && value < 1000 ? value : 0;
-    const raw = String(value).trim().toLowerCase();
-    if (!raw) return 0;
-    const clock = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-    if (clock) return clock[3] !== undefined ? Number(clock[1]) * 60 + Number(clock[2]) : Number(clock[1]) + Number(clock[2]) / 60;
-    const iso = raw.match(/^pt(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?$/i);
-    if (iso) {
-        const minutes = Number(iso[1] || 0) * 60 + Number(iso[2] || 0);
-        return minutes > 0 && minutes < 1000 ? minutes : 0;
-    }
-    const hours = Number((raw.match(/(\d+(?:\.\d+)?)\s*h(?:ou)?/) || [])[1] || 0);
-    const mins = Number((raw.match(/(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?/) || [])[1] || 0);
-    if (hours || mins) {
-        const total = hours * 60 + mins;
-        return total > 0 && total < 1000 ? total : 0;
-    }
-    if (/^\d+(?:\.\d+)?$/.test(raw)) {
-        const n = Number(raw);
-        return n > 0 && n < 1000 ? n : 0;
-    }
-    return 0;
-}
-
-async function fetchMediaRuntime(mediaId) {
-    const rawId = String(mediaId || '').trim();
-    const match = rawId.match(/^(tt\d+)(?::(\d+)(?::(\d+))?)?$/i);
-    if (!match) return 0;
-    const baseId = match[1];
-    const mediaType = rawId.includes(':') ? 'series' : 'movie';
-    const cacheKey = `${mediaType}:${rawId.toLowerCase()}`;
-    const cached = mediaRuntimeCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) return cached.value;
-    if (cached) mediaRuntimeCache.delete(cacheKey);
-    try {
-        const response = await axios.get(
-            `https://v3-cinemeta.strem.io/meta/${mediaType}/${baseId}.json`,
-            { timeout: 2500, headers: { 'User-Agent': BROWSER_USER_AGENT } }
-        );
-        const meta = response.data?.meta || response.data?.item?.meta || {};
-        let runtimeValue = meta.runtime;
-        if (mediaType === 'series' && Array.isArray(meta.videos) && match[2] && match[3]) {
-            const season = Number(match[2]);
-            const episode = Number(match[3]);
-            const video = meta.videos.find(item => Number(item.season) === season && Number(item.episode) === episode);
-            if (video && video.runtime) runtimeValue = video.runtime;
-        }
-        const value = parseMediaRuntimeMinutes(runtimeValue);
-        mediaRuntimeCache.set(cacheKey, { value, expiresAt: Date.now() + MEDIA_RUNTIME_CACHE_TTL_MS });
-        return value;
-    } catch (_) {
-        mediaRuntimeCache.set(cacheKey, { value: 0, expiresAt: Date.now() + 2 * 60 * 1000 });
-        return 0;
-    }
-}
-
-function normalizeSubtitleCacheUrl(rawUrl) {
-    try {
-        const parsed = new URL(String(rawUrl || '').trim());
-        parsed.hash = '';
-        return parsed.toString();
-    } catch (_) {
-        return String(rawUrl || '').trim();
-    }
-}
-
-function normalizeChoiceFilename(rawFilename) {
-    return String(rawFilename || '')
-        .replace(/\\/g, '/')
-        .split('/')
-        .pop()
-        .normalize('NFKC')
-        .toLowerCase()
-        .replace(/[\r\n\t]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 240);
-}
-
-function makeMediaFileChoiceKey(mediaId, videoHash, videoSize, filename) {
-    const normalizedId = String(mediaId || '').trim().toLowerCase();
-    if (!/^tt\d+(?::\d+(?::\d+)?)?$/i.test(normalizedId)) return '';
-    const hash = String(videoHash || '').trim().toLowerCase();
-    const rawSize = String(videoSize || '').trim();
-    const size = /^\d{1,15}$/.test(rawSize) ? rawSize : '';
-    const normalizedFilename = normalizeChoiceFilename(filename);
-    if (/^[a-f0-9]{8,128}$/.test(hash)) return `${normalizedId}|hash:${hash}${size ? `|size:${size}` : ''}`;
-    if (normalizedFilename) return `${normalizedId}|file:${normalizedFilename}${size ? `|size:${size}` : ''}`;
-    return '';
-}
-
-function getLastSubtitleChoice(choiceKey) {
-    if (!choiceKey) return '';
-    const entry = lastSubtitleChoiceCache.get(choiceKey);
-    if (!entry) return '';
-    if (entry.expiresAt <= Date.now()) {
-        lastSubtitleChoiceCache.delete(choiceKey);
-        return '';
-    }
-    lastSubtitleChoiceCache.delete(choiceKey);
-    lastSubtitleChoiceCache.set(choiceKey, entry);
-    return entry.url;
-}
-
-function rememberLastSubtitleChoice(choiceKey, subtitleUrl) {
-    if (!choiceKey || !subtitleUrl) return;
-    lastSubtitleChoiceCache.delete(choiceKey);
-    lastSubtitleChoiceCache.set(choiceKey, {
-        url: normalizeSubtitleCacheUrl(subtitleUrl),
-        expiresAt: Date.now() + LAST_SUBTITLE_CHOICE_TTL_MS
-    });
-    while (lastSubtitleChoiceCache.size > LAST_SUBTITLE_CHOICE_CACHE_MAX_ENTRIES) {
-        lastSubtitleChoiceCache.delete(lastSubtitleChoiceCache.keys().next().value);
-    }
-}
-
-function isSubtitleTranslationCached(subtitleUrl) {
-    const normalized = normalizeSubtitleCacheUrl(subtitleUrl);
-    if (typeof memoryCache.get(normalized) === 'string') return true;
-    // Tolerăm o eventuală diferență de fragment URL: fragmentul nu ajunge la server.
-    for (const [key, value] of memoryCache) {
-        if (typeof value === 'string' && normalizeSubtitleCacheUrl(key) === normalized) return true;
-    }
-    return false;
-}
-
-function normalizeSubtitleCueForFingerprint(rawText) {
-    return String(rawText || '')
-        .replace(/\{\\[^}]*\}/g, ' ')
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/&nbsp;|&#160;?/gi, ' ')
-        .replace(/&amp;/gi, '&')
-        .replace(/&quot;/gi, '"')
-        .replace(/&#39;|&apos;/gi, "'")
-        .replace(/[’‘`]/g, "'")
-        .normalize('NFKC')
-        .toLowerCase()
-        // Ignorăm diferențele cosmetice de punctuație/capitalizare, dar păstrăm cuvintele.
-        .replace(/[^\p{L}\p{N}']+/gu, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function createSubtitleContentFingerprint(rawText) {
-    const text = String(rawText || '').replace(/^\uFEFF/, '').replace(/\r/g, '');
-    if (!text.trim() || /<(?:html|head|body)\b|access denied|404 not found|cloudflare|captcha/i.test(text.slice(0, 12000))) return '';
-
-    const blocks = text.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
-    const cues = [];
-    let wordCount = 0;
-    const timingPattern = /((?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{3})\s*-->\s*((?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{3})/;
-
-    for (const block of blocks) {
-        const lines = block.split('\n');
-        let timingIndex = -1;
-        let timingMatch = null;
-        for (let i = 0; i < lines.length; i++) {
-            const candidate = lines[i].match(timingPattern);
-            if (candidate) {
-                timingIndex = i;
-                timingMatch = candidate;
-                break;
-            }
-        }
-        if (timingIndex < 0 || !timingMatch) continue;
-
-        const startMs = subtitleTimeToMs(timingMatch[1]);
-        const endMs = subtitleTimeToMs(timingMatch[2]);
-        if (startMs === null || endMs === null || endMs < startMs) continue;
-
-        const body = normalizeSubtitleCueForFingerprint(lines.slice(timingIndex + 1).join(' '));
-        if (!body) continue;
-        wordCount += body.split(/\s+/).filter(Boolean).length;
-        // Include timing to avoid merging the same dialogue synced for different cuts/editions.
-        cues.push(`${startMs}|${endMs}|${body}`);
-    }
-
-    // Too little content is not a reliable fingerprint for a whole subtitle file.
-    if (cues.length < 20 || wordCount < 60) return '';
-    return crypto.createHash('sha256').update(cues.join('\n'), 'utf8').digest('hex');
-}
-
-function trimTranslatedSubtitleFingerprintCache() {
-    const now = Date.now();
-    for (const [fingerprint, entry] of translatedSubtitleFingerprintCache) {
-        if (!entry || entry.expiresAt <= now) translatedSubtitleFingerprintCache.delete(fingerprint);
-    }
-    while (translatedSubtitleFingerprintCache.size > TRANSLATED_SUBTITLE_FINGERPRINT_CACHE_MAX_ENTRIES) {
-        translatedSubtitleFingerprintCache.delete(translatedSubtitleFingerprintCache.keys().next().value);
-    }
-}
-
-function rememberTranslatedSubtitleFingerprint(fingerprint, sourceUrl = '') {
-    if (!fingerprint) return;
-    translatedSubtitleFingerprintCache.delete(fingerprint);
-    translatedSubtitleFingerprintCache.set(fingerprint, {
-        sourceUrl: normalizeSubtitleCacheUrl(sourceUrl),
-        expiresAt: Date.now() + TRANSLATED_SUBTITLE_FINGERPRINT_CACHE_TTL_MS
-    });
-    trimTranslatedSubtitleFingerprintCache();
-}
-
-function isKnownTranslatedSubtitleFingerprint(fingerprint) {
-    if (!fingerprint) return false;
-    const entry = translatedSubtitleFingerprintCache.get(fingerprint);
-    if (!entry) return false;
-    if (entry.expiresAt <= Date.now()) {
-        translatedSubtitleFingerprintCache.delete(fingerprint);
-        return false;
-    }
-    // LRU bump while preserving the original expiry.
-    translatedSubtitleFingerprintCache.delete(fingerprint);
-    translatedSubtitleFingerprintCache.set(fingerprint, entry);
-    return true;
-}
-
-function seedTranslatedSubtitleFingerprintsFromMemory() {
-    // Backfill și pentru traducerile în cache din această sesiune, create înaintea amprentei.
-    for (const [cacheKey, translatedText] of memoryCache) {
-        if (typeof translatedText !== 'string') continue;
-        let originalText = originalSources[cacheKey];
-        if (!originalText) {
-            const normalizedKey = normalizeSubtitleCacheUrl(cacheKey);
-            for (const [sourceKey, sourceText] of Object.entries(originalSources)) {
-                if (normalizeSubtitleCacheUrl(sourceKey) === normalizedKey) {
-                    originalText = sourceText;
-                    break;
-                }
-            }
-        }
-        if (!originalText) continue;
-        const fingerprint = createSubtitleContentFingerprint(originalText);
-        if (fingerprint) rememberTranslatedSubtitleFingerprint(fingerprint, cacheKey);
     }
 }
 
@@ -422,7 +164,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.188',
+    version: '12.78.186',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -572,23 +314,16 @@ async function handleSubtitles(req, res) {
     const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
     const baseUrl = `${protocol}://${host}`;
 
+    let extraString = '';
     let userFilename = '';
-    const forwardedExtraParams = new URLSearchParams(String(extra || ''));
-    // Stremio transmite de regulă aceste valori în extra-argumente; acceptăm și query params.
-    for (const key of ['videoHash', 'videoSize', 'filename']) {
-        const queryValue = req.query && req.query[key];
-        const value = Array.isArray(queryValue) ? queryValue[0] : queryValue;
-        if (!forwardedExtraParams.has(key) && value !== undefined && value !== null && String(value).trim()) {
-            forwardedExtraParams.set(key, String(value));
-        }
+
+    if (extra) {
+        extraString = '/' + extra;
+        try {
+            const params = new URLSearchParams(extra);
+            userFilename = params.get('filename') || '';
+        } catch (e) {}
     }
-    userFilename = String(forwardedExtraParams.get('filename') || '').slice(0, 512);
-    const requestedVideoHash = String(forwardedExtraParams.get('videoHash') || '').trim().toLowerCase();
-    const requestedVideoSize = String(forwardedExtraParams.get('videoSize') || '').trim();
-    const forwardedExtraString = forwardedExtraParams.toString();
-    const extraString = forwardedExtraString ? '/' + forwardedExtraString : '';
-    const mediaFileChoiceKey = makeMediaFileChoiceKey(id, requestedVideoHash, requestedVideoSize, userFilename);
-    const lastChosenSubtitleUrl = getLastSubtitleChoice(mediaFileChoiceKey);
 
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
@@ -657,19 +392,6 @@ async function handleSubtitles(req, res) {
             }
         });
 
-        // Nu mai afișăm URL-uri pentru care traducerea există deja în cache.
-        // Se face înainte de scorare/preflight, ca să nu consumăm sloturi din cele 6 verificări.
-        const alreadyTranslatedUrlCount = diverseSubs.filter(candidate =>
-            isSubtitleTranslationCached(candidate.originalUrl)
-        ).length;
-        diverseSubs = diverseSubs.filter(candidate =>
-            !isSubtitleTranslationCached(candidate.originalUrl)
-        );
-        if (!diverseSubs.length) {
-            console.log(`[Subtitles] Toate candidatele găsite pentru ${id} au deja traducere în cache; nu afișez variante traduse.`);
-            return res.json({ subtitles: [] });
-        }
-
         const fNameLower = userFilename.toLowerCase();
 
         // ============================================================
@@ -718,7 +440,7 @@ async function handleSubtitles(req, res) {
 
             const tokens = normalizeReleaseName(raw).split(' ').filter(Boolean);
             const stop = new Set([
-                'the','season','episode','series',
+                'the','boys','season','episode','instant','white','hot','wild','series',
                 '2160p','1080p','720p','480p','576p','sd','web','bluray','x264','x265',
                 'h264','h265','hevc','avc','10bit','8bit','aac','ac3','eac3','ddp',
                 'dd','5','1','2','0','1ch','2ch','5ch','6ch','7ch','hdr','hdr10','dv',
@@ -726,7 +448,7 @@ async function handleSubtitles(req, res) {
                 'webrip','brrip','bdrip','bdr','torrentgalaxy','mkv','mp4','avi',
                 'proper','repack','rerip','extended','unrated','theatrical','remastered','director','directors','cut','imax'
             ]);
-            const technical = /^(s\d{1,2}(?:e\d{1,2})?|e\d{1,2}|19\d{2}|20\d{2}|\d{1,4}p|x\d+|h\d+|\d+bit|\d+(?:\.\d+)?ch?)$/i;
+            const technical = /^(s\d{1,2}e\d{1,2}|19\d{2}|20\d{2}|\d{1,4}p|x\d+|h\d+|\d+bit|\d+(?:\.\d+)?ch?)$/i;
             const candidates = tokens.filter(t => !stop.has(t) && !technical.test(t));
             return candidates.length ? candidates[candidates.length - 1] : '';
         };
@@ -783,8 +505,8 @@ async function handleSubtitles(req, res) {
 
         const countMeaningfulOverlap = (a, b) => {
             const ignore = new Set([
-                'the','season','episode','series',
-                'year','mkv','mp4','avi',
+                'the','boys','season','episode','series','instant','white','hot','wild',
+                'year','s03','s04','s05','mkv','mp4','avi',
                 'proper','repack','rerip','imax','extended','unrated','theatrical','remastered',
                 'director','directors','cut','special','edition'
             ]);
@@ -858,162 +580,57 @@ async function handleSubtitles(req, res) {
             else if (overlap >= 0.60) s.score += 300;
             else if (overlap >= 0.35) s.score += 120;
 
-            // Comparăm hash/dimensiune numai dacă sursa chiar le raportează.
-            // Dacă hash-ul a fost trimis proxy-ului OpenSubtitles, ordinea sa primește
-            // doar un bonus mic de departajare; nu presupunem că toate răspunsurile sunt potriviri exacte.
-            const reportedHash = String(subData.videoHash || subData.movieHash || subData.movie_hash || '').trim().toLowerCase();
-            if (requestedVideoHash && reportedHash) {
-                if (reportedHash === requestedVideoHash) s.score += 2200;
-                else s.score -= 900;
-            } else if (/^[a-f0-9]{8,128}$/.test(requestedVideoHash) && s.sourceIndex === 0) {
-                s.score += Math.max(0, 120 - Math.min(Number(s.sourceOrder) || 0, 6) * 20);
-            }
-            const reportedVideoSize = Number(subData.videoSize || subData.movieSize || subData.movie_size || 0);
-            const numericRequestedVideoSize = /^\d{1,15}$/.test(requestedVideoSize) ? Number(requestedVideoSize) : 0;
-            if (numericRequestedVideoSize > 0 && reportedVideoSize > 0) {
-                s.score += reportedVideoSize === numericRequestedVideoSize ? 150 : -100;
-            }
-
             if (/\bsdh\b|\bhi\b|hearing\s*impaired/i.test(subName)) s.score -= 80;
             if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
         });
 
-        // Nu prioritizăm rezultatele deja traduse: acestea au fost eliminate mai sus.
-        // Se poate prefera ultima alegere numai dacă ea nu mai are traducere disponibilă în cache.
-        const candidatePreferenceRank = candidate => {
-            if (lastChosenSubtitleUrl && normalizeSubtitleCacheUrl(candidate.originalUrl) === normalizeSubtitleCacheUrl(lastChosenSubtitleUrl)) return 1;
-            return 0;
-        };
-        diverseSubs.forEach(candidate => {
-            candidate._preferenceRank = candidatePreferenceRank(candidate);
-            candidate._isCachedTranslation = false;
-            candidate._isLastChoice = candidate._preferenceRank === 1;
-        });
-        const compareCandidates = (a, b) =>
-            (b._preferenceRank - a._preferenceRank) ||
-            (b.score - a.score) ||
-            (a._rankingOrder - b._rankingOrder);
-
-        // Păstrăm top 15 interne per sursă și includem explicit candidații memorizați.
+        // Clasăm toți candidații eligibili din fiecare sursă, apoi păstrăm
+        // maximum 15 din fiecare. Astfel, o sursă nu poate ocupa bugetul înainte
+        // ca rezultatele celorlalte surse să fie evaluate.
         const sourceBalancedCandidates = [];
         for (let sourceIndex = 0; sourceIndex < urlsToFetch.length; sourceIndex++) {
-            const rankedSource = diverseSubs.filter(s => s.sourceIndex === sourceIndex).sort(compareCandidates);
+            const rankedSource = diverseSubs
+                .filter(s => s.sourceIndex === sourceIndex)
+                .sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
             sourceBalancedCandidates.push(...rankedSource.slice(0, 15));
-            sourceBalancedCandidates.push(...rankedSource.filter(s => s._preferenceRank > 0));
         }
 
+        // Deduplicare globală după selecția per-sursă. Dacă același URL apare
+        // în mai mulți furnizori, păstrăm varianta cu scorul mai bun; la egalitate
+        // rămâne prima din ordinea deterministă a surselor.
         const bestCandidateByUrl = new Map();
         for (const candidate of sourceBalancedCandidates) {
-            const urlKey = normalizeSubtitleCacheUrl(candidate.originalUrl);
+            const urlKey = String(candidate.originalUrl);
             const existing = bestCandidateByUrl.get(urlKey);
-            if (!existing || candidate._preferenceRank > existing._preferenceRank ||
-                (candidate._preferenceRank === existing._preferenceRank && candidate.score > existing.score) ||
-                (candidate._preferenceRank === existing._preferenceRank && candidate.score === existing.score && candidate._rankingOrder < existing._rankingOrder)) {
+            if (!existing || candidate.score > existing.score ||
+                (candidate.score === existing.score && candidate._rankingOrder < existing._rankingOrder)) {
                 bestCandidateByUrl.set(urlKey, candidate);
             }
         }
-        diverseSubs = [...bestCandidateByUrl.values()].sort(compareCandidates);
 
-        // Verificare locală pentru maximum 6 candidați; fără Gemini și fără traducere.
-        // URL-urile sunt verificate prin protecția SSRF existentă, cu timeout și plafon de dimensiune.
-        const preflightCandidates = diverseSubs.slice(0, SUBTITLE_PREFLIGHT_CANDIDATE_LIMIT);
-        const runtimePromise = fetchMediaRuntime(id).catch(() => 0);
-        const preflightTexts = await Promise.all(preflightCandidates.map(candidate =>
-            getSubtitleTextCached(candidate.originalUrl).catch(() => null)
-        ));
-        const runtimeMinutes = await runtimePromise;
-        let preflightVerifiedCount = 0;
-        let duplicateContentCount = 0;
-        let alreadyTranslatedContentCount = 0;
-        let unusablePreflightCount = 0;
+        diverseSubs = [...bestCandidateByUrl.values()]
+            .sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder))
+            .slice(0, 15);
+        
 
-        for (let i = 0; i < preflightCandidates.length; i++) {
-            const candidate = preflightCandidates[i];
-            const text = preflightTexts[i];
-            if (typeof text !== 'string' || !text.trim()) {
-                candidate._skipFromResults = true;
-                unusablePreflightCount++;
-                continue;
-            }
-            const diagnostics = analyzeSubtitleCandidateText(text);
-            candidate._preflight = diagnostics;
-            candidate._preflightVerified = true;
-            candidate.score += diagnostics.score + scoreSubtitleRuntimeFit(diagnostics, runtimeMinutes);
-            candidate._contentFingerprint = createSubtitleContentFingerprint(text);
-            preflightVerifiedCount++;
-        }
-
-        // Înregistrează amprentele traducerilor deja reușite în această sesiune.
-        // Apoi ascunde și URL-urile alternative care livrează același SRT deja tradus.
-        seedTranslatedSubtitleFingerprintsFromMemory();
-        const candidateByFingerprint = new Map();
-        for (const candidate of preflightCandidates) {
-            if (candidate._skipFromResults) continue;
-            if (!candidate._contentFingerprint) {
-                candidate._skipFromResults = true;
-                unusablePreflightCount++;
-                continue;
-            }
-            if (isKnownTranslatedSubtitleFingerprint(candidate._contentFingerprint)) {
-                candidate._skipFromResults = true;
-                alreadyTranslatedContentCount++;
-                continue;
-            }
-
-            const existing = candidateByFingerprint.get(candidate._contentFingerprint);
-            if (!existing) {
-                candidateByFingerprint.set(candidate._contentFingerprint, candidate);
-                continue;
-            }
-
-            // Păstrăm un singur URL pentru conținut identic: câștigă varianta cu scorul mai bun.
-            duplicateContentCount++;
-            if (compareCandidates(candidate, existing) < 0) {
-                existing._skipFromResults = true;
-                candidateByFingerprint.set(candidate._contentFingerprint, candidate);
-            } else {
-                candidate._skipFromResults = true;
-            }
-        }
-
-        diverseSubs = preflightCandidates.filter(candidate =>
-            candidate._preflightVerified && candidate._contentFingerprint && !candidate._skipFromResults
-        );
-        if (preflightCandidates.length) {
-            console.log(`[Subtitles] Filtrare locală pentru ${id}: analizate ${preflightVerifiedCount}/${preflightCandidates.length}; eliminate ${alreadyTranslatedUrlCount} deja traduse după URL, ${alreadyTranslatedContentCount} deja traduse după conținut, ${duplicateContentCount} duplicate, ${unusablePreflightCount} neverificabile; rămân ${diverseSubs.length} surse unice netraduse. Runtime Cinemeta ${runtimeMinutes ? `${Math.round(runtimeMinutes)} min` : 'indisponibil'}; fără AI.`);
-        }
-
-        diverseSubs.sort(compareCandidates);
-
-        // Afișăm maximum 5 variante. Când scorurile sunt apropiate, păstrăm diversitatea
-        // surselor; alegerea deja tradusă/memorată are prioritate în continuare.
-        const selectedSubs = [];
-        const selectedUrls = new Set();
-        const addSelected = candidate => {
-            if (!candidate || selectedSubs.length >= SUBTITLE_RESULT_LIMIT) return;
-            const key = normalizeSubtitleCacheUrl(candidate.originalUrl);
-            if (selectedUrls.has(key)) return;
-            selectedUrls.add(key);
-            selectedSubs.push(candidate);
-        };
-        diverseSubs.filter(s => s._preferenceRank > 0).sort(compareCandidates).forEach(addSelected);
-        const unpreferred = diverseSubs.filter(s => s._preferenceRank === 0).sort(compareCandidates);
-        const bestUnpreferredScore = unpreferred.length ? unpreferred[0].score : -Infinity;
-        for (let sourceIndex = 0; sourceIndex < urlsToFetch.length && selectedSubs.length < SUBTITLE_RESULT_LIMIT; sourceIndex++) {
-            const topFromSource = unpreferred.find(s => s.sourceIndex === sourceIndex && s.score >= bestUnpreferredScore - 500);
-            addSelected(topFromSource);
-        }
-        unpreferred.forEach(addSelected);
-        const finalCandidates = selectedSubs.sort(compareCandidates);
-
-        // VIZUALIZARE UI STREMIO
-        const generatedSubs = finalCandidates.map((s, index) => {
+        // ============================================================
+        // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
+        // ============================================================
+        const generatedSubs = diverseSubs.map((s, index) => {
+            const encodedUrl = encodeURIComponent(s.originalUrl);
+            
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
             const foundTags = [];
+            
+            // 1. Extragem Rezoluția
             const resMatch = vizualName.match(/\b(2160p|1080p|720p|4k|sd)\b/i);
             if (resMatch) foundTags.push(resMatch[1].toUpperCase());
+            
+            // 2. Extragem Sursa
             const sourceMatch = vizualName.match(/\b(bluray|web-dl|webrip|remux|hdtv)\b/i);
             if (sourceMatch) foundTags.push(sourceMatch[1].toUpperCase());
+            
+            // 3. Extragem Ediția, Fix-urile și Tehnologia (max 2-3 elemente ca să nu umplem ecranul)
             const extraMatch = vizualName.match(/\b(imax|proper|repack|extended|unrated|director'?s cut|hdr10|hdr|dv)\b/ig);
             if (extraMatch) {
                 const uniqueExtras = [...new Set(extraMatch.map(t => t.toUpperCase().replace(/\s+/g, ' ')))];
@@ -1021,26 +638,18 @@ async function handleSubtitles(req, res) {
             }
 
             let labelName = `🇷🇴 RO AI [${index + 1}]`;
-            if (s._isLastChoice) {
-                labelName = `🇷🇴 RO AI ✓ ALEASĂ [${index + 1}]`;
+            if (foundTags.length > 0) {
+                labelName += ` • ${foundTags.join(' | ')}`;
             }
-            if (foundTags.length > 0) labelName += ` • ${foundTags.join(' | ')}`;
-
-            const linkParams = new URLSearchParams();
-            linkParams.set('id', String(id));
-            linkParams.set('targetUrl', String(s.originalUrl));
-            linkParams.set('v', String(s.index + 1));
-            if (requestedVideoHash) linkParams.set('videoHash', requestedVideoHash);
-            if (requestedVideoSize) linkParams.set('videoSize', requestedVideoSize);
-            if (userFilename) linkParams.set('filename', userFilename);
 
             return {
                 id: `ai_sub_${index}`,
-                title: labelName,
-                url: `${baseUrl}/${configData}/translate?${linkParams.toString()}`,
+                title: labelName, 
+                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
                 lang: 'ron'
             };
         });
+
         return res.json({ subtitles: generatedSubs });
     } catch (error) {
         return res.json({ subtitles: [] });
@@ -6419,7 +6028,7 @@ function isPrivateOrReservedIp(address) {
     return true;
 }
 
-async function validateTargetUrl(rawUrl, options = {}) {
+async function validateTargetUrl(rawUrl) {
     let parsed;
 
     try {
@@ -6448,23 +6057,7 @@ async function validateTargetUrl(rawUrl, options = {}) {
         addresses = [{ address: hostname, family: net.isIP(hostname) }];
     } else {
         try {
-            const lookupPromise = dns.lookup(hostname, { all: true, verbatim: true });
-            const dnsTimeoutMs = Number(options.dnsTimeoutMs) || 0;
-            if (dnsTimeoutMs > 0) {
-                let timeoutHandle;
-                try {
-                    addresses = await Promise.race([
-                        lookupPromise,
-                        new Promise((_, reject) => {
-                            timeoutHandle = setTimeout(() => reject(new Error('DNS lookup timeout')), dnsTimeoutMs);
-                        })
-                    ]);
-                } finally {
-                    if (timeoutHandle) clearTimeout(timeoutHandle);
-                }
-            } else {
-                addresses = await lookupPromise;
-            }
+            addresses = await dns.lookup(hostname, { all: true, verbatim: true });
         } catch (error) {
             throw new Error('Nu s-a putut rezolva gazda URL-ului.');
         }
@@ -6481,223 +6074,37 @@ async function validateTargetUrl(rawUrl, options = {}) {
     };
 }
 
-async function fetchValidatedSubtitleUrl(initialUrl, options = {}) {
+async function fetchValidatedSubtitleUrl(initialUrl) {
     let currentUrl = initialUrl;
     const maxRedirects = 5;
-    const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 30000;
-    const maxContentLengthBytes = Number.isFinite(options.maxContentLengthBytes) ? options.maxContentLengthBytes : 0;
 
     for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
-        const validation = await validateTargetUrl(currentUrl, { dnsTimeoutMs: Number(options.dnsTimeoutMs) || 0 });
-        const requestOptions = {
+        const validation = await validateTargetUrl(currentUrl);
+
+        const response = await axios.get(validation.url, {
             headers: { 'User-Agent': BROWSER_USER_AGENT },
-            timeout: timeoutMs,
+            timeout: 30000,
             responseType: 'text',
             maxRedirects: 0,
             validateStatus: status => status >= 200 && status < 400,
-            lookup: (hostname, options, callback) => callback(null, validation.address, validation.family)
-        };
-        if (maxContentLengthBytes > 0) requestOptions.maxContentLength = maxContentLengthBytes;
-        const response = await axios.get(validation.url, requestOptions);
+            lookup: (hostname, options, callback) => {
+                callback(null, validation.address, validation.family);
+            }
+        });
 
         if (response.status >= 300) {
             const location = response.headers.location;
-            if (!location) throw new Error('Redirecționare URL fără destinație validă.');
+            if (!location) {
+                throw new Error('Redirecționare URL fără destinație validă.');
+            }
             currentUrl = new URL(location, validation.url).toString();
             continue;
         }
+
         return response;
     }
+
     throw new Error('Prea multe redirecționări pentru URL-ul sursă.');
-}
-
-function trimSubtitlePreflightCache() {
-    const now = Date.now();
-    for (const [key, entry] of subtitlePreflightCache) {
-        if (entry.expiresAt <= now) subtitlePreflightCache.delete(key);
-    }
-    while (subtitlePreflightCache.size > SUBTITLE_PREFLIGHT_CACHE_MAX_ENTRIES) {
-        let removed = false;
-        for (const [key, entry] of subtitlePreflightCache) {
-            if (entry.settled) {
-                subtitlePreflightCache.delete(key);
-                removed = true;
-                break;
-            }
-        }
-        if (!removed) break;
-    }
-}
-
-async function getSubtitleTextCached(rawUrl) {
-    const key = normalizeSubtitleCacheUrl(rawUrl);
-    if (!/^https?:\/\//i.test(key)) throw new Error('URL sursă invalid.');
-    const now = Date.now();
-    const existing = subtitlePreflightCache.get(key);
-    if (existing && existing.expiresAt > now) {
-        subtitlePreflightCache.delete(key);
-        subtitlePreflightCache.set(key, existing);
-        return existing.promise;
-    }
-    if (existing) subtitlePreflightCache.delete(key);
-
-    const entry = { expiresAt: now + SUBTITLE_PREFLIGHT_CACHE_TTL_MS, settled: false, promise: null };
-    entry.promise = (async () => {
-        const response = await fetchValidatedSubtitleUrl(key, {
-            timeoutMs: SUBTITLE_PREFLIGHT_TIMEOUT_MS,
-            dnsTimeoutMs: 1000,
-            maxContentLengthBytes: SUBTITLE_PREFLIGHT_MAX_BYTES
-        });
-        const content = typeof response.data === 'string'
-            ? response.data
-            : Buffer.isBuffer(response.data) ? response.data.toString('utf8') : String(response.data || '');
-        if (Buffer.byteLength(content, 'utf8') > SUBTITLE_PREFLIGHT_MAX_BYTES) {
-            throw new Error('Subtitrarea depășește limita de verificare locală.');
-        }
-        entry.settled = true;
-        entry.expiresAt = Date.now() + SUBTITLE_PREFLIGHT_CACHE_TTL_MS;
-        return content;
-    })().catch(error => {
-        entry.settled = true;
-        if (subtitlePreflightCache.get(key) === entry) subtitlePreflightCache.delete(key);
-        throw error;
-    });
-    subtitlePreflightCache.set(key, entry);
-    trimSubtitlePreflightCache();
-    return entry.promise;
-}
-
-async function fetchSubtitleForTranslation(rawUrl) {
-    const key = normalizeSubtitleCacheUrl(rawUrl);
-    const entry = subtitlePreflightCache.get(key);
-    if (entry && entry.expiresAt > Date.now()) {
-        try {
-            const cachedText = await entry.promise;
-            if (typeof cachedText === 'string' && cachedText.trim()) return { data: cachedText };
-        } catch (_) {
-            // Dacă preflight-ul a eșuat, încercăm descărcarea normală.
-        }
-    }
-    return fetchValidatedSubtitleUrl(rawUrl);
-}
-
-function subtitleTimeToMs(rawTime) {
-    const parts = String(rawTime || '').replace(',', '.').split(':');
-    if (parts.length < 2 || parts.length > 3) return null;
-    let hours = 0, minutes = 0, seconds = 0;
-    if (parts.length === 3) {
-        hours = Number(parts[0]); minutes = Number(parts[1]); seconds = Number(parts[2]);
-    } else {
-        minutes = Number(parts[0]); seconds = Number(parts[1]);
-    }
-    if (![hours, minutes, seconds].every(Number.isFinite)) return null;
-    return Math.round(((hours * 60 + minutes) * 60 + seconds) * 1000);
-}
-
-function analyzeSubtitleCandidateText(rawText) {
-    const text = String(rawText || '').replace(/^\uFEFF/, '').replace(/\r/g, '');
-    const timingRegex = /((?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{3})\s*-->\s*((?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{3})/g;
-    const timings = [];
-    let match;
-    while ((match = timingRegex.exec(text)) !== null) {
-        const startMs = subtitleTimeToMs(match[1]);
-        const endMs = subtitleTimeToMs(match[2]);
-        if (startMs !== null && endMs !== null) timings.push({ startMs, endMs });
-    }
-
-    const visibleLines = text.split('\n').map(line => line.trim())
-        .filter(line => line && !/^\d+$/.test(line) && !/-->/.test(line))
-        .filter(line => !/^(?:WEBVTT|NOTE(?:\s|$)|STYLE(?:\s|$)|REGION(?:\s|$)|X-TIMESTAMP-MAP)/i.test(line))
-        .map(line => line
-            .replace(/^Dialogue:\s*[^,]*(?:,[^,]*){8},/i, '')
-            .replace(/\{\\[^}]*\}/g, '')
-            .replace(/<[^>]*>/g, ' ')
-            .replace(/&(?:nbsp|amp|lt|gt|quot|#39);/gi, ' ')
-            .replace(/\s+/g, ' ').trim())
-        .filter(Boolean);
-    const bodyText = visibleLines.join(' ');
-    const words = (bodyText.toLowerCase().match(/[a-zà-ÿ']+/gi) || [])
-        .map(word => word.replace(/^'+|'+$/g, '')).filter(Boolean);
-    const wordCount = words.length;
-    const englishMarkers = new Set(['the','you','i','to','of','a','is','it','we','do','not','what','that','in','and','for','have','are','your','my','he','she','was','this','on','with','but','be','as','at','if','they','me','his','her','our','can','will','would','no','yes','so','just','all','one','there','who','why','how','from','get','got','want','know','think','now','well','then','when','where','go','come','like','see','yeah','oh']);
-    const foreignMarkers = new Set(['el','los','las','una','unos','unas','para','pero','porque','está','estoy','están','gracias','usted','ustedes','nosotros','ellos','ella','vous','nous','une','des','pas','pour','sont','être','avec','dans','mais','aussi','cette','ich','nicht','und','der','die','das','ist','ein','eine','mit','für','auf','werden','wird','não','uma','dos','com','estão','vocês','muito','também','gli','sono','della','questo','perché','grazie','dove','non','per','che']);
-    let englishCount = 0, foreignCount = 0;
-    for (const word of words) {
-        if (englishMarkers.has(word)) englishCount++;
-        if (foreignMarkers.has(word)) foreignCount++;
-    }
-
-    const promoRegex = /\b(?:opensubtitles(?:\.org|\.com)?|yifysubtitles(?:\.com)?|subdl(?:\.com)?|addic7ed(?:\.com)?|subscene(?:\.com)?|subtitleseeker(?:\.com)?|subtitles?\s+(?:by|brought\s+to\s+you\s+by)|synced\s+by|resynced\s+by|downloaded\s+from|visit\s+(?:www\.)?[a-z0-9.-]+\.(?:com|net|org|tv|to)\b|www\.[a-z0-9.-]+\.[a-z]{2,}\b|https?:\/\/)/i;
-    const promoLines = visibleLines.filter(line => promoRegex.test(line)).length;
-    const soundCueLines = visibleLines.filter(line => /^(?:\[[^\]]{1,60}\]|\([^)]{1,60}\))$/.test(line) && /music|sigh|laugh|applause|silence|gunshot|door|scream|cry|breath|inaudible|speaking|singing|cheering|phone|ringing|knock|footsteps|engine|noise|static/i.test(line)).length;
-
-    const replacementChars = (text.match(/\uFFFD/g) || []).length;
-    const mojibakeCount = (text.match(/(?:Ã[\u0080-\u00ff]|â€™|â€œ|â€|ðŸ|ï»¿)/g) || []).length;
-    const controlChars = (text.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g) || []).length;
-    const charCount = Math.max(1, text.length);
-    const htmlErrorPage = /<(?:html|head|body)\b|access denied|404 not found|cloudflare|captcha|enable javascript/i.test(text.slice(0, 12000));
-
-    let outOfOrderCount = 0, invalidTimingCount = 0, previousStart = -1, maxEndMs = 0;
-    for (const timing of timings) {
-        if (timing.endMs < timing.startMs) invalidTimingCount++;
-        if (previousStart >= 0 && timing.startMs < previousStart - 1000) outOfOrderCount++;
-        previousStart = timing.startMs;
-        if (timing.endMs > maxEndMs) maxEndMs = timing.endMs;
-    }
-
-    let score = 0;
-    if (htmlErrorPage) score -= 1500;
-    if (timings.length === 0) score -= 900;
-    else if (timings.length < 25) score -= 650;
-    else if (timings.length < 60) score -= 250;
-    if (promoLines > 0) score -= 220;
-    if (promoLines >= 3) score -= 350;
-    if (promoLines / Math.max(1, visibleLines.length) > 0.01) score -= 250;
-
-    const corruptionCount = replacementChars + mojibakeCount + controlChars;
-    if (corruptionCount > 0) score -= Math.min(800, 150 + corruptionCount * 45);
-    if (corruptionCount / charCount > 0.002) score -= 250;
-    if (wordCount >= 80) {
-        const englishRate = englishCount / wordCount;
-        const foreignRate = foreignCount / wordCount;
-        if (foreignCount >= 20 && foreignRate > 0.10 && englishRate < 0.07) score -= 650;
-        else if (foreignCount >= 12 && foreignRate > 0.07 && englishRate < 0.06) score -= 300;
-    }
-    if (timings.length > 0) {
-        if (outOfOrderCount > 0) score -= Math.min(650, outOfOrderCount * 130);
-        if (outOfOrderCount / timings.length > 0.01) score -= 250;
-        if (invalidTimingCount > 0) score -= Math.min(500, invalidTimingCount * 150);
-    }
-    const soundCueRate = soundCueLines / Math.max(1, timings.length);
-    if (soundCueRate > 0.30) score -= 200;
-    if (soundCueRate > 0.50) score -= 250;
-
-    return { score, cueCount: timings.length, lastEndMs: maxEndMs, outOfOrderCount, invalidTimingCount,
-        promoLines, corruptionCount, wordCount, englishCount, foreignCount, soundCueLines, htmlErrorPage };
-}
-
-function scoreSubtitleRuntimeFit(diagnostics, runtimeMinutes) {
-    const runtime = Number(runtimeMinutes) || 0;
-    if (!runtime || runtime < 5 || !diagnostics || diagnostics.cueCount <= 0) return 0;
-    const cueCount = diagnostics.cueCount;
-    const cuesPerMinute = cueCount / runtime;
-    const lastMinutes = diagnostics.lastEndMs / 60000;
-    let score = 0;
-    if (runtime >= 50) {
-        if (cuesPerMinute < 0.8) score -= 650;
-        else if (cuesPerMinute < 1.5) score -= 350;
-        else if (cuesPerMinute < 2.5) score -= 120;
-    }
-    if (cuesPerMinute > 140) score -= 450;
-    else if (cuesPerMinute > 110) score -= 200;
-    if (lastMinutes > 0) {
-        if (lastMinutes < runtime * 0.55 && runtime >= 70) score -= 650;
-        else if (lastMinutes < runtime * 0.72) score -= 350;
-        else if (lastMinutes < runtime * 0.82) score -= 150;
-        if (lastMinutes > runtime + 35) score -= 450;
-        else if (lastMinutes > runtime + 15) score -= 220;
-    }
-    return score;
 }
 
 // ============================================================
@@ -6708,7 +6115,6 @@ app.get('/:configData/translate', async (req, res) => {
     const imdbId = req.query.id;
     const targetUrl = req.query.targetUrl || req.query.url;
     const configData = req.params.configData;
-    const choiceKey = makeMediaFileChoiceKey(imdbId, req.query.videoHash, req.query.videoSize, req.query.filename);
 
 
     if (!targetUrl) {
@@ -6789,7 +6195,7 @@ app.get('/:configData/translate', async (req, res) => {
             
             processPromise = (async () => {
                 const [srtRes, mediaTitle] = await Promise.all([
-                    fetchSubtitleForTranslation(validatedTarget.url),
+                    fetchValidatedSubtitleUrl(validatedTarget.url),
                     fetchMediaTitle(imdbId)
                 ]);
                 rememberOriginalSource(cacheKey, String(srtRes.data || ''));
@@ -6834,12 +6240,6 @@ app.get('/:configData/translate', async (req, res) => {
         const finalSrt = await processPromise;
         
         if (finalSrt && finalSrt.trim().length > 0 && !qaStatus.hasErrors) {
-            // Memorăm amprenta sursei doar după o traducere reușită, ca duplicatele cu alt URL
-            // să poată fi ascunse la căutările următoare din aceeași sesiune a serverului.
-            const sourceFingerprint = createSubtitleContentFingerprint(originalSources[cacheKey] || '');
-            if (sourceFingerprint) rememberTranslatedSubtitleFingerprint(sourceFingerprint, cacheKey);
-            // Memorăm ultima alegere numai după o traducere utilizabilă, asociată filmului/fișierului.
-            rememberLastSubtitleChoice(choiceKey, cacheKey);
             const now = new Date();
             const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
             
