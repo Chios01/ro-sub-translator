@@ -164,7 +164,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.191',
+    version: '12.78.192',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -728,9 +728,9 @@ function isOnlyStandaloneFillerSequence(text) {
 // Nu elimină paranteze cu text obișnuit de dialog (ex. „I mean”, „Don't knock!”).
 // ============================================================
 
-const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed|ing)?|gurgle(?:s|d|ing)?|knock(?:s|ed|ing)?|bang(?:s|ed|ing)?|pound(?:s|ed|ing)?|thud(?:s|ded|ding)?|thump(?:s|ed|ing)?|ring(?:s|ing)?|beep(?:s|ed|ing)?|buzz(?:es|ed|ing)?|click(?:s|ed|ing)?|clatter(?:s|ed|ing)?|clang(?:s|ed|ing)?|crash(?:es|ed|ing)?|slam(?:s|med|ming)?|creak(?:s|ed|ing)?|cough(?:s|ed|ing)?|clear(?:s|ed|ing)\s+(?:(?:his|her|their|its|my|your)\s+)?throat|throat\s+clearing|sigh(?:s|ed|ing)?|gasp(?:s|ed|ing)?|groan(?:s|ed|ing)?|grunt(?:s|ed|ing)?|snort(?:s|ed|ing)?|sniff(?:s|ed|ing|les|led)?|sneez(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|chuckl(?:e|es|ed|ing)|giggl(?:e|es|ed|ing)|sob(?:s|bed|bing)?|cri(?:es|ed|ying)|scream(?:s|ed|ing)?|shout(?:s|ed|ing)?|whisper(?:s|ed|ing)?|pant(?:s|ed|ing)?|snor(?:es|ed|ing)|whimper(?:s|ed|ing)?|growl(?:s|ed|ing)?|bark(?:s|ed|ing)?|meow(?:s|ed|ing)?|chirp(?:s|ed|ing)?|howl(?:s|ed|ing)?|rustl(?:e|es|ed|ing)|rattl(?:e|es|ed|ing)|rumbl(?:e|es|ed|ing)|whistl(?:e|es|ed|ing)|clap(?:s|ped|ping)?|applaud(?:s|ed|ing)?|sing(?:s|ing)?|hum(?:s|med|ming)|footsteps?\s+(?:approach|recede|stop|fade|pass)|heavy\s+breathing|breathing\s+heavily|soft\s+breathing|squeak(?:s|ed|ing)?|squeal(?:s|ed|ing)?|scrap(?:e|es|ed|ing)|scratch(?:es|ed|ing)|shuffle(?:s|d|ing)|swallow(?:s|ed|ing)?|gulp(?:s|ed|ing)?|wind\s+howl(?:s|ing)?|birds?\s+chirp(?:s|ing)?|doorbell\s+ring(?:s|ing)?|phone\s+ring(?:s|ing)?|music\s+play(?:s|ing)?|background\s+music|gângur(?:ește|ind|it)|băt(?:aie|ăi|e|ește|ând|ut)|ciocăn(?:it|ește|ind|ituri)?|pocnet(?:e|ul)?|pocnește|bubuit(?:uri)?|bubuie|zgomot(?:e)?|sunet(?:e)?\s+de|sonerie|bip(?:uri|uie)?|țiuit|trosnet(?:e)?|trosnește|trântește|trântit|scârțâi(?:t|ește|ind)|pași|foșnet|foșnește|fâșâit|tușește|tușind|tușit|își\s+drege\s+glasul|dreg(?:e|ându-și)\s+glasul|gâfâie|gâfâind|gâfâit|respiră\s+greu|respirație\s+grea|oftează|oftând|oftat|suspin(?:ă|ând)?|mormăit|mormăie|mormăind|bufnește|bufnet|râde|râzând|râs|chicotește|chicotind|plânge|plângând|plâns|țipă|țipăt|țipând|strigă|strigând|horcăie|sforăie|adulmecă|fornăie|sughiță|șuieră|fluieră|fredonează|face\s+fâ+|cântă\s+încet|bate\s+din\s+palme|aplauze|urale|clopoțel|răpăit|zdrăngănit|vibrează|hârâit)(?![\p{L}\p{N}])/iu;
+const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed|ing)?|gurgle(?:s|d|ing)?|knock(?:s|ed|ing)?|bang(?:s|ed|ing)?|pound(?:s|ed|ing)?|thud(?:s|ded|ding)?|thump(?:s|ed|ing)?|ring(?:s|ing)?|beep(?:s|ed|ing)?|buzz(?:es|ed|ing)?|click(?:s|ed|ing)?|clatter(?:s|ed|ing)?|clang(?:s|ed|ing)?|crash(?:es|ed|ing)?|slam(?:s|med|ming)?|creak(?:s|ed|ing)?|cough(?:s|ed|ing)?|clear(?:s|ed|ing)\s+(?:(?:his|her|their|its|my|your)\s+)?throat|throat\s+clearing|sigh(?:s|ed|ing)?|gasp(?:s|ed|ing)?|groan(?:s|ed|ing)?|grunt(?:s|ed|ing)?|snort(?:s|ed|ing)?|sniff(?:s|ed|ing|les|led)?|sneez(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|chuckl(?:e|es|ed|ing)|giggl(?:e|es|ed|ing)|sob(?:s|bed|bing)?|cri(?:es|ed|ying)|scream(?:s|ed|ing)?|shout(?:s|ed|ing)?|whisper(?:s|ed|ing)?|pant(?:s|ed|ing)?|snor(?:es|ed|ing)|whimper(?:s|ed|ing)?|growl(?:s|ed|ing)?|bark(?:s|ed|ing)?|meow(?:s|ed|ing)?|chirp(?:s|ed|ing)?|howl(?:s|ed|ing)?|rustl(?:e|es|ed|ing)|rattl(?:e|es|ed|ing)|rumbl(?:e|es|ed|ing)|whistl(?:e|es|ed|ing)|clap(?:s|ped|ping)?|applaud(?:s|ed|ing)?|sing(?:s|ing)?|hum(?:s|med|ming)|footsteps?\s+(?:approach|recede|stop|fade|pass)|heavy\s+breathing|breathing\s+heavily|soft\s+breathing|squeak(?:s|ed|ing)?|squeal(?:s|ed|ing)?|scrap(?:e|es|ed|ing)|scratch(?:es|ed|ing)|shuffle(?:s|d|ing)|swallow(?:s|ed|ing)?|gulp(?:s|ed|ing)?|wind\s+howl(?:s|ing)?|birds?\s+chirp(?:s|ing)?|doorbell\s+ring(?:s|ing)?|phone\s+ring(?:s|ing)?|music\s+play(?:s|ing)?|background\s+music|gângur(?:ește|ind|it)|băt(?:aie|ăi|e|ește|ând|ut)|ciocăn(?:it|ește|ind|ituri)?|pocnet(?:e|ul)?|pocnește|bubuit(?:uri)?|bubuie|zgomot(?:e)?|sunet(?:e)?\s+de|sonerie|bip(?:uri|uie)?|țiuit|trosnet(?:e)?|trosnește|trântește|trântit|scârțâi(?:t|ește|ind)|pași|foșnet|foșnește|fâșâit|tușește|tușind|tușit|își\s+drege\s+glasul|dreg(?:e|ându-și)\s+glasul|gâfâie|gâfâind|gâfâit|respiră\s+greu|respirație\s+grea|oftează|oftând|oftat|suspin(?:ă|ând)?|mormăit|mormăie|mormăind|bufnește|bufnet|râde|râzând|râs|chicotește|chicotind|plânge|plângând|plâns|țipă|țipăt|țipând|strigă|strigând|horcăie|sforăie|adulmecă|fornăie|sughiță|șuieră|fluieră|fredonează|face\s+fâ+|cântă\s+încet|bate\s+din\s+palme|aplauze|urale|clopoțel|răpăit|zdrăngănit|vibrează|hârâit|bufnire|bufniri|bufnete|bufnituri|șuierături|fluierături|pufnire|pufniri|râsete|plânsete|gemete|geamăt(?:e)?|suspin(?:e|uri)?|sughițuri|foșnet(?:e|uri)?|fâșâit(?:uri)?)(?![\p{L}\p{N}])/iu;
 
-const SOUND_CUE_LABEL_RE = /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|background|gentle|heavy|slight|small|short|brief|off-screen|în fundal|încet|încetișor|tare|ușor|scurt|scurtă|puternic|puternică)\s+)*(?:sound(?:s)?(?:\s+of)?|noise(?:s)?(?:\s+of)?|music(?:\s+(?:playing|continues|swells|fades|starts|stops|in background))?|applause|laughter|footsteps?|knocking|banging|pounding|thumping|doorbell|ringing|beeping|buzzing|clicking|clattering|crashing|slamming|creaking|coughing|sighing|gasping|groaning|grunting|snoring|heavy breathing|breathing|whispering|singing|humming|babbling|murmuring|bătaie(?:\s+în\s+ușă)?|bătăi(?:\s+în\s+ușă)?|gângurit|gânguritul|mormăit|suspin(?:ând)?|oftat|râs|plâns|pași|aplauze|urale|tușit|gâfâit|bufnet|foșnet|fâșâit|trosnet|zgomot(?:\s+de\s+[^.!?]{1,60})?|sunet(?:\s+de\s+[^.!?]{1,60})?)(?:\s+(?:in the background|from outside|from inside|în fundal|se aude|continuă|încet|tare))?[.!…]*$/iu;
+const SOUND_CUE_LABEL_RE = /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|background|gentle|heavy|slight|small|short|brief|off-screen|în fundal|încet|încetișor|tare|ușor|scurt|scurtă|puternic|puternică|îndepărtat(?:ă|e)?|slab(?:ă|e)?)\s+)*(?:sound(?:s)?(?:\s+of)?|noise(?:s)?(?:\s+of)?|music(?:\s+(?:playing|continues|swells|fades|starts|stops|in background))?|applause|laughter|laugh(?:s|ing)?|footsteps?|knocking|banging|pounding|thudding|thumping|doorbell|ringing|beeping|buzzing|clicking|clattering|crashing|slamming|creaking|cough(?:ing|s)?|sigh(?:ing|s)?|gasp(?:ing|s)?|groan(?:ing|s)?|grunt(?:ing|s)?|snoring|heavy breathing|breathing heavily|breathing|whispering|singing|humming|babbling|murmuring|whimpering|growling|snorting|sniffing|sneezing|screaming|shouting|panting|chirping|howling|rustling|rattling|rumbling|whistling|clapping|shuffling|swallowing|gulping|squeaking|squealing|scraping|scratching|wind howling|birds? chirping|doorbell ringing|phone ringing|background music|bătaie(?:\s+în\s+ușă)?|bătăi(?:\s+în\s+ușă)?|gângurit(?:ul)?|mormăit(?:ul|uri)?|suspin(?:ând|e|uri)?|oftat(?:ul)?|râs(?:ul)?|râde|râzând|râsete|plâns(?:ul)?|plânge|plângând|plânsete|pași|aplauze|urale|tușit(?:ul)?|tușește|tușind|gâfâit(?:ul|uri)?|gâfâie|gâfâind|bufnet(?:ul|e)?|bufnește|bufnire|bufniri|pufnet(?:ul|e)?|pufnește|pufnire|foșnet(?:ul|e|uri)?|foșnește|fâșâit(?:ul|uri)?|fâșâie|trosnet(?:ul|e)?|trosnește|zgomot(?:e)?(?:\s+de\s+[^.!?]{1,60})?|sunet(?:e)?(?:\s+de\s+[^.!?]{1,60})?|șuieră|șuierând|șuierături|fluieră|fluierând|fluierături|geme|gemând|geamăt(?:e)?|gemete|horcăie|horcăit(?:ul|uri)?|sforăie|sforăit|adulmecă|fornăie|sughiță|sughițuri|fredonează|cântă\s+încet|face\s+fâ+|bate\s+din\s+palme|clopoțel|răpăit|zdrăngănit|vibrează|hârâit)(?:\s+(?:in the background|from outside|from inside|în fundal|se aude|continuă|încet|tare|ușor|puternic|loudly|softly))?[.!…]*$/iu;
 
 function isNonDialogueSoundCueAnnotation(annotation) {
     const text = String(annotation || '')
@@ -773,6 +773,65 @@ function stripNonDialogueSoundAnnotations(text) {
         .replace(/[ \t]+([,;:!?])/g, '$1')
         .replace(/[,;:][ \t]*([.!?])/g, '$1')
         .replace(/[ \t]{2,}/g, ' ');
+    if (removedCount && /^[ \t\r\n\-–—,;:.!?…]+$/.test(clean)) clean = '';
+
+    return { text: clean, removedCount };
+}
+
+// Detectează și etichetele sonore care apar singure, fără paranteze: „Whistling”,
+// „râsete”, „bufnire” etc. Este un test de linie întreagă, ca să nu șteargă dialog
+// precum „Râde de mine” sau propoziții care doar menționează un sunet.
+function isStandaloneNonDialogueSoundCue(value) {
+    const text = String(value || '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/[♪♫♬♩]+/g, ' ')
+        .replace(/^[\s\-–—]+|[\s\-–—]+$/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!text || text.length > 180) return false;
+    return SOUND_CUE_LABEL_RE.test(text);
+}
+
+// Filtrare de siguranță aplicată atât sursei, cât și traducerii finale:
+// scoate descrierile sonore dintre paranteze/paranteze drepte și cue-urile izolate,
+// păstrând textul de dialog din același bloc.
+function stripNonDialogueSoundMarkup(value) {
+    let clean = String(value || '');
+    let removedCount = 0;
+
+    const parenthetical = stripNonDialogueSoundAnnotations(clean);
+    clean = parenthetical.text;
+    removedCount += parenthetical.removedCount;
+
+    clean = clean.replace(/\[([^\[\]\r\n]{1,180})\]/g, (full, inside) => {
+        if (!isNonDialogueSoundCueAnnotation(inside)) return full;
+        removedCount++;
+        return ' ';
+    });
+
+    // Înlăturăm cue-urile sonore simple rămase pe linii proprii.
+    clean = clean.split('\n').map(line => {
+        if (!isStandaloneNonDialogueSoundCue(line)) return line;
+        removedCount++;
+        return '';
+    }).join('\n');
+
+    // Eliminăm marcatorii de vorbitor orfani când singurul conținut de după ei era un sunet.
+    clean = clean
+        .replace(/^[ \t]*[-–—][ \t]*$/gm, '')
+        .replace(/[ \t]+[-–—][ \t]*$/gm, '')
+        .replace(/^([ \t]*)[:,;][ \t]*/gm, '$1')
+        .replace(/[ \t]+([,;:!?])/g, '$1')
+        .replace(/[,;:][ \t]*([.!?])/g, '$1')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\n[ \t]*\n+/g, '\n')
+        .trim();
+
+    // Și un cue complet rămas pe un singur rând este eliminat, fără a șterge propoziții.
+    if (isStandaloneNonDialogueSoundCue(clean)) {
+        clean = '';
+        removedCount++;
+    }
     if (removedCount && /^[ \t\r\n\-–—,;:.!?…]+$/.test(clean)) clean = '';
 
     return { text: clean, removedCount };
@@ -1425,7 +1484,7 @@ INTERJECTIONS AND FILLERS
 - Do NOT automatically delete meaningful acknowledgments, questions, reactions, or commands. Preserve and translate “Okay”, “Mhm/Mm-hmm” when they express agreement, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief, and “Aha” when expressing realization.
 - Use neighboring subtitles and the scene context to distinguish a meaningless filler from a meaningful reaction. If the function is ambiguous, prefer preserving its communicative/emotional meaning in concise Romanian rather than deleting it automatically.
 - Remove an embedded filler only when it is clearly hesitation and not part of a meaningful expression; then repair punctuation and capitalization. Do not delete a meaningful multi-word expression simply because it begins with an interjection; translate the expression by meaning.
-- Remove non-dialogue sound labels and standalone grunts when they are just subtitle noise, not meaningful spoken dialogue.
+- NEVER include non-dialogue sound effects, music cues, stage directions, or vocal-action captions in the Romanian subtitle output. Remove cues such as “(sighs)”, “[whistling]”, „(bufnește)”, „(șuierături)”, „(bufnire)” and „(plângând)” completely. If a cue shares a block with spoken dialogue, delete only the cue and preserve every spoken word. Do not remove genuine dialogue merely because it mentions a sound, laughter, singing, or music.
 
 FINAL CHECK
 Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, dialogue format, filler cleanup, and one-to-one ID alignment. Correct clear errors without adding or deleting meaning.
@@ -6185,6 +6244,21 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         console.log(`${c.yellow}[Final Repair] Omisă pentru ${finalRepairCandidates.length} candidate: circuitul 429 este deschis; nu înlocuim o lipsă de traducere cu cereri Grammar Review.${c.reset}`);
     }
 
+    // Filtru final de siguranță: Gemini poate reintroduce descrieri sonore în română
+    // chiar dacă sursa a fost curățată. Le scoatem înainte de QA, cache și export SRT.
+    let finalSoundAnnotationsRemoved = 0;
+    for (const item of items) {
+        const id = String(item.id);
+        const current = String(translatedById[id] || '');
+        if (!current.trim()) continue;
+        const soundCleaned = stripNonDialogueSoundMarkup(current);
+        if (soundCleaned.removedCount) finalSoundAnnotationsRemoved += soundCleaned.removedCount;
+        translatedById[id] = soundCleaned.text;
+    }
+    if (finalSoundAnnotationsRemoved) {
+        console.log(`${c.cyan}[Filtru sunete] Eliminate ${finalSoundAnnotationsRemoved} descrieri/etichete sonore din traducerile finale.${c.reset}`);
+    }
+
     // Interjecțiile generate ca traducere izolată sunt eliminate din ieșire și
     // scoase din numitorul QA; nu trebuie raportate ca eroare de fidelitate.
     const suppressedFillerIds = items
@@ -6611,7 +6685,7 @@ function parseSrt(srt, stats = null) {
 
         // Eliminăm doar indicațiile sonore clare între paranteze. Dacă rămâne dialog,
         // acesta continuă în pipeline; dacă rămâne doar zgomotul, întregul cue este omis.
-        const soundStripped = stripNonDialogueSoundAnnotations(rawText);
+        const soundStripped = stripNonDialogueSoundMarkup(rawText);
         rawText = soundStripped.text;
         if (stats && soundStripped.removedCount) {
             stats.soundCueAnnotationsRemoved += soundStripped.removedCount;
