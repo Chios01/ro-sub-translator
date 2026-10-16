@@ -164,7 +164,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.186',
+    version: '12.78.189',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1757,7 +1757,7 @@ function registerGlobalGemini5xx(status) {
     const jitterMs = Math.floor(Math.random() * Math.min(1500, Math.max(250, backoffBaseMs * 0.25)));
     const pauseMs = backoffBaseMs + jitterMs;
     geminiRequestControl.cooldownUntil = Math.max(geminiRequestControl.cooldownUntil, now + pauseMs);
-    console.log(`${c.yellow}⚠ [Gemini Control] API ${status}; pauză comună ${Math.ceil(pauseMs / 1000)}s și concurență redusă la ${geminiRequestControl.maxConcurrent}/${geminiRequestControl.targetConcurrent}.${c.reset}`);
+    console.log(`${c.yellow}⚠ Gemini ${status} | Pauză ${Math.ceil(pauseMs / 1000)}s | Concurență ${geminiRequestControl.maxConcurrent}/${geminiRequestControl.targetConcurrent}${c.reset}`);
     notifyGeminiRequestWaiters();
 }
 
@@ -2212,7 +2212,7 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
                     // locală: 503 este o problemă de serviciu, nu dovada că proiectul
                     // API curent are o cotă diferită de celelalte.
                     attemptedKeyStates.clear();
-                    console.log(`${c.yellow}[Gemini Recovery] API ${status || message.match(/5\d\d/)?.[0] || '5xx'}; retry ${fiveXxAttempts}/${maxTransientAttempts} după backoff global.${c.reset}`);
+                    console.log(`${c.yellow}↻ Recovery ${status || message.match(/5\d\d/)?.[0] || '5xx'} | Retry ${fiveXxAttempts}/${maxTransientAttempts} | Backoff activ${c.reset}`);
                     continue;
                 }
                 console.log(`${c.red}[Gemini Recovery] Bugetul retry 5xx s-a epuizat (${fiveXxAttempts}/${maxTransientAttempts}).${c.reset}`);
@@ -3719,7 +3719,7 @@ ${JSON.stringify(missingItems, null, 2)}
                 transientAttempts++;
                 attemptedKeyStates.clear(); // 503/5xx este o problemă de serviciu, nu un motiv de a epuiza proiectele
                 if (transientAttempts < maxTransientAttempts && attempt < maxAttemptsThisPass) {
-                    console.log(`${c.yellow}[Gemini Retry] API 5xx; retry ${transientAttempts + 1}/${maxTransientAttempts} după backoff global. Nu împart calupul doar din cauza unei erori de serviciu.${c.reset}`);
+                    console.log(`${c.yellow}↻ Retry ${transientAttempts}/${maxTransientAttempts} | Backoff activ${c.reset}`);
                     continue;
                 }
                 console.error(`${c.red}✖ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} eșuat după ${transientAttempts} încercări 5xx. Nu îl împart automat.${c.reset}`);
