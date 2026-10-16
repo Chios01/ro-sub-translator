@@ -164,7 +164,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.192',
+    version: '12.78.193',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2588,14 +2588,73 @@ function safeJsonParse(rawText) {
         let out = '';
         let inString = false;
         let escaped = false;
+        let stringCanBeKey = false;
+        const containerStack = [];
+
+        // O ghilimea în interiorul unui text trebuie escapata, nu tratată ca
+        // încheierea șirului. Considerăm structurală ghilimeaua urmată de un
+        // delimitator JSON valid; după virgulă verificăm și începutul valorii
+        // următoare, pentru a nu confunda „a zis "da", apoi...” cu JSON separat.
+        function isStructuralQuoteAt(source, quoteIndex, canBeKey) {
+            let cursor = quoteIndex + 1;
+            while (cursor < source.length && /\s/.test(source[cursor])) cursor++;
+            if (cursor >= source.length) return true;
+
+            const next = source[cursor];
+            // „:” termină o cheie JSON, nu o valoare text. Protejează replici
+            // precum: El mi-a spus "nu": apoi a plecat.
+            if (next === ':') return canBeKey;
+            if (next === '}' || next === ']') return true;
+            if (next !== ',') return false;
+
+            cursor++;
+            while (cursor < source.length && /\s/.test(source[cursor])) cursor++;
+            if (cursor >= source.length) return false;
+
+            const valueStart = source[cursor];
+            if (valueStart === '{' || valueStart === '[') return true;
+            if (valueStart === '"') {
+                let end = cursor + 1;
+                let inEscape = false;
+                for (; end < source.length; end++) {
+                    const token = source[end];
+                    if (inEscape) { inEscape = false; continue; }
+                    if (token === '\\') { inEscape = true; continue; }
+                    if (token === '"') break;
+                }
+                if (end >= source.length) return false;
+                end++;
+                while (end < source.length && /\s/.test(source[end])) end++;
+                return source[end] === ':' || source[end] === ',' || source[end] === '}' || source[end] === ']';
+            }
+
+            const tail = source.slice(cursor);
+            const literal = /^(?:true|false|null)(?=\s*[,\]}])/u.exec(tail);
+            if (literal) return true;
+            const number = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?(?=\s*[,\]}])/u.exec(tail);
+            return Boolean(number);
+        }
 
         for (let i = 0; i < input.length; i++) {
             const ch = input[i];
 
             if (!inString) {
-                if (ch === '“' || ch === '”') { out += '"'; inString = true; escaped = false; continue; }
+                if (ch === '“' || ch === '”' || ch === '"') {
+                    let previous = i - 1;
+                    while (previous >= 0 && /\s/.test(input[previous])) previous--;
+                    stringCanBeKey = containerStack[containerStack.length - 1] === '{' &&
+                        (previous < 0 || input[previous] === '{' || input[previous] === ',');
+                    out += '"';
+                    inString = true;
+                    escaped = false;
+                    continue;
+                }
                 out += ch;
-                if (ch === '"') { inString = true; escaped = false; }
+                if (ch === '{' || ch === '[') {
+                    containerStack.push(ch);
+                } else if ((ch === '}' || ch === ']') && containerStack.length) {
+                    containerStack.pop();
+                }
                 continue;
             }
 
@@ -2611,7 +2670,21 @@ function safeJsonParse(rawText) {
             }
 
             if (ch === '\\') { escaped = true; continue; }
-            if (ch === '"' || ch === '”') { out += '"'; inString = false; continue; }
+            if (ch === '"' || ch === '”') {
+                if (isStructuralQuoteAt(input, i, stringCanBeKey)) {
+                    out += '"';
+                    inString = false;
+                    stringCanBeKey = false;
+                } else if (ch === '"') {
+                    // Ghilimea ASCII neescapată, dar non-structurală: o păstrăm
+                    // în text, escapând-o pentru ca JSON-ul să rămână valid.
+                    out += '\\"';
+                } else {
+                    // Ghilimelele tipografice din text nu sunt delimitatori JSON.
+                    out += ch;
+                }
+                continue;
+            }
             if (ch === '\n') { out += '\\n'; continue; }
             if (ch === '\r') { out += '\\r'; continue; }
             if (ch === '\t') { out += '\\t'; continue; }
@@ -3652,7 +3725,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 ? `Segment aliniere pentru calup ${globalChunkIndex + 1}/${totalChunks}`
                 : `Calup ${globalChunkIndex + 1}/${totalChunks}`;
             const raw = await callGemini(prompt, keyState, { requestLabel });
-            const parsed = JSON.parse(String(raw).trim());
+            const parsed = safeJsonParse(raw);
             const dict = normalizeTranslationPayload(parsed);
 
             // Verificăm rezultatul DUPĂ același formatter care va fi folosit la ieșire.
@@ -3688,68 +3761,12 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             if (missingItems.length > 12) {
                 throw new Error(`Răspuns Gemini sever incomplet: ${missingItems.length} ID-uri lipsă sau cu traduceri goale.`);
             }
-            if (missingItems.length) {
-                // Încercarea de recuperare se execută în continuare; raportul pentru liniile rămase
-                // este consolidat în QA FINAL pentru a evita avertismente repetitive pe calup. 
-                const missingPrompt = `
-${MASTER_TRANSLATION_PROMPT}
 
-Returnează STRICT un ARRAY JSON valid pentru TOATE replicile de mai jos care lipsesc sau au primit text gol. Nu omite niciun ID și nu modifica ID-urile:
-[
-  {"id": 123, "text": "traducerea română"}
-]
-
-LINIILE LIPSĂ SAU GOALE:
-${JSON.stringify(missingItems, null, 2)}
-`;
-                try {
-                    const missingRaw = await callGeminiWithKeyRotation(missingPrompt, keyStates, { timeout: 20000, requestLabel: `Calup ${globalChunkIndex + 1}/${totalChunks} — recuperare linii lipsă` });
-                    const missingJson = JSON.parse(String(missingRaw).trim());
-                    const missingDict = normalizeTranslationPayload(missingJson);
-                    for (const obj of missingItems) {
-                        const value = missingDict[String(obj.id)];
-                        if (hasUsableTranslation(obj.id, value)) dict[String(obj.id)] = value;
-                    }
-                } catch (missingError) {
-                    const is429 = missingError?.isRateLimit429 === true || /\b429\b/i.test(String(missingError?.message || ''));
-                    if (is429) {
-                        register429(
-                            keyStates,
-                            Number(missingError.retryAfterMs) || 15000,
-                            missingError.isProjectQuota429 === true
-                        );
-                    }
-                    const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, missingError);
-                    if (!is429) {
-                        console.log(`${c.yellow}  ⚠ [Gemini] Cererea punctuală a eșuat: ${missingError.message}${quotaBlocked ? ' Oprind alte cereri de recuperare din cauza limitei Gemini.' : ''}${c.reset}`);
-                    }
-                }
-            }
-
-            // Dacă cererea punctuală pentru întregul set tot a lăsat unele texte goale,
-            // încercăm fiecare ID separat. Nu retrimitem calupul întreg și oprim la primul 429.
-            let stillMissing = chunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
-            if (stillMissing.length && !keyStates._emptyRecoveryQuotaBlocked && !keyStates._emptyRecoveryIndividualRetriesDisabled) {
-                // Recuperare individuală fără avertismente per ID; QA FINAL rezumă numai ce nu s-a reparat.
-                for (const item of stillMissing) {
-                    if (keyStates._emptyRecoveryQuotaBlocked || keyStates._emptyRecoveryIndividualRetriesDisabled) break;
-                    const singleResult = Object.create(null);
-                    const recovered = await retryEmptyTranslationIndividually(
-                        item, singleResult, keyStates, `Calup ${globalChunkIndex + 1} Empty Recovery`
-                    );
-                    if (recovered && hasUsableTranslation(item.id, singleResult[String(item.id)])) {
-                        dict[String(item.id)] = singleResult[String(item.id)];
-                    }
-                }
-            }
-
-            stillMissing = chunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
-            // ID-urile încă goale rămân înregistrate ca spațiu și sunt recuperate la final;
-            // numărul și ID-urile nerezolvate se raportează o singură dată în QA FINAL.
-
+            // Până la 12 linii lipsă nu declanșăm cereri API suplimentare în timpul
+            // traducerii principale. Rămân spații detectabile pentru Empty Recovery
+            // final: întâi reutilizare locală (0 apeluri API), apoi loturi de maximum 10.
             const results = chunk.map(obj => ({
                 id: obj.id,
-                // Un text gol rămâne detectabil de Empty Recovery; nu eșuăm și nu retrimitem tot calupul.
                 text: getUsableFormattedTranslation(obj.id, dict[String(obj.id)]) || ' '
             }));
 
@@ -4070,7 +4087,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
         const batchFixedBefore = fixed;
 
         const payload = batch.map(item => {
-            const index = contextItems.findIndex(x => String(x.id) === String(item.id));
+            const index = getFastItemIndex(contextItems, item.id);
             const previous = index > 0 ? contextItems[index - 1] : null;
             const next = index >= 0 && index < contextItems.length - 1 ? contextItems[index + 1] : null;
 
@@ -4134,11 +4151,10 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     await sleep(GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS);
                 }
 
-                const keyState = await getAvailableKey(keyStates);
                 const requestPrompt = jsonAttempt > 0
                     ? `${prompt}\n\nRETRY TEHNIC: Returnează DOAR JSON valid, fără markdown sau explicații. Format exact: [{\"id\":123,\"text\":\"...\"}]. Pentru nicio corecție returnează exact []. Nu modifica ID-urile. Escapă toate ghilimelele interne din text.`
                     : prompt;
-                const raw = await callGemini(requestPrompt, keyState, {
+                const raw = await callGeminiWithKeyRotation(requestPrompt, keyStates, {
                     timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
                     requestLabel: `Grammar Review — ${label || `calup ${batchIndex + 1}/${batches.length}`}`,
                     // Folosim MEDIUM și pentru Grammar Review, în acord cu nivelul general de gândire.
@@ -4253,9 +4269,21 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     if (is429) {
                         const cooldownMs = Number(error?.retryAfterMs) || 30000;
                         register429(keyStates, cooldownMs);
-                        keyStates._secondaryRecovery429Hold = true;
-                        keyStates._emptyRecoveryIndividualRetriesDisabled = true;
-                        return { success: false, is429: true, halted: true };
+                        const poolSnapshot = getGeminiPoolAvailability(keyStates);
+                        const noProjectsLeft = poolSnapshot.available.length === 0 &&
+                            poolSnapshot.temporarilyPaused.length === 0;
+                        if (noProjectsLeft) {
+                            keyStates._secondaryRecovery429Hold = true;
+                            keyStates._emptyRecoveryIndividualRetriesDisabled = true;
+                            return { success: false, is429: true, halted: true };
+                        }
+
+                        // Rotația a primit 429, dar mai există proiecte eligibile sau
+                        // proiecte temporar în cooldown. Nu blocăm Grammar Review:
+                        // calupul rămâne în rateLimitRetryQueue pentru o rundă coordonată.
+                        keyStates._secondaryRecovery429Hold = false;
+                        keyStates._emptyRecoveryIndividualRetriesDisabled = false;
+                        return { success: false, is429: true, halted: false };
                     }
 
                     // Timeout pe calup mic: păstrăm comportamentul existent.
@@ -4305,8 +4333,7 @@ DATE:
 ${JSON.stringify(singlePayload, null, 2)}
 
 Returnează DOAR textul final al replicii românești, fără JSON, fără markdown, fără ghilimele adăugate în jurul întregii replici și fără explicații.`;
-                        const fallbackKey = await getAvailableKey(keyStates);
-                        const fallbackRaw = await callGemini(fallbackPrompt, fallbackKey, {
+                        const fallbackRaw = await callGeminiWithKeyRotation(fallbackPrompt, keyStates, {
                             timeout: GRAMMAR_REVIEW_TIMEOUT_MS,
                             requestLabel: `Grammar Review — ${label || `calup ${batchIndex + 1}/${batches.length}`} — fallback text`,
                             thinkingLevel: 'MEDIUM',
@@ -4338,7 +4365,27 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
                         verifiedIds.add(id);
                         return { success: true, is429: false };
                     } catch (fallbackError) {
-                        // Fallback-ul nu a trecut validarea; păstrăm traducerea existentă și evităm logul per replică.
+                        // Erorile 429 ale fallback-ului reintră în coada coordonată;
+                        // alte erori păstrează traducerea existentă și evită loguri per ID.
+                        const fallbackMessage = String(fallbackError?.message || fallbackError);
+                        const fallbackIs429 = fallbackError?.isRateLimit429 === true || /\b429\b/.test(fallbackMessage);
+                        if (fallbackIs429) {
+                            lastJsonError = fallbackError;
+                            // Intră în același handler de 429 al calupului.
+                            const cooldownMs = Number(fallbackError?.retryAfterMs) || 30000;
+                            register429(keyStates, cooldownMs);
+                            const poolSnapshot = getGeminiPoolAvailability(keyStates);
+                            const noProjectsLeft = poolSnapshot.available.length === 0 &&
+                                poolSnapshot.temporarilyPaused.length === 0;
+                            if (noProjectsLeft) {
+                                keyStates._secondaryRecovery429Hold = true;
+                                keyStates._emptyRecoveryIndividualRetriesDisabled = true;
+                                return { success: false, is429: true, halted: true };
+                            }
+                            keyStates._secondaryRecovery429Hold = false;
+                            keyStates._emptyRecoveryIndividualRetriesDisabled = false;
+                            return { success: false, is429: true, halted: false };
+                        }
                         return { success: false, is429: false };
                     }
                 }
@@ -4396,6 +4443,21 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
     // Maximum 2 reîncercări suplimentare DOAR pentru calupurile care au eșuat cu 429.
     // Nu modificăm aici logica 429 a traducerii principale sau a altor etape.
     for (let retryRound = 1; retryRound <= 2 && rateLimitRetryQueue.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold; retryRound++) {
+        const retryPool = getGeminiPoolAvailability(keyStates);
+        if (!retryPool.available.length && retryPool.temporarilyPaused.length) {
+            const waitStartedAt = Date.now();
+            const projectWaitMs = getMinimumTransientPoolCooldownMs(keyStates, waitStartedAt, true);
+            const globalUntil = Math.max(
+                Number(geminiRequestControl.cooldownUntil || 0),
+                Number(geminiRequestControl.global429PauseUntil || 0),
+                Number(getGlobal429Until(keyStates) || 0)
+            );
+            const waitMs = Math.max(projectWaitMs, globalUntil - waitStartedAt);
+            if (waitMs > 0) {
+                console.log(`${c.yellow}[Grammar Review] Toate proiectele rămase sunt temporar în cooldown; aștept ${Math.ceil(waitMs / 1000)}s înainte de runda ${retryRound}/2.${c.reset}`);
+                await sleep(Math.min(waitMs, 120000) + 250);
+            }
+        }
         const pending = rateLimitRetryQueue.splice(0);
         console.log(`${c.cyan}🔄 [Grammar Review] Reîncerc 429: ${pending.length} calupuri (runda ${retryRound}/2)...${c.reset}`);
 
@@ -4563,6 +4625,23 @@ function detectLocalGrammarReviewReasons(text) {
     return reasons;
 }
 
+const itemsIndexCache = new WeakMap();
+function getFastItemIndex(itemsArray, id) {
+    if (!Array.isArray(itemsArray)) return -1;
+    let indexMap = itemsIndexCache.get(itemsArray);
+    if (!indexMap) {
+        indexMap = new Map();
+        for (let i = 0; i < itemsArray.length; i++) {
+            const key = String(itemsArray[i].id);
+            // findIndex întoarce prima potrivire și în cazul unor ID-uri duplicate.
+            if (!indexMap.has(key)) indexMap.set(key, i);
+        }
+        itemsIndexCache.set(itemsArray, indexMap);
+    }
+    const found = indexMap.get(String(id));
+    return found !== undefined ? found : -1;
+}
+
 function detectSourceAwareQualityReviewReasons(item, translation, contextItems, translatedById) {
     const source = String(item?.text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const target = String(translation || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -4618,7 +4697,7 @@ function detectSourceAwareQualityReviewReasons(item, translation, contextItems, 
     // cu „was/were”, blocul curent începe cu un gerunziu, iar traducerea începe cu
     // o formă clară de persoana I prezent, persoana/timpul s-au schimbat.
     const allItems = Array.isArray(contextItems) ? contextItems : [item];
-    const index = allItems.findIndex(entry => String(entry.id) === String(item.id));
+    const index = getFastItemIndex(allItems, item.id);
     if (index > 0) {
         const previous = allItems[index - 1];
         const previousSource = String(previous.text || '').replace(/<[^>]+>/g, ' ').trim();
@@ -5031,7 +5110,7 @@ async function runLocalGrammarQualityPass(items, translatedById) {
         }
     }
 
-    flagged.sort((a, b) => items.findIndex(item => String(item.id) === String(a.item.id)) - items.findIndex(item => String(item.id) === String(b.item.id)));
+    flagged.sort((a, b) => getFastItemIndex(items, a.item.id) - getFastItemIndex(items, b.item.id));
 
     console.log(`${c.green}[GRAMATICĂ] Verificare locală încheiată; ${autoFixed} corecții directe aplicate.${c.reset}`);
 
@@ -5753,7 +5832,11 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
 
             if (localIndex > 0) await sleep(1500 * localIndex);
 
-            const result = await processChunkWithRetry(chunk, items, start, end, previousTranslatedContext, keyStates, globalIndex, chunks.length);
+            // Numai primul calup continuă imediat contextul tradus al batch-ului anterior.
+            // Calupurile paralele următoare folosesc contextul original din allItems,
+            // fără un context românesc învechit cu 165–330 de replici.
+            const contextForChunk = localIndex === 0 ? previousTranslatedContext : [];
+            const result = await processChunkWithRetry(chunk, items, start, end, contextForChunk, keyStates, globalIndex, chunks.length);
             return { globalIndex, result };
         });
 
