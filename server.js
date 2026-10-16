@@ -164,7 +164,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.189',
+    version: '12.78.190',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4148,6 +4148,14 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     return { success: false, is429: false };
                 }
 
+                const errorStatus = Number(error?.response?.status || 0);
+                const is5xx = (errorStatus >= 500 && errorStatus <= 599) || /status code 5\d\d/i.test(message);
+                if (is5xx) {
+                    const statusLabel = errorStatus || message.match(/5\d\d/)?.[0] || '5xx';
+                    console.log(`${c.yellow}⚠ [Grammar Review] Gemini ${statusLabel}; calupul rămâne neschimbat. Eroarea nu este tratată ca JSON invalid.${c.reset}`);
+                    return { success: false, is429: false };
+                }
+
                 const isJsonError = /JSON Parse failed|Unexpected token|Unexpected end of JSON|Expected ',' or '}'|Expected property name/i.test(message);
 
                 // Prima eroare JSON/conținut gol: retry pe același calup, cu prompt
@@ -4991,6 +4999,18 @@ function runSemanticSpotCheck(items, translatedById) {
 // RECUPERARE FINALĂ — TRADUCERI DEVENITE GOALE
 // ============================================================
 
+// Recuperarea finală folosește loturi mici pentru ca un singur răspuns JSON
+// malformat să nu compromită toate replicile goale. Split-ul este limitat la
+// două niveluri; nu transformăm o problemă de format într-un val nelimitat de apeluri.
+const FINAL_EMPTY_RECOVERY_BATCH_SIZE = 10;
+const FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH = 2;
+const FINAL_EMPTY_RECOVERY_JSON_RETRY_DELAY_MS = 1200;
+
+function isRecoverableJsonParseError(error) {
+    const message = String(error?.message || error || '');
+    return /JSON Parse failed|Unexpected token|Unexpected end of JSON|Expected ',' or '}'|Expected property name|Bad control character|unterminated string|conținut gol|empty content/i.test(message);
+}
+
 // Întoarce un motiv explicit când o traducere de recuperare nu este acceptată.
 function assessEmptyRecoveryCandidate(item, candidateRaw) {
     if (candidateRaw === undefined || candidateRaw === null) {
@@ -5218,49 +5238,138 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
         return { detected: detectedEmptyTranslations.length, recovered: recoveredCount };
     }
 
-    console.log(`${c.cyan}[Final Empty Recovery] Încerc recuperarea AI pentru ${emptyTranslations.length} ID-uri rămase după recuperarea locală.${c.reset}`);
-    const recoveryPrompt = `
+    const recoveryBatches = chunkArray(emptyTranslations, FINAL_EMPTY_RECOVERY_BATCH_SIZE);
+    console.log(`${c.cyan}[Final Empty Recovery] Încerc recuperarea AI pentru ${emptyTranslations.length} ID-uri în ${recoveryBatches.length} grupuri de maximum ${FINAL_EMPTY_RECOVERY_BATCH_SIZE}.${c.reset}`);
+
+    // O eroare de transport/API oprește restul acestei etape. Astfel nu multiplicăm
+    // apelurile în timpul unui 503/429; numai erorile de format JSON sunt izolate prin split.
+    let stopAfterRecoveryApiFailure = false;
+
+    const buildRecoveryPrompt = (batch, strictJsonRetry = false) => `
 ${MASTER_TRANSLATION_PROMPT}
 
 RECUPERARE FINALĂ PENTRU TRADUCERI GOALE.
 Următoarele replici au text original, dar traducerea existentă este goală.
-Tradu TOATE liniile de mai jos în română naturală. Nu omite niciun ID.
+Tradu TOATE liniile din acest grup în română naturală. Nu omite niciun ID.
 Nu returna text gol.
 
-${JSON.stringify(emptyTranslations.map(item => ({ id: item.id, text: item.text })), null, 2)}
+${JSON.stringify(batch.map(item => ({ id: item.id, text: item.text })), null, 2)}
 
 Returnează DOAR un ARRAY JSON valid în forma:
 [
   {"id": 123, "text": "traducerea română"}
 ]
+${strictJsonRetry ? '\nRETRY TEHNIC: fără markdown sau explicații; escapă toate ghilimelele din text și returnează numai obiecte cu ID-urile din grupul primit. Dacă nu poți traduce un ID, returnează totuși JSON valid și nu altera alte ID-uri.' : ''}
 `;
 
-    const failedIds = [];
-    try {
-        const recoveryRaw = await callGeminiWithKeyRotation(recoveryPrompt, keyStates, { timeout: 20000, allowAfter429Hold: true, requestLabel: 'Final Empty Recovery' });
-        const recoveryJson = safeJsonParse(recoveryRaw);
-        const recoveryDict = normalizeTranslationPayload(recoveryJson);
+    const requestRecoveryBatch = async (batch, batchLabel, strictJsonRetry = false) => {
+        const raw = await callGeminiWithKeyRotation(
+            buildRecoveryPrompt(batch, strictJsonRetry),
+            keyStates,
+            {
+                timeout: 20000,
+                allowAfter429Hold: true,
+                requestLabel: `Final Empty Recovery — ${batchLabel} (${batch.length} ID-uri)`
+            }
+        );
+        return normalizeTranslationPayload(safeJsonParse(raw));
+    };
 
-        for (const item of emptyTranslations) {
+    const splitAndRecover = async (batch, depth, batchLabel, reason) => {
+        if (stopAfterRecoveryApiFailure || batch.length <= 1 || depth >= FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH) {
+            console.log(`${c.yellow}[Final Empty Recovery] ${reason}; ${batch.length} ID-uri rămân pentru raportul QA FINAL.${c.reset}`);
+            return;
+        }
+        const middle = Math.ceil(batch.length / 2);
+        const left = batch.slice(0, middle);
+        const right = batch.slice(middle);
+        console.log(`${c.yellow}[Final Empty Recovery] ${reason} la ${batch.length} ID-uri; împart în ${left.length}+${right.length}.${c.reset}`);
+        await processRecoveryBatch(left, depth + 1, `${batchLabel}.a`, false);
+        if (!stopAfterRecoveryApiFailure) {
+            await processRecoveryBatch(right, depth + 1, `${batchLabel}.b`, false);
+        }
+    };
+
+    const processRecoveryBatch = async (batch, depth, batchLabel, allowSameBatchJsonRetry) => {
+        if (!batch.length || stopAfterRecoveryApiFailure) return;
+        if (keyStates._emptyRecoveryQuotaBlocked || keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) {
+            stopAfterRecoveryApiFailure = true;
+            return;
+        }
+
+        let recoveryDict;
+        try {
+            recoveryDict = await requestRecoveryBatch(batch, batchLabel, false);
+        } catch (error) {
+            if (isRecoverableJsonParseError(error)) {
+                if (allowSameBatchJsonRetry) {
+                    console.log(`${c.yellow}↻ [Final Empty Recovery] JSON invalid la ${batch.length} ID-uri; retry 1/1...${c.reset}`);
+                    await sleep(FINAL_EMPTY_RECOVERY_JSON_RETRY_DELAY_MS);
+                    try {
+                        recoveryDict = await requestRecoveryBatch(batch, batchLabel, true);
+                    } catch (retryError) {
+                        if (isRecoverableJsonParseError(retryError)) {
+                            await splitAndRecover(batch, depth, batchLabel, 'JSON invalid după retry');
+                            return;
+                        }
+                        const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, retryError);
+                        const is429 = retryError?.isRateLimit429 === true || /\b429\b/i.test(String(retryError?.message || ''));
+                        if (!is429) {
+                            console.log(`${c.yellow}[Final Empty Recovery] Eroare API la grupul ${batchLabel}: ${String(retryError?.message || retryError).slice(0, 240)}${quotaBlocked ? ' Recuperarea AI se oprește pentru această procesare.' : ''}${c.reset}`);
+                        }
+                        stopAfterRecoveryApiFailure = true;
+                        return;
+                    }
+                } else {
+                    await splitAndRecover(batch, depth, batchLabel, 'JSON invalid');
+                    return;
+                }
+            } else {
+                const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
+                const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(String(error?.message || ''));
+                if (!is429) {
+                    console.log(`${c.yellow}[Final Empty Recovery] Eroare API la grupul ${batchLabel}: ${String(error?.message || error).slice(0, 240)}${quotaBlocked ? ' Recuperarea AI se oprește pentru această procesare.' : ''}${c.reset}`);
+                }
+                // În special pentru 503, nu lansăm grupuri suplimentare după epuizarea
+                // retry-urilor API. Traducerile deja recuperate rămân păstrate.
+                stopAfterRecoveryApiFailure = true;
+                return;
+            }
+        }
+
+        const unresolved = [];
+        for (const item of batch) {
             const id = String(item.id);
+            if (String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim()) continue;
             const assessment = assessEmptyRecoveryCandidate(item, recoveryDict[id]);
             if (assessment.ok) {
                 translatedById[id] = assessment.candidate;
                 recoveredCount++;
                 recoveredIds.push(id);
             } else {
-                failedIds.push(id);
+                unresolved.push(item);
             }
         }
-    } catch (error) {
-        const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
-        if (error?.isRateLimit429 !== true && !/\b429\b/i.test(String(error?.message || ''))) {
-            console.log(`${c.yellow}⚠ [Final Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${quotaBlocked ? ' Nu vor mai fi pornite alte cereri de recuperare în această procesare.' : ''}${c.reset}`);
+
+        // Dacă JSON-ul este valid, dar lipsesc rezultate sau unele texte nu trec
+        // validarea, reluăm numai ID-urile respective în grupuri mai mici.
+        if (unresolved.length) {
+            if (depth < FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH && unresolved.length > 0) {
+                await splitAndRecover(unresolved, depth, batchLabel, `${unresolved.length} ID-uri lipsă sau respinse după JSON valid`);
+            } else {
+                console.log(`${c.yellow}[Final Empty Recovery] Grupul ${batchLabel}: ${unresolved.length} ID-uri nu au trecut validarea; rămân pentru QA FINAL.${c.reset}`);
+            }
         }
-        for (const item of emptyTranslations) {
-            const id = String(item.id);
-            if (!String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim() && !failedIds.includes(id)) failedIds.push(id);
-        }
+    };
+
+    for (let batchIndex = 0; batchIndex < recoveryBatches.length; batchIndex++) {
+        if (stopAfterRecoveryApiFailure) break;
+        await processRecoveryBatch(
+            recoveryBatches[batchIndex],
+            0,
+            `grup ${batchIndex + 1}/${recoveryBatches.length}`,
+            true
+        );
     }
 
     const remainingEmpty = detectedEmptyTranslations.filter(item =>
