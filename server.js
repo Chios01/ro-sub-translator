@@ -164,7 +164,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.190',
+    version: '12.78.191',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -723,6 +723,62 @@ function isOnlyStandaloneFillerSequence(text) {
 }
 
 // ============================================================
+// FILTRARE DESCRIERI SONORE NON-DIALOGATE
+// Elimină etichetele de sunet din paranteze înainte ca sursa să ajungă la Gemini.
+// Nu elimină paranteze cu text obișnuit de dialog (ex. „I mean”, „Don't knock!”).
+// ============================================================
+
+const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed|ing)?|gurgle(?:s|d|ing)?|knock(?:s|ed|ing)?|bang(?:s|ed|ing)?|pound(?:s|ed|ing)?|thud(?:s|ded|ding)?|thump(?:s|ed|ing)?|ring(?:s|ing)?|beep(?:s|ed|ing)?|buzz(?:es|ed|ing)?|click(?:s|ed|ing)?|clatter(?:s|ed|ing)?|clang(?:s|ed|ing)?|crash(?:es|ed|ing)?|slam(?:s|med|ming)?|creak(?:s|ed|ing)?|cough(?:s|ed|ing)?|clear(?:s|ed|ing)\s+(?:(?:his|her|their|its|my|your)\s+)?throat|throat\s+clearing|sigh(?:s|ed|ing)?|gasp(?:s|ed|ing)?|groan(?:s|ed|ing)?|grunt(?:s|ed|ing)?|snort(?:s|ed|ing)?|sniff(?:s|ed|ing|les|led)?|sneez(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|chuckl(?:e|es|ed|ing)|giggl(?:e|es|ed|ing)|sob(?:s|bed|bing)?|cri(?:es|ed|ying)|scream(?:s|ed|ing)?|shout(?:s|ed|ing)?|whisper(?:s|ed|ing)?|pant(?:s|ed|ing)?|snor(?:es|ed|ing)|whimper(?:s|ed|ing)?|growl(?:s|ed|ing)?|bark(?:s|ed|ing)?|meow(?:s|ed|ing)?|chirp(?:s|ed|ing)?|howl(?:s|ed|ing)?|rustl(?:e|es|ed|ing)|rattl(?:e|es|ed|ing)|rumbl(?:e|es|ed|ing)|whistl(?:e|es|ed|ing)|clap(?:s|ped|ping)?|applaud(?:s|ed|ing)?|sing(?:s|ing)?|hum(?:s|med|ming)|footsteps?\s+(?:approach|recede|stop|fade|pass)|heavy\s+breathing|breathing\s+heavily|soft\s+breathing|squeak(?:s|ed|ing)?|squeal(?:s|ed|ing)?|scrap(?:e|es|ed|ing)|scratch(?:es|ed|ing)|shuffle(?:s|d|ing)|swallow(?:s|ed|ing)?|gulp(?:s|ed|ing)?|wind\s+howl(?:s|ing)?|birds?\s+chirp(?:s|ing)?|doorbell\s+ring(?:s|ing)?|phone\s+ring(?:s|ing)?|music\s+play(?:s|ing)?|background\s+music|gângur(?:ește|ind|it)|băt(?:aie|ăi|e|ește|ând|ut)|ciocăn(?:it|ește|ind|ituri)?|pocnet(?:e|ul)?|pocnește|bubuit(?:uri)?|bubuie|zgomot(?:e)?|sunet(?:e)?\s+de|sonerie|bip(?:uri|uie)?|țiuit|trosnet(?:e)?|trosnește|trântește|trântit|scârțâi(?:t|ește|ind)|pași|foșnet|foșnește|fâșâit|tușește|tușind|tușit|își\s+drege\s+glasul|dreg(?:e|ându-și)\s+glasul|gâfâie|gâfâind|gâfâit|respiră\s+greu|respirație\s+grea|oftează|oftând|oftat|suspin(?:ă|ând)?|mormăit|mormăie|mormăind|bufnește|bufnet|râde|râzând|râs|chicotește|chicotind|plânge|plângând|plâns|țipă|țipăt|țipând|strigă|strigând|horcăie|sforăie|adulmecă|fornăie|sughiță|șuieră|fluieră|fredonează|face\s+fâ+|cântă\s+încet|bate\s+din\s+palme|aplauze|urale|clopoțel|răpăit|zdrăngănit|vibrează|hârâit)(?![\p{L}\p{N}])/iu;
+
+const SOUND_CUE_LABEL_RE = /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|background|gentle|heavy|slight|small|short|brief|off-screen|în fundal|încet|încetișor|tare|ușor|scurt|scurtă|puternic|puternică)\s+)*(?:sound(?:s)?(?:\s+of)?|noise(?:s)?(?:\s+of)?|music(?:\s+(?:playing|continues|swells|fades|starts|stops|in background))?|applause|laughter|footsteps?|knocking|banging|pounding|thumping|doorbell|ringing|beeping|buzzing|clicking|clattering|crashing|slamming|creaking|coughing|sighing|gasping|groaning|grunting|snoring|heavy breathing|breathing|whispering|singing|humming|babbling|murmuring|bătaie(?:\s+în\s+ușă)?|bătăi(?:\s+în\s+ușă)?|gângurit|gânguritul|mormăit|suspin(?:ând)?|oftat|râs|plâns|pași|aplauze|urale|tușit|gâfâit|bufnet|foșnet|fâșâit|trosnet|zgomot(?:\s+de\s+[^.!?]{1,60})?|sunet(?:\s+de\s+[^.!?]{1,60})?)(?:\s+(?:in the background|from outside|from inside|în fundal|se aude|continuă|încet|tare))?[.!…]*$/iu;
+
+function isNonDialogueSoundCueAnnotation(annotation) {
+    const text = String(annotation || '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/[♪♫♬♩]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!text || text.length > 180) return false;
+
+    // Parantezele pot conține dialog real; păstrăm expresii conversaționale clare.
+    if (/^(?:i|you|we|they|he|she|it)\s+(?:heard|hear|love|like|think|thought|know|mean|said|say|told|want|need|prefer|remember|wonder|believe|guess|suppose)\b/iu.test(text)) {
+        return false;
+    }
+    if (/^(?:don't|do not|please|why|what|who|where|when|how|can you|could you|would you|will you|did you|have you)\b/iu.test(text)) {
+        return false;
+    }
+    // Formulările care încep cu pronume conversaționale pot fi dialog real,
+    // chiar dacă includ un verb de sunet („I was laughing when you called”).
+    if (/^(?:i|you|we|they)\b/iu.test(text)) return false;
+
+    if (SOUND_CUE_LABEL_RE.test(text)) return true;
+    // La descrierile compuse cu propoziție, virgulă, două puncte, întrebare
+    // sau citare, preferăm păstrarea: pot fi replici reale între paranteze.
+    if (/[,;:?]|["'“”]/u.test(text)) return false;
+    if (SOUND_CUE_ACTION_RE.test(text)) return true;
+    return false;
+}
+
+function stripNonDialogueSoundAnnotations(text) {
+    let removedCount = 0;
+    let clean = String(text || '').replace(/\(([^()\r\n]{1,180})\)/g, (full, inside) => {
+        if (!isNonDialogueSoundCueAnnotation(inside)) return full;
+        removedCount++;
+        return ' ';
+    });
+
+    // Reparăm punctuația rămasă după eliminarea unui cue, de ex. „(suspinând): Dacă...”.
+    clean = clean
+        .replace(/^([ \t]*)[:,;][ \t]*/gm, '$1')
+        .replace(/[ \t]+([,;:!?])/g, '$1')
+        .replace(/[,;:][ \t]*([.!?])/g, '$1')
+        .replace(/[ \t]{2,}/g, ' ');
+    if (removedCount && /^[ \t\r\n\-–—,;:.!?…]+$/.test(clean)) clean = '';
+
+    return { text: clean, removedCount };
+}
+
+// ============================================================
 // CLEAN TEXT FOR JSON 
 // ============================================================
 
@@ -740,9 +796,9 @@ function cleanTextForJson(text) {
 
     clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
     clean = clean.replace(/\[[^\]]*?\]/g, '');
-    clean = clean.replace(/\([^)]*?(râsete|murmur|muzică|aplauze|urale|fluierături|music|sighs|cheering|applause|laughs|laughing|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|chuckles|pant|groan|sigh|chuckle|whisper)[^)]*?\)/gi, '');
-    // Nu eliminăm parantezele în mod global: pot conține dialog real (de ex. (I mean)).
-    // Sunt eliminate doar parantezele care conțin indicații sonore, mai sus.
+    // Etichetele sonore între paranteze au fost filtrate contextual în parseSrt().
+    // Păstrăm parantezele obișnuite de dialog; nu mai ștergem un grup doar pentru
+    // că include accidental un cuvânt precum „music” sau „sigh”.
 
     // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
@@ -5033,6 +5089,175 @@ function assessEmptyRecoveryCandidate(item, candidateRaw) {
     return { ok: true, candidate };
 }
 
+function buildEmptyRecoveryPrompt(batch, strictJsonRetry = false, stageLabel = 'Empty Recovery') {
+    return `
+${MASTER_TRANSLATION_PROMPT}
+
+${stageLabel.toUpperCase()} PENTRU TRADUCERI GOALE.
+Următoarele replici au text original, dar traducerea existentă este goală.
+Tradu TOATE liniile din acest grup în română naturală. Nu omite niciun ID și nu returna text gol.
+
+${JSON.stringify(batch.map(item => ({ id: item.id, text: item.text })), null, 2)}
+
+Returnează DOAR un ARRAY JSON valid în forma:
+[
+  {"id": 123, "text": "traducerea română"}
+]
+${strictJsonRetry ? '\nRETRY TEHNIC: fără markdown sau explicații; escapă ghilimelele interne, păstrează fiecare ID exact și returnează numai JSON valid.' : ''}
+`;
+}
+
+// Recuperare inițială în loturi mici. Un JSON malformat afectează cel mult lotul curent;
+// după un retry JSON, acesta se împarte treptat. Erorile API (mai ales 503) opresc etapa
+// fără cereri suplimentare în rafală; traducerile deja recuperate rămân păstrate.
+async function recoverEmptyTranslationsBatched(items, translatedById, keyStates, stageLabel = 'Empty Recovery') {
+    const batches = chunkArray(items, FINAL_EMPTY_RECOVERY_BATCH_SIZE);
+    const failedById = new Map();
+    // Păstrăm separat numai ID-urile care au primit un răspuns JSON valid,
+    // dar au fost omise sau respinse de validarea traducerii. Doar acestea
+    // pot primi retry individual; JSON-ul malformat nu declanșează o rafală.
+    const individualRetryById = new Map();
+    const recoveredIds = [];
+    let recoveredCount = 0;
+    let parsedAnyResponse = false;
+    let apiFailure = false;
+
+    const rememberFailed = item => {
+        if (!String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()) {
+            failedById.set(String(item.id), item);
+        }
+    };
+
+    const processBatch = async (batch, depth, batchLabel, allowJsonRetry = true) => {
+        if (!batch.length) return;
+        if (apiFailure || keyStates._emptyRecoveryQuotaBlocked || keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) {
+            batch.forEach(rememberFailed);
+            return;
+        }
+
+        let recoveryDict;
+        try {
+            const raw = await callGeminiWithKeyRotation(
+                buildEmptyRecoveryPrompt(batch, false, stageLabel),
+                keyStates,
+                { requestLabel: `${stageLabel} — ${batchLabel} (${batch.length} ID-uri)` }
+            );
+            recoveryDict = normalizeTranslationPayload(safeJsonParse(raw));
+            parsedAnyResponse = true;
+        } catch (error) {
+            if (isRecoverableJsonParseError(error)) {
+                if (allowJsonRetry) {
+                    console.log(`${c.yellow}↻ [${stageLabel}] JSON invalid la ${batch.length} ID-uri; retry 1/1...${c.reset}`);
+                    await sleep(FINAL_EMPTY_RECOVERY_JSON_RETRY_DELAY_MS);
+                    try {
+                        const retryRaw = await callGeminiWithKeyRotation(
+                            buildEmptyRecoveryPrompt(batch, true, stageLabel),
+                            keyStates,
+                            { requestLabel: `${stageLabel} — ${batchLabel} — JSON retry (${batch.length} ID-uri)` }
+                        );
+                        recoveryDict = normalizeTranslationPayload(safeJsonParse(retryRaw));
+                        parsedAnyResponse = true;
+                    } catch (retryError) {
+                        if (isRecoverableJsonParseError(retryError)) {
+                            if (batch.length > 1 && depth < FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH) {
+                                const middle = Math.ceil(batch.length / 2);
+                                const left = batch.slice(0, middle);
+                                const right = batch.slice(middle);
+                                console.log(`${c.yellow}⚠ [${stageLabel}] JSON încă invalid; împart grupul ${batchLabel} în ${left.length}+${right.length}.${c.reset}`);
+                                await processBatch(left, depth + 1, `${batchLabel}.a`, true);
+                                await processBatch(right, depth + 1, `${batchLabel}.b`, true);
+                            } else {
+                                batch.forEach(rememberFailed);
+                            }
+                            return;
+                        }
+                        const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, retryError);
+                        const is429 = retryError?.isRateLimit429 === true || /\b429\b/i.test(String(retryError?.message || ''));
+                        if (!is429) {
+                            console.log(`${c.yellow}⚠ [${stageLabel}] API indisponibil la grupul ${batchLabel}: ${String(retryError?.message || retryError).slice(0, 200)}${quotaBlocked ? ' Recuperarea AI se oprește pentru această procesare.' : ''}${c.reset}`);
+                        }
+                        apiFailure = true;
+                        batch.forEach(rememberFailed);
+                        return;
+                    }
+                } else if (batch.length > 1 && depth < FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH) {
+                    const middle = Math.ceil(batch.length / 2);
+                    const left = batch.slice(0, middle);
+                    const right = batch.slice(middle);
+                    console.log(`${c.yellow}⚠ [${stageLabel}] JSON invalid; împart grupul ${batchLabel} în ${left.length}+${right.length}.${c.reset}`);
+                    await processBatch(left, depth + 1, `${batchLabel}.a`, true);
+                    await processBatch(right, depth + 1, `${batchLabel}.b`, true);
+                    return;
+                } else {
+                    batch.forEach(rememberFailed);
+                    return;
+                }
+            } else {
+                const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
+                const is429 = error?.isRateLimit429 === true || /\b429\b/i.test(String(error?.message || ''));
+                if (!is429) {
+                    console.log(`${c.yellow}⚠ [${stageLabel}] API indisponibil la grupul ${batchLabel}: ${String(error?.message || error).slice(0, 200)}${quotaBlocked ? ' Recuperarea AI se oprește pentru această procesare.' : ''}${c.reset}`);
+                }
+                apiFailure = true;
+                batch.forEach(rememberFailed);
+                return;
+            }
+        }
+
+        const unresolved = [];
+        for (const item of batch) {
+            const id = String(item.id);
+            if (String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim()) {
+                failedById.delete(id);
+                individualRetryById.delete(id);
+                continue;
+            }
+            const assessment = assessEmptyRecoveryCandidate(item, recoveryDict[id]);
+            if (assessment.ok) {
+                translatedById[id] = assessment.candidate;
+                recoveredCount++;
+                recoveredIds.push(id);
+                failedById.delete(id);
+                individualRetryById.delete(id);
+            } else {
+                unresolved.push(item);
+                failedById.set(id, item);
+                individualRetryById.set(id, item);
+            }
+        }
+
+        // JSON valid, dar ID-uri absente/inacceptabile: reluăm numai acele ID-uri.
+        if (unresolved.length > 1 && depth < FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH && !apiFailure) {
+            const middle = Math.ceil(unresolved.length / 2);
+            const left = unresolved.slice(0, middle);
+            const right = unresolved.slice(middle);
+            console.log(`${c.yellow}⚠ [${stageLabel}] ${unresolved.length} ID-uri lipsă sau respinse; reîncerc în loturi ${left.length}+${right.length}.${c.reset}`);
+            await processBatch(left, depth + 1, `${batchLabel}.missing-a`, true);
+            await processBatch(right, depth + 1, `${batchLabel}.missing-b`, true);
+        }
+    };
+
+    console.log(`${c.cyan}[${stageLabel}] Procesez ${items.length} ID-uri în ${batches.length} grupuri de maximum ${FINAL_EMPTY_RECOVERY_BATCH_SIZE}.${c.reset}`);
+    for (let index = 0; index < batches.length; index++) {
+        await processBatch(batches[index], 0, `grup ${index + 1}/${batches.length}`, true);
+        if (apiFailure || keyStates._emptyRecoveryQuotaBlocked || keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) {
+            for (let pendingIndex = index + 1; pendingIndex < batches.length; pendingIndex++) {
+                batches[pendingIndex].forEach(rememberFailed);
+            }
+            break;
+        }
+    }
+
+    return {
+        recoveredCount,
+        recoveredIds,
+        failedItems: [...individualRetryById.values()],
+        unresolvedItems: [...failedById.values()],
+        parsedAnyResponse,
+        apiFailure
+    };
+}
+
 // Recuperare locală, fără apel API: refolosește traducerea deja validată a unei
 // replici cu text-sursă identic. Nu ghicește și nu folosește potriviri aproximative.
 function normalizeLocalRecoverySource(text) {
@@ -5447,8 +5672,8 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     const items = parseSrt(srtText, parseStats);
     if (!items.length) throw new Error('Nu s-au găsit subtitrări valide.');
 
-    const accountingDelta = sourceBlockCount - items.length - parseStats.fillerBlocksFiltered - parseStats.otherBlocksFiltered - parseStats.invalidBlocksSkipped;
-    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${items.length} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
+    const accountingDelta = sourceBlockCount - items.length - parseStats.fillerBlocksFiltered - parseStats.otherBlocksFiltered - parseStats.invalidBlocksSkipped - parseStats.soundCueBlocksFiltered;
+    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${items.length} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${parseStats.soundCueBlocksFiltered ? ` | descrieri sonore eliminate: ${parseStats.soundCueBlocksFiltered} blocuri` : ''}${parseStats.soundCueAnnotationsRemoved > parseStats.soundCueBlocksFiltered ? ` | marcaje sonore eliminate: ${parseStats.soundCueAnnotationsRemoved}` : ''}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
 
     const cleanKeys = Array.from(new Set(apiKeys.map(k => String(k).trim()).filter(Boolean)));
     if (!cleanKeys.length) throw new Error('Nu există chei Gemini valide.');
@@ -5727,55 +5952,23 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         );
         let recoveredCount = localRecovery.recoveredIds.length;
         const recoveredIds = [...localRecovery.recoveredIds];
-        const failedIds = [];
-        const failedItems = [];
         let parsedInitialResponse = false;
+        let initialRecoveryApiFailure = false;
         const pendingEmptyTranslations = localRecovery.remaining;
 
         if (pendingEmptyTranslations.length && !keyStates._emptyRecoveryQuotaBlocked && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
-            console.log(`${c.cyan}[Empty Recovery] Cerere Gemini pentru ${pendingEmptyTranslations.length} replici fără potrivire locală sigură.${c.reset}`);
-            const recoveryPrompt = `
-${MASTER_TRANSLATION_PROMPT}
+            const recoveryResult = await recoverEmptyTranslationsBatched(
+                pendingEmptyTranslations, translatedById, keyStates, 'Empty Recovery'
+            );
+            recoveredCount += recoveryResult.recoveredCount;
+            recoveredIds.push(...recoveryResult.recoveredIds);
+            const failedItems = recoveryResult.failedItems;
+            parsedInitialResponse = recoveryResult.parsedAnyResponse;
+            initialRecoveryApiFailure = recoveryResult.apiFailure;
 
-RECOVERY PENTRU TRADUCERI GOALE.
-Următoarele replici au text original, dar traducerea anterioară a fost goală.
-Tradu TOATE liniile de mai jos în română naturală. Nu omite niciun ID.
-
-${JSON.stringify(pendingEmptyTranslations.map(item => ({ id: item.id, text: item.text })), null, 2)}
-
-Returnează DOAR un ARRAY JSON valid în forma:
-[
-  {"id": 123, "text": "traducerea română"}
-]
-`;
-
-            try {
-                const recoveryRaw = await callGeminiWithKeyRotation(recoveryPrompt, keyStates, { requestLabel: 'Empty Recovery' });
-                const recoveryJson = safeJsonParse(recoveryRaw);
-                const recoveryDict = normalizeTranslationPayload(recoveryJson);
-                parsedInitialResponse = true;
-
-                for (const item of pendingEmptyTranslations) {
-                    const id = String(item.id);
-                    const assessment = assessEmptyRecoveryCandidate(item, recoveryDict[id]);
-                    if (assessment.ok) {
-                        translatedById[id] = assessment.candidate;
-                        recoveredCount++;
-                        recoveredIds.push(id);
-                    } else {
-                        failedIds.push(id);
-                        failedItems.push(item);
-                    }
-                }
-            } catch (error) {
-                const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, error);
-                if (error?.isRateLimit429 !== true && !/\b429\b/i.test(String(error?.message || ''))) {
-                    console.log(`${c.yellow}⚠ [Empty Recovery] Cererea de recuperare a eșuat: ${error.message}${quotaBlocked ? ' Nu vor mai fi pornite alte cereri de recuperare în această procesare.' : ''}${c.reset}`);
-                }
-            }
-
-            // Doar ID-urile respinse de un răspuns utilizabil primesc un retry AI individual.
-            if (parsedInitialResponse && !keyStates._emptyRecoveryQuotaBlocked && !keyStates._emptyRecoveryIndividualRetriesDisabled) {
+            // Doar ID-urile încă goale după împărțirea JSON-ului primesc retry individual.
+            // Dacă API-ul a răspuns cu 503/altă eroare de transport, nu lansăm rafală de cereri.
+            if (parsedInitialResponse && !initialRecoveryApiFailure && !keyStates._emptyRecoveryQuotaBlocked && !keyStates._emptyRecoveryIndividualRetriesDisabled) {
                 for (const item of failedItems) {
                     if (keyStates._emptyRecoveryQuotaBlocked || keyStates._emptyRecoveryIndividualRetriesDisabled) break;
                     const id = String(item.id);
@@ -5785,8 +5978,6 @@ Returnează DOAR un ARRAY JSON valid în forma:
                     if (retriedSuccessfully) {
                         recoveredCount++;
                         recoveredIds.push(id);
-                        const failedIndex = failedIds.indexOf(id);
-                        if (failedIndex >= 0) failedIds.splice(failedIndex, 1);
                     }
                 }
             }
@@ -5801,10 +5992,6 @@ Returnează DOAR un ARRAY JSON valid în forma:
         const stillEmpty = emptyTranslations.filter(item =>
             !String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()
         );
-        for (const item of stillEmpty) {
-            const id = String(item.id);
-            if (!failedIds.includes(id)) failedIds.push(id);
-        }
         if (stillEmpty.length === 0) {
             const recoveredSuffix = recoveredIds.length ? ` (ID: ${recoveredIds.join(', ')})` : '';
             console.log(`${c.green}✔ [Empty Recovery] Recuperate: ${recoveredCount}/${emptyTranslations.length}${recoveredSuffix}.${c.reset}`);
@@ -6389,6 +6576,8 @@ function parseSrt(srt, stats = null) {
         stats.fillerBlocksFiltered = 0;
         stats.otherBlocksFiltered = 0;
         stats.invalidBlocksSkipped = 0;
+        stats.soundCueBlocksFiltered = 0;
+        stats.soundCueAnnotationsRemoved = 0;
     }
 
     for (const block of blocks) {
@@ -6413,10 +6602,24 @@ function parseSrt(srt, stats = null) {
 
         let rawText = lines.slice(2).join('\n');
 
-        // Verificăm textul ORIGINAL înainte de cleanTextForJson(). Unele surse folosesc
-        // entități HTML pentru spații/caractere invizibile, iar etapa de curățare poate
-        // transforma aceste entități într-un fragment aparent nenul. Un astfel de bloc
-        // este totuși gol și nu trebuie să intre în pipeline-ul de traducere.
+        // Verificăm textul ORIGINAL înainte de curățare. Unele surse folosesc
+        // entități HTML pentru spații/caractere invizibile, iar acestea pot părea nenule.
+        if (isEffectivelyEmptySubtitleText(rawText)) {
+            if (stats) stats.otherBlocksFiltered++;
+            continue;
+        }
+
+        // Eliminăm doar indicațiile sonore clare între paranteze. Dacă rămâne dialog,
+        // acesta continuă în pipeline; dacă rămâne doar zgomotul, întregul cue este omis.
+        const soundStripped = stripNonDialogueSoundAnnotations(rawText);
+        rawText = soundStripped.text;
+        if (stats && soundStripped.removedCount) {
+            stats.soundCueAnnotationsRemoved += soundStripped.removedCount;
+        }
+        if (!rawText.trim() && soundStripped.removedCount) {
+            if (stats) stats.soundCueBlocksFiltered++;
+            continue;
+        }
         if (isEffectivelyEmptySubtitleText(rawText)) {
             if (stats) stats.otherBlocksFiltered++;
             continue;
