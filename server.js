@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const dns = require('dns').promises;
 const net = require('net');
+const zlib = require('zlib');
 
 const app = express();
 
@@ -164,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.196',
+    version: '12.78.205',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -306,6 +307,122 @@ app.get('/:configData/manifest.json', (req, res) => {
 
 const BROWSER_USER_AGENT_FETCH = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
+function decodeSubtitleHtmlEntities(value) {
+    return String(value || '')
+        .replace(/&nbsp;|&#160;/gi, ' ')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;|&apos;/gi, "'")
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&#(\d+);/g, (_, n) => {
+            const code = Number(n);
+            return Number.isFinite(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : '';
+        })
+        .replace(/&#x([0-9a-f]+);/gi, (_, n) => {
+            const code = parseInt(n, 16);
+            return Number.isFinite(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : '';
+        })
+        .replace(/&amp;/gi, '&');
+}
+
+function subtitleHtmlText(value) {
+    return decodeSubtitleHtmlEntities(String(value || '')
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' '))
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function subtitleHtmlAnchors(html) {
+    const anchors = [];
+    const regex = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+    let match;
+    while ((match = regex.exec(String(html || ''))) !== null) {
+        const hrefMatch = match[1].match(/\bhref\s*=\s*(["'])(.*?)\1/i);
+        if (!hrefMatch) continue;
+        anchors.push({
+            href: decodeSubtitleHtmlEntities(hrefMatch[2].trim()),
+            text: subtitleHtmlText(match[2])
+        });
+    }
+    return anchors;
+}
+
+function subtitleSourceError(error) {
+    if (error && error.response && error.response.status) return `HTTP ${error.response.status}`;
+    if (error && (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || ''))) return 'timeout';
+    if (error && error.code) return String(error.code);
+    return String(error && error.message || 'eroare necunoscută').replace(/[\r\n]+/g, ' ').slice(0, 140);
+}
+
+async function fetchSubtitleSourceHtml(url, referer) {
+    const response = await axios.get(url, {
+        timeout: 6500,
+        maxContentLength: 8 * 1024 * 1024,
+        maxRedirects: 4,
+        responseType: 'text',
+        headers: {
+            'User-Agent': BROWSER_USER_AGENT_FETCH,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            ...(referer ? { 'Referer': referer } : {})
+        }
+    });
+    return { html: String(response.data || ''), status: response.status, url: response.request?.res?.responseUrl || url };
+}
+
+async function fetchYifySubtitleResults(type, rawId) {
+    const imdbId = String(rawId || '').match(/tt\d+/i)?.[0];
+    if (!imdbId) throw new Error('IMDb ID invalid pentru YIFY');
+    if (String(type || '').toLowerCase() !== 'movie') return [];
+
+    const listingUrl = `https://yts-subs.com/movie-imdb/${imdbId}`;
+    const { html } = await fetchSubtitleSourceHtml(listingUrl, 'https://yts-subs.com/');
+    const rows = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m => m[1]);
+    if (!rows.length) throw new Error('pagina YIFY nu conține tabelul de subtitrări');
+
+    const results = [];
+    const seen = new Set();
+    for (const row of rows) {
+        const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(m => subtitleHtmlText(m[1]));
+        if (!cells.some(cell => /^english$/i.test(cell))) continue;
+
+        const anchors = subtitleHtmlAnchors(row);
+        const detail = anchors.find(a => /\/subtitles\/[^/?#]+/i.test(a.href));
+        if (!detail) continue;
+
+        let detailUrl;
+        try { detailUrl = new URL(detail.href, listingUrl); } catch (_) { continue; }
+        if (!['yts-subs.com', 'www.yts-subs.com'].includes(detailUrl.hostname.toLowerCase())) continue;
+        const slugMatch = detailUrl.pathname.match(/^\/subtitles\/([^/]+)\/?$/i);
+        if (!slugMatch) continue;
+        const slug = decodeURIComponent(slugMatch[1]);
+
+        const directDownload = anchors.find(a => /\.zip(?:$|[?#])/i.test(a.href));
+        let downloadUrl = directDownload ? new URL(directDownload.href, listingUrl).toString() : `https://yts-subs.com/subtitle/${encodeURIComponent(slug)}.zip`;
+        if (!seen.has(downloadUrl)) {
+            seen.add(downloadUrl);
+            const releaseName = detail.text || slug.replace(/-+/g, ' ');
+            results.push({
+                id: `yify_${slug}`,
+                lang: 'eng',
+                title: releaseName,
+                releaseName,
+                movieReleaseName: releaseName,
+                url: downloadUrl
+            });
+        }
+        if (results.length >= 40) break;
+    }
+
+    if (!results.length && !/404\s*!?\s*Page Not Found/i.test(html)) {
+        throw new Error('pagina YIFY accesibilă, dar formatul listei EN nu a fost recunoscut');
+    }
+    return results;
+}
+
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
     
@@ -316,34 +433,84 @@ async function handleSubtitles(req, res) {
 
     let extraString = '';
     let userFilename = '';
+    let userVideoHash = '';
+    let extraKeys = [];
 
     if (extra) {
-        extraString = '/' + extra;
+        // Express decodifică req.params, iar un filename cu „&” (ex. „Fast & Furious”) ar rupe
+        // parametrii. Citim segmentul brut din URL, îl împărțim la „&” și decodăm fiecare valoare.
+        let rawExtra = '';
         try {
-            const params = new URLSearchParams(extra);
-            userFilename = params.get('filename') || '';
+            const rawPath = String(req.originalUrl || '').split('?')[0];
+            const rawMatch = rawPath.match(/\/subtitles\/[^/]+\/[^/]+\/([^/]+)\.json$/);
+            rawExtra = rawMatch ? rawMatch[1] : '';
+        } catch (e) {}
+        extraString = '/' + (rawExtra || extra);
+        try {
+            if (rawExtra) {
+                for (const part of rawExtra.split('&')) {
+                    const eq = part.indexOf('=');
+                    if (eq <= 0) continue;
+                    const key = part.slice(0, eq);
+                    extraKeys.push(key);
+                    if (key === 'filename') {
+                        let value = part.slice(eq + 1);
+                        try { value = decodeURIComponent(value); } catch (e) {}
+                        userFilename = value;
+                    } else if (key === 'videoHash') {
+                        let value = part.slice(eq + 1);
+                        try { value = decodeURIComponent(value); } catch (e) {}
+                        userVideoHash = String(value || '').trim();
+                    }
+                }
+            } else {
+                const params = new URLSearchParams(extra);
+                userFilename = params.get('filename') || '';
+                userVideoHash = params.get('videoHash') || '';
+                extraKeys = [...params.keys()];
+            }
         } catch (e) {}
     }
 
+    console.log(`${c.cyan}[Subtitrări] cerere ${type}/${id} | ${extra ? 'extra: ' + (extraKeys.join(',') || 'nerecunoscut') : 'fără extra'}${userFilename ? ' | filename: ' + userFilename.slice(0, 100) : ''} | client: ${req.headers['user-agent'] ? String(req.headers['user-agent']).slice(0, 40) : 'necunoscut'}${c.reset}`);
+
     const urlsToFetch = [
-        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
-        `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
-        `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`
+        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`,
+        `https://yts-subs.com/movie-imdb/${String(id).match(/tt\d+/i)?.[0] || id}`
     ];
 
     try {
-        const fetchPromises = urlsToFetch.map(u => 
-            axios.get(u, { 
-                timeout: 3500, 
-                headers: { 'User-Agent': BROWSER_USER_AGENT_FETCH } 
-            }).catch(() => ({ data: { subtitles: [] } }))
-        );
+        const sourceDiagnostics = ['în așteptare', 'în așteptare'];
+        const fetchPromises = [
+            axios.get(urlsToFetch[0], {
+                timeout: 6500,
+                maxContentLength: 8 * 1024 * 1024,
+                headers: { 'User-Agent': BROWSER_USER_AGENT_FETCH }
+            }).then(response => {
+                sourceDiagnostics[0] = `HTTP ${response.status}`;
+                return response;
+            }).catch(error => {
+                sourceDiagnostics[0] = subtitleSourceError(error);
+                return { data: { subtitles: [] } };
+            }),
+            (async () => {
+                try {
+                    const subtitles = await fetchYifySubtitleResults(type, id);
+                    sourceDiagnostics[1] = `HTML OK, ${subtitles.length} EN`;
+                    return { data: { subtitles } };
+                } catch (error) {
+                    sourceDiagnostics[1] = subtitleSourceError(error);
+                    return { data: { subtitles: [] } };
+                }
+            })(),
+        ];
 
         const results = await Promise.all(fetchPromises);
+        console.log(`${c.cyan}[Subtitrări] diagnostic preluare: OpenSubtitles: ${sourceDiagnostics[0]} | YIFY: ${sourceDiagnostics[1]}${c.reset}`);
         
         // Păstrăm proveniența fiecărui candidat; limita se aplică separat
         // fiecărei surse, nu listei concatenate în ordinea furnizorilor.
-        const subtitleSourceNames = ['OpenSubtitles', 'YIFY Subtitles', 'SubDL'];
+        const subtitleSourceNames = ['OpenSubtitles', 'YIFY Subtitles'];
         let allSubs = [];
         results.forEach((r, sourceIndex) => {
             if (r && r.data && Array.isArray(r.data.subtitles)) {
@@ -358,6 +525,30 @@ async function handleSubtitles(req, res) {
         });
         
         let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
+
+        // OpenSubtitles v3 indică metoda potrivirii prin câmpul `m`;
+        // `m: "h"` înseamnă potrivire după hash. O folosim doar când Stremio
+        // a trimis efectiv videoHash; nu deducem potrivirea din numele release-ului.
+        const isReportedHashMatch = (candidate) => {
+            const data = candidate && candidate.sourceData ? candidate.sourceData : (candidate || {});
+            const sourceIndex = candidate && candidate.sourceIndex !== undefined
+                ? candidate.sourceIndex
+                : candidate && candidate._selectionSourceIndex;
+            if (!userVideoHash || sourceIndex !== 0) return false;
+            const matchMethod = String(data.m || data.matchMethod || data.match_method || data.matchType || '')
+                .trim().toLowerCase();
+            const explicitHashFlag = [data.moviehash_match, data.hashMatch, data.hash_match]
+                .some(value => value === true || /^(?:true|1|yes)$/i.test(String(value || '')));
+            return explicitHashFlag || ['h', 'hash', 'moviehash', 'movie_hash'].includes(matchMethod);
+        };
+        const reportedEnglishHashMatches = engSubs.filter(isReportedHashMatch).length;
+        if (!userVideoHash) {
+            console.log(`${c.cyan}[Subtitrări] potrivire hash: videoHash absent; fallback la ordinea OpenSubtitles${c.reset}`);
+        } else if (reportedEnglishHashMatches > 0) {
+            console.log(`${c.cyan}[Subtitrări] potrivire hash: ${reportedEnglishHashMatches} variante EN OpenSubtitles marcate ca potrivire după hash${c.reset}`);
+        } else {
+            console.log(`${c.cyan}[Subtitrări] potrivire hash: videoHash transmis, dar nicio variantă EN nu este confirmată de OpenSubtitles ca potrivire după hash; se păstrează ordinea furnizorului${c.reset}`);
+        }
         
         // Eliminăm duplicatele din fiecare sursă, dar nu deduplicăm încă
         // între furnizori: fiecare sursă trebuie să-și poată completa top 15.
@@ -368,6 +559,19 @@ async function handleSubtitles(req, res) {
             sourceSet.add(sub.url);
             return true;
         });
+
+        try {
+            const sourceLabels = ['OpenSubtitles', 'YIFY'];
+            console.log(`${c.cyan}[Subtitrări] surse: ${urlsToFetch.map((_, i) => `${sourceLabels[i]}: ${allSubs.filter(s => s._selectionSourceIndex === i).length} total / ${engSubs.filter(s => s._selectionSourceIndex === i).length} EN`).join(' | ')}${c.reset}`);
+            urlsToFetch.forEach((_, i) => {
+                const sample = allSubs.find(s => s._selectionSourceIndex === i);
+                if (!sample) return;
+                const raw = { ...sample };
+                delete raw._selectionSourceIndex;
+                delete raw._selectionSourceOrder;
+                console.log(`${c.cyan}[Subtitrări] exemplu brut ${sourceLabels[i]}: ${JSON.stringify(raw).slice(0, 300)}${c.reset}`);
+            });
+        } catch (e) {}
 
         if (engSubs.length === 0) {
             console.log(`${c.yellow}⚠ Nu s-au găsit subtitrări sursă EN pentru: ${id}${c.reset}`);
@@ -387,7 +591,8 @@ async function handleSubtitles(req, res) {
                     sourceData: sub,
                     sourceIndex: sub._selectionSourceIndex,
                     sourceOrder: sub._selectionSourceOrder,
-                    sourceName: subtitleSourceNames[sub._selectionSourceIndex] || 'Unknown'
+                    sourceName: subtitleSourceNames[sub._selectionSourceIndex] || 'Unknown',
+                    hashMatch: isReportedHashMatch(sub)
                 });
             }
         });
@@ -434,23 +639,25 @@ async function handleSubtitles(req, res) {
         };
 
         const extractReleaseGroup = (name) => {
-            const raw = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '');
-            const bracket = raw.match(/\[([^\]]+)\](?:\s*)$/);
+            const raw = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '').trim();
+            const bracket = raw.match(/\[([^\]]+)\]\s*$/);
             if (bracket) return bracket[1].trim().toLowerCase();
 
-            const tokens = normalizeReleaseName(raw).split(' ').filter(Boolean);
+            // Grupul este doar ultimul token real al numelui release-ului,
+            // nu ultimul cuvânt al titlului când lipsesc metadatele de release.
+            if (!/\b(?:2160p|1080p|720p|576p|480p|webrip|web[ .-]?dl|bluray|blu[ .-]?ray|brrip|bdrip|hdtv|x264|x265|h264|h265|hevc|avc|19\d{2}|20\d{2})\b/i.test(raw)) return '';
+
+            const tokens = raw.replace(/[._-]+/g, ' ').split(/\s+/).filter(Boolean);
+            const candidate = String(tokens[tokens.length - 1] || '').toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, '');
             const stop = new Set([
-                'the','boys','season','episode','instant','white','hot','wild','series',
-                '2160p','1080p','720p','480p','576p','sd','web','bluray','x264','x265',
-                'h264','h265','hevc','avc','10bit','8bit','aac','ac3','eac3','ddp',
-                'dd','5','1','2','0','1ch','2ch','5ch','6ch','7ch','hdr','hdr10','dv',
-                'dolby','vision','amzn','amazon','nf','netflix','dsnp','disney','hulu','max',
-                'webrip','brrip','bdrip','bdr','torrentgalaxy','mkv','mp4','avi',
-                'proper','repack','rerip','extended','unrated','theatrical','remastered','director','directors','cut','imax'
+                'web','dl','rip','webrip','bluray','brrip','bdrip','bdr','hdtv','2160p','1080p','720p','576p','480p','sd',
+                'x264','x265','h264','h265','hevc','avc','264','265','10bit','8bit','aac','ac3','eac3','ddp','dd','atmos','truehd','dts','flac',
+                'hdr','hdr10','dv','dolby','vision','amzn','amazon','netflix','disney','hulu','max','proper','repack','rerip',
+                'extended','unrated','theatrical','remastered','director','directors','cut','imax','sdh','hi','eng','english','subtitle','subs','internal'
             ]);
-            const technical = /^(s\d{1,2}e\d{1,2}|19\d{2}|20\d{2}|\d{1,4}p|x\d+|h\d+|\d+bit|\d+(?:\.\d+)?ch?)$/i;
-            const candidates = tokens.filter(t => !stop.has(t) && !technical.test(t));
-            return candidates.length ? candidates[candidates.length - 1] : '';
+            const technical = /^(?:s\d{1,2}e\d{1,2}|19\d{2}|20\d{2}|\d{1,4}p|x\d+|h\d+|\d+bit|\d+(?:\.\d+)?ch?|\d{1,4})$/i;
+            if (candidate.length < 2 || stop.has(candidate) || technical.test(candidate)) return '';
+            return candidate;
         };
 
         const detectFamily = (name) => {
@@ -495,10 +702,45 @@ async function handleSubtitles(req, res) {
             return /\b(proper|repack|rerip)\b/i.test(n);
         };
 
+        const getMetaRawText = (sub) => {
+            const data = sub && sub.sourceData ? sub.sourceData : {};
+            const keys = [
+                'movieReleaseName', 'releaseName', 'releaseGroup', 'releaseFormat',
+                'movieRelease', 'release', 'name', 'title', 'filename', 'fileName',
+                'source', 'sourceName', 'provider', 'group', 'format', 'tags'
+            ];
+            return [...new Set([sub && sub.realName ? sub.realName : '', ...keys.map(key => data[key] == null ? '' : String(data[key]))]
+                .map(value => String(value || '').trim()).filter(Boolean))].join(' ');
+        };
+
+        const detectSourceKind = (name) => {
+            const n = String(name || '').toLowerCase().replace(/[._]+/g, ' ').replace(/\s+/g, ' ');
+            if (/\bweb\s*-?\s*dl\b/.test(n) || /\bwebdl\b/.test(n)) return 'webdl';
+            if (/\bweb\s*-?\s*rip\b/.test(n) || /\bwebrip\b/.test(n)) return 'webrip';
+            if (/\b(?:bluray|blu\s*-?\s*ray|brrip|bdrip|bdr)\b/.test(n)) return 'bluray';
+            if (/\b(?:hdtv|pdtv)\b/.test(n)) return 'hdtv';
+            if (/\bdvdrip\b|\bdvd\b/.test(n)) return 'dvd';
+            return '';
+        };
+
+        const detectVideoCodec = (name) => {
+            const n = String(name || '').toLowerCase().replace(/\bh[._ -]?265\b/g, ' h265 ').replace(/\bh[._ -]?264\b/g, ' h264 ').replace(/[._]+/g, ' ');
+            if (/\b(?:x265|h265|hevc)\b/.test(n)) return 'h265';
+            if (/\b(?:x264|h264|avc)\b/.test(n)) return 'h264';
+            return '';
+        };
+
+        const isMultiReleasePack = (name) => {
+            const resolutions = String(name || '').match(/\b(?:2160p|1080p|720p|576p|480p)\b/gi) || [];
+            return resolutions.length >= 3 || (resolutions.length >= 2 && new Set(resolutions.map(x => x.toLowerCase())).size >= 2);
+        };
+
         const videoSeasonEpisode = extractSeasonEpisode(videoName);
         const videoFamily = detectFamily(videoName);
         const videoProviders = detectProviders(videoName);
         const videoGroup = extractReleaseGroup(fNameLower);
+        const videoSourceKind = detectSourceKind(fNameLower);
+        const videoCodec = detectVideoCodec(fNameLower);
         const videoFlags = detectFlags(videoName);
         const videoResolution = (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
         const videoEdition = extractEdition(videoName);
@@ -518,9 +760,13 @@ async function handleSubtitles(req, res) {
 
         diverseSubs.forEach((s, originalOrder) => {
             const subName = getMetaText(s);
+            const subMetaRaw = getMetaRawText(s);
             const subData = s.sourceData || {};
             const subFamily = detectFamily(subName);
             const subProviders = detectProviders(subName);
+            const subSourceKind = detectSourceKind(subMetaRaw);
+            const subCodec = detectVideoCodec(subMetaRaw);
+            const subIsMultiReleasePack = isMultiReleasePack(s.realName || subMetaRaw);
             const subGroupRaw = String(subData.releaseGroup || subData.group || extractReleaseGroup(s.realName) || '').toLowerCase().trim();
             const subGroup = normalizeReleaseName(subGroupRaw);
             const subFlags = detectFlags(subName);
@@ -559,9 +805,25 @@ async function handleSubtitles(req, res) {
             }
 
             if (videoGroup && subGroup) {
-                if (subGroup === normalizeReleaseName(videoGroup)) s.score += 1300;
+                if (subGroup === normalizeReleaseName(videoGroup)) s.score += 1500;
                 else if (subGroup.includes(normalizeReleaseName(videoGroup)) || normalizeReleaseName(videoGroup).includes(subGroup)) s.score += 500;
+                else s.score -= 350;
             }
+
+            // Diferențiem WEB-DL de WEBRip și codec-ul video; versiuni cu release diferit
+            // nu mai rămân la egalitate doar pentru că au aceeași rezoluție.
+            if (videoSourceKind && subSourceKind) {
+                if (videoSourceKind === subSourceKind) s.score += 320;
+                else s.score -= 380;
+            }
+            if (videoCodec && subCodec) {
+                if (videoCodec === subCodec) s.score += 260;
+                else s.score -= 240;
+            }
+
+            // Unele rânduri YIFY sunt pachete cu mai multe release-uri concatenate.
+            // Nu le lăsăm să câștige artificial doar pentru că textul conține multe taguri.
+            if (subIsMultiReleasePack) s.score -= 700;
 
             if (videoFlags.hdr && subFlags.hdr) s.score += 220;
             if (videoFlags.dv && subFlags.dv) s.score += 220;
@@ -576,48 +838,87 @@ async function handleSubtitles(req, res) {
                 else s.score -= 80;
             }
 
-            if (overlap >= 0.85) s.score += 500;
-            else if (overlap >= 0.60) s.score += 300;
-            else if (overlap >= 0.35) s.score += 120;
+            if (!subIsMultiReleasePack) {
+                if (overlap >= 0.85) s.score += 500;
+                else if (overlap >= 0.60) s.score += 300;
+                else if (overlap >= 0.35) s.score += 120;
+            }
 
             if (/\bsdh\b|\bhi\b|hearing\s*impaired/i.test(subName)) s.score -= 80;
             if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
+
+            // Ordinea upstream (mai ales OpenSubtitles, care primește filename/videoSize/videoHash)
+            // este un semnal de potrivire separat. Nu lăsăm tagurile release-ului să o răstoarne
+            // pentru avantaje mici/medii: scorul local poate promova o variantă cu timpi greșiți.
+            // Penalizare moderată per poziție; potrivirile structurale decisive (episod/ediție)
+            // rămân suficient de puternice pentru a schimba ordinea când există un motiv clar.
+            // OpenSubtitles se ordonează explicit după markerul de hash și ordinea upstream;
+            // penalizarea de ordine rămâne doar pentru clasarea alternativelor YIFY.
+            const sourceOrderPenalty = s.sourceIndex === 0 ? 0 : 150;
+            s.score -= Math.max(0, Number(s.sourceOrder) || 0) * sourceOrderPenalty;
         });
 
-        // Clasăm toți candidații eligibili din fiecare sursă, apoi păstrăm
-        // maximum 15 din fiecare. Astfel, o sursă nu poate ocupa bugetul înainte
-        // ca rezultatele celorlalte surse să fie evaluate.
-        const sourceBalancedCandidates = [];
-        for (let sourceIndex = 0; sourceIndex < urlsToFetch.length; sourceIndex++) {
-            const rankedSource = diverseSubs
-                .filter(s => s.sourceIndex === sourceIndex)
-                .sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
-            sourceBalancedCandidates.push(...rankedSource.slice(0, 15));
-        }
-
-        // Deduplicare globală după selecția per-sursă. Dacă același URL apare
-        // în mai mulți furnizori, păstrăm varianta cu scorul mai bun; la egalitate
-        // rămâne prima din ordinea deterministă a surselor.
-        const bestCandidateByUrl = new Map();
-        for (const candidate of sourceBalancedCandidates) {
-            const urlKey = String(candidate.originalUrl);
-            const existing = bestCandidateByUrl.get(urlKey);
-            if (!existing || candidate.score > existing.score ||
-                (candidate.score === existing.score && candidate._rankingOrder < existing._rankingOrder)) {
-                bestCandidateByUrl.set(urlKey, candidate);
-            }
-        }
-
-        diverseSubs = [...bestCandidateByUrl.values()]
-            .sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder))
+        // OpenSubtitles: dacă există rezultate EN explicit marcate ca potrivire hash,
+        // acestea trec primele. În lipsa unui astfel de semnal, păstrăm ordinea upstream
+        // a OpenSubtitles în loc să ghicim sincronizarea din rezoluție/codec/release.
+        const openSubtitlesRanked = diverseSubs
+            .filter(s => s.sourceIndex === 0)
+            .sort((a, b) => {
+                if (a.hashMatch !== b.hashMatch) return a.hashMatch ? -1 : 1;
+                return (Number(a.sourceOrder) || 0) - (Number(b.sourceOrder) || 0)
+                    || (a._rankingOrder - b._rankingOrder);
+            })
             .slice(0, 15);
-        
+
+        // YIFY rămâne sursă alternativă; aici scorăm numele release-ului,
+        // dar excludem pachetele care concatenau mai multe release-uri.
+        const yifyRanked = diverseSubs
+            .filter(s => s.sourceIndex === 1)
+            .sort((a, b) => (b.score - a.score)
+                || ((Number(a.sourceOrder) || 0) - (Number(b.sourceOrder) || 0))
+                || (a._rankingOrder - b._rankingOrder))
+            .slice(0, 15);
+
+        const exactHashMatches = openSubtitlesRanked.filter(s => s.hashMatch);
+        const nonHashOpenSubtitles = openSubtitlesRanked.filter(s => !s.hashMatch);
+        const hasExactHashMatch = exactHashMatches.length > 0;
+        const orderedCandidates = [];
+
+        if (hasExactHashMatch) {
+            // Păstrăm toate variantele confirmate după hash înaintea fallback-urilor.
+            orderedCandidates.push(...exactHashMatches);
+            orderedCandidates.push(...nonHashOpenSubtitles.slice(0, Math.max(0, 10 - exactHashMatches.length)));
+            orderedCandidates.push(...yifyRanked.slice(0, 5));
+        } else {
+            // Fără confirmare de hash: primele 10 vin în ordinea OpenSubtitles;
+            // YIFY ocupă până la 5 poziții alternative, ordonate după potrivirea release-ului.
+            orderedCandidates.push(...openSubtitlesRanked.slice(0, 10));
+            orderedCandidates.push(...yifyRanked.slice(0, 5));
+        }
+
+        // Dacă una dintre surse a oferit puține rezultate sau există duplicate de URL,
+        // completăm lista în aceeași ordine de prioritate, fără a reordona scorurile.
+        const bestCandidateByUrl = new Map();
+        for (const candidate of [
+            ...orderedCandidates,
+            ...openSubtitlesRanked,
+            ...yifyRanked
+        ]) {
+            const urlKey = String(candidate.originalUrl || '');
+            if (!urlKey || bestCandidateByUrl.has(urlKey)) continue;
+            bestCandidateByUrl.set(urlKey, candidate);
+        }
+        diverseSubs = [...bestCandidateByUrl.values()].slice(0, 15);
 
         // ============================================================
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
         // ============================================================
         const generatedSubs = diverseSubs.map((s, index) => {
-            const encodedUrl = encodeURIComponent(s.originalUrl);
+            const sourceProvider = s.sourceIndex === 1 ? 'yify' : '';
+            const subtitleUrl = sourceProvider
+                ? `${baseUrl}/source-subtitle?provider=${sourceProvider}&url=${encodeURIComponent(s.originalUrl)}&filename=${encodeURIComponent(userFilename)}`
+                : s.originalUrl;
+            const encodedUrl = encodeURIComponent(subtitleUrl);
             
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
             const foundTags = [];
@@ -645,10 +946,19 @@ async function handleSubtitles(req, res) {
             return {
                 id: `ai_sub_${index}`,
                 title: labelName, 
-                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
+                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${index + 1}`,
                 lang: 'ron'
             };
         });
+
+        try {
+            diverseSubs.forEach((s, i) => {
+                const diagnosticName = s.sourceData?.subtitleFileName || s.sourceData?.fileName || s.sourceData?.movieReleaseName || s.realName;
+                const hashNote = s.hashMatch ? ' | POTRIVIRE HASH' : '';
+                console.log(`${c.cyan}[Subtitrări] #${i + 1} [${s.sourceName} #${s.sourceOrder}] scor=${s.score}${hashNote} | ${String(diagnosticName).slice(0, 120)}${c.reset}`);
+            });
+            console.log(`${c.cyan}[Subtitrări] returnate ${generatedSubs.length} variante pentru ${id}${c.reset}`);
+        } catch (e) {}
 
         return res.json({ subtitles: generatedSubs });
     } catch (error) {
@@ -6609,6 +6919,282 @@ async function fetchValidatedSubtitleUrl(initialUrl) {
 
     throw new Error('Prea multe redirecționări pentru URL-ul sursă.');
 }
+
+// ============================================================
+// DOWNLOAD/UNPACK SUBTITLE ARCHIVES FOR YIFY
+// ============================================================
+
+function allowedSubtitleSourceHost(provider, hostname) {
+    const host = String(hostname || '').toLowerCase();
+    const allowed = provider === 'yify'
+        ? ['yts-subs.com', 'www.yts-subs.com', 'yifysubtitles.org', 'www.yifysubtitles.org']
+        : [];
+    return allowed.includes(host);
+}
+
+function makeSubtitleDownloadFallbacks(provider, initialUrl) {
+    const result = [initialUrl];
+    let parsed;
+    try { parsed = new URL(initialUrl); } catch (_) { return result; }
+    if (provider === 'yify') {
+        const match = parsed.pathname.match(/^\/subtitle\/([^/]+\.zip)$/i);
+        if (match) {
+            for (const host of ['yts-subs.com', 'yifysubtitles.org']) {
+                const candidate = `https://${host}/subtitle/${match[1]}`;
+                if (!result.includes(candidate)) result.push(candidate);
+            }
+        }
+    }
+    return [...new Set(result)];
+}
+
+async function fetchSubtitleSourceBytes(provider, initialUrl) {
+    const allowedProvider = provider === 'yify';
+    if (!allowedProvider) throw new Error('Sursă de subtitrare nepermisă.');
+
+    const starts = makeSubtitleDownloadFallbacks(provider, initialUrl);
+    let lastError = null;
+    for (const startUrl of starts) {
+        let currentUrl = startUrl;
+        try {
+            for (let redirects = 0; redirects <= 5; redirects++) {
+                const parsed = new URL(currentUrl);
+                if (parsed.protocol !== 'https:' || !allowedSubtitleSourceHost(provider, parsed.hostname)) {
+                    throw new Error('domeniu de descărcare nepermis');
+                }
+                const validation = await validateTargetUrl(currentUrl);
+                const response = await axios.get(validation.url, {
+                    timeout: 18000,
+                    maxContentLength: 25 * 1024 * 1024,
+                    maxBodyLength: 25 * 1024 * 1024,
+                    responseType: 'arraybuffer',
+                    maxRedirects: 0,
+                    validateStatus: status => status >= 200 && status < 400,
+                    headers: {
+                        'User-Agent': BROWSER_USER_AGENT_FETCH,
+                        'Accept': 'application/zip, application/octet-stream, text/plain, */*',
+                        'Referer': 'https://yts-subs.com/'
+                    },
+                    lookup: (hostname, options, callback) => callback(null, validation.address, validation.family)
+                });
+
+                if (response.status >= 300) {
+                    const location = response.headers.location;
+                    if (!location) throw new Error('redirecționare fără destinație');
+                    currentUrl = new URL(location, validation.url).toString();
+                    continue;
+                }
+                return Buffer.from(response.data);
+            }
+            throw new Error('prea multe redirecționări');
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw new Error(`descărcarea arhivei a eșuat (${subtitleSourceError(lastError)})`);
+}
+
+function decodeSubtitleBytes(buffer) {
+    let text = Buffer.from(buffer).toString('utf8');
+    const replacementCount = (text.match(/\uFFFD/g) || []).length;
+    if (replacementCount > 2) {
+        try { text = new TextDecoder('windows-1252').decode(buffer); } catch (_) {}
+    }
+    return text.replace(/^\uFEFF/, '').replace(/\0/g, '');
+}
+
+function convertAssSubtitleToSrt(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    let inEvents = false;
+    let format = null;
+    const cues = [];
+    const toSrtTime = value => {
+        const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2}):(\d{2})[.](\d{1,2})$/);
+        if (!match) return '';
+        return `${match[1].padStart(2, '0')}:${match[2]}:${match[3]},${String(match[4]).padEnd(3, '0').slice(0, 3)}`;
+    };
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (/^\[Events\]/i.test(trimmed)) { inEvents = true; continue; }
+        if (/^\[[^\]]+\]/.test(trimmed)) { inEvents = false; continue; }
+        if (!inEvents) continue;
+        if (/^Format\s*:/i.test(trimmed)) {
+            format = trimmed.slice(trimmed.indexOf(':') + 1).split(',').map(x => x.trim().toLowerCase());
+            continue;
+        }
+        if (!/^Dialogue\s*:/i.test(trimmed) || !format) continue;
+        const fields = trimmed.slice(trimmed.indexOf(':') + 1).split(',');
+        const textIndex = format.indexOf('text');
+        if (textIndex < 0 || fields.length < format.length) continue;
+        // ASS text is the final field; rejoin commas in dialogue text.
+        const values = fields.slice(0, format.length - 1);
+        values.push(fields.slice(format.length - 1).join(','));
+        const start = toSrtTime(values[format.indexOf('start')]);
+        const end = toSrtTime(values[format.indexOf('end')]);
+        let dialogue = String(values[textIndex] || '')
+            .replace(/\{[^}]*\}/g, '')
+            .replace(/\\[Nn]/g, '\n')
+            .replace(/<[^>]+>/g, '')
+            .trim();
+        if (!start || !end || !dialogue) continue;
+        cues.push(`${cues.length + 1}\n${start} --> ${end}\n${dialogue}`);
+    }
+    return cues.join('\n\n');
+}
+
+function normalizeSubtitleText(text, filename) {
+    const extension = String(filename || '').toLowerCase().match(/\.(srt|vtt|ass|ssa)$/i)?.[1] || '';
+    let normalized = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+    if (extension === 'ass' || extension === 'ssa') {
+        normalized = convertAssSubtitleToSrt(normalized);
+    } else if (extension === 'vtt' || /^\s*WEBVTT\b/i.test(normalized)) {
+        normalized = normalized
+            .replace(/^\s*WEBVTT[^\n]*\n+/i, '')
+            .replace(/^NOTE[^\n]*(?:\n(?!\n)[^\n]*)*/gim, '')
+            .replace(/(^|\s)(\d{2}):(\d{2})\.(\d{3})(?=\s*-->|\s*$)/gm, (match, prefix, minutes, seconds, millis) => `${prefix}00:${minutes}:${seconds},${millis}`)
+            .replace(/(\d{2}:\d{2}:\d{2})\.(\d{3})/g, '$1,$2');
+    }
+    normalized = normalized.trim();
+    if (!normalized || !/\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[,.]\d{3}/.test(normalized)) {
+        throw new Error('fișierul descărcat nu conține subtitrare SRT/VTT/ASS recunoscută');
+    }
+    return normalized.replace(/\n{3,}/g, '\n\n') + '\n';
+}
+
+function scoreSubtitleArchiveFilename(subtitleFilename, videoFilename) {
+    const normalize = value => String(value || '').toLowerCase()
+        .replace(/\.[a-z0-9]{2,5}$/i, '')
+        .replace(/\bh[._ -]?265\b/g, ' h265 ')
+        .replace(/\bh[._ -]?264\b/g, ' h264 ')
+        .replace(/[._-]+/g, ' ')
+        .replace(/\bweb\s+dl\b/g, ' webdl ')
+        .replace(/\bweb\s+rip\b/g, ' webrip ')
+        .replace(/\b(?:hevc|h265)\b/g, ' h265 ')
+        .replace(/\b(?:avc|h264)\b/g, ' h264 ')
+        .replace(/\s+/g, ' ').trim();
+    const video = normalize(videoFilename);
+    const candidate = normalize(subtitleFilename);
+    if (!video || !candidate) return 0;
+
+    const ignored = new Set(['the', 'and', 'with', 'from', 'mkv', 'mp4', 'avi', 'subtitle', 'subs', 'english', 'eng', 'srt', 'web', 'dl', 'rip', 'x265', 'x264', 'h265', 'h264', 'hevc', 'avc', 'aac', 'ac3', 'eac3', 'ddp', 'atmos', 'hdr', 'hdr10', 'dv', 'uhd', 'proper', 'repack']);
+    const tokens = [...new Set(video.split(/\s+/).filter(t => t.length > 2 && !ignored.has(t)))];
+    let score = 0;
+    if (tokens.length) {
+        const c = new Set(candidate.split(/\s+/));
+        score += tokens.filter(t => c.has(t)).length * 20;
+    }
+    const videoResolution = (video.match(/\b(2160p|1080p|720p|576p|480p)\b/) || [])[1] || '';
+    const subResolution = (candidate.match(/\b(2160p|1080p|720p|576p|480p)\b/) || [])[1] || '';
+    if (videoResolution && subResolution) score += videoResolution === subResolution ? 100 : -40;
+
+    const sourceKind = value => /\bwebdl\b/.test(value) ? 'webdl' : (/\bwebrip\b/.test(value) ? 'webrip' : (/\bbluray\b/.test(value) ? 'bluray' : ''));
+    const videoKind = sourceKind(video);
+    const subKind = sourceKind(candidate);
+    if (videoKind && subKind) score += videoKind === subKind ? 80 : -35;
+
+    const codec = value => /\b(?:x265|h265)\b/.test(value) ? 'h265' : (/\b(?:x264|h264)\b/.test(value) ? 'h264' : '');
+    const videoCodec = codec(video);
+    const subCodec = codec(candidate);
+    if (videoCodec && subCodec) score += videoCodec === subCodec ? 60 : -25;
+
+    const videoTokens = video.split(/\s+/).filter(Boolean);
+    const subtitleTokens = candidate.split(/\s+/).filter(Boolean);
+    const lastVideoToken = videoTokens[videoTokens.length - 1] || '';
+    const lastSubtitleToken = subtitleTokens[subtitleTokens.length - 1] || '';
+    if (lastVideoToken.length >= 3 && !ignored.has(lastVideoToken) && lastSubtitleToken.length >= 3) {
+        if (lastSubtitleToken === lastVideoToken) score += 140;
+        else if (/^[a-z][a-z0-9]{2,}$/i.test(lastVideoToken) && /^[a-z][a-z0-9]{2,}$/i.test(lastSubtitleToken)) score -= 25;
+    }
+    return score;
+}
+
+function extractSubtitleFromZip(buffer, preferredVideoFilename = '') {
+    const bytes = Buffer.from(buffer);
+    if (bytes.length < 22) throw new Error('arhivă ZIP prea scurtă');
+    const minEocd = Math.max(0, bytes.length - 22 - 0xFFFF);
+    let eocd = -1;
+    for (let i = bytes.length - 22; i >= minEocd; i--) {
+        if (bytes.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('arhiva ZIP nu are director central valid');
+
+    const entryCount = bytes.readUInt16LE(eocd + 10);
+    const centralOffset = bytes.readUInt32LE(eocd + 16);
+    if (!entryCount || entryCount > 300 || centralOffset >= bytes.length) throw new Error('arhivă ZIP goală sau cu structură neacceptată');
+
+    const files = [];
+    let offset = centralOffset;
+    for (let i = 0; i < entryCount && offset + 46 <= bytes.length; i++) {
+        if (bytes.readUInt32LE(offset) !== 0x02014b50) break;
+        const flags = bytes.readUInt16LE(offset + 8);
+        const method = bytes.readUInt16LE(offset + 10);
+        const compressedSize = bytes.readUInt32LE(offset + 20);
+        const uncompressedSize = bytes.readUInt32LE(offset + 24);
+        const nameLength = bytes.readUInt16LE(offset + 28);
+        const extraLength = bytes.readUInt16LE(offset + 30);
+        const commentLength = bytes.readUInt16LE(offset + 32);
+        const localOffset = bytes.readUInt32LE(offset + 42);
+        const filename = bytes.subarray(offset + 46, offset + 46 + nameLength).toString('utf8');
+        offset += 46 + nameLength + extraLength + commentLength;
+
+        if ((flags & 1) !== 0 || /(^|\/)__MACOSX\//i.test(filename) || /(^|\/)\._/.test(filename) || /\/$/.test(filename)) continue;
+        if (!/\.(srt|vtt|ass|ssa)$/i.test(filename)) continue;
+        if (compressedSize > bytes.length || uncompressedSize > 16 * 1024 * 1024 || localOffset + 30 > bytes.length) continue;
+        if (bytes.readUInt32LE(localOffset) !== 0x04034b50) continue;
+        const localNameLength = bytes.readUInt16LE(localOffset + 26);
+        const localExtraLength = bytes.readUInt16LE(localOffset + 28);
+        const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+        const dataEnd = dataOffset + compressedSize;
+        if (dataOffset < 0 || dataEnd > bytes.length) continue;
+        try {
+            const compressed = bytes.subarray(dataOffset, dataEnd);
+            let content;
+            if (method === 0) content = Buffer.from(compressed);
+            else if (method === 8) content = zlib.inflateRawSync(compressed, { maxOutputLength: 16 * 1024 * 1024 });
+            else continue;
+            if (content.length > 16 * 1024 * 1024) continue;
+            files.push({
+                filename,
+                content,
+                priority: /\.srt$/i.test(filename) ? 0 : (/\.vtt$/i.test(filename) ? 1 : 2),
+                matchScore: scoreSubtitleArchiveFilename(filename, preferredVideoFilename)
+            });
+        } catch (_) {}
+    }
+
+    files.sort((a, b) => (b.matchScore - a.matchScore) || (a.priority - b.priority));
+    for (const file of files) {
+        try { return normalizeSubtitleText(decodeSubtitleBytes(file.content), file.filename); } catch (_) {}
+    }
+    throw new Error('arhiva nu conține un fișier SRT/VTT/ASS valid');
+}
+
+async function serveSubtitleSource(req, res) {
+    const provider = String(req.query.provider || '').trim().toLowerCase();
+    const sourceUrl = String(req.query.url || '').trim();
+    if (provider !== 'yify' || !sourceUrl || sourceUrl.length > 2048) {
+        return res.status(400).send('Parametri de sursă invalidi.');
+    }
+    try {
+        const bytes = await fetchSubtitleSourceBytes(provider, sourceUrl);
+        let subtitleText;
+        if (bytes.length >= 4 && bytes.readUInt32LE(0) === 0x04034b50) {
+            subtitleText = extractSubtitleFromZip(bytes, String(req.query.filename || ''));
+        } else {
+            const pathExtension = (() => { try { return new URL(sourceUrl).pathname; } catch (_) { return ''; } })();
+            subtitleText = normalizeSubtitleText(decodeSubtitleBytes(bytes), pathExtension);
+        }
+        res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
+        res.setHeader('Cache-Control', 'private, max-age=60');
+        return res.send(subtitleText);
+    } catch (error) {
+        console.log(`${c.yellow}[Subtitrări] proxy ${provider.toUpperCase()} eșuat: ${subtitleSourceError(error)}${c.reset}`);
+        return res.status(502).send('Nu s-a putut prelua sau extrage subtitrarea sursă.');
+    }
+}
+
+app.get('/source-subtitle', serveSubtitleSource);
 
 // ============================================================
 // TRANSLATION ROUTE
