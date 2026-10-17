@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.205',
+    version: '12.78.206',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4087,13 +4087,11 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const hasUsableTranslation = (id, value) => Boolean(getUsableFormattedTranslation(id, value));
 
             const missingItems = chunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
-            if (missingItems.length > 12) {
-                throw new Error(`Răspuns Gemini sever incomplet: ${missingItems.length} ID-uri lipsă sau cu traduceri goale.`);
-            }
 
-            // Până la 12 linii lipsă nu declanșăm cereri API suplimentare în timpul
-            // traducerii principale. Rămân spații detectabile pentru Empty Recovery
-            // final: întâi reutilizare locală (0 apeluri API), apoi loturi de maximum 10.
+            // Un răspuns JSON valid cu unele ID-uri omise NU este un eșec al calupului.
+            // Păstrăm toate traducerile valide și lăsăm doar ID-urile lipsă pentru
+            // Empty Recovery. Split-ul rămâne rezervat erorilor reale de API/JSON,
+            // nu omisiunilor dintr-un răspuns care poate fi folosit parțial.
             const results = chunk.map(obj => ({
                 id: obj.id,
                 text: getUsableFormattedTranslation(obj.id, dict[String(obj.id)]) || ' '
@@ -4102,7 +4100,14 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             // Verificările de limbă și fidelitate rulează o singură dată după toate calupurile,
             // unde pot corecta problemele contextual în loc să emită avertismente premature.
 
-            if (alignmentRepair) {
+            if (missingItems.length > 0) {
+                const usableCount = chunk.length - missingItems.length;
+                if (alignmentRepair) {
+                    console.log(`${c.yellow}⚠ [Aliniere] Segment punctual: ${usableCount}/${chunk.length} traduceri utilizabile; ${missingItems.length} ID-uri goale lăsate pentru recuperarea existentă.${c.reset}`);
+                } else {
+                    console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: ${usableCount}/${chunk.length} traduceri utilizabile; ${missingItems.length} ID-uri goale lăsate pentru Empty Recovery, fără split.${c.reset}`);
+                }
+            } else if (alignmentRepair) {
                 console.log(`${c.green}✔ [Aliniere] Segment punctual finalizat (${chunk.length}/${chunk.length} replici).${c.reset}`);
             } else {
                 console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
