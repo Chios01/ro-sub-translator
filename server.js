@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.199',
+    version: '12.78.200',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -438,6 +438,7 @@ async function handleSubtitles(req, res) {
 
     let extraString = '';
     let userFilename = '';
+    let userVideoHash = '';
     let extraKeys = [];
 
     if (extra) {
@@ -461,11 +462,16 @@ async function handleSubtitles(req, res) {
                         let value = part.slice(eq + 1);
                         try { value = decodeURIComponent(value); } catch (e) {}
                         userFilename = value;
+                    } else if (key === 'videoHash') {
+                        let value = part.slice(eq + 1);
+                        try { value = decodeURIComponent(value); } catch (e) {}
+                        userVideoHash = String(value || '').trim();
                     }
                 }
             } else {
                 const params = new URLSearchParams(extra);
                 userFilename = params.get('filename') || '';
+                userVideoHash = params.get('videoHash') || '';
                 extraKeys = [...params.keys()];
             }
         } catch (e) {}
@@ -524,6 +530,30 @@ async function handleSubtitles(req, res) {
         });
         
         let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
+
+        // OpenSubtitles v3 indică metoda potrivirii prin câmpul `m`;
+        // `m: "h"` înseamnă potrivire după hash. O folosim doar când Stremio
+        // a trimis efectiv videoHash; nu deducem potrivirea din numele release-ului.
+        const isReportedHashMatch = (candidate) => {
+            const data = candidate && candidate.sourceData ? candidate.sourceData : (candidate || {});
+            const sourceIndex = candidate && candidate.sourceIndex !== undefined
+                ? candidate.sourceIndex
+                : candidate && candidate._selectionSourceIndex;
+            if (!userVideoHash || sourceIndex !== 0) return false;
+            const matchMethod = String(data.m || data.matchMethod || data.match_method || data.matchType || '')
+                .trim().toLowerCase();
+            const explicitHashFlag = [data.moviehash_match, data.hashMatch, data.hash_match]
+                .some(value => value === true || /^(?:true|1|yes)$/i.test(String(value || '')));
+            return explicitHashFlag || ['h', 'hash', 'moviehash', 'movie_hash'].includes(matchMethod);
+        };
+        const reportedEnglishHashMatches = engSubs.filter(isReportedHashMatch).length;
+        if (!userVideoHash) {
+            console.log(`${c.cyan}[Subtitrări] potrivire hash: videoHash absent; fallback la ordinea OpenSubtitles${c.reset}`);
+        } else if (reportedEnglishHashMatches > 0) {
+            console.log(`${c.cyan}[Subtitrări] potrivire hash: ${reportedEnglishHashMatches} variante EN OpenSubtitles marcate ca potrivire după hash${c.reset}`);
+        } else {
+            console.log(`${c.cyan}[Subtitrări] potrivire hash: videoHash transmis, dar nicio variantă EN nu este confirmată de OpenSubtitles ca potrivire după hash; se păstrează ordinea furnizorului${c.reset}`);
+        }
         
         // Eliminăm duplicatele din fiecare sursă, dar nu deduplicăm încă
         // între furnizori: fiecare sursă trebuie să-și poată completa top 15.
@@ -566,7 +596,8 @@ async function handleSubtitles(req, res) {
                     sourceData: sub,
                     sourceIndex: sub._selectionSourceIndex,
                     sourceOrder: sub._selectionSourceOrder,
-                    sourceName: subtitleSourceNames[sub._selectionSourceIndex] || 'Unknown'
+                    sourceName: subtitleSourceNames[sub._selectionSourceIndex] || 'Unknown',
+                    hashMatch: isReportedHashMatch(sub)
                 });
             }
         });
@@ -826,38 +857,63 @@ async function handleSubtitles(req, res) {
             // pentru avantaje mici/medii: scorul local poate promova o variantă cu timpi greșiți.
             // Penalizare moderată per poziție; potrivirile structurale decisive (episod/ediție)
             // rămân suficient de puternice pentru a schimba ordinea când există un motiv clar.
-            const sourceOrderPenalty = s.sourceIndex === 0 ? 300 : 150;
+            // OpenSubtitles se ordonează explicit după markerul de hash și ordinea upstream;
+            // penalizarea de ordine rămâne doar pentru clasarea alternativelor YIFY.
+            const sourceOrderPenalty = s.sourceIndex === 0 ? 0 : 150;
             s.score -= Math.max(0, Number(s.sourceOrder) || 0) * sourceOrderPenalty;
         });
 
-        // Clasăm toți candidații eligibili din fiecare sursă, apoi păstrăm
-        // maximum 15 din fiecare. Astfel, o sursă nu poate ocupa bugetul înainte
-        // ca rezultatele celorlalte surse să fie evaluate.
-        const sourceBalancedCandidates = [];
-        for (let sourceIndex = 0; sourceIndex < urlsToFetch.length; sourceIndex++) {
-            const rankedSource = diverseSubs
-                .filter(s => s.sourceIndex === sourceIndex)
-                .sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
-            sourceBalancedCandidates.push(...rankedSource.slice(0, 15));
-        }
-
-        // Deduplicare globală după selecția per-sursă. Dacă același URL apare
-        // în mai mulți furnizori, păstrăm varianta cu scorul mai bun; la egalitate
-        // rămâne prima din ordinea deterministă a surselor.
-        const bestCandidateByUrl = new Map();
-        for (const candidate of sourceBalancedCandidates) {
-            const urlKey = String(candidate.originalUrl);
-            const existing = bestCandidateByUrl.get(urlKey);
-            if (!existing || candidate.score > existing.score ||
-                (candidate.score === existing.score && candidate._rankingOrder < existing._rankingOrder)) {
-                bestCandidateByUrl.set(urlKey, candidate);
-            }
-        }
-
-        diverseSubs = [...bestCandidateByUrl.values()]
-            .sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder))
+        // OpenSubtitles: dacă există rezultate EN explicit marcate ca potrivire hash,
+        // acestea trec primele. În lipsa unui astfel de semnal, păstrăm ordinea upstream
+        // a OpenSubtitles în loc să ghicim sincronizarea din rezoluție/codec/release.
+        const openSubtitlesRanked = diverseSubs
+            .filter(s => s.sourceIndex === 0)
+            .sort((a, b) => {
+                if (a.hashMatch !== b.hashMatch) return a.hashMatch ? -1 : 1;
+                return (Number(a.sourceOrder) || 0) - (Number(b.sourceOrder) || 0)
+                    || (a._rankingOrder - b._rankingOrder);
+            })
             .slice(0, 15);
-        
+
+        // YIFY rămâne sursă alternativă; aici scorăm numele release-ului,
+        // dar excludem pachetele care concatenau mai multe release-uri.
+        const yifyRanked = diverseSubs
+            .filter(s => s.sourceIndex === 1)
+            .sort((a, b) => (b.score - a.score)
+                || ((Number(a.sourceOrder) || 0) - (Number(b.sourceOrder) || 0))
+                || (a._rankingOrder - b._rankingOrder))
+            .slice(0, 15);
+
+        const exactHashMatches = openSubtitlesRanked.filter(s => s.hashMatch);
+        const nonHashOpenSubtitles = openSubtitlesRanked.filter(s => !s.hashMatch);
+        const hasExactHashMatch = exactHashMatches.length > 0;
+        const orderedCandidates = [];
+
+        if (hasExactHashMatch) {
+            // Păstrăm toate variantele confirmate după hash înaintea fallback-urilor.
+            orderedCandidates.push(...exactHashMatches);
+            orderedCandidates.push(...nonHashOpenSubtitles.slice(0, Math.max(0, 10 - exactHashMatches.length)));
+            orderedCandidates.push(...yifyRanked.slice(0, 5));
+        } else {
+            // Fără confirmare de hash: primele 10 vin în ordinea OpenSubtitles;
+            // YIFY ocupă până la 5 poziții alternative, ordonate după potrivirea release-ului.
+            orderedCandidates.push(...openSubtitlesRanked.slice(0, 10));
+            orderedCandidates.push(...yifyRanked.slice(0, 5));
+        }
+
+        // Dacă una dintre surse a oferit puține rezultate sau există duplicate de URL,
+        // completăm lista în aceeași ordine de prioritate, fără a reordona scorurile.
+        const bestCandidateByUrl = new Map();
+        for (const candidate of [
+            ...orderedCandidates,
+            ...openSubtitlesRanked,
+            ...yifyRanked
+        ]) {
+            const urlKey = String(candidate.originalUrl || '');
+            if (!urlKey || bestCandidateByUrl.has(urlKey)) continue;
+            bestCandidateByUrl.set(urlKey, candidate);
+        }
+        diverseSubs = [...bestCandidateByUrl.values()].slice(0, 15);
 
         // ============================================================
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
@@ -903,7 +959,8 @@ async function handleSubtitles(req, res) {
         try {
             diverseSubs.forEach((s, i) => {
                 const diagnosticName = s.sourceData?.subtitleFileName || s.sourceData?.fileName || s.sourceData?.movieReleaseName || s.realName;
-                console.log(`${c.cyan}[Subtitrări] #${i + 1} [${s.sourceName} #${s.sourceOrder}] scor=${s.score} | ${String(diagnosticName).slice(0, 120)}${c.reset}`);
+                const hashNote = s.hashMatch ? ' | POTRIVIRE HASH' : '';
+                console.log(`${c.cyan}[Subtitrări] #${i + 1} [${s.sourceName} #${s.sourceOrder}] scor=${s.score}${hashNote} | ${String(diagnosticName).slice(0, 120)}${c.reset}`);
             });
             console.log(`${c.cyan}[Subtitrări] returnate ${generatedSubs.length} variante pentru ${id}${c.reset}`);
         } catch (e) {}
