@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.233',
+    version: '12.78.235',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4869,15 +4869,9 @@ function detectLocalGrammarReviewReasons(text) {
         if (guard.pattern.test(clean)) reasons.push(guard.message);
     }
 
-    // Repetiție imediată de cuvânt: nu o corectăm automat, deoarece poate fi
-    // o bâlbâială/replică intenționată; o lăsăm Grammar Review să decidă.
-    // Limitele sunt Unicode-aware pentru a nu confunda prefixe precum
-    // „de” din „deștept” sau „cu” din „cuțitul” cu duplicate reale.
-    const duplicate = clean.match(/(?<![\p{L}])([\p{L}]{2,})\s+\1(?![\p{L}-])/iu);
-    const intentionalRepeatWords = new Set(['nu', 'da', 'mă', 'te', 'eu', 'tu', 'ha', 'haha', 'hei']);
-    if (duplicate && !intentionalRepeatWords.has(String(duplicate[1]).toLowerCase())) {
-        reasons.push(`cuvânt repetat: „${duplicate[0]}”`);
-    }
+    // Filtrul general de cuvinte repetate este dezactivat deliberat.
+    // Repetițiile din dialog și versuri pot fi firești; nu declanșăm
+    // verificare gramaticală/AI doar pentru că un cuvânt apare de două ori.
 
     // Construcții de clitic evident suspecte, pe care Grammar Review deja știe
     // să le analizeze, dar care merită o verificare punctuală atunci când apar.
