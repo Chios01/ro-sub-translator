@@ -316,14 +316,40 @@ async function handleSubtitles(req, res) {
 
     let extraString = '';
     let userFilename = '';
+    let extraKeys = [];
 
     if (extra) {
-        extraString = '/' + extra;
+        // Express decodifică req.params, iar un filename cu „&” (ex. „Fast & Furious”) ar rupe
+        // parametrii. Citim segmentul brut din URL, îl împărțim la „&” și decodăm fiecare valoare.
+        let rawExtra = '';
         try {
-            const params = new URLSearchParams(extra);
-            userFilename = params.get('filename') || '';
+            const rawPath = String(req.originalUrl || '').split('?')[0];
+            const rawMatch = rawPath.match(/\/subtitles\/[^/]+\/[^/]+\/([^/]+)\.json$/);
+            rawExtra = rawMatch ? rawMatch[1] : '';
+        } catch (e) {}
+        extraString = '/' + (rawExtra || extra);
+        try {
+            if (rawExtra) {
+                for (const part of rawExtra.split('&')) {
+                    const eq = part.indexOf('=');
+                    if (eq <= 0) continue;
+                    const key = part.slice(0, eq);
+                    extraKeys.push(key);
+                    if (key === 'filename') {
+                        let value = part.slice(eq + 1);
+                        try { value = decodeURIComponent(value); } catch (e) {}
+                        userFilename = value;
+                    }
+                }
+            } else {
+                const params = new URLSearchParams(extra);
+                userFilename = params.get('filename') || '';
+                extraKeys = [...params.keys()];
+            }
         } catch (e) {}
     }
+
+    console.log(`${c.cyan}[Subtitrări] cerere ${type}/${id} | ${extra ? 'extra: ' + (extraKeys.join(',') || 'nerecunoscut') : 'fără extra'}${userFilename ? ' | filename: ' + userFilename.slice(0, 100) : ''} | client: ${req.headers['user-agent'] ? String(req.headers['user-agent']).slice(0, 40) : 'necunoscut'}${c.reset}`);
 
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
@@ -368,6 +394,19 @@ async function handleSubtitles(req, res) {
             sourceSet.add(sub.url);
             return true;
         });
+
+        try {
+            const sourceLabels = ['OpenSubtitles', 'YIFY', 'SubDL'];
+            console.log(`${c.cyan}[Subtitrări] surse: ${urlsToFetch.map((_, i) => `${sourceLabels[i]}: ${allSubs.filter(s => s._selectionSourceIndex === i).length} total / ${engSubs.filter(s => s._selectionSourceIndex === i).length} EN`).join(' | ')}${c.reset}`);
+            urlsToFetch.forEach((_, i) => {
+                const sample = allSubs.find(s => s._selectionSourceIndex === i);
+                if (!sample) return;
+                const raw = { ...sample };
+                delete raw._selectionSourceIndex;
+                delete raw._selectionSourceOrder;
+                console.log(`${c.cyan}[Subtitrări] exemplu brut ${sourceLabels[i]}: ${JSON.stringify(raw).slice(0, 300)}${c.reset}`);
+            });
+        } catch (e) {}
 
         if (engSubs.length === 0) {
             console.log(`${c.yellow}⚠ Nu s-au găsit subtitrări sursă EN pentru: ${id}${c.reset}`);
@@ -649,6 +688,11 @@ async function handleSubtitles(req, res) {
                 lang: 'ron'
             };
         });
+
+        try {
+            diverseSubs.forEach((s, i) => console.log(`${c.cyan}[Subtitrări] #${i + 1} [${s.sourceName} #${s.sourceOrder}] scor=${s.score} | ${String(s.realName).slice(0, 90)}${c.reset}`));
+            console.log(`${c.cyan}[Subtitrări] returnate ${generatedSubs.length} variante pentru ${id}${c.reset}`);
+        } catch (e) {}
 
         return res.json({ subtitles: generatedSubs });
     } catch (error) {
@@ -6619,6 +6663,7 @@ app.get('/:configData/translate', async (req, res) => {
     const targetUrl = req.query.targetUrl || req.query.url;
     const configData = req.params.configData;
 
+    console.log(`${c.cyan}[Alegere] ${imdbId} | varianta v=${req.query.v || '?'} | ${String(targetUrl || '').slice(0, 90)}${c.reset}`);
 
     if (!targetUrl) {
         console.log(`${c.red}✖ EROARE: Lipsă URL sursă.${c.reset}`);
