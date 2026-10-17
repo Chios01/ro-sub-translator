@@ -30,10 +30,9 @@ const BROWSER_USER_AGENT =
 
 const CHUNK_SIZE = 165;
 const CONCURRENCY_LIMIT = 3;
-// Răspunsurile Gemini sever incomplete sunt izolate în subcalupuri mici,
-// până când fiecare segment are cel mult 12 replici și poate fi reparat ulterior
-// de Empty Recovery fără a abandona întregul calup.
-const GEMINI_INCOMPLETE_SPLIT_MAX_DEPTH = 4;
+// Limităm împărțirea răspunsurilor sever incomplete pentru a nu multiplica excesiv
+// cererile Gemini și păstrăm traducerile parțiale pentru recuperarea golurilor la final.
+const GEMINI_INCOMPLETE_SPLIT_MAX_DEPTH = 2;
 const GEMINI_INCOMPLETE_SPLIT_MIN_SIZE = 12;
 
 // După orice răspuns HTTP 429, nu pornim alte cereri Gemini timp de 5 secunde.
@@ -170,7 +169,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.201',
+    version: '12.78.202',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4098,7 +4097,15 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
             const missingItems = chunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
             if (missingItems.length > 12) {
-                throw new Error(`Răspuns Gemini sever incomplet: ${missingItems.length} ID-uri lipsă sau cu traduceri goale.`);
+                const incompleteError = new Error(`Răspuns Gemini sever incomplet: ${missingItems.length} ID-uri lipsă sau cu traduceri goale.`);
+                // Reținem traducerile valide din răspunsul parțial. Dacă ajungem la
+                // limita de împărțire, nu aruncăm și aceste traduceri; numai golurile
+                // vor fi trimise mecanismului Empty Recovery.
+                incompleteError.partialResults = chunk.map(obj => ({
+                    id: obj.id,
+                    text: getUsableFormattedTranslation(obj.id, dict[String(obj.id)]) || ' '
+                }));
+                throw incompleteError;
             }
 
             // Până la 12 linii lipsă nu declanșăm cereri API suplimentare în timpul
@@ -4112,7 +4119,9 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             // Verificările de limbă și fidelitate rulează o singură dată după toate calupurile,
             // unde pot corecta problemele contextual în loc să emită avertismente premature.
 
-            if (alignmentRepair) {
+            if (missingItems.length > 0) {
+                console.warn(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: ${chunk.length - missingItems.length}/${chunk.length} traduceri utilizabile; ${missingItems.length} goluri lăsate pentru Empty Recovery.${c.reset}`);
+            } else if (alignmentRepair) {
                 console.log(`${c.green}✔ [Aliniere] Segment punctual finalizat (${chunk.length}/${chunk.length} replici).${c.reset}`);
             } else {
                 console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
@@ -4185,7 +4194,8 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 const splitRecoveryAvailable = isSeverelyIncompleteResponse
                     ? (chunk.length > GEMINI_INCOMPLETE_SPLIT_MIN_SIZE && depth < GEMINI_INCOMPLETE_SPLIT_MAX_DEPTH)
                     : (chunk.length > 20 && depth < 2);
-                if (!splitRecoveryAvailable) {
+                const partialWillBePreserved = isSeverelyIncompleteResponse && Array.isArray(error?.partialResults);
+                if (!splitRecoveryAvailable && !partialWillBePreserved) {
                     console.error(`${c.red}✖ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} eșuat: ${errorMessage}${c.reset}`);
                 }
                 break;
@@ -4255,6 +4265,12 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
         const secondResult = await processChunkWithRetry(second, allItems, chunkStart + middle, chunkEnd, secondContext, keyStates, globalChunkIndex, totalChunks, depth + 1, alignmentRepair);
 
         return [...firstResult, ...secondResult];
+    }
+
+    if (finalIsSeverelyIncompleteResponse && Array.isArray(lastError?.partialResults)) {
+        const missingPartialCount = lastError.partialResults.filter(item => !String(item.text || '').trim()).length;
+        console.warn(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: limita de împărțire atinsă; păstrez traducerile valide și trimit ${missingPartialCount} goluri la Empty Recovery.${c.reset}`);
+        return lastError.partialResults;
     }
 
     console.log(`${c.red}✖ [Gemini] Calupul ${globalChunkIndex + 1} a eșuat definitiv.${c.reset}`);
