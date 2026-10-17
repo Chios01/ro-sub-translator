@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.216',
+    version: '12.78.217',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5278,6 +5278,95 @@ function findRepeatedTranslationIssues(items, translatedById) {
     return issues;
 }
 
+// Detectează contaminarea dintre două cue-uri consecutive: traducerea primului
+// cue se termină cu o expresie lungă care reapare la începutul traducerii următorului,
+// deși originalul primului cue este neterminat. Semnalul nu mută și nu șterge text;
+// ambele ID-uri sunt trimise împreună la verificare contextuală.
+function findCrossCueTextLeakageIssues(items, translatedById) {
+    const issues = [];
+    const seenPairs = new Set();
+    const lowInformationWords = new Set([
+        'a', 'ai', 'al', 'ale', 'am', 'ar', 'are', 'as', 'au', 'avea', 'avem', 'aveți',
+        'ca', 'că', 'ce', 'cel', 'cea', 'cei', 'cele', 'cu', 'da', 'dar', 'de', 'din',
+        'e', 'ea', 'ei', 'el', 'ele', 'era', 'este', 'eu', 'fi', 'fie', 'la', 'le',
+        'lui', 'lor', 'mai', 'mă', 'mi', 'ne', 'nici', 'nu', 'o', 'pe', 'pentru',
+        'poate', 'pot', 'sa', 'să', 'se', 'și', 'sunt', 'te', 'tu', 'un', 'una', 'în'
+    ]);
+    const clean = value => String(value || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\|/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const words = value => clean(value)
+        .normalize('NFC')
+        .toLocaleLowerCase('ro-RO')
+        .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
+    const sourceIsUnfinished = value => {
+        const text = clean(value);
+        if (!text) return false;
+        // Punctuația finală indică de regulă o propoziție completă; elipsele sau
+        // lipsa punctuației finale indică adesea că sursa continuă în cue-ul următor.
+        const endsWithEllipsis = /(?:\.{3}|…)\s*$/u.test(text);
+        const endsWithSentencePunctuation = /[.!?]["”’')\]]*\s*$/u.test(text);
+        return endsWithEllipsis || !endsWithSentencePunctuation;
+    };
+
+    for (let i = 0; i < items.length - 1; i++) {
+        const first = items[i];
+        const second = items[i + 1];
+        if (isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
+
+        const firstId = String(first.id);
+        const secondId = String(second.id);
+        const firstNumericId = Number(firstId);
+        const secondNumericId = Number(secondId);
+        if (!Number.isFinite(firstNumericId) || !Number.isFinite(secondNumericId) ||
+            secondNumericId !== firstNumericId + 1) continue;
+
+        const firstSource = clean(first.text);
+        if (!sourceIsUnfinished(firstSource)) continue;
+
+        const firstTargetWords = words(translatedById[firstId]);
+        const secondTargetWords = words(translatedById[secondId]);
+        // Exigență conservatoare: cel puțin patru cuvinte consecutive la coada primului
+        // cue, regăsite aproape de începutul următorului cue, cu minimum două cuvinte
+        // semnificative. Nu alarmează pe conectori sau expresii foarte scurte.
+        if (firstTargetWords.length < 4 || secondTargetWords.length < 4) continue;
+
+        let match = null;
+        const maxLength = Math.min(8, firstTargetWords.length, secondTargetWords.length);
+        for (let length = maxLength; length >= 4 && !match; length--) {
+            const phrase = firstTargetWords.slice(-length);
+            const meaningful = phrase.filter(word => word.length >= 4 && !lowInformationWords.has(word));
+            if (meaningful.length < 2) continue;
+
+            const lastStart = Math.min(8, secondTargetWords.length - length);
+            for (let start = 0; start <= lastStart; start++) {
+                if (phrase.every((word, index) => word === secondTargetWords[start + index])) {
+                    match = { phrase: phrase.join(' '), length };
+                    break;
+                }
+            }
+        }
+        if (!match) continue;
+
+        const pairKey = `${firstId}:${secondId}:${match.phrase}`;
+        if (seenPairs.has(pairKey)) continue;
+        seenPairs.add(pairKey);
+
+        const reason = `posibilă contaminare între cue-uri: ultimii ${match.length} termeni („${match.phrase}”) din traducerea ID ${firstId} apar și aproape de începutul traducerii ID ${secondId}, iar originalul ID ${firstId} este neterminat; compară ambele originale și elimină din primul cue textul provenit din al doilea numai dacă sursa nu îl justifică; nu muta text între ID-uri`;
+        issues.push({ item: first, pairedItem: second, reason });
+        issues.push({
+            item: second,
+            pairedItem: first,
+            reason: `posibilă contaminare cu ID ${firstId}: expresia „${match.phrase}” apare la coada traducerii precedente și la începutul acestei traduceri; păstrează repetiția numai dacă ambele originale o justifică`
+        });
+        console.log(`${c.yellow}⚠ [QA Contaminare între cue-uri] ID ${firstId} și ${secondId}: expresia „${match.phrase}” se repetă peste limita dintre cue-uri; verificare contextuală a ambelor ID-uri.${c.reset}`);
+    }
+
+    return issues;
+}
+
 // Detectează suprapunerea posibilă a sensului între două subtitrări consecutive.
 // Este strict un semnal pentru QA: nu rescrie automat traducerile.
 function findAdjacentSemanticOverlapIssues(items, translatedById) {
@@ -5579,6 +5668,18 @@ async function runLocalGrammarQualityPass(items, translatedById) {
             if (!existing.reasons.includes(overlapIssue.reason)) existing.reasons.push(overlapIssue.reason);
         } else {
             flagged.push({ item: overlapIssue.item, reasons: [overlapIssue.reason] });
+        }
+    }
+
+    // Detectare dedicată de text preluat accidental din cue-ul următor; ambele
+    // replici sunt trimise împreună la Grammar Review, cu contextul lor original.
+    for (const leakageIssue of findCrossCueTextLeakageIssues(items, translatedById)) {
+        const id = String(leakageIssue.item.id);
+        const existing = flagged.find(entry => String(entry.item.id) === id);
+        if (existing) {
+            if (!existing.reasons.includes(leakageIssue.reason)) existing.reasons.push(leakageIssue.reason);
+        } else {
+            flagged.push({ item: leakageIssue.item, reasons: [leakageIssue.reason] });
         }
     }
 
@@ -6755,6 +6856,15 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         if (existing) existing.reasons.push(issue.reason);
         else unresolvedQualityMap.set(id, { item: issue.item, reasons: [issue.reason] });
     }
+    for (const issue of findCrossCueTextLeakageIssues(items, translatedById)) {
+        const id = String(issue.item.id);
+        const existing = unresolvedQualityMap.get(id);
+        if (existing) {
+            if (!existing.reasons.includes(issue.reason)) existing.reasons.push(issue.reason);
+        } else {
+            unresolvedQualityMap.set(id, { item: issue.item, reasons: [issue.reason] });
+        }
+    }
     if (unresolvedQualityMap.size && targetedQualityCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
         const retryCandidates = items.filter(item => unresolvedQualityMap.has(String(item.id))).slice(0, 15);
         const retryReasonById = Object.fromEntries(retryCandidates.map(item => {
@@ -6843,6 +6953,13 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
     }
     for (const issue of findAdjacentSemanticOverlapIssues(items, translatedById)) {
+        const id = String(issue.item.id);
+        if (!finalRepairCandidates.some(item => String(item.id) === id)) {
+            finalRepairCandidates.push(issue.item);
+        }
+        finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
+    }
+    for (const issue of findCrossCueTextLeakageIssues(items, translatedById)) {
         const id = String(issue.item.id);
         if (!finalRepairCandidates.some(item => String(item.id) === id)) {
             finalRepairCandidates.push(issue.item);
@@ -6959,6 +7076,26 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         }
     }
 
+    // Ultima verificare de contaminare după toate corecturile și formatarea finală.
+    // Dacă semnalul persistă, nu declarăm QA FINAL reușit și nu memorăm rezultatul în cache.
+    const finalCrossCueLeakageIssues = findCrossCueTextLeakageIssues(items, translatedById);
+    const finalCrossCueLeakageIds = [...new Set(finalCrossCueLeakageIssues
+        .filter(issue => !suppressedFinalOutputIdSet.has(String(issue.item.id)))
+        .map(issue => String(issue.item.id)))];
+    for (const issue of finalCrossCueLeakageIssues) {
+        const id = String(issue.item.id);
+        if (suppressedFinalOutputIdSet.has(id)) continue;
+        const existing = finalQualityFlags.find(entry => String(entry.item.id) === id);
+        if (existing) {
+            if (!existing.reasons.includes(issue.reason)) existing.reasons.push(issue.reason);
+        } else {
+            finalQualityFlags.push({ item: issue.item, reasons: [issue.reason] });
+        }
+    }
+    if (finalCrossCueLeakageIds.length) {
+        console.log(`${c.red}[QA FINAL] EROARE: posibilă contaminare între cue-uri rămasă după corecturi (ID: ${finalCrossCueLeakageIds.join(', ')}); rezultatul nu va fi memorat în cache până la o nouă traducere/verificare.${c.reset}`);
+    }
+
     const finalSuspicious = items.filter(item => {
         const id = String(item.id);
         if (suppressedFinalOutputIdSet.has(id)) return false;
@@ -6984,14 +7121,20 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         return Boolean(source) && !String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim();
     });
     if (qaStatus && typeof qaStatus === 'object') {
-        qaStatus.hasErrors = unresolvedFinalItems.length > 0;
-        qaStatus.unresolvedIds = unresolvedFinalItems.map(item => String(item.id));
+        qaStatus.hasErrors = unresolvedFinalItems.length > 0 || finalCrossCueLeakageIds.length > 0;
+        qaStatus.unresolvedIds = [...new Set([
+            ...unresolvedFinalItems.map(item => String(item.id)),
+            ...finalCrossCueLeakageIds
+        ])];
     }
     if (unresolvedFinalItems.length) {
         const ids = unresolvedFinalItems.map(item => item.id).join(', ');
         console.log(`${c.red}[QA FINAL] EROARE: ${unresolvedFinalItems.length} replici fără traducere (ID: ${ids}).${c.reset}`);
-    } else {
-        console.log(`${c.green}[QA FINAL] OK: toate replicile relevante au traducere.${c.reset}`);
+    }
+    if (!unresolvedFinalItems.length && !finalCrossCueLeakageIds.length) {
+        console.log(`${c.green}[QA FINAL] OK: toate replicile relevante au traducere și nu au fost detectate contaminări între cue-uri.${c.reset}`);
+    } else if (!unresolvedFinalItems.length && finalCrossCueLeakageIds.length) {
+        console.log(`${c.red}[QA FINAL] EROARE: traducerile există, dar verificarea de contaminare nu a trecut (ID: ${finalCrossCueLeakageIds.join(', ')}).${c.reset}`);
     }
 
     const output = items
