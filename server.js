@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.211',
+    version: '12.78.212',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1879,9 +1879,9 @@ function buildTranslationResponseSchema(chunk) {
     }
 
     return {
+        // Nu fixăm minItems/maxItems în schema trimisă la API: cardinalitatea
+        // este verificată local prin compararea ID-urilor solicitate și primite.
         type: 'ARRAY',
-        minItems: chunk.length,
-        maxItems: chunk.length,
         items: {
             type: 'OBJECT',
             properties: {
@@ -2852,11 +2852,16 @@ async function callGemini(prompt, keyState, options = {}) {
             throw new Error(`Cheie Gemini invalidă (${status}).`);
         }
         if (status === 400) {
-            const providerMessage = String(error.response?.data?.error?.message || error.message || 'detalii indisponibile')
+            const providerError = error.response?.data?.error || {};
+            const providerMessage = String(providerError.message || error.message || 'detalii indisponibile')
                 .replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+            const providerDetails = providerError.details == null
+                ? ''
+                : ` | detalii API: ${JSON.stringify(providerError.details).replace(/[\r\n\t]+/g, ' ').slice(0, 1200)}`;
             const requestLabel = String(options.requestLabel || 'Cerere Gemini')
                 .replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
-            console.error(`${c.red}[Gemini 400] ${requestLabel}: ${providerMessage}${c.reset}`);
+            // Nu logăm request-ul, promptul sau cheia API; numai motivul de eroare returnat de Google.
+            console.error(`${c.red}[Gemini 400] ${requestLabel}: ${providerMessage}${providerDetails}${c.reset}`);
         }
         if (status === 429) {
             const quotaInfo = classifyGeminiQuotaError(error);
@@ -4536,8 +4541,6 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     thinkingLevel: 'MEDIUM',
                     responseSchema: {
                         type: 'ARRAY',
-                        minItems: 0,
-                        maxItems: batch.length,
                         items: {
                             type: 'OBJECT',
                             properties: {
