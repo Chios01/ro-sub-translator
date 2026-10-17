@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.224',
+    version: '12.78.225',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -584,24 +584,14 @@ async function handleSubtitles(req, res) {
             return explicitSdhFlag || /\bsdh\b|\bhi\b|hearing[\s_-]*impaired|closed[\s_-]*captions/i.test(metadata);
         };
 
-        // Mai întâi eliminăm candidații cu URL-uri malformate/nepermise și release-urile
-        // excluse deja de selector. Un astfel de candidat nu trebuie să blocheze fallback-ul HI/SDH.
+        // Eliminăm URL-urile nevalide și release-urile excluse; HI/SDH rămân eligibile.
+        // Potrivirea hash are prioritate, iar SDH/non-SDH este doar un criteriu secundar de ordine.
         const eligibleEngSubs = engSubs.filter(sub => {
             const candidateName = String(sub.title || sub.id || '');
             const isRejectedRelease = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i.test(candidateName);
             return isValidSubtitleSourceUrl(sub.url) && !isRejectedRelease;
         });
-
-        // Prioritate pentru subtitrările EN normale, fără HI/SDH.
-        // HI/SDH intră în listă numai dacă nu există nicio variantă normală eligibilă.
-        const nonSdhEngSubs = eligibleEngSubs.filter(sub => {
-            const candidateName = String(sub.title || sub.id || '');
-            return !isSdhSub({
-                realName: candidateName,
-                sourceData: sub
-            });
-        });
-        engSubs = nonSdhEngSubs.length > 0 ? nonSdhEngSubs : eligibleEngSubs;
+        engSubs = eligibleEngSubs;
 
         // OpenSubtitles v3 indică metoda potrivirii prin câmpul `m`;
         // `m: "h"` înseamnă potrivire după hash. O folosim doar când Stremio
