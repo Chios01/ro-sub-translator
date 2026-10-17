@@ -164,7 +164,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.193',
+    version: '12.78.194',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6329,7 +6329,12 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
 
     // Filtru final de siguranță: Gemini poate reintroduce descrieri sonore în română
     // chiar dacă sursa a fost curățată. Le scoatem înainte de QA, cache și export SRT.
+    // Dacă filtrul golește un rezultat, sursa acestui ID conținea dialog eligibil (cue-urile
+    // exclusiv sonore au fost deja eliminate la parsarea sursei). Încercăm o singură
+    // recuperare finală pentru acele ID-uri, apoi filtrăm din nou numai rezultatele recuperate.
+    // Dacă nici după recuperare nu rămâne dialog, QA FINAL trebuie să păstreze eroarea.
     let finalSoundAnnotationsRemoved = 0;
+    const finalSoundEmptiedItems = [];
     for (const item of items) {
         const id = String(item.id);
         const current = String(translatedById[id] || '');
@@ -6337,7 +6342,47 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         const soundCleaned = stripNonDialogueSoundMarkup(current);
         if (soundCleaned.removedCount) finalSoundAnnotationsRemoved += soundCleaned.removedCount;
         translatedById[id] = soundCleaned.text;
+        if (soundCleaned.removedCount && !String(soundCleaned.text || '').trim()) {
+            finalSoundEmptiedItems.push(item);
+        }
     }
+
+    if (finalSoundEmptiedItems.length) {
+        console.log(`${c.yellow}[Filtru sunete] ${finalSoundEmptiedItems.length} replici au rămas goale după eliminarea descrierilor sonore; încerc recuperare finală înainte de QA.${c.reset}`);
+        // Căutăm mai întâi o traducere locală reutilizabilă în întregul SRT, fără API.
+        recoverEmptyTranslationsLocally(items, finalSoundEmptiedItems, translatedById, 'Post-Sound Recovery');
+        const pendingPostSoundRecovery = finalSoundEmptiedItems.filter(item =>
+            !String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()
+        );
+        // Dacă mai lipsesc traduceri, folosim recuperarea existentă doar pentru ID-urile
+        // afectate de filtrul sonor, în loturile normale de maximum 10. Nu reluăm alte ID-uri.
+        if (pendingPostSoundRecovery.length) {
+            await recoverEmptyTranslationsFinal(pendingPostSoundRecovery, translatedById, keyStates);
+        }
+
+        // Recuperarea poate reintroduce la rândul ei o etichetă sonoră; o eliminăm din nou.
+        // Nu suprimăm aceste ID-uri din QA: dacă sursa conține dialog și rezultatul rămâne gol,
+        // problema trebuie raportată, nu ascunsă ca efect sonor legitim.
+        for (const item of finalSoundEmptiedItems) {
+            const id = String(item.id);
+            const recovered = String(translatedById[id] || '');
+            if (!recovered.trim()) continue;
+            const soundCleaned = stripNonDialogueSoundMarkup(recovered);
+            if (soundCleaned.removedCount) finalSoundAnnotationsRemoved += soundCleaned.removedCount;
+            translatedById[id] = soundCleaned.text;
+        }
+
+        const stillEmptyAfterSoundRecovery = finalSoundEmptiedItems.filter(item =>
+            !String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()
+        );
+        if (stillEmptyAfterSoundRecovery.length) {
+            const ids = stillEmptyAfterSoundRecovery.map(item => item.id).join(', ');
+            console.log(`${c.yellow}[Filtru sunete] ${stillEmptyAfterSoundRecovery.length} replici încă nu au dialog după recuperare (ID: ${ids}); rămân pentru QA FINAL.${c.reset}`);
+        } else {
+            console.log(`${c.green}[Filtru sunete] Recuperarea post-filtru a păstrat dialog pentru toate cele ${finalSoundEmptiedItems.length} replici.${c.reset}`);
+        }
+    }
+
     if (finalSoundAnnotationsRemoved) {
         console.log(`${c.cyan}[Filtru sunete] Eliminate ${finalSoundAnnotationsRemoved} descrieri/etichete sonore din traducerile finale.${c.reset}`);
     }
