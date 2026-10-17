@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.210',
+    version: '12.78.211',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1819,18 +1819,6 @@ FINAL CHECK
 Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, dialogue format, filler cleanup, and one-to-one ID alignment. Correct clear errors without adding or deleting meaning.
 `;
 
-// Pentru traducerea principală folosim o proprietate JSON obligatorie per ID.
-// Prompturile de recuperare/Grammar Review își păstrează formatul lor existent.
-const MASTER_TRANSLATION_PROMPT_ID_MAP = MASTER_TRANSLATION_PROMPT.replace(
-    /OUTPUT — CRITICAL[\s\S]*?(?=\nTRANSLATION AND CONTEXT)/,
-    `OUTPUT — CRITICAL
-- Return ONLY a valid JSON object with exactly one property for every supplied subtitle ID.
-- Each property name must be the exact original ID converted to a JSON string; its value is that ID's Romanian translation.
-- Include EVERY supplied ID exactly once. Never omit, duplicate, invent, merge, renumber, or move content to another ID.
-- Input IDs may contain gaps because other source blocks were filtered before translation. Use the exact supplied ID keys; never renumber by position.
-- Verify that each Romanian translation belongs to the source block with the same ID.
-- Do not return an array, markdown, code fences, comments, or explanations.`
-);
 
 // ============================================================
 // PROMPT BUILDER CU CONTEXT
@@ -1840,16 +1828,10 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
     const contextBefore = allItems.slice(Math.max(0, chunkStart - CONTEXT_LINES_BEFORE), chunkStart);
     const contextAfter = allItems.slice(chunkEnd, Math.min(allItems.length, chunkEnd + CONTEXT_LINES_AFTER));
 
-    // Fiecare replică primește câteva replici vecine direct în obiectul JSON.
-    // Astfel Gemini poate lega gramatical replica de ceea ce vine imediat înainte/după,
-    // fără request-uri suplimentare și fără a modifica numărul de linii traduse.
-    // Context direct pentru fiecare replică: o linie înainte și una după.
-    // Nu creează request-uri suplimentare; este trimis în același JSON.
     const keysToTranslate = chunk.map((obj, localIndex) => {
         const absoluteIndex = chunkStart + localIndex;
         const previous = allItems[absoluteIndex - 1];
         const next = allItems[absoluteIndex + 1];
-
         return {
             id: obj.id,
             text: obj.text,
@@ -1859,7 +1841,7 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
     });
 
     return `
-${MASTER_TRANSLATION_PROMPT_ID_MAP}
+${MASTER_TRANSLATION_PROMPT}
 
 Context inainte (pentru referinta):
 ${contextBefore.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
@@ -1870,52 +1852,48 @@ ${contextAfter.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
 Context anterior tradus in Romana (pentru continuitate):
 ${previousTranslatedContext.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
 
-Tradu STRICT următoarele replici și returnează un obiect JSON cu o proprietate pentru fiecare ID furnizat.
-Format exemplu (doar pentru a arăta structura; folosește toate ID-urile reale din intrare):
-{"123": "traducerea în română", "124": "traducerea următoare"}
-Cheia fiecărei proprietăți este ID-ul original ca șir; valoarea este exclusiv traducerea în română.
-Include toate ID-urile furnizate exact o dată. Nu returna un array și nu omite nicio proprietate.
+Tradu STRICT următoarele replici și returnează un ARRAY JSON cu exact câte un obiect pentru fiecare ID, în aceeași ordine:
+[
+  {"id": 123, "text": "traducerea în română"}
+]
+Nu modifica ID-urile, nu omite nicio replică și nu duplica ID-uri.
 Câmpurile context_anterior și context_urmator sunt DOAR pentru înțelegerea replicii curente; NU le traduce și NU le include în răspuns.
-Folosește contextul pentru acord, pronume, continuitate, topică și sens, dar atribuie fiecare traducere exclusiv cheii ID corespunzătoare.
+Folosește contextul pentru acord, pronume, continuitate, topică și sens, dar modifică DOAR câmpul text al ID-ului curent.
 
 REPLICILE DE TRADUS:
 ${JSON.stringify(keysToTranslate, null, 2)}
 `;
 }
 
-// Schema strictă pentru cererea principală: fiecare ID din calup este cheie obligatorie.
-// Spre deosebire de un ARRAY cu minItems=1, required impune fiecare cheie pentru ID-urile cerute.
-// Valorile goale sunt verificate în cod, deoarece minLength nu este suportat de subsetul de schemă Gemini folosit aici.
+// Schema JSON folosește doar elemente acceptate de Gemini Structured Output.
+// Numărul de elemente este fixat la dimensiunea calupului; ID-urile și textele
+// sunt validate suplimentar în cod după parsare.
 function buildTranslationResponseSchema(chunk) {
     if (!Array.isArray(chunk) || chunk.length === 0) {
         throw new Error('Nu se poate construi schema Gemini pentru un calup gol.');
     }
 
     const ids = chunk.map(item => String(item.id));
-    const uniqueIds = new Set(ids);
-    if (uniqueIds.size !== ids.length) {
-        throw new Error('Calupul conține ID-uri SRT duplicate; schema strictă nu poate mapa univoc traducerile.');
+    if (new Set(ids).size !== ids.length) {
+        throw new Error('Calupul conține ID-uri SRT duplicate; schema nu poate valida o mapare univocă.');
     }
 
-    const properties = {};
-    for (const id of ids) {
-        properties[id] = {
-            type: 'STRING',
-            description: `Traducerea română pentru replica SRT cu ID-ul ${id}; nu returna un șir gol.`
-        };
-    }
-
-    // Folosim numai proprietăți de schemă documentate de Gemini pentru obiecte:
-    // properties, required, additionalProperties și propertyOrdering.
-    // minLength/minProperties/maxProperties nu sunt suportate de acest subset și nu le declarăm.
     return {
-        type: 'OBJECT',
-        properties,
-        required: ids,
-        additionalProperties: false,
-        propertyOrdering: ids
+        type: 'ARRAY',
+        minItems: chunk.length,
+        maxItems: chunk.length,
+        items: {
+            type: 'OBJECT',
+            properties: {
+                id: { type: 'INTEGER', description: 'ID-ul original al replicii furnizate.' },
+                text: { type: 'STRING', description: 'Traducerea română a replicii cu același ID.' }
+            },
+            required: ['id', 'text'],
+            propertyOrdering: ['id', 'text']
+        }
     };
 }
+
 // ============================================================
 // API KEY STATE & MANAGEMENT
 // ============================================================
@@ -2872,6 +2850,13 @@ async function callGemini(prompt, keyState, options = {}) {
             const invalidLane = getLaneForKeyState(keyState);
             if (invalidLane) invalidLane.disabled = true;
             throw new Error(`Cheie Gemini invalidă (${status}).`);
+        }
+        if (status === 400) {
+            const providerMessage = String(error.response?.data?.error?.message || error.message || 'detalii indisponibile')
+                .replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+            const requestLabel = String(options.requestLabel || 'Cerere Gemini')
+                .replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
+            console.error(`${c.red}[Gemini 400] ${requestLabel}: ${providerMessage}${c.reset}`);
         }
         if (status === 429) {
             const quotaInfo = classifyGeminiQuotaError(error);
@@ -4248,6 +4233,15 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     const finalErrorMessage = String(lastError?.message || lastError || '');
     const finalStatus = Number(lastError?.response?.status || 0);
     const finalIs5xx = (finalStatus >= 500 && finalStatus <= 599) || /status code 5\d\d/i.test(finalErrorMessage);
+    const finalIsNonRetryable4xx =
+        (finalStatus >= 400 && finalStatus <= 499 && finalStatus !== 429) ||
+        /Cheie Gemini invalidă \((?:401|403)\)/i.test(finalErrorMessage);
+    if (finalIsNonRetryable4xx) {
+        // Împărțirea calupului nu poate repara un HTTP 400/401/403:
+        // acestea sunt erori de cerere/schemă sau de autentificare, nu de mărimea calupului.
+        console.error(`${c.red}✖ [Gemini] Eroare nerecuperabilă HTTP ${finalStatus || finalErrorMessage.match(/\((?:401|403)\)/)?.[0] || '4xx'} pentru calup ${globalChunkIndex + 1}/${totalChunks}; nu împart și nu retrimit automat cererea. Verifică mesajul [Gemini 400] de mai sus.${c.reset}`);
+        throw lastError || new Error('Gemini a respins cererea cu o eroare 4xx nerecuperabilă.');
+    }
     if (finalIs5xx) {
         // Split-ul nu repară indisponibilitatea serviciului; QA va raporta explicit
         // replicile lipsă, fără multiplicarea apelurilor Gemini pentru aceleași linii.
@@ -5609,24 +5603,25 @@ function assessEmptyRecoveryCandidate(item, candidateRaw) {
 }
 
 function buildEmptyRecoveryPrompt(batch, strictJsonRetry = false, stageLabel = 'Empty Recovery') {
-    const example = Object.fromEntries(batch.map(item => [String(item.id), `traducerea română pentru ID ${item.id}`]));
     return `
-${MASTER_TRANSLATION_PROMPT_ID_MAP}
+${MASTER_TRANSLATION_PROMPT}
 
 ${stageLabel.toUpperCase()} PENTRU TRADUCERI GOALE.
 Următoarele replici au text original, dar traducerea existentă este goală sau inutilizabilă.
-Tradu TOATE liniile din acest grup în română naturală. Pentru fiecare ID furnizat, returnează o traducere nenulă, nevidă și fidelă sursei.
+Tradu TOATE liniile din acest grup în română naturală. Returnează un element JSON pentru fiecare ID, cu traducere română nenulă și nevidă.
+
+Returnează DOAR un ARRAY JSON valid, în ordinea ID-urilor furnizate:
+[
+  {"id": 123, "text": "traducerea română"}
+]
+Nu omite, nu duplica și nu renumerota ID-urile.
+${strictJsonRetry ? '\nRETRY TEHNIC: fără markdown sau explicații; întoarce exact un obiect pentru fiecare ID furnizat și numai JSON valid.' : ''}
 
 REPLICILE DE TRADUS:
 ${JSON.stringify(batch.map(item => ({ id: item.id, text: item.text })), null, 2)}
-
-Returnează DOAR un obiect JSON, folosind ID-urile originale ca chei și traducerile drept valori.
-Exemplu de structură (nu copia textul exemplu; folosește toate ID-urile reale):
-${JSON.stringify(example)}
-Nu returna array, markdown, cod sau explicații.
-${strictJsonRetry ? '\nRETRY TEHNIC: întoarce toate cheile cerute, fiecare cu traducere română nenulă și nevidă; nu adăuga alte chei.' : ''}
 `;
 }
+
 // Recuperare inițială în loturi mici. Un JSON malformat afectează cel mult lotul curent;
 // după un retry JSON, acesta se împarte treptat. Erorile API (mai ales 503) opresc etapa
 // fără cereri suplimentare în rafală; traducerile deja recuperate rămân păstrate.
@@ -5676,7 +5671,10 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
                         const retryRaw = await callGeminiWithKeyRotation(
                             buildEmptyRecoveryPrompt(batch, true, stageLabel),
                             keyStates,
-                            { requestLabel: `${stageLabel} — ${batchLabel} — JSON retry (${batch.length} ID-uri)` }
+                            {
+                                requestLabel: `${stageLabel} — ${batchLabel} — JSON retry (${batch.length} ID-uri)`,
+                                responseSchema: buildTranslationResponseSchema(batch)
+                            }
                         );
                         recoveryDict = normalizeTranslationPayload(safeJsonParse(retryRaw));
                         parsedAnyResponse = true;
@@ -5902,16 +5900,18 @@ async function retryEmptyTranslationIndividually(item, translatedById, keyStates
     keyStates._emptyRecoveryAttemptedIds.add(id);
 
     const prompt = `
-${MASTER_TRANSLATION_PROMPT_ID_MAP}
+${MASTER_TRANSLATION_PROMPT}
 
 RECUPERARE INDIVIDUALĂ PENTRU O SINGURĂ TRADUCERE GOALĂ.
 Tradu numai replica de mai jos în română naturală. Păstrează sensul, tonul și formatul de subtitrare.
-Nu omite ID-ul și nu returna text gol. Returnează un obiect JSON cu cheia exactă a ID-ului.
+Nu omite ID-ul și nu returna text gol. Returnează doar un array JSON cu exact un obiect.
 
 ${JSON.stringify([{ id: item.id, text: item.text }], null, 2)}
 
 Format obligatoriu:
-${JSON.stringify({[id]: 'traducerea română'})}
+[
+  {"id": ${Number.parseInt(id, 10)}, "text": "traducerea română"}
+]
 `;
 
     try {
@@ -6002,22 +6002,22 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
     // apelurile în timpul unui 503/429; numai erorile de format JSON sunt izolate prin split.
     let stopAfterRecoveryApiFailure = false;
 
-    const buildRecoveryPrompt = (batch, strictJsonRetry = false) => {
-        const example = Object.fromEntries(batch.map(item => [String(item.id), `traducerea română pentru ID ${item.id}`]));
-        return `
-${MASTER_TRANSLATION_PROMPT_ID_MAP}
+    const buildRecoveryPrompt = (batch, strictJsonRetry = false) => `
+${MASTER_TRANSLATION_PROMPT}
 
 RECUPERARE FINALĂ PENTRU TRADUCERI GOALE.
 Următoarele replici au text original, dar traducerea existentă este goală.
 Tradu TOATE liniile din acest grup în română naturală. Nu omite niciun ID și nu returna text gol.
 
-${JSON.stringify(batch.map(item => ({ id: item.id, text: item.text })), null, 2)}
+Returnează DOAR un ARRAY JSON valid, cu câte un obiect pentru fiecare ID furnizat, în ordinea primită:
+[
+  {"id": 123, "text": "traducerea română"}
+]
+${strictJsonRetry ? '\nRETRY TEHNIC: fără markdown sau explicații; păstrează exact ID-urile, un obiect per ID și returnează numai JSON valid.' : ''}
 
-Returnează DOAR un obiect JSON cu ID-urile originale ca chei și traducerile ca valori.
-Exemplu structural (folosește toate ID-urile reale): ${JSON.stringify(example)}
-${strictJsonRetry ? '\nRETRY TEHNIC: fără markdown sau explicații; include toate cheile cerute cu traduceri nenule și nevidе.' : ''}
+REPLICILE DE TRADUS:
+${JSON.stringify(batch.map(item => ({ id: item.id, text: item.text })), null, 2)}
 `;
-    };
 
     const requestRecoveryBatch = async (batch, batchLabel, strictJsonRetry = false) => {
         const raw = await callGeminiWithKeyRotation(
