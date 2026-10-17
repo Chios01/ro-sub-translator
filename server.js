@@ -164,7 +164,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.194',
+    version: '12.78.195',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -728,7 +728,7 @@ function isOnlyStandaloneFillerSequence(text) {
 // Nu elimină paranteze cu text obișnuit de dialog (ex. „I mean”, „Don't knock!”).
 // ============================================================
 
-const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed|ing)?|gurgle(?:s|d|ing)?|knock(?:s|ed|ing)?|bang(?:s|ed|ing)?|pound(?:s|ed|ing)?|thud(?:s|ded|ding)?|thump(?:s|ed|ing)?|ring(?:s|ing)?|beep(?:s|ed|ing)?|buzz(?:es|ed|ing)?|click(?:s|ed|ing)?|clatter(?:s|ed|ing)?|clang(?:s|ed|ing)?|crash(?:es|ed|ing)?|slam(?:s|med|ming)?|creak(?:s|ed|ing)?|cough(?:s|ed|ing)?|clear(?:s|ed|ing)\s+(?:(?:his|her|their|its|my|your)\s+)?throat|throat\s+clearing|sigh(?:s|ed|ing)?|gasp(?:s|ed|ing)?|groan(?:s|ed|ing)?|grunt(?:s|ed|ing)?|snort(?:s|ed|ing)?|sniff(?:s|ed|ing|les|led)?|sneez(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|chuckl(?:e|es|ed|ing)|giggl(?:e|es|ed|ing)|sob(?:s|bed|bing)?|cri(?:es|ed|ying)|scream(?:s|ed|ing)?|shout(?:s|ed|ing)?|whisper(?:s|ed|ing)?|pant(?:s|ed|ing)?|snor(?:es|ed|ing)|whimper(?:s|ed|ing)?|growl(?:s|ed|ing)?|bark(?:s|ed|ing)?|meow(?:s|ed|ing)?|chirp(?:s|ed|ing)?|howl(?:s|ed|ing)?|rustl(?:e|es|ed|ing)|rattl(?:e|es|ed|ing)|rumbl(?:e|es|ed|ing)|whistl(?:e|es|ed|ing)|clap(?:s|ped|ping)?|applaud(?:s|ed|ing)?|sing(?:s|ing)?|hum(?:s|med|ming)|footsteps?\s+(?:approach|recede|stop|fade|pass)|heavy\s+breathing|breathing\s+heavily|soft\s+breathing|squeak(?:s|ed|ing)?|squeal(?:s|ed|ing)?|scrap(?:e|es|ed|ing)|scratch(?:es|ed|ing)|shuffle(?:s|d|ing)|swallow(?:s|ed|ing)?|gulp(?:s|ed|ing)?|wind\s+howl(?:s|ing)?|birds?\s+chirp(?:s|ing)?|doorbell\s+ring(?:s|ing)?|phone\s+ring(?:s|ing)?|music\s+play(?:s|ing)?|background\s+music|gângur(?:ește|ind|it)|băt(?:aie|ăi|e|ește|ând|ut)|ciocăn(?:it|ește|ind|ituri)?|pocnet(?:e|ul)?|pocnește|bubuit(?:uri)?|bubuie|zgomot(?:e)?|sunet(?:e)?\s+de|sonerie|bip(?:uri|uie)?|țiuit|trosnet(?:e)?|trosnește|trântește|trântit|scârțâi(?:t|ește|ind)|pași|foșnet|foșnește|fâșâit|tușește|tușind|tușit|își\s+drege\s+glasul|dreg(?:e|ându-și)\s+glasul|gâfâie|gâfâind|gâfâit|respiră\s+greu|respirație\s+grea|oftează|oftând|oftat|suspin(?:ă|ând)?|mormăit|mormăie|mormăind|bufnește|bufnet|râde|râzând|râs|chicotește|chicotind|plânge|plângând|plâns|țipă|țipăt|țipând|strigă|strigând|horcăie|sforăie|adulmecă|fornăie|sughiță|șuieră|fluieră|fredonează|face\s+fâ+|cântă\s+încet|bate\s+din\s+palme|aplauze|urale|clopoțel|răpăit|zdrăngănit|vibrează|hârâit|bufnire|bufniri|bufnete|bufnituri|șuierături|fluierături|pufnire|pufniri|râsete|plânsete|gemete|geamăt(?:e)?|suspin(?:e|uri)?|sughițuri|foșnet(?:e|uri)?|fâșâit(?:uri)?)(?![\p{L}\p{N}])/iu;
+const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed|ing)?|gurgle(?:s|d|ing)?|knock(?:s|ed|ing)?|bang(?:s|ed|ing)?|pound(?:s|ed|ing)?|thud(?:s|ded|ding)?|thump(?:s|ed|ing)?|ring(?:s|ing)?|beep(?:s|ed|ing)?|buzz(?:es|ed|ing)?|click(?:s|ed|ing)?|clatter(?:s|ed|ing)?|clang(?:s|ed|ing)?|crash(?:es|ed|ing)?|slam(?:s|med|ming)?|creak(?:s|ed|ing)?|cough(?:s|ed|ing)?|clear(?:s|ed|ing)\s+(?:(?:his|her|their|its|my|your)\s+)?throat|throat\s+clearing|sigh(?:s|ed|ing)?|gasp(?:s|ed|ing)?|groan(?:s|ed|ing)?|grunt(?:s|ed|ing)?|snort(?:s|ed|ing)?|sniff(?:s|ed|ing|les|led)?|sneez(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|chuckl(?:e|es|ed|ing)|giggl(?:e|es|ed|ing)|sob(?:s|bed|bing)?|cri(?:es|ed|ying)|scream(?:s|ed|ing)?|yelp(?:s|ed|ing)?|wail(?:s|ed|ing)?|moan(?:s|ed|ing)?|roar(?:s|ed|ing)?|exhale(?:s|d|ing)?|shout(?:s|ed|ing)?|whisper(?:s|ed|ing)?|pant(?:s|ed|ing)?|snor(?:es|ed|ing)|whimper(?:s|ed|ing)?|growl(?:s|ed|ing)?|bark(?:s|ed|ing)?|meow(?:s|ed|ing)?|chirp(?:s|ed|ing)?|howl(?:s|ed|ing)?|rustl(?:e|es|ed|ing)|rattl(?:e|es|ed|ing)|rumbl(?:e|es|ed|ing)|whistl(?:e|es|ed|ing)|clap(?:s|ped|ping)?|applaud(?:s|ed|ing)?|sing(?:s|ing)?|hum(?:s|med|ming)|footsteps?\s+(?:approach|recede|stop|fade|pass)|heavy\s+breathing|breathing\s+heavily|soft\s+breathing|squeak(?:s|ed|ing)?|squeal(?:s|ed|ing)?|scrap(?:e|es|ed|ing)|scratch(?:es|ed|ing)|shuffle(?:s|d|ing)|swallow(?:s|ed|ing)?|gulp(?:s|ed|ing)?|wind\s+howl(?:s|ing)?|birds?\s+chirp(?:s|ing)?|doorbell\s+ring(?:s|ing)?|phone\s+ring(?:s|ing)?|music\s+play(?:s|ing)?|background\s+music|gângur(?:ește|ind|it)|băt(?:aie|ăi|e|ește|ând|ut)|ciocăn(?:it|ește|ind|ituri)?|pocnet(?:e|ul)?|pocnește|bubuit(?:uri)?|bubuie|zgomot(?:e)?|sunet(?:e)?\s+de|sonerie|bip(?:uri|uie)?|țiuit|trosnet(?:e)?|trosnește|trântește|trântit|scârțâi(?:t|ește|ind)|pași|foșnet|foșnește|fâșâit|tușește|tușind|tușit|își\s+drege\s+glasul|dreg(?:e|ându-și)\s+glasul|gâfâie|gâfâind|gâfâit|respiră\s+greu|respirație\s+grea|oftează|oftând|oftat|suspin(?:ă|ând)?|mormăit|mormăie|mormăind|bufnește|bufnet|râde|râzând|râs|chicotește|chicotind|plânge|plângând|plâns|țipă|țipăt|țipând|strigă|strigând|horcăie|sforăie|adulmecă|fornăie|sughiță|șuieră|fluieră|fredonează|face\s+fâ+|cântă\s+încet|bate\s+din\s+palme|aplauze|urale|clopoțel|răpăit|zdrăngănit|vibrează|hârâit|bufnire|bufniri|bufnete|bufnituri|șuierături|fluierături|pufnire|pufniri|râsete|plânsete|gemete|geamăt(?:e)?|suspin(?:e|uri)?|sughițuri|foșnet(?:e|uri)?|fâșâit(?:uri)?)(?![\p{L}\p{N}])/iu;
 
 const SOUND_CUE_LABEL_RE = /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|background|gentle|heavy|slight|small|short|brief|off-screen|în fundal|încet|încetișor|tare|ușor|scurt|scurtă|puternic|puternică|îndepărtat(?:ă|e)?|slab(?:ă|e)?)\s+)*(?:sound(?:s)?(?:\s+of)?|noise(?:s)?(?:\s+of)?|music(?:\s+(?:playing|continues|swells|fades|starts|stops|in background))?|applause|laughter|laugh(?:s|ing)?|footsteps?|knocking|banging|pounding|thudding|thumping|doorbell|ringing|beeping|buzzing|clicking|clattering|crashing|slamming|creaking|cough(?:ing|s)?|sigh(?:ing|s)?|gasp(?:ing|s)?|groan(?:ing|s)?|grunt(?:ing|s)?|snoring|heavy breathing|breathing heavily|breathing|whispering|singing|humming|babbling|murmuring|whimpering|growling|snorting|sniffing|sneezing|screaming|shouting|panting|chirping|howling|rustling|rattling|rumbling|whistling|clapping|shuffling|swallowing|gulping|squeaking|squealing|scraping|scratching|wind howling|birds? chirping|doorbell ringing|phone ringing|background music|bătaie(?:\s+în\s+ușă)?|bătăi(?:\s+în\s+ușă)?|gângurit(?:ul)?|mormăit(?:ul|uri)?|suspin(?:ând|e|uri)?|oftat(?:ul)?|râs(?:ul)?|râde|râzând|râsete|plâns(?:ul)?|plânge|plângând|plânsete|pași|aplauze|urale|tușit(?:ul)?|tușește|tușind|gâfâit(?:ul|uri)?|gâfâie|gâfâind|bufnet(?:ul|e)?|bufnește|bufnire|bufniri|pufnet(?:ul|e)?|pufnește|pufnire|foșnet(?:ul|e|uri)?|foșnește|fâșâit(?:ul|uri)?|fâșâie|trosnet(?:ul|e)?|trosnește|zgomot(?:e)?(?:\s+de\s+[^.!?]{1,60})?|sunet(?:e)?(?:\s+de\s+[^.!?]{1,60})?|șuieră|șuierând|șuierături|fluieră|fluierând|fluierături|geme|gemând|geamăt(?:e)?|gemete|horcăie|horcăit(?:ul|uri)?|sforăie|sforăit|adulmecă|fornăie|sughiță|sughițuri|fredonează|cântă\s+încet|face\s+fâ+|bate\s+din\s+palme|clopoțel|răpăit|zdrăngănit|vibrează|hârâit)(?:\s+(?:in the background|from outside|from inside|în fundal|se aude|continuă|încet|tare|ușor|puternic|loudly|softly))?[.!…]*$/iu;
 
@@ -789,7 +789,26 @@ function isStandaloneNonDialogueSoundCue(value) {
         .replace(/\s+/g, ' ')
         .trim();
     if (!text || text.length > 180) return false;
-    return SOUND_CUE_LABEL_RE.test(text);
+
+    // Lista închisă rămâne testul principal pentru etichete sonore explicite.
+    if (SOUND_CUE_LABEL_RE.test(text)) return true;
+
+    // Nu interpretăm ca efect sonor propoziții din perspectiva vorbitorului sau adresate interlocutorului.
+    // Exemple păstrate: "I laugh when I'm nervous", "You gasp every time", "We scream about it".
+    if (/^(?:i|you|we|they)\b/iu.test(text)) return false;
+    if (/[;:?,'"“”]/u.test(text)) return false;
+
+    // Unele piste scriu cue-ul fără paranteze și numai la forma verbală:
+    // "Screams", "Yelps", "Man gasps". Acceptăm forme foarte scurte, nu fraze explicative.
+    const words = text.match(/[\p{L}\p{N}]+/gu) || [];
+    if (words.length <= 2 && SOUND_CUE_ACTION_RE.test(text)) return true;
+
+    // Acceptăm descriptori de tip closed caption (subiect nominal + acțiune sonoră),
+    // dar nu propoziții mai lungi de dialog precum "She laughs at me after work".
+    const captionSubject = text.match(/^(?:(?:a|an|the|another|some|distant|off-screen)\s+)?(?:man|woman|person|someone|somebody|child|baby|girl|boy|crowd|people|audience|group|dog|cat|bird|birds|men|women|kids|children|voice|voices|animal|animals)\s+(?:(?:is|are)\s+)?(.+?)[.!…]*$/iu);
+    if (captionSubject && words.length <= 7 && SOUND_CUE_ACTION_RE.test(captionSubject[1])) return true;
+
+    return false;
 }
 
 // Filtrare de siguranță aplicată atât sursei, cât și traducerii finale:
@@ -6329,20 +6348,39 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
 
     // Filtru final de siguranță: Gemini poate reintroduce descrieri sonore în română
     // chiar dacă sursa a fost curățată. Le scoatem înainte de QA, cache și export SRT.
-    // Dacă filtrul golește un rezultat, sursa acestui ID conținea dialog eligibil (cue-urile
-    // exclusiv sonore au fost deja eliminate la parsarea sursei). Încercăm o singură
-    // recuperare finală pentru acele ID-uri, apoi filtrăm din nou numai rezultatele recuperate.
-    // Dacă nici după recuperare nu rămâne dialog, QA FINAL trebuie să păstreze eroarea.
+    // Unele piste au cue-uri autonome neîncadrate în paranteze și formulate ca acțiuni
+    // (de ex. "Screams" sau "Yelps"); dacă astfel de cue-uri au scăpat prefiltrului,
+    // clasificatorul de mai jos le exclude numai când sursa însăși este un cue autonom.
+    // Dacă sursa nu este cue sonor clar, încercăm recuperarea, iar QA păstrează eroarea
+    // dacă după filtrare tot nu există dialog.
     let finalSoundAnnotationsRemoved = 0;
     const finalSoundEmptiedItems = [];
+    const suppressedSourceSoundCueIds = new Set();
     for (const item of items) {
         const id = String(item.id);
         const current = String(translatedById[id] || '');
+
+        // Plasă de siguranță pentru cue-uri autonome care au scăpat de parser:
+        // le excludem după sursă, indiferent dacă traducerea este goală sau Gemini a tradus-o.
+        // Acest lucru nu se aplică replicilor de dialog care doar menționează sunete.
+        if (isStandaloneNonDialogueSoundCue(item.text)) {
+            if (current.trim()) {
+                const sourceCueOutput = stripNonDialogueSoundMarkup(current);
+                if (sourceCueOutput.removedCount) finalSoundAnnotationsRemoved += sourceCueOutput.removedCount;
+            }
+            translatedById[id] = '';
+            suppressedSourceSoundCueIds.add(id);
+            console.log(`${c.cyan}[Filtru sunete] ID ${id}: sursa este o descriere sonoră autonomă; omit recuperarea și exclud cue-ul din QA/export.${c.reset}`);
+            continue;
+        }
+
         if (!current.trim()) continue;
         const soundCleaned = stripNonDialogueSoundMarkup(current);
         if (soundCleaned.removedCount) finalSoundAnnotationsRemoved += soundCleaned.removedCount;
         translatedById[id] = soundCleaned.text;
         if (soundCleaned.removedCount && !String(soundCleaned.text || '').trim()) {
+            // Sursa nu este un cue sonor clar: încercăm recuperarea dialogului,
+            // iar dacă rezultatul rămâne gol, QA FINAL păstrează eroarea.
             finalSoundEmptiedItems.push(item);
         }
     }
@@ -6399,18 +6437,22 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         })
         .map(item => String(item.id));
     const suppressedFillerIdSet = new Set(suppressedFillerIds);
+    const suppressedFinalOutputIdSet = new Set([
+        ...suppressedFillerIdSet,
+        ...suppressedSourceSoundCueIds
+    ]);
 
     const finalQualityFlags = [];
     for (const item of items) {
         const id = String(item.id);
-        if (isJunkOrInterjection(item.text) || suppressedFillerIdSet.has(id)) continue;
+        if (isJunkOrInterjection(item.text) || suppressedFinalOutputIdSet.has(id)) continue;
         const text = String(translatedById[id] || '');
         const reasons = collectQualityReviewReasons(item, text, items, translatedById);
         if (reasons.length) finalQualityFlags.push({ item, reasons: [...new Set(reasons)] });
     }
     for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
         const id = String(issue.item.id);
-        if (suppressedFillerIdSet.has(id)) continue;
+        if (suppressedFinalOutputIdSet.has(id)) continue;
         const existing = finalQualityFlags.find(entry => String(entry.item.id) === id);
         if (existing) {
             if (!existing.reasons.includes(issue.reason)) existing.reasons.push(issue.reason);
@@ -6421,7 +6463,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
 
     const finalSuspicious = items.filter(item => {
         const id = String(item.id);
-        if (suppressedFillerIdSet.has(id)) return false;
+        if (suppressedFinalOutputIdSet.has(id)) return false;
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
         if (!originalClean) return false;
 
@@ -6439,7 +6481,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     // repetate pentru fiecare calup/retry. O problemă reală rămâne vizibilă în log.
     const unresolvedFinalItems = items.filter(item => {
         const id = String(item.id);
-        if (suppressedFillerIdSet.has(id)) return false;
+        if (suppressedFinalOutputIdSet.has(id)) return false;
         const source = String(item.text || '').replace(/<[^>]+>/g, '').trim();
         return Boolean(source) && !String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim();
     });
@@ -6457,7 +6499,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     const output = items
         .filter(item => {
             const id = String(item.id);
-            return !suppressedFillerIdSet.has(id) && String(translatedById[id] ?? '').trim().length > 0;
+            return !suppressedFinalOutputIdSet.has(id) && String(translatedById[id] ?? '').trim().length > 0;
         })
         .map(item => {
             const translated = String(translatedById[String(item.id)]);
