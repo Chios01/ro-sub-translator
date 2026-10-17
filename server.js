@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.225',
+    version: '12.78.226',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3806,7 +3806,7 @@ function hasUntranslatedEnglish(original, translated) {
         'the','and','but','if','then','than','they','them','their','we','us','our','you','your','he','him','his','she','her','it','its',
         'this','that','these','those','what','which','who','where','when','why','how','with','from','into','onto','about','after','before',
         'without','against','between','through','because','while','would','could','should','will','shall','can','cannot','do','does','did',
-        'have','has','had','not',"don't","isn't","won't","can't","didn't",'please','sorry','thanks','thank','yes','okay','ok',
+        'have','has','had','not',"don't","isn't","won't","can't","didn't",'please','sorry','thanks','thank','yes',
         'for','of','in','on','at','to','by','as'
     ]);
     const englishMarkers = new Set([...strongEnglish,
@@ -4433,7 +4433,8 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
 function isOkOnlySubtitle(text) {
     const clean = String(text || '').replace(/<[^>]+>/g, '').trim();
-    return /^(?:[-–—\s]*(?:ok|okay)(?:[.!?…]+)?[-–—\s]*)$/i.test(clean);
+    // OK/Okay poate fi un răspuns firesc și în română; acceptă una sau mai multe confirmări.
+    return /^(?:[-–—\s]*(?:ok|okay)(?:[.!?,…]+)?[-–—\s]*)+$/i.test(clean);
 }
 
 async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) {
