@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.229',
+    version: '12.78.230',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -543,13 +543,6 @@ async function handleSubtitles(req, res) {
 
         const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
         engSubs = engSubs.filter(sub => !trashRegex.test(String(sub.title || sub.id || '')));
-
-        if (!userVideoHash) {
-            console.log(`${c.cyan}[Subtitrări] videoHash absent; selecție după punctajul de release v193${c.reset}`);
-        } else {
-            console.log(`${c.cyan}[Subtitrări] videoHash transmis către OpenSubtitles; selecție locală după punctajul de release v193${c.reset}`);
-        }
-        console.log(`${c.cyan}[Subtitrări] surse: OpenSubtitles: ${allSubs.length} total / ${engSubs.length} EN eligibile${c.reset}`);
 
         if (engSubs.length === 0) {
             console.log(`${c.yellow}⚠ Nu s-au găsit subtitrări EN valide de la OpenSubtitles pentru: ${id}${c.reset}`);
