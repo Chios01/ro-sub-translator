@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.198',
+    version: '12.78.199',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -820,6 +820,14 @@ async function handleSubtitles(req, res) {
 
             if (/\bsdh\b|\bhi\b|hearing\s*impaired/i.test(subName)) s.score -= 80;
             if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
+
+            // Ordinea upstream (mai ales OpenSubtitles, care primește filename/videoSize/videoHash)
+            // este un semnal de potrivire separat. Nu lăsăm tagurile release-ului să o răstoarne
+            // pentru avantaje mici/medii: scorul local poate promova o variantă cu timpi greșiți.
+            // Penalizare moderată per poziție; potrivirile structurale decisive (episod/ediție)
+            // rămân suficient de puternice pentru a schimba ordinea când există un motiv clar.
+            const sourceOrderPenalty = s.sourceIndex === 0 ? 300 : 150;
+            s.score -= Math.max(0, Number(s.sourceOrder) || 0) * sourceOrderPenalty;
         });
 
         // Clasăm toți candidații eligibili din fiecare sursă, apoi păstrăm
@@ -893,7 +901,10 @@ async function handleSubtitles(req, res) {
         });
 
         try {
-            diverseSubs.forEach((s, i) => console.log(`${c.cyan}[Subtitrări] #${i + 1} [${s.sourceName} #${s.sourceOrder}] scor=${s.score} | ${String(s.realName).slice(0, 90)}${c.reset}`));
+            diverseSubs.forEach((s, i) => {
+                const diagnosticName = s.sourceData?.subtitleFileName || s.sourceData?.fileName || s.sourceData?.movieReleaseName || s.realName;
+                console.log(`${c.cyan}[Subtitrări] #${i + 1} [${s.sourceName} #${s.sourceOrder}] scor=${s.score} | ${String(diagnosticName).slice(0, 120)}${c.reset}`);
+            });
             console.log(`${c.cyan}[Subtitrări] returnate ${generatedSubs.length} variante pentru ${id}${c.reset}`);
         } catch (e) {}
 
