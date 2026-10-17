@@ -30,6 +30,11 @@ const BROWSER_USER_AGENT =
 
 const CHUNK_SIZE = 165;
 const CONCURRENCY_LIMIT = 3;
+// Răspunsurile Gemini sever incomplete sunt izolate în subcalupuri mici,
+// până când fiecare segment are cel mult 12 replici și poate fi reparat ulterior
+// de Empty Recovery fără a abandona întregul calup.
+const GEMINI_INCOMPLETE_SPLIT_MAX_DEPTH = 4;
+const GEMINI_INCOMPLETE_SPLIT_MIN_SIZE = 12;
 
 // După orice răspuns HTTP 429, nu pornim alte cereri Gemini timp de 5 secunde.
 // Pauzele Retry-After/cooldown ale proiectului rămân separate și pot fi mai lungi.
@@ -165,7 +170,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.200',
+    version: '12.78.201',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4176,7 +4181,11 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             }
             if (isDailyQuotaBlocked) break;
             if (!isTransient) {
-                if (!(chunk.length > 20 && depth < 2)) {
+                const isSeverelyIncompleteResponse = /Răspuns Gemini sever incomplet/i.test(errorMessage);
+                const splitRecoveryAvailable = isSeverelyIncompleteResponse
+                    ? (chunk.length > GEMINI_INCOMPLETE_SPLIT_MIN_SIZE && depth < GEMINI_INCOMPLETE_SPLIT_MAX_DEPTH)
+                    : (chunk.length > 20 && depth < 2);
+                if (!splitRecoveryAvailable) {
                     console.error(`${c.red}✖ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} eșuat: ${errorMessage}${c.reset}`);
                 }
                 break;
@@ -4229,8 +4238,13 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
         return chunk.map(item => ({ id: item.id, text: ' ' }));
     }
 
-    if (chunk.length > 20 && depth < 2) {
-        console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în două părți imediat după eșec...${c.reset}`);
+    const finalIsSeverelyIncompleteResponse = /Răspuns Gemini sever incomplet/i.test(finalErrorMessage);
+    const shouldSplitAfterFailure = finalIsSeverelyIncompleteResponse
+        ? (chunk.length > GEMINI_INCOMPLETE_SPLIT_MIN_SIZE && depth < GEMINI_INCOMPLETE_SPLIT_MAX_DEPTH)
+        : (chunk.length > 20 && depth < 2);
+
+    if (shouldSplitAfterFailure) {
+        console.log(`${c.yellow}⚠ [Gemini] Împart calupul ${globalChunkIndex + 1} în subcalupuri mai mici după eșec...${c.reset}`);
 
         const middle = Math.floor(chunk.length / 2);
         const first = chunk.slice(0, middle);
