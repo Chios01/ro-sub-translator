@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.232',
+    version: '12.78.233',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1666,6 +1666,7 @@ INTERJECTIONS AND FILLERS
 - Use neighboring subtitles and the scene context to distinguish a meaningless filler from a meaningful reaction. If the function is ambiguous, prefer preserving its communicative/emotional meaning in concise Romanian rather than deleting it automatically.
 - Remove an embedded filler only when it is clearly hesitation and not part of a meaningful expression; then repair punctuation and capitalization. Do not delete a meaningful multi-word expression simply because it begins with an interjection; translate the expression by meaning.
 - REGULĂ STRICTĂ PENTRU PARANTEZE: elimină integral orice text dintre paranteze rotunde (...) sau drepte [...], indiferent dacă este descriere sonoră, indicație de acțiune sau alt text. Acest conținut nu trebuie să apară în subtitrarea română. Dacă într-un bloc există dialog și în afara parantezelor, păstrează tot dialogul exterior.
+- PENTRU DIALOG NORMAL, returnează traducerea ca text simplu: nu pune replica tradusă între paranteze rotunde sau drepte și nu adăuga paranteze decorative în jurul întregii traduceri. Parantezele/parantezele drepte nu se folosesc ca ambalaj pentru o replică normală.
 - NEVER include non-dialogue sound effects, music cues, stage directions, or vocal-action captions in the Romanian subtitle output. Remove cues such as “(sighs)”, “[whistling]”, „(bufnește)”, „(șuierături)”, „(bufnire)” and „(plângând)” completely. Do not remove dialogue that mentions a sound, laughter, singing, or music when that dialogue is outside parentheses/brackets.
 
 FINAL CHECK
@@ -5623,6 +5624,9 @@ function assessEmptyRecoveryCandidate(item, candidateRaw) {
     if (candidateRaw === undefined || candidateRaw === null) {
         return { ok: false, reason: 'ID absent din răspunsul Gemini' };
     }
+    if (isEmptyRecoverySoundCueSkip(candidateRaw) && !isStandaloneNonDialogueSoundCue(item.text)) {
+        return { ok: false, reason: 'markerul de omitere este permis doar pentru un cue non-dialogat din sursă' };
+    }
 
     const candidate = formatSubtitleLine(String(candidateRaw || ''));
     if (!candidate || !candidate.replace(/<[^>]+>/g, '').trim()) {
@@ -5663,7 +5667,7 @@ function buildEmptyRecoveryPrompt(batch, strictJsonRetry = false, stageLabel = '
     return `
 ${stageLabel.toUpperCase()} — TRADUCERI RĂMASE GOALE.
 
-Tradu în română naturală fiecare replică din lista de mai jos. Aceste blocuri au trecut deja de filtrarea inițială a subtitrărilor. Pentru dialogul obișnuit, fragmente incomplete, replici de un singur cuvânt, întrebări și reacții cu sens, întoarce întotdeauna o traducere română nevidă. Nu lăsa câmpul text gol și nu omite niciun ID.
+Tradu în română naturală fiecare replică din lista de mai jos. Aceste blocuri au trecut deja de filtrarea inițială a subtitrărilor. Pentru dialogul obișnuit, fragmente incomplete, replici de un singur cuvânt, întrebări și reacții cu sens, întoarce întotdeauna o traducere română nevidă. Nu lăsa câmpul text gol și nu omite niciun ID. Pentru dialog normal, returnează numai textul tradus, fără paranteze rotunde/drepte adăugate în jurul replicii.
 
 EXCEPȚIE EXPLICITĂ: dacă și numai dacă textul-sursă este exclusiv o descriere non-dialogată de sunet/muzică, o indicație scenică sau o acțiune vocală fără niciun cuvânt rostit, pune valoarea exactă ${JSON.stringify(EMPTY_RECOVERY_SOUND_CUE_SKIP)} în câmpul text. Nu folosi acest marker pentru dialog, pentru o replică scurtă sau pentru o propoziție care doar menționează sunetul. Markerul înseamnă „omitere intenționată”, nu traducere lipsă; programul îl va scoate din rezultat și nu va mai reîncerca ID-ul.
 
@@ -5786,7 +5790,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
         let repeatedEmptyResponseSkips = 0;
         for (const item of batch) {
             const id = String(item.id);
-            if (isEmptyRecoverySoundCueSkip(recoveryDict[id])) {
+            if (isEmptyRecoverySoundCueSkip(recoveryDict[id]) && isStandaloneNonDialogueSoundCue(item.text)) {
                 markIntentionalSoundCueSuppressed(item, translatedById, keyStates);
                 failedById.delete(id);
                 individualRetryById.delete(id);
@@ -5998,7 +6002,7 @@ async function retryEmptyTranslationIndividually(item, translatedById, keyStates
         });
         const retryJson = safeJsonParse(retryRaw);
         const retryDict = normalizeTranslationPayload(retryJson);
-        if (isEmptyRecoverySoundCueSkip(retryDict[id])) {
+        if (isEmptyRecoverySoundCueSkip(retryDict[id]) && isStandaloneNonDialogueSoundCue(item.text)) {
             markIntentionalSoundCueSuppressed(item, translatedById, keyStates);
             console.log(`${c.cyan}[${stageLabel} Retry] ID ${id} marcat ca descriere sonoră; lăsat gol intenționat, fără alte retry-uri.${c.reset}`);
             return 'suppressed';
@@ -6166,7 +6170,7 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
         let intentionalSoundSkips = 0;
         for (const item of batch) {
             const id = String(item.id);
-            if (isEmptyRecoverySoundCueSkip(recoveryDict[id])) {
+            if (isEmptyRecoverySoundCueSkip(recoveryDict[id]) && isStandaloneNonDialogueSoundCue(item.text)) {
                 markIntentionalSoundCueSuppressed(item, translatedById, keyStates);
                 intentionalSoundSkips++;
                 continue;
@@ -6825,12 +6829,13 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         console.log(`${c.yellow}[Final Repair] Omisă pentru ${finalRepairCandidates.length} candidate: circuitul 429 este deschis; nu înlocuim o lipsă de traducere cu cereri Grammar Review.${c.reset}`);
     }
 
-    // Filtru final: orice text dintre (...) sau [...] și cue-urile sonore izolate
-    // sunt eliminate înainte de QA/export. Dacă rămâne doar un astfel de segment,
-    // traducerea este lăsată goală și nu este retrimisă în recuperare la nesfârșit.
+    // Filtru final: eliminăm orice segment dintre (...) sau [...]. Cue-urile
+    // sonore se clasifică pe baza sursei înainte de Gemini, nu printr-o euristică
+    // aplicată orbește cuvintelor românești dintr-o traducere deja validă.
     let finalBracketedOrCueSegmentsRemoved = 0;
     const suppressedSourceSoundCueIds = new Set();
     const suppressedTranslatedNonDialogueOnlyIds = new Set();
+    const finalFilterRecoveryItems = [];
     for (const item of items) {
         const id = String(item.id);
         const current = String(translatedById[id] || '');
@@ -6847,13 +6852,56 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         }
 
         if (!current.trim()) continue;
-        const soundCleaned = stripNonDialogueSoundMarkup(current);
+        // Pentru o replică-sursă deja clasificată drept dialog, aplicăm aici numai
+        // eliminarea parantezelor. Nu rulăm lista euristică de cue-uri pe traducere:
+        // un cuvânt românesc legitim (de ex. „bătut”) poate coincide cu un efect sonor.
+        const soundCleaned = stripBracketedSegments(current);
         if (soundCleaned.removedCount) finalBracketedOrCueSegmentsRemoved += soundCleaned.removedCount;
-        translatedById[id] = soundCleaned.text;
+        translatedById[id] = soundCleaned.text.trim();
         if (soundCleaned.removedCount && !String(soundCleaned.text || '').trim()) {
-            // Traducerea a fost clasificată ca descriere sonoră și eliminată.
-            // Nu încercăm s-o reparăm/retraducem; rămâne goală, fără QA de lipsă.
-            suppressedTranslatedNonDialogueOnlyIds.add(id);
+            // Sursa a trecut deja de filtrarea inițială și nu este un cue non-dialogat.
+            // Dacă filtrarea finală golește traducerea (de ex. Gemini a ambalat dialogul
+            // în paranteze), NU o marcăm drept omitere intenționată: încercăm recuperarea.
+            if (isJunkOrInterjection(item.text) || isStandaloneNonDialogueSoundCue(item.text) ||
+                getIntentionallySuppressedTranslationIds(keyStates).has(id)) {
+                suppressedTranslatedNonDialogueOnlyIds.add(id);
+            } else {
+                finalFilterRecoveryItems.push(item);
+            }
+        }
+    }
+
+    if (finalFilterRecoveryItems.length) {
+        const ids = finalFilterRecoveryItems.map(item => String(item.id)).join(', ');
+        console.log(`${c.yellow}[Filtru paranteze/cue-uri] ${finalFilterRecoveryItems.length} traduceri de replici normale au devenit goale după filtrare (ID: ${ids}); încerc recuperarea înainte de QA.${c.reset}`);
+        // Întâi încercăm o recuperare locală fără cost API, apoi doar pentru cazurile
+        // nerezolvate cerem o traducere individuală, evitând re-trimiterea întregului calup.
+        const localRecovery = recoverEmptyTranslationsLocally(items, finalFilterRecoveryItems, translatedById, 'Filtru final Local');
+        const locallyRecovered = new Set(localRecovery.recoveredIds.map(String));
+        for (const item of finalFilterRecoveryItems) {
+            const id = String(item.id);
+            if (locallyRecovered.has(id)) continue;
+            if (String(translatedById[id] || '').trim()) continue;
+            if (getIntentionallySuppressedTranslationIds(keyStates).has(id)) continue;
+            if (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold || keyStates._emptyRecoveryQuotaBlocked) {
+                console.log(`${c.yellow}[Filtru final Recovery] ID ${id}: recuperarea AI omisă deoarece circuitul de quota/429 este în pauză; QA va raporta dacă replica rămâne goală.${c.reset}`);
+                continue;
+            }
+            await retryEmptyTranslationIndividually(item, translatedById, keyStates, 'Filtru final Recovery');
+        }
+        // Reaplicăm filtrarea strictă traducerilor recuperate. Dacă și a doua variantă
+        // este alcătuită numai din segmente delimitate, rămâne goală și QA o raportează;
+        // nu o ascundem drept cue intenționat.
+        for (const item of finalFilterRecoveryItems) {
+            const id = String(item.id);
+            const current = String(translatedById[id] || '');
+            if (!current.trim()) continue;
+            const cleaned = stripBracketedSegments(current);
+            if (cleaned.removedCount) finalBracketedOrCueSegmentsRemoved += cleaned.removedCount;
+            translatedById[id] = cleaned.text.trim();
+            if (!cleaned.text.trim()) {
+                console.log(`${c.yellow}[Filtru final Recovery] ID ${id}: traducerea a rămas goală și după reîncercare; nu este marcată ca omisă intenționat și va fi verificată de QA.${c.reset}`);
+            }
         }
     }
 
