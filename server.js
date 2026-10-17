@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.219',
+    version: '12.78.220',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -472,8 +472,6 @@ async function handleSubtitles(req, res) {
         } catch (e) {}
     }
 
-    console.log(`${c.cyan}[Subtitrări] cerere ${type}/${id} | ${extra ? 'extra: ' + (extraKeys.join(',') || 'nerecunoscut') : 'fără extra'}${userFilename ? ' | filename: ' + userFilename.slice(0, 100) : ''} | client: ${req.headers['user-agent'] ? String(req.headers['user-agent']).slice(0, 40) : 'necunoscut'}${c.reset}`);
-
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`,
         `https://yts-subs.com/movie-imdb/${String(id).match(/tt\d+/i)?.[0] || id}`
@@ -506,7 +504,6 @@ async function handleSubtitles(req, res) {
         ];
 
         const results = await Promise.all(fetchPromises);
-        console.log(`${c.cyan}[Subtitrări] diagnostic preluare: OpenSubtitles: ${sourceDiagnostics[0]} | YIFY: ${sourceDiagnostics[1]}${c.reset}`);
         
         // Păstrăm proveniența fiecărui candidat; limita se aplică separat
         // fiecărei surse, nu listei concatenate în ordinea furnizorilor.
@@ -563,14 +560,6 @@ async function handleSubtitles(req, res) {
         try {
             const sourceLabels = ['OpenSubtitles', 'YIFY'];
             console.log(`${c.cyan}[Subtitrări] surse: ${urlsToFetch.map((_, i) => `${sourceLabels[i]}: ${allSubs.filter(s => s._selectionSourceIndex === i).length} total / ${engSubs.filter(s => s._selectionSourceIndex === i).length} EN`).join(' | ')}${c.reset}`);
-            urlsToFetch.forEach((_, i) => {
-                const sample = allSubs.find(s => s._selectionSourceIndex === i);
-                if (!sample) return;
-                const raw = { ...sample };
-                delete raw._selectionSourceIndex;
-                delete raw._selectionSourceOrder;
-                console.log(`${c.cyan}[Subtitrări] exemplu brut ${sourceLabels[i]}: ${JSON.stringify(raw).slice(0, 300)}${c.reset}`);
-            });
         } catch (e) {}
 
         if (engSubs.length === 0) {
@@ -989,12 +978,6 @@ async function handleSubtitles(req, res) {
         });
 
         try {
-            diverseSubs.forEach((s, i) => {
-                const diagnosticName = s.sourceData?.subtitleFileName || s.sourceData?.fileName || s.sourceData?.movieReleaseName || s.realName;
-                const hashNote = s.hashMatch ? ' | POTRIVIRE HASH' : '';
-                console.log(`${c.cyan}[Subtitrări] #${i + 1} [${s.sourceName} #${s.sourceOrder}] scor=${s.score}${hashNote} | ${String(diagnosticName).slice(0, 120)}${c.reset}`);
-            });
-            console.log(`${c.cyan}[Subtitrări] returnate ${generatedSubs.length} variante pentru ${id}${c.reset}`);
         } catch (e) {}
 
         return res.json({ subtitles: generatedSubs });
