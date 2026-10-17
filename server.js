@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.215',
+    version: '12.78.216',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1871,10 +1871,11 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
     const contextBefore = allItems.slice(Math.max(0, chunkStart - CONTEXT_LINES_BEFORE), chunkStart);
     const contextAfter = allItems.slice(chunkEnd, Math.min(allItems.length, chunkEnd + CONTEXT_LINES_AFTER));
 
-    const keysToTranslate = chunk.map((obj, localIndex) => {
-        const absoluteIndex = chunkStart + localIndex;
-        const previous = allItems[absoluteIndex - 1];
-        const next = allItems[absoluteIndex + 1];
+    const sourceIndexById = new Map(allItems.map((item, index) => [String(item.id), index]));
+    const keysToTranslate = chunk.map(obj => {
+        const absoluteIndex = sourceIndexById.get(String(obj.id));
+        const previous = Number.isInteger(absoluteIndex) ? allItems[absoluteIndex - 1] : null;
+        const next = Number.isInteger(absoluteIndex) ? allItems[absoluteIndex + 1] : null;
         return {
             id: obj.id,
             text: obj.text,
@@ -1902,6 +1903,7 @@ Tradu STRICT următoarele replici și returnează un ARRAY JSON cu exact câte u
 Nu modifica ID-urile, nu omite nicio replică și nu duplica ID-uri.
 Câmpurile context_anterior și context_urmator sunt DOAR pentru înțelegerea replicii curente; NU le traduce și NU le include în răspuns.
 Folosește contextul pentru acord, pronume, continuitate, topică și sens, dar modifică DOAR câmpul text al ID-ului curent.
+Nu reasocia textul unei replici cu alt ID. Șirurile alcătuite doar din cifre și semne de punctuație trebuie copiate exact; nu le înlocui cu traducerea replicii vecine.
 
 REPLICILE DE TRADUS:
 ${JSON.stringify(keysToTranslate, null, 2)}
@@ -3132,6 +3134,15 @@ function safeJsonParse(rawText) {
 // CHUNK ENGINE CU RETRY, RE-SPLIT SI VERIFICARE ENGLEZA
 // ============================================================
 
+// Codurile/șirurile strict numerice (de ex. 7.23.48.83 sau 11.17.55...)
+// sunt conținut de subtitrare, nu proză de tradus. Le păstrăm exact și nu le
+// trimitem modelului, ca să nu poată deplasa maparea ID-urilor vecine.
+function isNumericVerbatimCue(text) {
+    const clean = String(text || '').replace(/<[^>]+>/g, '').trim();
+    if (!clean || /[\p{L}]/u.test(clean) || !/\d/u.test(clean)) return false;
+    return /^[\d\s.,:;…\-–—/\\()#]+$/u.test(clean);
+}
+
 function chunkArray(array, size) {
     const chunks = [];
     for (let i = 0; i < array.length; i += size) {
@@ -3517,6 +3528,7 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
     if (!Array.isArray(sourceItems) || sourceItems.length < 3) return [];
     const targetById = new Map((translatedItems || []).map(item => [String(item.id), String(item.text || '')]));
     const hitsByIndex = new Map();
+    const mergedCueBoundaryIssues = [];
 
     const addHit = (index, reason, strength = 1) => {
         if (!hitsByIndex.has(index)) hitsByIndex.set(index, { index, reasons: [], strength: 0 });
@@ -3542,6 +3554,25 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
         const sourceChars = original.length;
         const targetChars = translated.length;
         if (!sourceWords || !targetWords) continue;
+
+        // Semnal de graniță cu încredere ridicată: un fragment-sursă scurt,
+        // neterminat, a primit o traducere mult mai lungă care se încheie cu o
+        // virgulă. Acest tipar poate indica faptul că modelul a absorbit cue-ul următor.
+        const sourceEndsSentence = /[.!?…]["'”’)]?\s*$/u.test(original);
+        const targetEndsClause = /[,;:]\s*$/u.test(translated);
+        if (!sourceEndsSentence && targetEndsClause &&
+            sourceWords >= 4 && sourceWords <= 6 &&
+            targetWords >= sourceWords + 4 && targetWords / sourceWords >= 1.8 &&
+            sourceChars <= 40 && targetChars >= 48) {
+            mergedCueBoundaryIssues.push({
+                start: Math.max(0, index - 1),
+                end: Math.min(sourceItems.length - 1, index + 10),
+                evidenceCount: 1,
+                strength: 8,
+                kind: 'merged-cue-boundary',
+                reasons: [`fragment neterminat posibil combinat cu următorul (${sourceWords}→${targetWords} cuvinte)`]
+            });
+        }
 
         // Semnal A: o replică-sursă normală a devenit neobișnuit de scurtă.
         // Sunt necesare praguri stricte; raportul singur nu decide corectitudinea.
@@ -3585,7 +3616,7 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
     }
 
     const hits = [...hitsByIndex.values()].sort((a, b) => a.index - b.index);
-    if (!hits.length) return [];
+    if (!hits.length && !mergedCueBoundaryIssues.length) return [];
 
     const clusters = [];
     for (const hit of hits) {
@@ -3640,11 +3671,16 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
             issue.end < sequenceShift.start - LOCAL_ALIGNMENT_MAX_GAP ||
             issue.start > sequenceShift.end + LOCAL_ALIGNMENT_MAX_GAP
         );
-        return [sequenceShift, ...unrelatedIssues]
+        const unrelatedMergedCueIssues = mergedCueBoundaryIssues.filter(issue =>
+            issue.end < sequenceShift.start - LOCAL_ALIGNMENT_MAX_GAP ||
+            issue.start > sequenceShift.end + LOCAL_ALIGNMENT_MAX_GAP
+        );
+        return [sequenceShift, ...unrelatedMergedCueIssues, ...unrelatedIssues]
             .sort((a, b) => b.strength - a.strength || a.start - b.start);
     }
 
-    return structuralIssues.sort((a, b) => b.strength - a.strength || a.start - b.start);
+    return [...mergedCueBoundaryIssues, ...structuralIssues]
+        .sort((a, b) => b.strength - a.strength || a.start - b.start);
 }
 
 function canRetranslateAlignmentItem(item) {
@@ -3695,6 +3731,7 @@ async function repairTranslationAlignmentRange(sourceChunk, currentResult, detec
 
     return sourceChunk.map(item => {
         const id = String(item.id);
+        if (isNumericVerbatimCue(item.text)) return { id: item.id, text: String(item.text || '') };
         if (replacementById.has(id)) return { id: item.id, text: replacementById.get(id) };
         return { id: item.id, text: currentById.get(id) || ' ' };
     });
@@ -4093,7 +4130,14 @@ function normalizeTranslationPayload(parsed) {
 }
 
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, alignmentRepair = false, deferred429Retry = false) {
-    const prompt = buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext);
+    const requestChunk = chunk.filter(obj => !isNumericVerbatimCue(obj.text));
+    const prompt = requestChunk.length
+        ? buildTranslationPrompt(requestChunk, allItems, chunkStart, chunkEnd, previousTranslatedContext)
+        : '';
+    const verbatimCueCount = chunk.length - requestChunk.length;
+    if (!requestChunk.length) {
+        return chunk.map(obj => ({ id: obj.id, text: String(obj.text || '') }));
+    }
     let lastError = null;
 
     // Tură inițială: cel mult o rotație prin pool, fără a aștepta separat
@@ -4135,7 +4179,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const requestLabel = alignmentRepair
                 ? `Segment aliniere pentru calup ${globalChunkIndex + 1}/${totalChunks}`
                 : `Calup ${globalChunkIndex + 1}/${totalChunks}`;
-            const raw = await callGemini(prompt, keyState, { requestLabel, responseSchema: buildTranslationResponseSchema(chunk) });
+            const raw = await callGemini(prompt, keyState, { requestLabel, responseSchema: buildTranslationResponseSchema(requestChunk) });
             const parsed = safeJsonParse(raw);
             const dict = normalizeTranslationPayload(parsed);
 
@@ -4168,16 +4212,17 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             };
             const hasUsableTranslation = (id, value) => Boolean(getUsableFormattedTranslation(id, value));
 
-            const missingItems = chunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
+            const missingItems = requestChunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
             const missingKeyCount = missingItems.filter(obj => !Object.prototype.hasOwnProperty.call(dict, String(obj.id))).length;
             const presentButUnusableCount = missingItems.length - missingKeyCount;
 
-            // Un răspuns JSON valid, chiar dacă omite multe ID-uri, este un rezultat parțial,
-            // nu motiv de split recursiv și nici de abandonare a calupului.
-            // Păstrăm traducerile valide; ID-urile lipsă rămân goale pentru recuperarea existentă.
+            // Cue-urile strict numerice sunt copiate byte-for-byte după parsare;
+            // toate celelalte ID-uri folosesc exclusiv răspunsul asociat explicit de model.
             const results = chunk.map(obj => ({
                 id: obj.id,
-                text: getUsableFormattedTranslation(obj.id, dict[String(obj.id)]) || ' '
+                text: isNumericVerbatimCue(obj.text)
+                    ? String(obj.text || '')
+                    : (getUsableFormattedTranslation(obj.id, dict[String(obj.id)]) || ' ')
             }));
 
             // Verificările de limbă și fidelitate rulează o singură dată după toate calupurile,
@@ -4185,15 +4230,17 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
             if (missingItems.length > 0) {
                 const usableCount = chunk.length - missingItems.length;
+                const passthroughNote = verbatimCueCount ? `; ${verbatimCueCount} coduri numerice copiate exact` : '';
                 if (alignmentRepair) {
-                    console.log(`${c.yellow}⚠ [Aliniere] Segment punctual: ${usableCount}/${chunk.length} traduceri utilizabile; ${missingItems.length} ID-uri goale lăsate pentru recuperarea existentă.${c.reset}`);
+                    console.log(`${c.yellow}⚠ [Aliniere] Segment punctual: ${usableCount}/${chunk.length} traduceri utilizabile${passthroughNote}; ${missingItems.length} ID-uri goale lăsate pentru recuperarea existentă.${c.reset}`);
                 } else {
-                    console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: ${usableCount}/${chunk.length} traduceri utilizabile; ${missingItems.length} de recuperat (chei absente: ${missingKeyCount}; valori prezente dar goale/eliminate de formatter: ${presentButUnusableCount}); fără split.${c.reset}`);
+                    console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: ${usableCount}/${chunk.length} traduceri utilizabile${passthroughNote}; ${missingItems.length} de recuperat (chei absente: ${missingKeyCount}; valori prezente dar goale/eliminate de formatter: ${presentButUnusableCount}); fără split.${c.reset}`);
                 }
             } else if (alignmentRepair) {
                 console.log(`${c.green}✔ [Aliniere] Segment punctual finalizat (${chunk.length}/${chunk.length} replici).${c.reset}`);
             } else {
-                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii)${c.reset}`);
+                const passthroughNote = verbatimCueCount ? `; ${verbatimCueCount} coduri numerice copiate exact` : '';
+                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii${passthroughNote})${c.reset}`);
             }
             return results;
         } catch (error) {
@@ -6302,8 +6349,10 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     const items = parseSrt(srtText, parseStats);
     if (!items.length) throw new Error('Nu s-au găsit subtitrări valide.');
 
+    const verbatimNumericCueCount = items.filter(item => isNumericVerbatimCue(item.text)).length;
+    const sentToGeminiCount = items.length - verbatimNumericCueCount;
     const accountingDelta = sourceBlockCount - items.length - parseStats.fillerBlocksFiltered - parseStats.otherBlocksFiltered - parseStats.invalidBlocksSkipped - parseStats.soundCueBlocksFiltered;
-    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${items.length} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${parseStats.soundCueBlocksFiltered ? ` | descrieri sonore eliminate: ${parseStats.soundCueBlocksFiltered} blocuri` : ''}${parseStats.soundCueAnnotationsRemoved > parseStats.soundCueBlocksFiltered ? ` | marcaje sonore eliminate: ${parseStats.soundCueAnnotationsRemoved}` : ''}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
+    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${sentToGeminiCount} | coduri numerice copiate exact: ${verbatimNumericCueCount} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${parseStats.soundCueBlocksFiltered ? ` | descrieri sonore eliminate: ${parseStats.soundCueBlocksFiltered} blocuri` : ''}${parseStats.soundCueAnnotationsRemoved > parseStats.soundCueBlocksFiltered ? ` | marcaje sonore eliminate: ${parseStats.soundCueAnnotationsRemoved}` : ''}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
 
     const cleanKeys = Array.from(new Set(apiKeys.map(k => String(k).trim()).filter(Boolean)));
     if (!cleanKeys.length) throw new Error('Nu există chei Gemini valide.');
