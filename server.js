@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.235',
+    version: '12.78.236',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3373,8 +3373,8 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
         const targetEndsClause = /[,;:]\s*$/u.test(translated);
         if (!sourceEndsSentence && targetEndsClause &&
             sourceWords >= 4 && sourceWords <= 6 &&
-            targetWords >= sourceWords + 4 && targetWords / sourceWords >= 1.8 &&
-            sourceChars <= 40 && targetChars >= 48) {
+            targetWords >= sourceWords + 5 && targetWords / sourceWords >= 2.0 &&
+            sourceChars <= 40 && targetChars >= 55) {
             mergedCueBoundaryIssues.push({
                 start: Math.max(0, index - 1),
                 end: Math.min(sourceItems.length - 1, index + 10),
@@ -3393,19 +3393,19 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
 
         // Semnal B: o replică foarte scurtă a primit prea mult text românesc,
         // semn compatibil cu alipirea accidentală a replicii următoare.
-        if (sourceWords <= 4 && targetWords >= 8 && targetWords / sourceWords >= 2) {
+        if (sourceWords <= 4 && targetWords >= 9 && targetWords / sourceWords >= 2.2) {
             addHit(index, `traducere neobișnuit de lungă (${sourceWords}→${targetWords} cuvinte)`, 2);
-        } else if (sourceWords <= 2 && targetWords >= 6 && targetWords / sourceWords >= 2.5) {
+        } else if (sourceWords <= 2 && targetWords >= 7 && targetWords / sourceWords >= 3.0) {
             addHit(index, `expansiune extremă pentru o replică foarte scurtă (${sourceWords}→${targetWords} cuvinte)`, 2);
         }
 
-        if (sourceChars <= 25 && targetChars >= 48 && targetChars / Math.max(1, sourceChars) >= 2.2) {
+        if (sourceChars <= 25 && targetChars >= 55 && targetChars / Math.max(1, sourceChars) >= 2.5) {
             addHit(index, `expansiune de caractere (${sourceChars}→${targetChars})`, 2);
         }
 
         const sourceSentences = localAlignmentSentenceCount(original);
         const targetSentences = localAlignmentSentenceCount(translated);
-        if (sourceSentences <= 1 && targetSentences >= 3 && targetChars >= 45) {
+        if (sourceSentences <= 1 && targetSentences >= 3 && targetChars >= 55) {
             addHit(index, `mai multe propoziții în traducere decât sugerează replica-sursă (${sourceSentences}→${targetSentences})`, 2);
         }
     }
@@ -3463,7 +3463,7 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
             // Două traduceri identice pot fi un refren/replică repetată; duplicarea
             // singură nu declanșează apel API fără și alt indiciu structural.
             return (structuralHits.length >= 2 && cluster.strength >= 4) ||
-                (structuralHits.length >= 1 && duplicateHits.length >= 2 && cluster.strength >= 6);
+                (structuralHits.length >= 1 && duplicateHits.length >= 2 && cluster.strength >= 9);
         })
         .map(cluster => ({
             start: cluster.start,
