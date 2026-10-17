@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.197',
+    version: '12.78.198',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -308,9 +308,8 @@ app.get('/:configData/manifest.json', (req, res) => {
 const BROWSER_USER_AGENT_FETCH = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 // ============================================================
-// PUBLIC SUBTITLE SOURCE SCRAPERS (YIFY + SUBDL)
-// Aceste funcții înlocuiesc doar vechile endpointuri Stremio care
-// nu mai întorceau rezultate. Scorarea/ordonarea rămân neschimbate.
+// PUBLIC SUBTITLE SOURCE SCRAPER (YIFY ONLY)
+// Preluare directă YIFY; rankingul rămâne în handlerul de subtitrări.
 // ============================================================
 
 function decodeSubtitleHtmlEntities(value) {
@@ -429,131 +428,6 @@ async function fetchYifySubtitleResults(type, rawId) {
     return results;
 }
 
-function extractSubdlMovieLinks(html, baseUrl) {
-    const anchors = subtitleHtmlAnchors(html);
-    const found = [];
-    const seen = new Set();
-    for (const anchor of anchors) {
-        let parsed;
-        try { parsed = new URL(anchor.href, baseUrl); } catch (_) { continue; }
-        const match = parsed.pathname.match(/^\/subtitle\/(sd\d+)\/([^/]+)(?:\/english)?\/?$/i);
-        if (!match) continue;
-        const path = `/subtitle/${match[1]}/${match[2]}`;
-        if (seen.has(path)) continue;
-        seen.add(path);
-        found.push({ path, text: anchor.text });
-    }
-    return found;
-}
-
-function extractSubdlDownloadLinks(html, pageUrl) {
-    const anchors = subtitleHtmlAnchors(html);
-    const results = [];
-    const seen = new Set();
-
-    for (let i = 0; i < anchors.length; i++) {
-        const anchor = anchors[i];
-        let parsed;
-        try { parsed = new URL(anchor.href, pageUrl); } catch (_) { continue; }
-        const zipLike = /\.zip(?:$|[?#])/i.test(parsed.pathname) &&
-            (/^dl\.subdl\.com$/i.test(parsed.hostname) || /^subdl\.com$/i.test(parsed.hostname) || /^www\.subdl\.com$/i.test(parsed.hostname));
-        const rawSubtitleFile = /^dl\.subdl\.com$/i.test(parsed.hostname) && /\/subtitle\//i.test(parsed.pathname);
-        if (!zipLike && !rawSubtitleFile) continue;
-        if (seen.has(parsed.toString())) continue;
-        seen.add(parsed.toString());
-
-        let releaseName = '';
-        for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
-            const prior = anchors[j];
-            if (!prior.text || /^(quick download|download|translate now|translate with pro|download english subtitle)$/i.test(prior.text)) continue;
-            if (/^\/s\/info\//i.test(prior.href)) {
-                releaseName = prior.text;
-                break;
-            }
-            if (!releaseName && prior.text.length >= 8 && !/^(english|download|author|mobile)$/i.test(prior.text)) releaseName = prior.text;
-        }
-        if (!releaseName) releaseName = decodeURIComponent(parsed.pathname.split('/').pop() || '').replace(/\.zip$/i, '').replace(/[-_.]+/g, ' ');
-
-        results.push({
-            id: `subdl_${parsed.pathname.split('/').pop()}`,
-            lang: 'eng',
-            title: releaseName,
-            releaseName,
-            movieReleaseName: releaseName,
-            url: parsed.toString()
-        });
-        if (results.length >= 40) break;
-    }
-    return results;
-}
-
-async function fetchSubdlSubtitleResults(type, rawId, userFilename) {
-    const imdbId = String(rawId || '').match(/tt\d+/i)?.[0];
-    if (!imdbId) throw new Error('IMDb ID invalid pentru SubDL');
-
-    const mediaTitle = await fetchMediaTitle(rawId).catch(() => '');
-    const filenameTitle = String(userFilename || '').replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[._]+/g, ' ').trim();
-    const queries = [...new Set([imdbId, mediaTitle, filenameTitle].map(x => String(x || '').trim()).filter(x => x.length >= 2))];
-    const searchUrls = [];
-    for (const query of queries) {
-        searchUrls.push(`https://subdl.com/search?query=${encodeURIComponent(query)}`);
-        if (query !== imdbId) searchUrls.push(`https://subdl.com/search?q=${encodeURIComponent(query)}`);
-        if (searchUrls.length >= 4) break;
-    }
-
-    let titleLinks = [];
-    let lastError = null;
-    for (const searchUrl of searchUrls) {
-        try {
-            const result = await fetchSubtitleSourceHtml(searchUrl, 'https://subdl.com/');
-            titleLinks = extractSubdlMovieLinks(result.html, result.url || searchUrl);
-            if (titleLinks.length) break;
-        } catch (error) {
-            lastError = error;
-        }
-    }
-    if (!titleLinks.length) {
-        if (lastError) throw new Error(`căutarea publică SubDL a eșuat (${subtitleSourceError(lastError)})`);
-        throw new Error('pagina publică SubDL nu a returnat linkuri de titlu; formatul de căutare trebuie reverificat');
-    }
-
-    const wanted = String(mediaTitle || filenameTitle || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-    if (wanted) {
-        const wantedTokens = wanted.split(/\s+/).filter(x => x.length > 2);
-        titleLinks.sort((a, b) => {
-            const score = item => {
-                const hay = `${item.text} ${item.path}`.toLowerCase().replace(/[^a-z0-9]+/g, ' ');
-                return wantedTokens.filter(t => hay.includes(t)).length;
-            };
-            return score(b) - score(a);
-        });
-    }
-
-    const allResults = [];
-    const errors = [];
-    for (const titleLink of titleLinks.slice(0, 3)) {
-        const languagePage = `https://subdl.com${titleLink.path}/english`;
-        try {
-            const page = await fetchSubtitleSourceHtml(languagePage, 'https://subdl.com/');
-            const parsed = extractSubdlDownloadLinks(page.html, page.url || languagePage);
-            allResults.push(...parsed);
-            if (allResults.length >= 40) break;
-        } catch (error) {
-            errors.push(subtitleSourceError(error));
-        }
-    }
-
-    const unique = [];
-    const seen = new Set();
-    for (const sub of allResults) {
-        if (!seen.has(sub.url)) { seen.add(sub.url); unique.push(sub); }
-        if (unique.length >= 40) break;
-    }
-    if (!unique.length && errors.length) throw new Error(`paginile SubDL au eșuat (${[...new Set(errors)].join(', ')})`);
-    if (!unique.length) throw new Error('am găsit pagina titlului SubDL, dar nu și linkuri de descărcare EN');
-    return unique;
-}
-
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
     
@@ -601,12 +475,11 @@ async function handleSubtitles(req, res) {
 
     const urlsToFetch = [
         `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`,
-        `https://yts-subs.com/movie-imdb/${String(id).match(/tt\d+/i)?.[0] || id}`,
-        `https://subdl.com/search?query=${encodeURIComponent(String(id).match(/tt\d+/i)?.[0] || id)}`
+        `https://yts-subs.com/movie-imdb/${String(id).match(/tt\d+/i)?.[0] || id}`
     ];
 
     try {
-        const sourceDiagnostics = ['în așteptare', 'în așteptare', 'în așteptare'];
+        const sourceDiagnostics = ['în așteptare', 'în așteptare'];
         const fetchPromises = [
             axios.get(urlsToFetch[0], {
                 timeout: 6500,
@@ -629,24 +502,14 @@ async function handleSubtitles(req, res) {
                     return { data: { subtitles: [] } };
                 }
             })(),
-            (async () => {
-                try {
-                    const subtitles = await fetchSubdlSubtitleResults(type, id, userFilename);
-                    sourceDiagnostics[2] = `HTML OK, ${subtitles.length} EN`;
-                    return { data: { subtitles } };
-                } catch (error) {
-                    sourceDiagnostics[2] = subtitleSourceError(error);
-                    return { data: { subtitles: [] } };
-                }
-            })()
         ];
 
         const results = await Promise.all(fetchPromises);
-        console.log(`${c.cyan}[Subtitrări] diagnostic preluare: OpenSubtitles: ${sourceDiagnostics[0]} | YIFY: ${sourceDiagnostics[1]} | SubDL: ${sourceDiagnostics[2]}${c.reset}`);
+        console.log(`${c.cyan}[Subtitrări] diagnostic preluare: OpenSubtitles: ${sourceDiagnostics[0]} | YIFY: ${sourceDiagnostics[1]}${c.reset}`);
         
         // Păstrăm proveniența fiecărui candidat; limita se aplică separat
         // fiecărei surse, nu listei concatenate în ordinea furnizorilor.
-        const subtitleSourceNames = ['OpenSubtitles', 'YIFY Subtitles', 'SubDL'];
+        const subtitleSourceNames = ['OpenSubtitles', 'YIFY Subtitles'];
         let allSubs = [];
         results.forEach((r, sourceIndex) => {
             if (r && r.data && Array.isArray(r.data.subtitles)) {
@@ -673,7 +536,7 @@ async function handleSubtitles(req, res) {
         });
 
         try {
-            const sourceLabels = ['OpenSubtitles', 'YIFY', 'SubDL'];
+            const sourceLabels = ['OpenSubtitles', 'YIFY'];
             console.log(`${c.cyan}[Subtitrări] surse: ${urlsToFetch.map((_, i) => `${sourceLabels[i]}: ${allSubs.filter(s => s._selectionSourceIndex === i).length} total / ${engSubs.filter(s => s._selectionSourceIndex === i).length} EN`).join(' | ')}${c.reset}`);
             urlsToFetch.forEach((_, i) => {
                 const sample = allSubs.find(s => s._selectionSourceIndex === i);
@@ -750,23 +613,25 @@ async function handleSubtitles(req, res) {
         };
 
         const extractReleaseGroup = (name) => {
-            const raw = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '');
-            const bracket = raw.match(/\[([^\]]+)\](?:\s*)$/);
+            const raw = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '').trim();
+            const bracket = raw.match(/\[([^\]]+)\]\s*$/);
             if (bracket) return bracket[1].trim().toLowerCase();
 
-            const tokens = normalizeReleaseName(raw).split(' ').filter(Boolean);
+            // Grupul este doar ultimul token real al numelui release-ului,
+            // nu ultimul cuvânt al titlului când lipsesc metadatele de release.
+            if (!/\b(?:2160p|1080p|720p|576p|480p|webrip|web[ .-]?dl|bluray|blu[ .-]?ray|brrip|bdrip|hdtv|x264|x265|h264|h265|hevc|avc|19\d{2}|20\d{2})\b/i.test(raw)) return '';
+
+            const tokens = raw.replace(/[._-]+/g, ' ').split(/\s+/).filter(Boolean);
+            const candidate = String(tokens[tokens.length - 1] || '').toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, '');
             const stop = new Set([
-                'the','boys','season','episode','instant','white','hot','wild','series',
-                '2160p','1080p','720p','480p','576p','sd','web','bluray','x264','x265',
-                'h264','h265','hevc','avc','10bit','8bit','aac','ac3','eac3','ddp',
-                'dd','5','1','2','0','1ch','2ch','5ch','6ch','7ch','hdr','hdr10','dv',
-                'dolby','vision','amzn','amazon','nf','netflix','dsnp','disney','hulu','max',
-                'webrip','brrip','bdrip','bdr','torrentgalaxy','mkv','mp4','avi',
-                'proper','repack','rerip','extended','unrated','theatrical','remastered','director','directors','cut','imax'
+                'web','dl','rip','webrip','bluray','brrip','bdrip','bdr','hdtv','2160p','1080p','720p','576p','480p','sd',
+                'x264','x265','h264','h265','hevc','avc','264','265','10bit','8bit','aac','ac3','eac3','ddp','dd','atmos','truehd','dts','flac',
+                'hdr','hdr10','dv','dolby','vision','amzn','amazon','netflix','disney','hulu','max','proper','repack','rerip',
+                'extended','unrated','theatrical','remastered','director','directors','cut','imax','sdh','hi','eng','english','subtitle','subs','internal'
             ]);
-            const technical = /^(s\d{1,2}e\d{1,2}|19\d{2}|20\d{2}|\d{1,4}p|x\d+|h\d+|\d+bit|\d+(?:\.\d+)?ch?)$/i;
-            const candidates = tokens.filter(t => !stop.has(t) && !technical.test(t));
-            return candidates.length ? candidates[candidates.length - 1] : '';
+            const technical = /^(?:s\d{1,2}e\d{1,2}|19\d{2}|20\d{2}|\d{1,4}p|x\d+|h\d+|\d+bit|\d+(?:\.\d+)?ch?|\d{1,4})$/i;
+            if (candidate.length < 2 || stop.has(candidate) || technical.test(candidate)) return '';
+            return candidate;
         };
 
         const detectFamily = (name) => {
@@ -811,10 +676,45 @@ async function handleSubtitles(req, res) {
             return /\b(proper|repack|rerip)\b/i.test(n);
         };
 
+        const getMetaRawText = (sub) => {
+            const data = sub && sub.sourceData ? sub.sourceData : {};
+            const keys = [
+                'movieReleaseName', 'releaseName', 'releaseGroup', 'releaseFormat',
+                'movieRelease', 'release', 'name', 'title', 'filename', 'fileName',
+                'source', 'sourceName', 'provider', 'group', 'format', 'tags'
+            ];
+            return [...new Set([sub && sub.realName ? sub.realName : '', ...keys.map(key => data[key] == null ? '' : String(data[key]))]
+                .map(value => String(value || '').trim()).filter(Boolean))].join(' ');
+        };
+
+        const detectSourceKind = (name) => {
+            const n = String(name || '').toLowerCase().replace(/[._]+/g, ' ').replace(/\s+/g, ' ');
+            if (/\bweb\s*-?\s*dl\b/.test(n) || /\bwebdl\b/.test(n)) return 'webdl';
+            if (/\bweb\s*-?\s*rip\b/.test(n) || /\bwebrip\b/.test(n)) return 'webrip';
+            if (/\b(?:bluray|blu\s*-?\s*ray|brrip|bdrip|bdr)\b/.test(n)) return 'bluray';
+            if (/\b(?:hdtv|pdtv)\b/.test(n)) return 'hdtv';
+            if (/\bdvdrip\b|\bdvd\b/.test(n)) return 'dvd';
+            return '';
+        };
+
+        const detectVideoCodec = (name) => {
+            const n = String(name || '').toLowerCase().replace(/\bh[._ -]?265\b/g, ' h265 ').replace(/\bh[._ -]?264\b/g, ' h264 ').replace(/[._]+/g, ' ');
+            if (/\b(?:x265|h265|hevc)\b/.test(n)) return 'h265';
+            if (/\b(?:x264|h264|avc)\b/.test(n)) return 'h264';
+            return '';
+        };
+
+        const isMultiReleasePack = (name) => {
+            const resolutions = String(name || '').match(/\b(?:2160p|1080p|720p|576p|480p)\b/gi) || [];
+            return resolutions.length >= 3 || (resolutions.length >= 2 && new Set(resolutions.map(x => x.toLowerCase())).size >= 2);
+        };
+
         const videoSeasonEpisode = extractSeasonEpisode(videoName);
         const videoFamily = detectFamily(videoName);
         const videoProviders = detectProviders(videoName);
         const videoGroup = extractReleaseGroup(fNameLower);
+        const videoSourceKind = detectSourceKind(fNameLower);
+        const videoCodec = detectVideoCodec(fNameLower);
         const videoFlags = detectFlags(videoName);
         const videoResolution = (videoName.match(/\b(2160p|1080p|720p|sd)\b/) || [])[1] || '';
         const videoEdition = extractEdition(videoName);
@@ -834,9 +734,13 @@ async function handleSubtitles(req, res) {
 
         diverseSubs.forEach((s, originalOrder) => {
             const subName = getMetaText(s);
+            const subMetaRaw = getMetaRawText(s);
             const subData = s.sourceData || {};
             const subFamily = detectFamily(subName);
             const subProviders = detectProviders(subName);
+            const subSourceKind = detectSourceKind(subMetaRaw);
+            const subCodec = detectVideoCodec(subMetaRaw);
+            const subIsMultiReleasePack = isMultiReleasePack(s.realName || subMetaRaw);
             const subGroupRaw = String(subData.releaseGroup || subData.group || extractReleaseGroup(s.realName) || '').toLowerCase().trim();
             const subGroup = normalizeReleaseName(subGroupRaw);
             const subFlags = detectFlags(subName);
@@ -875,9 +779,25 @@ async function handleSubtitles(req, res) {
             }
 
             if (videoGroup && subGroup) {
-                if (subGroup === normalizeReleaseName(videoGroup)) s.score += 1300;
+                if (subGroup === normalizeReleaseName(videoGroup)) s.score += 1500;
                 else if (subGroup.includes(normalizeReleaseName(videoGroup)) || normalizeReleaseName(videoGroup).includes(subGroup)) s.score += 500;
+                else s.score -= 350;
             }
+
+            // Diferențiem WEB-DL de WEBRip și codec-ul video; versiuni cu release diferit
+            // nu mai rămân la egalitate doar pentru că au aceeași rezoluție.
+            if (videoSourceKind && subSourceKind) {
+                if (videoSourceKind === subSourceKind) s.score += 320;
+                else s.score -= 380;
+            }
+            if (videoCodec && subCodec) {
+                if (videoCodec === subCodec) s.score += 260;
+                else s.score -= 240;
+            }
+
+            // Unele rânduri YIFY sunt pachete cu mai multe release-uri concatenate.
+            // Nu le lăsăm să câștige artificial doar pentru că textul conține multe taguri.
+            if (subIsMultiReleasePack) s.score -= 700;
 
             if (videoFlags.hdr && subFlags.hdr) s.score += 220;
             if (videoFlags.dv && subFlags.dv) s.score += 220;
@@ -892,9 +812,11 @@ async function handleSubtitles(req, res) {
                 else s.score -= 80;
             }
 
-            if (overlap >= 0.85) s.score += 500;
-            else if (overlap >= 0.60) s.score += 300;
-            else if (overlap >= 0.35) s.score += 120;
+            if (!subIsMultiReleasePack) {
+                if (overlap >= 0.85) s.score += 500;
+                else if (overlap >= 0.60) s.score += 300;
+                else if (overlap >= 0.35) s.score += 120;
+            }
 
             if (/\bsdh\b|\bhi\b|hearing\s*impaired/i.test(subName)) s.score -= 80;
             if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
@@ -933,9 +855,9 @@ async function handleSubtitles(req, res) {
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
         // ============================================================
         const generatedSubs = diverseSubs.map((s, index) => {
-            const sourceProvider = s.sourceIndex === 1 ? 'yify' : (s.sourceIndex === 2 ? 'subdl' : '');
+            const sourceProvider = s.sourceIndex === 1 ? 'yify' : '';
             const subtitleUrl = sourceProvider
-                ? `${baseUrl}/source-subtitle?provider=${sourceProvider}&url=${encodeURIComponent(s.originalUrl)}`
+                ? `${baseUrl}/source-subtitle?provider=${sourceProvider}&url=${encodeURIComponent(s.originalUrl)}&filename=${encodeURIComponent(userFilename)}`
                 : s.originalUrl;
             const encodedUrl = encodeURIComponent(subtitleUrl);
             
@@ -965,7 +887,7 @@ async function handleSubtitles(req, res) {
             return {
                 id: `ai_sub_${index}`,
                 title: labelName, 
-                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${s.index + 1}`,
+                url: `${baseUrl}/${configData}/translate?id=${id}&targetUrl=${encodedUrl}&v=${index + 1}`,
                 lang: 'ron'
             };
         });
@@ -6936,14 +6858,14 @@ async function fetchValidatedSubtitleUrl(initialUrl) {
 }
 
 // ============================================================
-// DOWNLOAD/UNPACK SUBTITLE ARCHIVES FOR YIFY + SUBDL
+// DOWNLOAD/UNPACK SUBTITLE ARCHIVES FOR YIFY
 // ============================================================
 
 function allowedSubtitleSourceHost(provider, hostname) {
     const host = String(hostname || '').toLowerCase();
     const allowed = provider === 'yify'
         ? ['yts-subs.com', 'www.yts-subs.com', 'yifysubtitles.org', 'www.yifysubtitles.org']
-        : ['subdl.com', 'www.subdl.com', 'dl.subdl.com'];
+        : [];
     return allowed.includes(host);
 }
 
@@ -6959,20 +6881,12 @@ function makeSubtitleDownloadFallbacks(provider, initialUrl) {
                 if (!result.includes(candidate)) result.push(candidate);
             }
         }
-    } else if (provider === 'subdl') {
-        const match = parsed.pathname.match(/^\/subtitle\/([^/]+\.zip)$/i);
-        if (match) {
-            for (const host of ['dl.subdl.com', 'subdl.com']) {
-                const candidate = `https://${host}/subtitle/${match[1]}`;
-                if (!result.includes(candidate)) result.push(candidate);
-            }
-        }
     }
     return [...new Set(result)];
 }
 
 async function fetchSubtitleSourceBytes(provider, initialUrl) {
-    const allowedProvider = provider === 'yify' || provider === 'subdl';
+    const allowedProvider = provider === 'yify';
     if (!allowedProvider) throw new Error('Sursă de subtitrare nepermisă.');
 
     const starts = makeSubtitleDownloadFallbacks(provider, initialUrl);
@@ -6996,7 +6910,7 @@ async function fetchSubtitleSourceBytes(provider, initialUrl) {
                     headers: {
                         'User-Agent': BROWSER_USER_AGENT_FETCH,
                         'Accept': 'application/zip, application/octet-stream, text/plain, */*',
-                        'Referer': provider === 'yify' ? 'https://yts-subs.com/' : 'https://subdl.com/'
+                        'Referer': 'https://yts-subs.com/'
                     },
                     lookup: (hostname, options, callback) => callback(null, validation.address, validation.family)
                 });
@@ -7085,7 +6999,54 @@ function normalizeSubtitleText(text, filename) {
     return normalized.replace(/\n{3,}/g, '\n\n') + '\n';
 }
 
-function extractSubtitleFromZip(buffer) {
+function scoreSubtitleArchiveFilename(subtitleFilename, videoFilename) {
+    const normalize = value => String(value || '').toLowerCase()
+        .replace(/\.[a-z0-9]{2,5}$/i, '')
+        .replace(/\bh[._ -]?265\b/g, ' h265 ')
+        .replace(/\bh[._ -]?264\b/g, ' h264 ')
+        .replace(/[._-]+/g, ' ')
+        .replace(/\bweb\s+dl\b/g, ' webdl ')
+        .replace(/\bweb\s+rip\b/g, ' webrip ')
+        .replace(/\b(?:hevc|h265)\b/g, ' h265 ')
+        .replace(/\b(?:avc|h264)\b/g, ' h264 ')
+        .replace(/\s+/g, ' ').trim();
+    const video = normalize(videoFilename);
+    const candidate = normalize(subtitleFilename);
+    if (!video || !candidate) return 0;
+
+    const ignored = new Set(['the', 'and', 'with', 'from', 'mkv', 'mp4', 'avi', 'subtitle', 'subs', 'english', 'eng', 'srt', 'web', 'dl', 'rip', 'x265', 'x264', 'h265', 'h264', 'hevc', 'avc', 'aac', 'ac3', 'eac3', 'ddp', 'atmos', 'hdr', 'hdr10', 'dv', 'uhd', 'proper', 'repack']);
+    const tokens = [...new Set(video.split(/\s+/).filter(t => t.length > 2 && !ignored.has(t)))];
+    let score = 0;
+    if (tokens.length) {
+        const c = new Set(candidate.split(/\s+/));
+        score += tokens.filter(t => c.has(t)).length * 20;
+    }
+    const videoResolution = (video.match(/\b(2160p|1080p|720p|576p|480p)\b/) || [])[1] || '';
+    const subResolution = (candidate.match(/\b(2160p|1080p|720p|576p|480p)\b/) || [])[1] || '';
+    if (videoResolution && subResolution) score += videoResolution === subResolution ? 100 : -40;
+
+    const sourceKind = value => /\bwebdl\b/.test(value) ? 'webdl' : (/\bwebrip\b/.test(value) ? 'webrip' : (/\bbluray\b/.test(value) ? 'bluray' : ''));
+    const videoKind = sourceKind(video);
+    const subKind = sourceKind(candidate);
+    if (videoKind && subKind) score += videoKind === subKind ? 80 : -35;
+
+    const codec = value => /\b(?:x265|h265)\b/.test(value) ? 'h265' : (/\b(?:x264|h264)\b/.test(value) ? 'h264' : '');
+    const videoCodec = codec(video);
+    const subCodec = codec(candidate);
+    if (videoCodec && subCodec) score += videoCodec === subCodec ? 60 : -25;
+
+    const videoTokens = video.split(/\s+/).filter(Boolean);
+    const subtitleTokens = candidate.split(/\s+/).filter(Boolean);
+    const lastVideoToken = videoTokens[videoTokens.length - 1] || '';
+    const lastSubtitleToken = subtitleTokens[subtitleTokens.length - 1] || '';
+    if (lastVideoToken.length >= 3 && !ignored.has(lastVideoToken) && lastSubtitleToken.length >= 3) {
+        if (lastSubtitleToken === lastVideoToken) score += 140;
+        else if (/^[a-z][a-z0-9]{2,}$/i.test(lastVideoToken) && /^[a-z][a-z0-9]{2,}$/i.test(lastSubtitleToken)) score -= 25;
+    }
+    return score;
+}
+
+function extractSubtitleFromZip(buffer, preferredVideoFilename = '') {
     const bytes = Buffer.from(buffer);
     if (bytes.length < 22) throw new Error('arhivă ZIP prea scurtă');
     const minEocd = Math.max(0, bytes.length - 22 - 0xFFFF);
@@ -7130,11 +7091,16 @@ function extractSubtitleFromZip(buffer) {
             else if (method === 8) content = zlib.inflateRawSync(compressed, { maxOutputLength: 16 * 1024 * 1024 });
             else continue;
             if (content.length > 16 * 1024 * 1024) continue;
-            files.push({ filename, content, priority: /\.srt$/i.test(filename) ? 0 : (/\.vtt$/i.test(filename) ? 1 : 2) });
+            files.push({
+                filename,
+                content,
+                priority: /\.srt$/i.test(filename) ? 0 : (/\.vtt$/i.test(filename) ? 1 : 2),
+                matchScore: scoreSubtitleArchiveFilename(filename, preferredVideoFilename)
+            });
         } catch (_) {}
     }
 
-    files.sort((a, b) => a.priority - b.priority);
+    files.sort((a, b) => (b.matchScore - a.matchScore) || (a.priority - b.priority));
     for (const file of files) {
         try { return normalizeSubtitleText(decodeSubtitleBytes(file.content), file.filename); } catch (_) {}
     }
@@ -7144,14 +7110,14 @@ function extractSubtitleFromZip(buffer) {
 async function serveSubtitleSource(req, res) {
     const provider = String(req.query.provider || '').trim().toLowerCase();
     const sourceUrl = String(req.query.url || '').trim();
-    if (!['yify', 'subdl'].includes(provider) || !sourceUrl || sourceUrl.length > 2048) {
+    if (provider !== 'yify' || !sourceUrl || sourceUrl.length > 2048) {
         return res.status(400).send('Parametri de sursă invalidi.');
     }
     try {
         const bytes = await fetchSubtitleSourceBytes(provider, sourceUrl);
         let subtitleText;
         if (bytes.length >= 4 && bytes.readUInt32LE(0) === 0x04034b50) {
-            subtitleText = extractSubtitleFromZip(bytes);
+            subtitleText = extractSubtitleFromZip(bytes, String(req.query.filename || ''));
         } else {
             const pathExtension = (() => { try { return new URL(sourceUrl).pathname; } catch (_) { return ''; } })();
             subtitleText = normalizeSubtitleText(decodeSubtitleBytes(bytes), pathExtension);
