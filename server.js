@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.209',
+    version: '12.78.210',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1884,8 +1884,8 @@ ${JSON.stringify(keysToTranslate, null, 2)}
 }
 
 // Schema strictă pentru cererea principală: fiecare ID din calup este cheie obligatorie.
-// Spre deosebire de un ARRAY cu minItems=1, modelul nu poate returna un obiect parțial valid
-// fără o cheie cerută și nici o valoare șir cu lungime zero. Formatul keyed-object reduce și tokenii JSON repetați per replică.
+// Spre deosebire de un ARRAY cu minItems=1, required impune fiecare cheie pentru ID-urile cerute.
+// Valorile goale sunt verificate în cod, deoarece minLength nu este suportat de subsetul de schemă Gemini folosit aici.
 function buildTranslationResponseSchema(chunk) {
     if (!Array.isArray(chunk) || chunk.length === 0) {
         throw new Error('Nu se poate construi schema Gemini pentru un calup gol.');
@@ -1894,22 +1894,28 @@ function buildTranslationResponseSchema(chunk) {
     const ids = chunk.map(item => String(item.id));
     const uniqueIds = new Set(ids);
     if (uniqueIds.size !== ids.length) {
-        throw new Error('Calupul conține ID-uri SRT duplicate; schema strictă nu poate mapă univoc traducerile.');
+        throw new Error('Calupul conține ID-uri SRT duplicate; schema strictă nu poate mapa univoc traducerile.');
     }
 
     const properties = {};
-    for (const id of ids) properties[id] = { type: 'STRING', minLength: 1 };
+    for (const id of ids) {
+        properties[id] = {
+            type: 'STRING',
+            description: `Traducerea română pentru replica SRT cu ID-ul ${id}; nu returna un șir gol.`
+        };
+    }
 
+    // Folosim numai proprietăți de schemă documentate de Gemini pentru obiecte:
+    // properties, required, additionalProperties și propertyOrdering.
+    // minLength/minProperties/maxProperties nu sunt suportate de acest subset și nu le declarăm.
     return {
         type: 'OBJECT',
         properties,
         required: ids,
-        minProperties: ids.length,
-        maxProperties: ids.length,
+        additionalProperties: false,
         propertyOrdering: ids
     };
 }
-
 // ============================================================
 // API KEY STATE & MANAGEMENT
 // ============================================================
@@ -4127,6 +4133,8 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const hasUsableTranslation = (id, value) => Boolean(getUsableFormattedTranslation(id, value));
 
             const missingItems = chunk.filter(obj => !hasUsableTranslation(obj.id, dict[String(obj.id)]));
+            const missingKeyCount = missingItems.filter(obj => !Object.prototype.hasOwnProperty.call(dict, String(obj.id))).length;
+            const presentButUnusableCount = missingItems.length - missingKeyCount;
 
             // Un răspuns JSON valid, chiar dacă omite multe ID-uri, este un rezultat parțial,
             // nu motiv de split recursiv și nici de abandonare a calupului.
@@ -4144,7 +4152,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 if (alignmentRepair) {
                     console.log(`${c.yellow}⚠ [Aliniere] Segment punctual: ${usableCount}/${chunk.length} traduceri utilizabile; ${missingItems.length} ID-uri goale lăsate pentru recuperarea existentă.${c.reset}`);
                 } else {
-                    console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: ${usableCount}/${chunk.length} traduceri utilizabile; ${missingItems.length} ID-uri goale lăsate pentru Empty Recovery, fără split.${c.reset}`);
+                    console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: ${usableCount}/${chunk.length} traduceri utilizabile; ${missingItems.length} de recuperat (chei absente: ${missingKeyCount}; valori prezente dar goale/eliminate de formatter: ${presentButUnusableCount}); fără split.${c.reset}`);
                 }
             } else if (alignmentRepair) {
                 console.log(`${c.green}✔ [Aliniere] Segment punctual finalizat (${chunk.length}/${chunk.length} replici).${c.reset}`);
@@ -5601,23 +5609,24 @@ function assessEmptyRecoveryCandidate(item, candidateRaw) {
 }
 
 function buildEmptyRecoveryPrompt(batch, strictJsonRetry = false, stageLabel = 'Empty Recovery') {
+    const example = Object.fromEntries(batch.map(item => [String(item.id), `traducerea română pentru ID ${item.id}`]));
     return `
-${MASTER_TRANSLATION_PROMPT}
+${MASTER_TRANSLATION_PROMPT_ID_MAP}
 
 ${stageLabel.toUpperCase()} PENTRU TRADUCERI GOALE.
-Următoarele replici au text original, dar traducerea existentă este goală.
-Tradu TOATE liniile din acest grup în română naturală. Nu omite niciun ID și nu returna text gol.
+Următoarele replici au text original, dar traducerea existentă este goală sau inutilizabilă.
+Tradu TOATE liniile din acest grup în română naturală. Pentru fiecare ID furnizat, returnează o traducere nenulă, nevidă și fidelă sursei.
 
+REPLICILE DE TRADUS:
 ${JSON.stringify(batch.map(item => ({ id: item.id, text: item.text })), null, 2)}
 
-Returnează DOAR un ARRAY JSON valid în forma:
-[
-  {"id": 123, "text": "traducerea română"}
-]
-${strictJsonRetry ? '\nRETRY TEHNIC: fără markdown sau explicații; escapă ghilimelele interne, păstrează fiecare ID exact și returnează numai JSON valid.' : ''}
+Returnează DOAR un obiect JSON, folosind ID-urile originale ca chei și traducerile drept valori.
+Exemplu de structură (nu copia textul exemplu; folosește toate ID-urile reale):
+${JSON.stringify(example)}
+Nu returna array, markdown, cod sau explicații.
+${strictJsonRetry ? '\nRETRY TEHNIC: întoarce toate cheile cerute, fiecare cu traducere română nenulă și nevidă; nu adăuga alte chei.' : ''}
 `;
 }
-
 // Recuperare inițială în loturi mici. Un JSON malformat afectează cel mult lotul curent;
 // după un retry JSON, acesta se împarte treptat. Erorile API (mai ales 503) opresc etapa
 // fără cereri suplimentare în rafală; traducerile deja recuperate rămân păstrate.
@@ -5651,7 +5660,10 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
             const raw = await callGeminiWithKeyRotation(
                 buildEmptyRecoveryPrompt(batch, false, stageLabel),
                 keyStates,
-                { requestLabel: `${stageLabel} — ${batchLabel} (${batch.length} ID-uri)` }
+                {
+                    requestLabel: `${stageLabel} — ${batchLabel} (${batch.length} ID-uri)`,
+                    responseSchema: buildTranslationResponseSchema(batch)
+                }
             );
             recoveryDict = normalizeTranslationPayload(safeJsonParse(raw));
             parsedAnyResponse = true;
@@ -5716,6 +5728,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
         }
 
         const unresolved = [];
+        const rejectionReasons = new Map();
         for (const item of batch) {
             const id = String(item.id);
             if (String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim()) {
@@ -5734,10 +5747,16 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
                 unresolved.push(item);
                 failedById.set(id, item);
                 individualRetryById.set(id, item);
+                const reason = assessment.reason || 'motiv necunoscut';
+                rejectionReasons.set(reason, (rejectionReasons.get(reason) || 0) + 1);
             }
         }
 
         // JSON valid, dar ID-uri absente/inacceptabile: reluăm numai acele ID-uri.
+        if (unresolved.length) {
+            const reasonSummary = [...rejectionReasons.entries()].map(([reason, count]) => `${reason}: ${count}`).join('; ');
+            console.log(`${c.yellow}[${stageLabel}] Răspuns pentru grupul ${batchLabel}: ${unresolved.length}/${batch.length} ID-uri încă neacceptate${reasonSummary ? ` (${reasonSummary})` : ''}.${c.reset}`);
+        }
         if (unresolved.length > 1 && depth < FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH && !apiFailure) {
             const middle = Math.ceil(unresolved.length / 2);
             const left = unresolved.slice(0, middle);
@@ -5883,22 +5902,24 @@ async function retryEmptyTranslationIndividually(item, translatedById, keyStates
     keyStates._emptyRecoveryAttemptedIds.add(id);
 
     const prompt = `
-${MASTER_TRANSLATION_PROMPT}
+${MASTER_TRANSLATION_PROMPT_ID_MAP}
 
 RECUPERARE INDIVIDUALĂ PENTRU O SINGURĂ TRADUCERE GOALĂ.
 Tradu numai replica de mai jos în română naturală. Păstrează sensul, tonul și formatul de subtitrare.
-Nu omite ID-ul și nu returna text gol. Returnează doar un array JSON cu exact un obiect.
+Nu omite ID-ul și nu returna text gol. Returnează un obiect JSON cu cheia exactă a ID-ului.
 
 ${JSON.stringify([{ id: item.id, text: item.text }], null, 2)}
 
 Format obligatoriu:
-[
-  {"id": ${Number.parseInt(id, 10)}, "text": "traducerea română"}
-]
+${JSON.stringify({[id]: 'traducerea română'})}
 `;
 
     try {
-        const retryRaw = await callGeminiWithKeyRotation(prompt, keyStates, { timeout: 30000, requestLabel: `${stageLabel} — ID ${id}` });
+        const retryRaw = await callGeminiWithKeyRotation(prompt, keyStates, {
+            timeout: 30000,
+            requestLabel: `${stageLabel} — ID ${id}`,
+            responseSchema: buildTranslationResponseSchema([item])
+        });
         const retryJson = safeJsonParse(retryRaw);
         const retryDict = normalizeTranslationPayload(retryJson);
         const assessment = assessEmptyRecoveryCandidate(item, retryDict[id]);
@@ -5981,22 +6002,22 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
     // apelurile în timpul unui 503/429; numai erorile de format JSON sunt izolate prin split.
     let stopAfterRecoveryApiFailure = false;
 
-    const buildRecoveryPrompt = (batch, strictJsonRetry = false) => `
-${MASTER_TRANSLATION_PROMPT}
+    const buildRecoveryPrompt = (batch, strictJsonRetry = false) => {
+        const example = Object.fromEntries(batch.map(item => [String(item.id), `traducerea română pentru ID ${item.id}`]));
+        return `
+${MASTER_TRANSLATION_PROMPT_ID_MAP}
 
 RECUPERARE FINALĂ PENTRU TRADUCERI GOALE.
 Următoarele replici au text original, dar traducerea existentă este goală.
-Tradu TOATE liniile din acest grup în română naturală. Nu omite niciun ID.
-Nu returna text gol.
+Tradu TOATE liniile din acest grup în română naturală. Nu omite niciun ID și nu returna text gol.
 
 ${JSON.stringify(batch.map(item => ({ id: item.id, text: item.text })), null, 2)}
 
-Returnează DOAR un ARRAY JSON valid în forma:
-[
-  {"id": 123, "text": "traducerea română"}
-]
-${strictJsonRetry ? '\nRETRY TEHNIC: fără markdown sau explicații; escapă toate ghilimelele din text și returnează numai obiecte cu ID-urile din grupul primit. Dacă nu poți traduce un ID, returnează totuși JSON valid și nu altera alte ID-uri.' : ''}
+Returnează DOAR un obiect JSON cu ID-urile originale ca chei și traducerile ca valori.
+Exemplu structural (folosește toate ID-urile reale): ${JSON.stringify(example)}
+${strictJsonRetry ? '\nRETRY TEHNIC: fără markdown sau explicații; include toate cheile cerute cu traduceri nenule și nevidе.' : ''}
 `;
+    };
 
     const requestRecoveryBatch = async (batch, batchLabel, strictJsonRetry = false) => {
         const raw = await callGeminiWithKeyRotation(
@@ -6005,7 +6026,8 @@ ${strictJsonRetry ? '\nRETRY TEHNIC: fără markdown sau explicații; escapă to
             {
                 timeout: 20000,
                 allowAfter429Hold: true,
-                requestLabel: `Final Empty Recovery — ${batchLabel} (${batch.length} ID-uri)`
+                requestLabel: `Final Empty Recovery — ${batchLabel} (${batch.length} ID-uri)`,
+                responseSchema: buildTranslationResponseSchema(batch)
             }
         );
         return normalizeTranslationPayload(safeJsonParse(raw));
