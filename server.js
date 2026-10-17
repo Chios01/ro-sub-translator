@@ -1077,6 +1077,26 @@ function isOnlyStandaloneFillerSequence(text) {
 
 const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed|ing)?|gurgle(?:s|d|ing)?|knock(?:s|ed|ing)?|bang(?:s|ed|ing)?|pound(?:s|ed|ing)?|thud(?:s|ded|ding)?|thump(?:s|ed|ing)?|ring(?:s|ing)?|beep(?:s|ed|ing)?|buzz(?:es|ed|ing)?|click(?:s|ed|ing)?|clatter(?:s|ed|ing)?|clang(?:s|ed|ing)?|crash(?:es|ed|ing)?|slam(?:s|med|ming)?|creak(?:s|ed|ing)?|cough(?:s|ed|ing)?|clear(?:s|ed|ing)\s+(?:(?:his|her|their|its|my|your)\s+)?throat|throat\s+clearing|sigh(?:s|ed|ing)?|gasp(?:s|ed|ing)?|groan(?:s|ed|ing)?|grunt(?:s|ed|ing)?|snort(?:s|ed|ing)?|sniff(?:s|ed|ing|les|led)?|sneez(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|chuckl(?:e|es|ed|ing)|giggl(?:e|es|ed|ing)|sob(?:s|bed|bing)?|cri(?:es|ed|ying)|scream(?:s|ed|ing)?|yelp(?:s|ed|ing)?|wail(?:s|ed|ing)?|moan(?:s|ed|ing)?|roar(?:s|ed|ing)?|exhale(?:s|d|ing)?|shout(?:s|ed|ing)?|whisper(?:s|ed|ing)?|pant(?:s|ed|ing)?|snor(?:es|ed|ing)|whimper(?:s|ed|ing)?|growl(?:s|ed|ing)?|bark(?:s|ed|ing)?|meow(?:s|ed|ing)?|chirp(?:s|ed|ing)?|howl(?:s|ed|ing)?|rustl(?:e|es|ed|ing)|rattl(?:e|es|ed|ing)|rumbl(?:e|es|ed|ing)|whistl(?:e|es|ed|ing)|clap(?:s|ped|ping)?|applaud(?:s|ed|ing)?|sing(?:s|ing)?|hum(?:s|med|ming)|footsteps?\s+(?:approach|recede|stop|fade|pass)|heavy\s+breathing|breathing\s+heavily|soft\s+breathing|squeak(?:s|ed|ing)?|squeal(?:s|ed|ing)?|scrap(?:e|es|ed|ing)|scratch(?:es|ed|ing)|shuffle(?:s|d|ing)|swallow(?:s|ed|ing)?|gulp(?:s|ed|ing)?|wind\s+howl(?:s|ing)?|birds?\s+chirp(?:s|ing)?|doorbell\s+ring(?:s|ing)?|phone\s+ring(?:s|ing)?|music\s+play(?:s|ing)?|background\s+music|gângur(?:ește|ind|it)|băt(?:aie|ăi|e|ește|ând|ut)|ciocăn(?:it|ește|ind|ituri)?|pocnet(?:e|ul)?|pocnește|bubuit(?:uri)?|bubuie|zgomot(?:e)?|sunet(?:e)?\s+de|sonerie|bip(?:uri|uie)?|țiuit|trosnet(?:e)?|trosnește|trântește|trântit|scârțâi(?:t|ește|ind)|pași|foșnet|foșnește|fâșâit|tușește|tușind|tușit|își\s+drege\s+glasul|dreg(?:e|ându-și)\s+glasul|gâfâie|gâfâind|gâfâit|respiră\s+greu|respirație\s+grea|oftează|oftând|oftat|suspin(?:ă|ând)?|mormăit|mormăie|mormăind|bufnește|bufnet|râde|râzând|râs|chicotește|chicotind|plânge|plângând|plâns|țipă|țipăt|țipând|strigă|strigând|horcăie|sforăie|adulmecă|fornăie|sughiță|șuieră|fluieră|fredonează|face\s+fâ+|cântă\s+încet|bate\s+din\s+palme|aplauze|urale|clopoțel|răpăit|zdrăngănit|vibrează|hârâit|bufnire|bufniri|bufnete|bufnituri|șuierături|fluierături|pufnire|pufniri|râsete|plânsete|gemete|geamăt(?:e)?|suspin(?:e|uri)?|sughițuri|foșnet(?:e|uri)?|fâșâit(?:uri)?)(?![\p{L}\p{N}])/iu;
 
+// Extensie îngustă pentru etichete SDH frecvente care nu erau acoperite de lista de bază.
+// Sunt expresii închise/descrieri de sunet; nu se aplică în interiorul replicilor obișnuite.
+const SOUND_CUE_EXTENDED_LABEL_PATTERNS = [
+    /^(?:crowd\s+)?clamor(?:s|ed|ing)?[.!…]*$/iu,
+    /^(?:yell(?:s|ed|ing)?|cheer(?:s|ed|ing)?|(?:crowd\s+)?cheering)[.!…]*$/iu,
+    /^(?:stammer(?:s|ed|ing)?|mutter(?:s|ed|ing)?|scoff(?:s|ed|ing)?|snarl(?:s|ed|ing)?|shriek(?:s|ed|ing)?|mouthing|straining)[.!…]*$/iu,
+    /^(?:pained\s+shrieking|shrieking\s+stops|soft\s*,?\s*clicking\s+vocalizations?|(?:bullets?|projectiles?)\s+ricochet(?:s|ed|ing)?|[\p{Lu}][\p{L}'’-]+\s+(?:stammers?|straining))[.!…]*$/u,
+    /^(?:shuddering|trembling)\s+breaths?(?:\s+continue)?[.!…]*$/iu,
+    /^(?:[\p{L}][\p{L}'’-]*['’]s\s+)?breath(?:s)?\s+(?:continues?\s+)?(?:trembling|stops?\s+trembling)[.!…]*$/iu,
+    /^(?:(?:takes?|taking|both taking)\s+)?deep\s+breaths?[.!…]*$/iu,
+    /^(?:(?:(?:heavy|deep|shallow|trembling|shuddering|rapid|ragged|labou?red|wheezy|shaky|gruff|sharp|gasping|long|slow|soft|quiet|loud)(?:\s*,\s*|\s+)){1,3})(?:breaths?|breathing)(?:\s+(?:continues?|nearby|deeply|calms\s+down|trembling|heavily|softly))?[.!…]*$/iu,
+    /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|heavy|rapid|sharp|muffled|electronic|electrical|power|device|piano|metallic|softly)\s+){0,4}(?:whirr(?:s|ed|ing)?|whoosh(?:es|ed|ing)?|crackl(?:e|es|ed|ing)|warbl(?:e|es|ed|ing)|thrumm?(?:s|ed|ing)?|sizzl(?:e|es|ed|ing)|clack(?:s|ed|ing)?|clink(?:s|ed|ing)?|flutter(?:s|ed|ing)?|jingl(?:e|es|ed|ing)|ding(?:s|ed|ing)?|resonat(?:e|es|ed|ing)|boom(?:s|ed|ing)|ricochet(?:s|ed|ing)?|tear(?:s|ed|ing)|shatter(?:s|ed|ing)|snarl(?:s|ed|ing)|scoff(?:s|ed|ing))[.!…]*$/iu,
+    /^(?:(?:backpack\s+drops?\s+to\s+(?:the\s+)?ground)|(?:snips?\s+(?:the\s+)?zip\s+tie)|(?:dialing\s+(?:the\s+)?phone)|(?:elevator\s+bell\s+chimes?)|(?:(?:entry|crossing|elevator)\s+bell\s+(?:jingling|dinging|chimes?))|(?:bell\s+(?:jingling|dinging|rings?))|(?:music\s+(?:ends|shuts\s+off))|(?:door\s+opens?\s+and\s+closes?)|(?:(?:vehicle|car)\s+door\s+(?:opens?|closes?))|(?:door\s+opens?)|(?:rapid\s+footsteps?)|(?:footsteps?\s+approaching)|(?:truck\s+departing)|(?:vehicles?\s+approaching)|(?:snaps?\s+fingers)|(?:taps?\s+(?:the\s+)?key)|(?:gunfire|gun\s+fires?)|(?:shower\s+water\s+running)|(?:air\s+pumping)|(?:glass\s+shards\s+clinking)|(?:voice\s+breaking)|(?:soft\s+clicking\s+vocalizations?)|(?:makes\s+whooshing\s+sound)|(?:piano\s+strings\s+resonating)|(?:piano\s+strings\s+thrumming)|(?:device\s+thrumming)|(?:device\s+sizzling)|(?:wings\s+fluttering)|(?:hailstones\s+clacking)|(?:conversing\s+in\s+Korean)|(?:praying\s+in\s+Latin)|(?:Park\s+continues\s+in\s+Korean)|(?:hisses\s+in\s+pain)|(?:Daniel\s+inhales\s+deeply)|(?:inhales?\s+deeply)|(?:breathing\s+calms\s+down)|(?:breathing\s+deeply)|(?:deep\s+breathing)|(?:muffled\s+shattering)|(?:glass\s+shattering)|(?:explosion\s+booming))[.!…]*$/iu,
+    /^(?:soft\s+electrical\s+warbling|soft\s+electrical\s+whooshing|soft\s+electrical\s+crackling|soft\s+whooshing\s*,\s*crackling|sharp\s+whoosh|soft\s+whirring|power\s+whirring|jet\s+engine\s+whirring|long\s*,\s*slow\s+gasp|rapid\s*,\s*gasping\s+breaths?|heavy\s*,\s*gasping\s+breaths?|heavy\s*,\s*labored\s+breathing|heavy\s*,\s*shaky\s+breathing|sharp\s*,\s*heavy\s+breathing|gruff\s*,\s*heavy\s+breathing\s+nearby|deep\s*,\s*wheezy\s+breathing|whimpering\s*,\s*straining|distressed\s+shrieking\s*,\s*clicking)[.!…]*$/iu
+];
+
+function isExtendedSoundCueLabel(text) {
+    return SOUND_CUE_EXTENDED_LABEL_PATTERNS.some(pattern => pattern.test(text));
+}
+
 const SOUND_CUE_LABEL_RE = /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|background|gentle|heavy|slight|small|short|brief|off-screen|în fundal|încet|încetișor|tare|ușor|scurt|scurtă|puternic|puternică|îndepărtat(?:ă|e)?|slab(?:ă|e)?)\s+)*(?:sound(?:s)?(?:\s+of)?|noise(?:s)?(?:\s+of)?|music(?:\s+(?:playing|continues|swells|fades|starts|stops|in background))?|applause|laughter|laugh(?:s|ing)?|footsteps?|knocking|banging|pounding|thudding|thumping|doorbell|ringing|beeping|buzzing|clicking|clattering|crashing|slamming|creaking|cough(?:ing|s)?|sigh(?:ing|s)?|gasp(?:ing|s)?|groan(?:ing|s)?|grunt(?:ing|s)?|snoring|heavy breathing|breathing heavily|breathing|whispering|singing|humming|babbling|murmuring|whimpering|growling|snorting|sniffing|sneezing|screaming|shouting|panting|chirping|howling|rustling|rattling|rumbling|whistling|clapping|shuffling|swallowing|gulping|squeaking|squealing|scraping|scratching|wind howling|birds? chirping|doorbell ringing|phone ringing|background music|bătaie(?:\s+în\s+ușă)?|bătăi(?:\s+în\s+ușă)?|gângurit(?:ul)?|mormăit(?:ul|uri)?|suspin(?:ând|e|uri)?|oftat(?:ul)?|râs(?:ul)?|râde|râzând|râsete|plâns(?:ul)?|plânge|plângând|plânsete|pași|aplauze|urale|tușit(?:ul)?|tușește|tușind|gâfâit(?:ul|uri)?|gâfâie|gâfâind|bufnet(?:ul|e)?|bufnește|bufnire|bufniri|pufnet(?:ul|e)?|pufnește|pufnire|foșnet(?:ul|e|uri)?|foșnește|fâșâit(?:ul|uri)?|fâșâie|trosnet(?:ul|e)?|trosnește|zgomot(?:e)?(?:\s+de\s+[^.!?]{1,60})?|sunet(?:e)?(?:\s+de\s+[^.!?]{1,60})?|șuieră|șuierând|șuierături|fluieră|fluierând|fluierături|geme|gemând|geamăt(?:e)?|gemete|horcăie|horcăit(?:ul|uri)?|sforăie|sforăit|adulmecă|fornăie|sughiță|sughițuri|fredonează|cântă\s+încet|face\s+fâ+|bate\s+din\s+palme|clopoțel|răpăit|zdrăngănit|vibrează|hârâit)(?:\s+(?:in the background|from outside|from inside|în fundal|se aude|continuă|încet|tare|ușor|puternic|loudly|softly))?[.!…]*$/iu;
 
 function isNonDialogueSoundCueAnnotation(annotation) {
@@ -1098,14 +1118,14 @@ function isNonDialogueSoundCueAnnotation(annotation) {
     // chiar dacă includ un verb de sunet („I was laughing when you called”).
     if (/^(?:i|you|we|they)\b/iu.test(text)) return false;
 
-    if (SOUND_CUE_LABEL_RE.test(text)) return true;
+    if (SOUND_CUE_LABEL_RE.test(text) || isExtendedSoundCueLabel(text)) return true;
     if (/[?]|["'“”]/u.test(text)) return false;
     if (/\b(?:indistinct|inaudible|unintelligible|chatter|chitter(?:s|ing)?|trill(?:s|ing)?|static|siren(?:s)?|horn(?:s)?|tire(?:s)?\s+screech|engine(?:s)?|alarm(?:s)?|helicopter|thunder|insects?|overlapping|over\s+(?:radio|speaker|pa|intercom|phone|tv)|on\s+(?:tv|radio|screen)|speaking\s+(?:in\s+)?[a-z]+|in\s+(?:spanish|french|german|russian|chinese|japanese|arabic|italian|alien|foreign\s+language)|(?:music|sound|noise|audio)\s+(?:plays|playing|continues|builds|swells|fades|stops|intensifies))\b/iu.test(text)) {
         return true;
     }
     if (/[,;:]/u.test(text)) {
         const parts = text.split(/[,;:]+/).map(p => p.trim()).filter(Boolean);
-        if (parts.length > 0 && parts.every(p => SOUND_CUE_LABEL_RE.test(p) || SOUND_CUE_ACTION_RE.test(p))) return true;
+        if (parts.length > 0 && parts.every(p => SOUND_CUE_LABEL_RE.test(p) || isExtendedSoundCueLabel(p) || SOUND_CUE_ACTION_RE.test(p))) return true;
         return false;
     }
     if (SOUND_CUE_ACTION_RE.test(text)) return true;
@@ -1144,7 +1164,7 @@ function isStandaloneNonDialogueSoundCue(value) {
     if (!text || text.length > 180) return false;
 
     // Lista închisă rămâne testul principal pentru etichete sonore explicite.
-    if (SOUND_CUE_LABEL_RE.test(text)) return true;
+    if (SOUND_CUE_LABEL_RE.test(text) || isExtendedSoundCueLabel(text)) return true;
 
     // Nu interpretăm ca efect sonor propoziții din perspectiva vorbitorului sau adresate interlocutorului.
     // Exemple păstrate: "I laugh when I'm nervous", "You gasp every time", "We scream about it".
