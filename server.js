@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.236',
+    version: '12.78.237',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5117,6 +5117,38 @@ function findPossibleBoundaryOverlapIssues(items, translatedById) {
         return endsWithEllipsis || !endsWithSentencePunctuation;
     };
 
+    // Dacă originalul englezesc repetă explicit aceeași secvență la limita
+    // dintre cue-uri, suprapunerea românească este susținută de sursă. Nu o
+    // semnalăm automat ca posibilă contaminare: exemplu „It's too soon to...” /
+    // „It's too soon to determine” → „E prea devreme să...” / „E prea devreme să stabilim”.
+    const hasSourceBoundaryRepeat = (firstSource, secondSource) => {
+        const sourceWords = value => clean(value)
+            .normalize('NFC')
+            .toLocaleLowerCase('en-US')
+            .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
+        const firstWords = sourceWords(firstSource);
+        const secondWords = sourceWords(secondSource);
+        if (firstWords.length < 3 || secondWords.length < 3) return false;
+
+        const sourceLowInformationWords = new Set([
+            'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'but', 'by',
+            'do', 'does', 'did', 'for', 'from', 'he', 'her', 'hers', 'him', 'his',
+            'i', 'if', 'in', 'is', 'it', "it's", 'its', 'me', 'my', 'of', 'on',
+            'or', 'our', 'she', 'that', 'the', 'their', 'them', 'there', 'these',
+            'they', 'this', 'those', 'to', 'us', 'was', 'we', 'were', 'what',
+            'when', 'where', 'which', 'who', 'will', 'with', 'you', 'your'
+        ]);
+        const maxLength = Math.min(8, firstWords.length, secondWords.length);
+        for (let length = maxLength; length >= 3; length--) {
+            const suffix = firstWords.slice(-length);
+            if (!suffix.every((word, index) => word === secondWords[index])) continue;
+            // Cel puțin un termen cu conținut trebuie să facă parte din suprapunere;
+            // evităm să suprimăm semnale pe baza unor formule doar gramaticale.
+            const informative = suffix.some(word => word.length >= 4 && !sourceLowInformationWords.has(word));
+            if (informative) return true;
+        }
+        return false;
+    };
 
     // Evită alarmele false când aceeași expresie românească este justificată de
     // același sens prezent în AMBELE originale consecutive (ex. „vreau să le știu”
@@ -5190,10 +5222,11 @@ function findPossibleBoundaryOverlapIssues(items, translatedById) {
         }
         if (!match) continue;
 
-        // Repetiția este legitimă dacă minimum două sensuri lexicale din expresia
-        // românească sunt susținute de ambele originale englezești. Nu blocăm QA
-        // când ambele replici spun în mod justificat, de exemplu, „want to know”.
-        if (targetPhraseGroundedInBothSources(match.phrase, firstSource, clean(second.text))) continue;
+        // Repetiția este legitimă dacă originalele susțin sensul expresiei.
+        // Două originale cu aceeași secvență la limita dintre cue-uri oferă o
+        // dovadă directă suplimentară și evită alarme de tipul „too soon to”.
+        if (hasSourceBoundaryRepeat(firstSource, clean(second.text)) ||
+            targetPhraseGroundedInBothSources(match.phrase, firstSource, clean(second.text))) continue;
 
         const pairKey = `${firstId}:${secondId}:${match.phrase}`;
         if (seenPairs.has(pairKey)) continue;
