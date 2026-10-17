@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.220',
+    version: '12.78.222',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -523,6 +523,53 @@ async function handleSubtitles(req, res) {
         
         let engSubs = allSubs.filter(s => s.lang === 'eng' || s.lang === 'en' || s.lang === 'English');
 
+        const isSdhSub = (sub) => {
+            const data = sub && sub.sourceData && typeof sub.sourceData === 'object'
+                ? sub.sourceData
+                : {};
+            const metadata = [
+                sub && sub.realName,
+                data.subtitleFileName,
+                data.subtitle_file_name,
+                data.fileName,
+                data.filename,
+                data.title,
+                data.name,
+                data.releaseName,
+                data.movieReleaseName,
+                data.release,
+                data.tags,
+                data.sdh,
+                data.isSdh,
+                data.hearingImpaired,
+                data.hearing_impaired,
+                data.closedCaptions,
+                data.closed_captions
+            ].filter(value => value !== undefined && value !== null)
+                .map(value => String(value)).join(' ');
+            const explicitSdhFlag = [
+                data.sdh, data.isSdh, data.hearingImpaired, data.hearing_impaired,
+                data.closedCaptions, data.closed_captions
+            ].some(value => value === true || value === 1 || /^(?:true|1|yes)$/i.test(String(value || '').trim()));
+            return explicitSdhFlag || /\bsdh\b|\bhi\b|hearing[\s_-]*impaired|closed[\s_-]*captions/i.test(metadata);
+        };
+
+        // Prioritate pentru subtitrările EN normale, fără HI/SDH.
+        // HI/SDH rămân fallback numai dacă nu există nicio variantă normală
+        // utilizabilă; când există variante normale, nu intră în lista de selecție.
+        const nonSdhEngSubs = engSubs.filter(sub => {
+            const candidateName = String(sub.title || sub.id || '');
+            const hasUsableUrl = Boolean(String(sub.url || '').trim());
+            const isRejectedRelease = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i.test(candidateName);
+            return hasUsableUrl && !isRejectedRelease && !isSdhSub({
+                realName: candidateName,
+                sourceData: sub
+            });
+        });
+        if (nonSdhEngSubs.length > 0) {
+            engSubs = nonSdhEngSubs;
+        }
+
         // OpenSubtitles v3 indică metoda potrivirii prin câmpul `m`;
         // `m: "h"` înseamnă potrivire după hash. O folosim doar când Stremio
         // a trimis efectiv videoHash; nu deducem potrivirea din numele release-ului.
@@ -563,7 +610,7 @@ async function handleSubtitles(req, res) {
         } catch (e) {}
 
         if (engSubs.length === 0) {
-            console.log(`${c.yellow}⚠ Nu s-au găsit subtitrări sursă EN pentru: ${id}${c.reset}`);
+            console.log(`${c.yellow}⚠ Nu s-au găsit subtitrări EN valide pentru: ${id}${c.reset}`);
             return res.json({ subtitles: [] });
         }
 
@@ -850,36 +897,6 @@ async function handleSubtitles(req, res) {
         // OpenSubtitles: dacă există rezultate EN explicit marcate ca potrivire hash,
         // acestea trec primele. În lipsa unui astfel de semnal, păstrăm ordinea upstream
         // a OpenSubtitles în loc să ghicim sincronizarea din rezoluție/codec/release.
-        const isSdhSub = (sub) => {
-            const data = sub && sub.sourceData && typeof sub.sourceData === 'object'
-                ? sub.sourceData
-                : {};
-            const metadata = [
-                sub && sub.realName,
-                data.subtitleFileName,
-                data.subtitle_file_name,
-                data.fileName,
-                data.filename,
-                data.title,
-                data.name,
-                data.releaseName,
-                data.movieReleaseName,
-                data.release,
-                data.tags,
-                data.sdh,
-                data.isSdh,
-                data.hearingImpaired,
-                data.hearing_impaired,
-                data.closedCaptions,
-                data.closed_captions
-            ].filter(value => value !== undefined && value !== null)
-                .map(value => String(value)).join(' ');
-            const explicitSdhFlag = [
-                data.sdh, data.isSdh, data.hearingImpaired, data.hearing_impaired,
-                data.closedCaptions, data.closed_captions
-            ].some(value => value === true || value === 1 || /^(?:true|1|yes)$/i.test(String(value || '').trim()));
-            return explicitSdhFlag || /\bsdh\b|\bhi\b|hearing[\s_-]*impaired|closed[\s_-]*captions/i.test(metadata);
-        };
         const openSubtitlesRanked = diverseSubs
             .filter(s => s.sourceIndex === 0)
             .sort((a, b) => {
