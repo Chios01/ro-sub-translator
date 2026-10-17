@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.214',
+    version: '12.78.215',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -861,9 +861,36 @@ async function handleSubtitles(req, res) {
         // OpenSubtitles: dacă există rezultate EN explicit marcate ca potrivire hash,
         // acestea trec primele. În lipsa unui astfel de semnal, păstrăm ordinea upstream
         // a OpenSubtitles în loc să ghicim sincronizarea din rezoluție/codec/release.
-        const isSdhSub = (sub) => /\bsdh\b|\bhi\b|hearing\s*impaired/i.test(
-            String(sub.realName || '') + ' ' + String(sub.sourceData?.subtitleFileName || '')
-        );
+        const isSdhSub = (sub) => {
+            const data = sub && sub.sourceData && typeof sub.sourceData === 'object'
+                ? sub.sourceData
+                : {};
+            const metadata = [
+                sub && sub.realName,
+                data.subtitleFileName,
+                data.subtitle_file_name,
+                data.fileName,
+                data.filename,
+                data.title,
+                data.name,
+                data.releaseName,
+                data.movieReleaseName,
+                data.release,
+                data.tags,
+                data.sdh,
+                data.isSdh,
+                data.hearingImpaired,
+                data.hearing_impaired,
+                data.closedCaptions,
+                data.closed_captions
+            ].filter(value => value !== undefined && value !== null)
+                .map(value => String(value)).join(' ');
+            const explicitSdhFlag = [
+                data.sdh, data.isSdh, data.hearingImpaired, data.hearing_impaired,
+                data.closedCaptions, data.closed_captions
+            ].some(value => value === true || value === 1 || /^(?:true|1|yes)$/i.test(String(value || '').trim()));
+            return explicitSdhFlag || /\bsdh\b|\bhi\b|hearing[\s_-]*impaired|closed[\s_-]*captions/i.test(metadata);
+        };
         const openSubtitlesRanked = diverseSubs
             .filter(s => s.sourceIndex === 0)
             .sort((a, b) => {
@@ -3732,7 +3759,7 @@ function hasUntranslatedEnglish(original, translated) {
         return false;
     }
 
-    const distinctive = new Set(['the','from','however','although','because','without','between','maybe','please','sorry','thanks','thank','your','would','could','should','cannot','itself','such','indictment']);
+    const distinctive = new Set(['the','from','however','although','because','without','between','maybe','please','sorry','thanks','thank','your','would','could','should','cannot','itself','such','indictment','secure']);
     const distinctiveHits = tw.filter(w => distinctive.has(w));
 
     // Protejează numele proprii păstrate intenționat din original, inclusiv
@@ -3782,6 +3809,9 @@ function hasCorruptedSubtitleText(text, originalText) {
     if (!s) return true;
     if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) return true;
     if (/[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF]/.test(s)) return true;
+    // Detectează coruperea de capitalizare dintr-un cuvânt (de ex. „cEEa”).
+    // Nu marchează acronimele, „iPhone” sau „iOS”; cere și o terminație cu litere mici.
+    if (/(?<![\p{L}])[\p{Ll}][\p{Lu}]{2,}[\p{Ll}]+(?![\p{L}])/u.test(s)) return true;
 
     return false;
 }
