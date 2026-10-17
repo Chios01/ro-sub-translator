@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.217',
+    version: '12.78.218',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5311,6 +5311,40 @@ function findCrossCueTextLeakageIssues(items, translatedById) {
         return endsWithEllipsis || !endsWithSentencePunctuation;
     };
 
+
+    // Evită alarmele false când aceeași expresie românească este justificată de
+    // același sens prezent în AMBELE originale consecutive (ex. „vreau să le știu”
+    // pentru „want to know” din ambele cue-uri). Cerem minimum două dovezi lexicale
+    // concordante în ambele originale; detectorul nu face o traducere automată.
+    const sourceGroundingPairs = [
+        { targetWords: ['vreau', 'vrei', 'vrea', 'vrem', 'vreți', 'vreti', 'vor', 'dorești', 'doresti', 'doresc', 'dorește', 'doreste', 'dorea', 'dorit'], source: /\b(?:want|wants|wanted|wish|wishes|wished|desire|desires|desired)\b/iu },
+        { targetWords: ['știu', 'stiu', 'știe', 'stie', 'știi', 'stii', 'știm', 'stim', 'știți', 'stiti', 'știam', 'stiam', 'știa', 'stia', 'știut', 'stiut', 'cunoaște', 'cunoaste', 'cunosc', 'cunoști', 'cunosti'], source: /\b(?:know|knows|knew|known|knowing)\b/iu },
+        { targetWords: ['lucru', 'lucruri', 'lucrurile'], source: /\bthings?\b/iu },
+        { targetWords: ['târziu', 'tarziu'], source: /\b(?:late|later)\b/iu },
+        { targetWords: ['prea'], source: /\btoo\b/iu },
+        { targetWords: ['nu'], source: /\b(?:no|not|never|don['’]?t|doesn['’]?t|didn['’]?t|isn['’]?t|aren['’]?t|wasn['’]?t|weren['’]?t|can['’]?t|cannot|won['’]?t|wouldn['’]?t)\b/iu },
+        { targetWords: ['ochi', 'ochii'], source: /\beyes?\b/iu },
+        { targetWords: ['drum', 'drumul'], source: /\broad\b/iu },
+        { targetWords: ['găsi', 'gasi', 'găsească', 'gaseasca', 'găsești', 'gasesti', 'găsim', 'gasim', 'găsit', 'gasit'], source: /\b(?:find|finds|found|finding)\b/iu },
+        { targetWords: ['lume', 'lumii'], source: /\bworld\b/iu },
+        { targetWords: ['telefon', 'telefonul'], source: /\bphone\b/iu },
+        { targetWords: ['strigi', 'strig', 'strige', 'țipi', 'tipi', 'țip', 'tip'], source: /\b(?:yell|yells|yelled|shout|shouts|shouted|scream|screams|screamed)\b/iu }
+    ];
+    const targetPhraseGroundedInBothSources = (phrase, firstSource, secondSource) => {
+        // `words()` deja tokeniza textul; setul evită limitele `\b` din JavaScript,
+        // care nu recunosc uniform toate literele românești cu diacritice.
+        const targetWords = new Set(words(phrase));
+        const first = clean(firstSource).normalize('NFC');
+        const second = clean(secondSource).normalize('NFC');
+        let groundedMeanings = 0;
+        for (const pair of sourceGroundingPairs) {
+            if (pair.targetWords.some(word => targetWords.has(word)) && pair.source.test(first) && pair.source.test(second)) {
+                groundedMeanings++;
+            }
+        }
+        return groundedMeanings >= 2;
+    };
+
     for (let i = 0; i < items.length - 1; i++) {
         const first = items[i];
         const second = items[i + 1];
@@ -5349,6 +5383,11 @@ function findCrossCueTextLeakageIssues(items, translatedById) {
             }
         }
         if (!match) continue;
+
+        // Repetiția este legitimă dacă minimum două sensuri lexicale din expresia
+        // românească sunt susținute de ambele originale englezești. Nu blocăm QA
+        // când ambele replici spun în mod justificat, de exemplu, „want to know”.
+        if (targetPhraseGroundedInBothSources(match.phrase, firstSource, clean(second.text))) continue;
 
         const pairKey = `${firstId}:${secondId}:${match.phrase}`;
         if (seenPairs.has(pairKey)) continue;
