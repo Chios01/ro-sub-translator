@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.227',
+    version: '12.78.228',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1098,11 +1098,28 @@ async function handleSubtitles(req, res) {
         // ============================================================
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
         // ============================================================
+        // Păstrăm câteva alternative OpenSubtitles deja clasate de selector.
+        // Dacă arhiva YIFY aleasă răspunde cu 403 sau nu poate fi extrasă, proxy-ul
+        // poate servi una dintre aceste alternative în loc să oprească traducerea cu 502.
+        const openSubtitlesFallbackUrls = diverseSubs
+            .filter(candidate => candidate.sourceIndex === 0 && isValidSubtitleSourceUrl(candidate.originalUrl))
+            .map(candidate => candidate.originalUrl)
+            .filter((url, index, all) => all.indexOf(url) === index)
+            .slice(0, 3);
+
         const generatedSubs = diverseSubs.map((s, index) => {
             const sourceProvider = s.sourceIndex === 1 ? 'yify' : '';
-            const subtitleUrl = sourceProvider
-                ? `${baseUrl}/source-subtitle?provider=${sourceProvider}&url=${encodeURIComponent(s.originalUrl)}&filename=${encodeURIComponent(userFilename)}`
-                : s.originalUrl;
+            let subtitleUrl = s.originalUrl;
+            if (sourceProvider) {
+                const sourceProxyUrl = new URL(`${baseUrl}/source-subtitle`);
+                sourceProxyUrl.searchParams.set('provider', sourceProvider);
+                sourceProxyUrl.searchParams.set('url', s.originalUrl);
+                sourceProxyUrl.searchParams.set('filename', userFilename);
+                if (openSubtitlesFallbackUrls.length) {
+                    sourceProxyUrl.searchParams.set('fallbackUrls', JSON.stringify(openSubtitlesFallbackUrls));
+                }
+                subtitleUrl = sourceProxyUrl.toString();
+            }
             const encodedUrl = encodeURIComponent(subtitleUrl);
             
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
@@ -7525,6 +7542,81 @@ async function fetchValidatedSubtitleUrl(initialUrl) {
     throw new Error('Prea multe redirecționări pentru URL-ul sursă.');
 }
 
+// Descarcă un candidat de subtitrare ca bytes, urmărind manual redirecționările
+// și validând fiecare destinație pentru a păstra protecția SSRF.
+async function fetchValidatedSubtitleBytes(initialUrl) {
+    let currentUrl = initialUrl;
+    const maxRedirects = 5;
+
+    for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
+        const validation = await validateTargetUrl(currentUrl);
+        const response = await axios.get(validation.url, {
+            headers: { 'User-Agent': BROWSER_USER_AGENT_FETCH },
+            timeout: 12000,
+            maxContentLength: 25 * 1024 * 1024,
+            maxBodyLength: 25 * 1024 * 1024,
+            responseType: 'arraybuffer',
+            maxRedirects: 0,
+            validateStatus: status => status >= 200 && status < 400,
+            lookup: (hostname, options, callback) => {
+                callback(null, validation.address, validation.family);
+            }
+        });
+
+        if (response.status >= 300) {
+            const location = response.headers.location;
+            if (!location) throw new Error('redirecționare fără destinație validă');
+            currentUrl = new URL(location, validation.url).toString();
+            continue;
+        }
+
+        const bytes = Buffer.from(response.data || []);
+        if (!bytes.length) throw new Error('descărcarea subtitrării a returnat un fișier gol');
+        return bytes;
+    }
+
+    throw new Error('prea multe redirecționări pentru subtitrarea alternativă');
+}
+
+function normalizeDownloadedSubtitle(bytes, sourceUrl, preferredVideoFilename = '') {
+    const buffer = Buffer.from(bytes || []);
+    if (buffer.length >= 4 && buffer.readUInt32LE(0) === 0x04034b50) {
+        return extractSubtitleFromZip(buffer, preferredVideoFilename);
+    }
+
+    let pathExtension = '';
+    try { pathExtension = new URL(sourceUrl).pathname; } catch (_) {}
+    const decoded = decodeSubtitleBytes(buffer);
+    try {
+        return normalizeSubtitleText(decoded, pathExtension || 'subtitle.srt');
+    } catch (firstError) {
+        // Unele endpointuri servesc SRT fără extensie sau cu o extensie generică.
+        // Reîncercăm ca SRT, fără să relaxăm verificarea structurii temporale.
+        return normalizeSubtitleText(decoded, 'subtitle.srt');
+    }
+}
+
+function parseOpenSubtitlesFallbackUrls(rawValue, failedUrl) {
+    let parsed;
+    try { parsed = JSON.parse(String(rawValue || '[]')); } catch (_) { return []; }
+    if (!Array.isArray(parsed)) return [];
+
+    const failed = String(failedUrl || '');
+    const result = [];
+    const seen = new Set([failed]);
+    for (const value of parsed) {
+        if (typeof value !== 'string' || value.length > 2048 || !isValidSubtitleSourceUrl(value)) continue;
+        let url;
+        try { url = new URL(value); } catch (_) { continue; }
+        // Fallback-urile sunt URL-uri HTTPS primite din lista OpenSubtitles.
+        if (url.protocol !== 'https:' || seen.has(url.toString())) continue;
+        seen.add(url.toString());
+        result.push(url.toString());
+        if (result.length >= 3) break;
+    }
+    return result;
+}
+
 // ============================================================
 // DOWNLOAD/UNPACK SUBTITLE ARCHIVES FOR YIFY
 // ============================================================
@@ -7778,25 +7870,47 @@ function extractSubtitleFromZip(buffer, preferredVideoFilename = '') {
 async function serveSubtitleSource(req, res) {
     const provider = String(req.query.provider || '').trim().toLowerCase();
     const sourceUrl = String(req.query.url || '').trim();
+    const preferredVideoFilename = String(req.query.filename || '').slice(0, 512);
     if (provider !== 'yify' || !sourceUrl || sourceUrl.length > 2048) {
         return res.status(400).send('Parametri de sursă invalidi.');
     }
+
+    let primaryError = null;
     try {
         const bytes = await fetchSubtitleSourceBytes(provider, sourceUrl);
-        let subtitleText;
-        if (bytes.length >= 4 && bytes.readUInt32LE(0) === 0x04034b50) {
-            subtitleText = extractSubtitleFromZip(bytes, String(req.query.filename || ''));
-        } else {
-            const pathExtension = (() => { try { return new URL(sourceUrl).pathname; } catch (_) { return ''; } })();
-            subtitleText = normalizeSubtitleText(decodeSubtitleBytes(bytes), pathExtension);
-        }
+        const subtitleText = normalizeDownloadedSubtitle(bytes, sourceUrl, preferredVideoFilename);
         res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
         res.setHeader('Cache-Control', 'private, max-age=60');
         return res.send(subtitleText);
     } catch (error) {
-        console.log(`${c.yellow}[Subtitrări] proxy ${provider.toUpperCase()} eșuat: ${subtitleSourceError(error)}${c.reset}`);
-        return res.status(502).send('Nu s-a putut prelua sau extrage subtitrarea sursă.');
+        primaryError = error;
     }
+
+    // Un URL YIFY poate fi listat corect, dar arhiva să răspundă 403 din Render.
+    // În acest caz încercăm până la 3 URL-uri OpenSubtitles deja clasate pentru același
+    // fișier video. Astfel, un candidat YIFY inaccesibil nu blochează o sursă alternativă.
+    const fallbacks = parseOpenSubtitlesFallbackUrls(req.query.fallbackUrls, sourceUrl);
+    let fallbackError = null;
+    for (let index = 0; index < fallbacks.length; index++) {
+        const fallbackUrl = fallbacks[index];
+        try {
+            const bytes = await fetchValidatedSubtitleBytes(fallbackUrl);
+            const subtitleText = normalizeDownloadedSubtitle(bytes, fallbackUrl, preferredVideoFilename);
+            console.log(`${c.yellow}[Subtitrări] YIFY indisponibil (${subtitleSourceError(primaryError)}); folosesc fallback OpenSubtitles ${index + 1}/${fallbacks.length}.${c.reset}`);
+            res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
+            res.setHeader('Cache-Control', 'private, max-age=60');
+            return res.send(subtitleText);
+        } catch (error) {
+            fallbackError = error;
+            console.log(`${c.yellow}[Subtitrări] fallback OpenSubtitles ${index + 1}/${fallbacks.length} eșuat: ${subtitleSourceError(error)}${c.reset}`);
+        }
+    }
+
+    const fallbackSuffix = fallbacks.length
+        ? `; fallback OpenSubtitles eșuat${fallbackError ? ` (${subtitleSourceError(fallbackError)})` : ''}`
+        : '; nu există URL-uri OpenSubtitles alternative eligibile';
+    console.log(`${c.yellow}[Subtitrări] proxy YIFY eșuat: ${subtitleSourceError(primaryError)}${fallbackSuffix}${c.reset}`);
+    return res.status(502).send('Nu s-a putut prelua subtitrarea YIFY și nu a fost disponibil un fallback OpenSubtitles utilizabil.');
 }
 
 app.get('/source-subtitle', serveSubtitleSource);
