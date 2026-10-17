@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.223',
+    version: '12.78.224',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5286,8 +5286,8 @@ function findRepeatedTranslationIssues(items, translatedById) {
         const secondId = String(second.id);
         // Dacă un ID a fost eliminat de filtrul de sursă, cele două elemente
         // pot fi vecine în `items` fără să fie vecine în SRT-ul original.
-        const firstNumericId = Number(firstId);
-        const secondNumericId = Number(secondId);
+        const firstNumericId = Number(first.sourceId ?? first.id);
+        const secondNumericId = Number(second.sourceId ?? second.id);
         if (Number.isFinite(firstNumericId) && Number.isFinite(secondNumericId) && secondNumericId !== firstNumericId + 1) continue;
         const firstTarget = normalizeRepeatedTranslationCheckText(translatedById[firstId]);
         const secondTarget = normalizeRepeatedTranslationCheckText(translatedById[secondId]);
@@ -5403,8 +5403,8 @@ function findCrossCueTextLeakageIssues(items, translatedById) {
 
         const firstId = String(first.id);
         const secondId = String(second.id);
-        const firstNumericId = Number(firstId);
-        const secondNumericId = Number(secondId);
+        const firstNumericId = Number(first.sourceId ?? first.id);
+        const secondNumericId = Number(second.sourceId ?? second.id);
         if (!Number.isFinite(firstNumericId) || !Number.isFinite(secondNumericId) ||
             secondNumericId !== firstNumericId + 1) continue;
 
@@ -5539,8 +5539,8 @@ function findAdjacentSemanticOverlapIssues(items, translatedById) {
 
         const firstId = String(first.id);
         const secondId = String(second.id);
-        const firstNumericId = Number(firstId);
-        const secondNumericId = Number(secondId);
+        const firstNumericId = Number(first.sourceId ?? first.id);
+        const secondNumericId = Number(second.sourceId ?? second.id);
         // Nu traversăm ID-uri eliminate de filtrul de interjecții sau lipsă din SRT.
         if (!Number.isFinite(firstNumericId) || !Number.isFinite(secondNumericId) || secondNumericId !== firstNumericId + 1) continue;
 
@@ -6536,14 +6536,14 @@ function applyContinuationCase(items, translatedById) {
 
 async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     const sourceBlockCount = (String(srtText || '').match(/-->/g) || []).length;
-    const parseStats = { fillerBlocksFiltered: 0, otherBlocksFiltered: 0, invalidBlocksSkipped: 0 };
+    const parseStats = { fillerBlocksFiltered: 0, otherBlocksFiltered: 0, invalidBlocksSkipped: 0, duplicateIdsRenumbered: 0 };
     const items = parseSrt(srtText, parseStats);
     if (!items.length) throw new Error('Nu s-au găsit subtitrări valide.');
 
     const verbatimNumericCueCount = items.filter(item => isNumericVerbatimCue(item.text)).length;
     const sentToGeminiCount = items.length - verbatimNumericCueCount;
     const accountingDelta = sourceBlockCount - items.length - parseStats.fillerBlocksFiltered - parseStats.otherBlocksFiltered - parseStats.invalidBlocksSkipped - parseStats.soundCueBlocksFiltered;
-    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${sentToGeminiCount} | coduri numerice copiate exact: ${verbatimNumericCueCount} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${parseStats.soundCueBlocksFiltered ? ` | descrieri sonore eliminate: ${parseStats.soundCueBlocksFiltered} blocuri` : ''}${parseStats.soundCueAnnotationsRemoved > parseStats.soundCueBlocksFiltered ? ` | marcaje sonore eliminate: ${parseStats.soundCueAnnotationsRemoved}` : ''}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
+    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${sentToGeminiCount} | coduri numerice copiate exact: ${verbatimNumericCueCount} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${parseStats.soundCueBlocksFiltered ? ` | descrieri sonore eliminate: ${parseStats.soundCueBlocksFiltered} blocuri` : ''}${parseStats.soundCueAnnotationsRemoved > parseStats.soundCueBlocksFiltered ? ` | marcaje sonore eliminate: ${parseStats.soundCueAnnotationsRemoved}` : ''}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${parseStats.duplicateIdsRenumbered ? ` | ID-uri duplicate normalizate: ${parseStats.duplicateIdsRenumbered}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
 
     const cleanKeys = Array.from(new Set(apiKeys.map(k => String(k).trim()).filter(Boolean)));
     if (!cleanKeys.length) throw new Error('Nu există chei Gemini valide.');
@@ -7210,19 +7210,56 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         const source = String(item.text || '').replace(/<[^>]+>/g, '').trim();
         return Boolean(source) && !String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim();
     });
+    // Quality Review și spot-check-urile suspecți sunt semnale utile, dar nu toate
+    // reprezintă erori certe. Le păstrăm ca avertismente vizibile, fără să blocăm
+    // livrarea/cache-ul atunci când traducerile există și nu persistă contaminări.
+    const finalErrorIds = new Set([
+        ...unresolvedFinalItems.map(item => String(item.id)),
+        ...finalCrossCueLeakageIds
+    ]);
+    const finalReviewWarnings = new Map();
+    const addFinalReviewWarning = (id, reasons) => {
+        const key = String(id);
+        if (suppressedFinalOutputIdSet.has(key) || finalErrorIds.has(key)) return;
+        const normalizedReasons = [...new Set((Array.isArray(reasons) ? reasons : [reasons])
+            .map(reason => String(reason || '').trim()).filter(Boolean))];
+        if (!normalizedReasons.length) return;
+        const existing = finalReviewWarnings.get(key) || [];
+        finalReviewWarnings.set(key, [...new Set([...existing, ...normalizedReasons])]);
+    };
+    for (const flag of finalQualityFlags) {
+        addFinalReviewWarning(flag.item.id, flag.reasons);
+    }
+    for (const item of finalSuspicious) {
+        const id = String(item.id);
+        const translated = String(translatedById[id] || '');
+        const reasons = [];
+        if (hasUntranslatedEnglish(item.text, translated)) reasons.push('posibil text englezesc rămas');
+        if (hasCorruptedSubtitleText(translated, item.text)) reasons.push('text posibil corupt');
+        if (hasLostExplicitSourceTerm(item.text, translated)) reasons.push('posibil termen explicit pierdut');
+        if (!reasons.length) reasons.push('traducere suspectă la verificarea finală');
+        addFinalReviewWarning(id, reasons);
+    }
+
     if (qaStatus && typeof qaStatus === 'object') {
         qaStatus.hasErrors = unresolvedFinalItems.length > 0 || finalCrossCueLeakageIds.length > 0;
-        qaStatus.unresolvedIds = [...new Set([
-            ...unresolvedFinalItems.map(item => String(item.id)),
-            ...finalCrossCueLeakageIds
-        ])];
+        qaStatus.unresolvedIds = [...finalErrorIds];
+        qaStatus.hasWarnings = finalReviewWarnings.size > 0;
+        qaStatus.warningIds = [...finalReviewWarnings.keys()];
     }
     if (unresolvedFinalItems.length) {
         const ids = unresolvedFinalItems.map(item => item.id).join(', ');
         console.log(`${c.red}[QA FINAL] EROARE: ${unresolvedFinalItems.length} replici fără traducere (ID: ${ids}).${c.reset}`);
     }
-    if (!unresolvedFinalItems.length && !finalCrossCueLeakageIds.length) {
-        console.log(`${c.green}[QA FINAL] OK: toate replicile relevante au traducere și nu au fost detectate contaminări între cue-uri.${c.reset}`);
+    if (finalReviewWarnings.size) {
+        const warningSamples = [...finalReviewWarnings.entries()].slice(0, 12).map(([id, reasons]) =>
+            `ID ${id}: ${reasons.slice(0, 2).join('; ').slice(0, 140)}`
+        );
+        const remaining = finalReviewWarnings.size - warningSamples.length;
+        console.log(`${c.yellow}[QA FINAL] AVERTISMENTE: ${finalReviewWarnings.size} replici au semnale de calitate care merită revizuire; acestea nu blochează livrarea subtitrării. ${warningSamples.join(' | ')}${remaining > 0 ? ` | și încă ${remaining}` : ''}.${c.reset}`);
+    }
+    if (!unresolvedFinalItems.length && !finalCrossCueLeakageIds.length && !finalReviewWarnings.size) {
+        console.log(`${c.green}[QA FINAL] OK: toate replicile relevante au traducere și nu au fost detectate probleme de calitate rămase.${c.reset}`);
     } else if (!unresolvedFinalItems.length && finalCrossCueLeakageIds.length) {
         console.log(`${c.red}[QA FINAL] EROARE: traducerile există, dar verificarea de contaminare nu a trecut (ID: ${finalCrossCueLeakageIds.join(', ')}).${c.reset}`);
     }
@@ -7732,7 +7769,7 @@ app.get('/:configData/translate', async (req, res) => {
         let processPromise;
         // QA status belongs to the shared translation promise, not only to the
         // request that created it. This keeps concurrent requests in the same scope.
-        let qaStatus = { hasErrors: false, unresolvedIds: [] };
+        let qaStatus = { hasErrors: false, hasWarnings: false, unresolvedIds: [], warningIds: [] };
 
         if (cachedEntry && typeof cachedEntry !== 'string') {
             processPromise = cachedEntry;
@@ -7773,8 +7810,9 @@ app.get('/:configData/translate', async (req, res) => {
                 const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
                 const timeFormatted = durationSeconds < 60 ? `${durationSeconds} sec` : `${Math.floor(durationSeconds / 60)} min și ${durationSeconds % 60} sec`;
                 
-                const doneLabel = qaStatus.hasErrors ? 'DONE CU ERORI QA' : 'DONE';
-                console.log(`\x1b[${qaStatus.hasErrors ? '31' : '96'}m[${doneLabel}] ${imdbId} | 🕒 ${timeFormatted}\x1b[0m\n`);
+                const doneLabel = qaStatus.hasErrors ? 'DONE CU ERORI QA' : qaStatus.hasWarnings ? 'DONE CU AVERTISMENTE QA' : 'DONE';
+                const doneColor = qaStatus.hasErrors ? '31' : qaStatus.hasWarnings ? '33' : '96';
+                console.log(`\x1b[${doneColor}m[${doneLabel}] ${imdbId} | 🕒 ${timeFormatted}\x1b[0m\n`);
                 
             }).catch((err) => {
                 console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
@@ -7829,6 +7867,7 @@ function parseSrt(srt, stats = null) {
         stats.invalidBlocksSkipped = 0;
         stats.soundCueBlocksFiltered = 0;
         stats.soundCueAnnotationsRemoved = 0;
+        stats.duplicateIdsRenumbered = 0;
     }
 
     for (const block of blocks) {
@@ -7902,6 +7941,26 @@ function parseSrt(srt, stats = null) {
         }
 
         result.push({ id, start: match[1], end: match[2], text });
+    }
+
+    // ID-urile SRT sunt folosite drept chei interne în traducere, QA și repararea
+    // calupurilor. Dacă există duplicate, renumerotăm rezultatul 1..N pentru a avea
+    // chei unice și ordine curată în SRT-ul emis; păstrăm sourceId pentru verificările
+    // care trebuie să respecte numerotarea și golurile originale. Fișierele normale
+    // fără ID-uri duplicate rămân complet neschimbate.
+    const seenSourceIds = new Set();
+    const duplicateItems = [];
+    for (const item of result) {
+        const sourceIdKey = String(item.id);
+        if (seenSourceIds.has(sourceIdKey)) duplicateItems.push(item);
+        else seenSourceIds.add(sourceIdKey);
+    }
+
+    if (duplicateItems.length) {
+        for (const item of result) item.sourceId = item.id;
+        result.forEach((item, index) => { item.id = index + 1; });
+        if (stats) stats.duplicateIdsRenumbered = duplicateItems.length;
+        console.warn(`[SRT] Au fost găsite ${duplicateItems.length} apariții cu ID duplicat; ID-urile ieșirii au fost normalizate pentru a preveni suprascrierea traducerilor.`);
     }
 
     return result;
