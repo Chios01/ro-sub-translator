@@ -164,7 +164,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.195',
+    version: '12.78.196',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6346,23 +6346,18 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         console.log(`${c.yellow}[Final Repair] Omisă pentru ${finalRepairCandidates.length} candidate: circuitul 429 este deschis; nu înlocuim o lipsă de traducere cu cereri Grammar Review.${c.reset}`);
     }
 
-    // Filtru final de siguranță: Gemini poate reintroduce descrieri sonore în română
-    // chiar dacă sursa a fost curățată. Le scoatem înainte de QA, cache și export SRT.
-    // Unele piste au cue-uri autonome neîncadrate în paranteze și formulate ca acțiuni
-    // (de ex. "Screams" sau "Yelps"); dacă astfel de cue-uri au scăpat prefiltrului,
-    // clasificatorul de mai jos le exclude numai când sursa însăși este un cue autonom.
-    // Dacă sursa nu este cue sonor clar, încercăm recuperarea, iar QA păstrează eroarea
-    // dacă după filtrare tot nu există dialog.
+    // Filtru final de siguranță: descrierile sonore rămase în traducerea Gemini
+    // sunt eliminate definitiv înainte de QA și export. Dacă filtrarea golește
+    // traducerea, NU lansăm recuperare locală/AI: cue-ul rămâne gol și este exclus
+    // din QA/export, astfel încât aceeași descriere să nu fie retradusă la nesfârșit.
     let finalSoundAnnotationsRemoved = 0;
-    const finalSoundEmptiedItems = [];
     const suppressedSourceSoundCueIds = new Set();
+    const suppressedTranslatedSoundCueIds = new Set();
     for (const item of items) {
         const id = String(item.id);
         const current = String(translatedById[id] || '');
 
-        // Plasă de siguranță pentru cue-uri autonome care au scăpat de parser:
-        // le excludem după sursă, indiferent dacă traducerea este goală sau Gemini a tradus-o.
-        // Acest lucru nu se aplică replicilor de dialog care doar menționează sunete.
+        // Dacă sursa însăși este o descriere sonoră autonomă, o lăsăm goală definitiv.
         if (isStandaloneNonDialogueSoundCue(item.text)) {
             if (current.trim()) {
                 const sourceCueOutput = stripNonDialogueSoundMarkup(current);
@@ -6370,7 +6365,6 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
             }
             translatedById[id] = '';
             suppressedSourceSoundCueIds.add(id);
-            console.log(`${c.cyan}[Filtru sunete] ID ${id}: sursa este o descriere sonoră autonomă; omit recuperarea și exclud cue-ul din QA/export.${c.reset}`);
             continue;
         }
 
@@ -6379,48 +6373,16 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         if (soundCleaned.removedCount) finalSoundAnnotationsRemoved += soundCleaned.removedCount;
         translatedById[id] = soundCleaned.text;
         if (soundCleaned.removedCount && !String(soundCleaned.text || '').trim()) {
-            // Sursa nu este un cue sonor clar: încercăm recuperarea dialogului,
-            // iar dacă rezultatul rămâne gol, QA FINAL păstrează eroarea.
-            finalSoundEmptiedItems.push(item);
+            // Traducerea a fost clasificată ca descriere sonoră și eliminată.
+            // Nu încercăm s-o reparăm/retraducem; rămâne goală, fără QA de lipsă.
+            suppressedTranslatedSoundCueIds.add(id);
         }
     }
 
-    if (finalSoundEmptiedItems.length) {
-        console.log(`${c.yellow}[Filtru sunete] ${finalSoundEmptiedItems.length} replici au rămas goale după eliminarea descrierilor sonore; încerc recuperare finală înainte de QA.${c.reset}`);
-        // Căutăm mai întâi o traducere locală reutilizabilă în întregul SRT, fără API.
-        recoverEmptyTranslationsLocally(items, finalSoundEmptiedItems, translatedById, 'Post-Sound Recovery');
-        const pendingPostSoundRecovery = finalSoundEmptiedItems.filter(item =>
-            !String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()
-        );
-        // Dacă mai lipsesc traduceri, folosim recuperarea existentă doar pentru ID-urile
-        // afectate de filtrul sonor, în loturile normale de maximum 10. Nu reluăm alte ID-uri.
-        if (pendingPostSoundRecovery.length) {
-            await recoverEmptyTranslationsFinal(pendingPostSoundRecovery, translatedById, keyStates);
-        }
-
-        // Recuperarea poate reintroduce la rândul ei o etichetă sonoră; o eliminăm din nou.
-        // Nu suprimăm aceste ID-uri din QA: dacă sursa conține dialog și rezultatul rămâne gol,
-        // problema trebuie raportată, nu ascunsă ca efect sonor legitim.
-        for (const item of finalSoundEmptiedItems) {
-            const id = String(item.id);
-            const recovered = String(translatedById[id] || '');
-            if (!recovered.trim()) continue;
-            const soundCleaned = stripNonDialogueSoundMarkup(recovered);
-            if (soundCleaned.removedCount) finalSoundAnnotationsRemoved += soundCleaned.removedCount;
-            translatedById[id] = soundCleaned.text;
-        }
-
-        const stillEmptyAfterSoundRecovery = finalSoundEmptiedItems.filter(item =>
-            !String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()
-        );
-        if (stillEmptyAfterSoundRecovery.length) {
-            const ids = stillEmptyAfterSoundRecovery.map(item => item.id).join(', ');
-            console.log(`${c.yellow}[Filtru sunete] ${stillEmptyAfterSoundRecovery.length} replici încă nu au dialog după recuperare (ID: ${ids}); rămân pentru QA FINAL.${c.reset}`);
-        } else {
-            console.log(`${c.green}[Filtru sunete] Recuperarea post-filtru a păstrat dialog pentru toate cele ${finalSoundEmptiedItems.length} replici.${c.reset}`);
-        }
+    if (suppressedTranslatedSoundCueIds.size) {
+        const ids = [...suppressedTranslatedSoundCueIds].join(', ');
+        console.log(`${c.cyan}[Filtru sunete] ${suppressedTranslatedSoundCueIds.size} traduceri constau doar din descrieri sonore; lăsate goale definitiv, fără recuperare AI (ID: ${ids}).${c.reset}`);
     }
-
     if (finalSoundAnnotationsRemoved) {
         console.log(`${c.cyan}[Filtru sunete] Eliminate ${finalSoundAnnotationsRemoved} descrieri/etichete sonore din traducerile finale.${c.reset}`);
     }
@@ -6439,7 +6401,8 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     const suppressedFillerIdSet = new Set(suppressedFillerIds);
     const suppressedFinalOutputIdSet = new Set([
         ...suppressedFillerIdSet,
-        ...suppressedSourceSoundCueIds
+        ...suppressedSourceSoundCueIds,
+        ...suppressedTranslatedSoundCueIds
     ]);
 
     const finalQualityFlags = [];
