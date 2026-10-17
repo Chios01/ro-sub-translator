@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.222',
+    version: '12.78.223',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -423,6 +423,36 @@ async function fetchYifySubtitleResults(type, rawId) {
     return results;
 }
 
+// Verificare sintactică înainte de selectarea variantei.
+// Verificarea DNS/redirecturilor și protecția completă la descărcare rămân
+// în validateTargetUrl(); aici nu facem cereri de rețea pentru fiecare candidat.
+function isValidSubtitleSourceUrl(value) {
+    const raw = String(value || '');
+    if (!raw.trim() || raw !== raw.trim() || /[\u0000-\u001f\u007f]/.test(raw)) return false;
+
+    let parsed;
+    try {
+        parsed = new URL(raw);
+    } catch (_) {
+        return false;
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    if (parsed.username || parsed.password || !parsed.hostname) return false;
+
+    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (
+        hostname === 'localhost' ||
+        hostname.endsWith('.localhost') ||
+        hostname.endsWith('.local') ||
+        hostname.endsWith('.internal') ||
+        hostname.endsWith('.home.arpa')
+    ) return false;
+
+    if (net.isIP(hostname) && isPrivateOrReservedIp(hostname)) return false;
+    return true;
+}
+
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
     
@@ -554,21 +584,24 @@ async function handleSubtitles(req, res) {
             return explicitSdhFlag || /\bsdh\b|\bhi\b|hearing[\s_-]*impaired|closed[\s_-]*captions/i.test(metadata);
         };
 
-        // Prioritate pentru subtitrările EN normale, fără HI/SDH.
-        // HI/SDH rămân fallback numai dacă nu există nicio variantă normală
-        // utilizabilă; când există variante normale, nu intră în lista de selecție.
-        const nonSdhEngSubs = engSubs.filter(sub => {
+        // Mai întâi eliminăm candidații cu URL-uri malformate/nepermise și release-urile
+        // excluse deja de selector. Un astfel de candidat nu trebuie să blocheze fallback-ul HI/SDH.
+        const eligibleEngSubs = engSubs.filter(sub => {
             const candidateName = String(sub.title || sub.id || '');
-            const hasUsableUrl = Boolean(String(sub.url || '').trim());
             const isRejectedRelease = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i.test(candidateName);
-            return hasUsableUrl && !isRejectedRelease && !isSdhSub({
+            return isValidSubtitleSourceUrl(sub.url) && !isRejectedRelease;
+        });
+
+        // Prioritate pentru subtitrările EN normale, fără HI/SDH.
+        // HI/SDH intră în listă numai dacă nu există nicio variantă normală eligibilă.
+        const nonSdhEngSubs = eligibleEngSubs.filter(sub => {
+            const candidateName = String(sub.title || sub.id || '');
+            return !isSdhSub({
                 realName: candidateName,
                 sourceData: sub
             });
         });
-        if (nonSdhEngSubs.length > 0) {
-            engSubs = nonSdhEngSubs;
-        }
+        engSubs = nonSdhEngSubs.length > 0 ? nonSdhEngSubs : eligibleEngSubs;
 
         // OpenSubtitles v3 indică metoda potrivirii prin câmpul `m`;
         // `m: "h"` înseamnă potrivire după hash. O folosim doar când Stremio
@@ -1245,11 +1278,9 @@ function cleanTextForJson(text) {
     clean = clean.replace(/<[iIbBuU]>\s*(?:uh|uhh|uhhh|uhm|uhmm|um|umm|ehm|erm|err|mwah|ă|ăă|ăăă|uu)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
 
-    clean = clean.replace(/\[\s*[^\]]*?(râsete|murmur|șuierând|muzică|aplauze|urale|fluierături|muzica|music|sighs|cheering|applause|laughter|gasping|groaning|snorts|crying|screaming|shouts|cough|sniff|music|chuckles|pant|groan|sigh|chuckle|whisper)[^\]]*?\]/gi, '');
-    clean = clean.replace(/\[[^\]]*?\]/g, '');
-    // Etichetele sonore între paranteze au fost filtrate contextual în parseSrt().
-    // Păstrăm parantezele obișnuite de dialog; nu mai ștergem un grup doar pentru
-    // că include accidental un cuvânt precum „music” sau „sigh”.
+    // Parantezele drepte sunt deja filtrate contextual în parseSrt() prin
+    // stripNonDialogueSoundMarkup(). Nu mai ștergem aici grupuri [ ... ] generic:
+    // pot conține dialog real, inclusiv expresii care menționează sunete sau muzică.
 
     // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
