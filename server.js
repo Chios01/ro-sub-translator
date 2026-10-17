@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const dns = require('dns').promises;
 const net = require('net');
+const zlib = require('zlib');
 
 const app = express();
 
@@ -164,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.196',
+    version: '12.78.197',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -306,6 +307,253 @@ app.get('/:configData/manifest.json', (req, res) => {
 
 const BROWSER_USER_AGENT_FETCH = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
+// ============================================================
+// PUBLIC SUBTITLE SOURCE SCRAPERS (YIFY + SUBDL)
+// Aceste funcții înlocuiesc doar vechile endpointuri Stremio care
+// nu mai întorceau rezultate. Scorarea/ordonarea rămân neschimbate.
+// ============================================================
+
+function decodeSubtitleHtmlEntities(value) {
+    return String(value || '')
+        .replace(/&nbsp;|&#160;/gi, ' ')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;|&apos;/gi, "'")
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&#(\d+);/g, (_, n) => {
+            const code = Number(n);
+            return Number.isFinite(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : '';
+        })
+        .replace(/&#x([0-9a-f]+);/gi, (_, n) => {
+            const code = parseInt(n, 16);
+            return Number.isFinite(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : '';
+        })
+        .replace(/&amp;/gi, '&');
+}
+
+function subtitleHtmlText(value) {
+    return decodeSubtitleHtmlEntities(String(value || '')
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' '))
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function subtitleHtmlAnchors(html) {
+    const anchors = [];
+    const regex = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+    let match;
+    while ((match = regex.exec(String(html || ''))) !== null) {
+        const hrefMatch = match[1].match(/\bhref\s*=\s*(["'])(.*?)\1/i);
+        if (!hrefMatch) continue;
+        anchors.push({
+            href: decodeSubtitleHtmlEntities(hrefMatch[2].trim()),
+            text: subtitleHtmlText(match[2])
+        });
+    }
+    return anchors;
+}
+
+function subtitleSourceError(error) {
+    if (error && error.response && error.response.status) return `HTTP ${error.response.status}`;
+    if (error && (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || ''))) return 'timeout';
+    if (error && error.code) return String(error.code);
+    return String(error && error.message || 'eroare necunoscută').replace(/[\r\n]+/g, ' ').slice(0, 140);
+}
+
+async function fetchSubtitleSourceHtml(url, referer) {
+    const response = await axios.get(url, {
+        timeout: 6500,
+        maxContentLength: 8 * 1024 * 1024,
+        maxRedirects: 4,
+        responseType: 'text',
+        headers: {
+            'User-Agent': BROWSER_USER_AGENT_FETCH,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            ...(referer ? { 'Referer': referer } : {})
+        }
+    });
+    return { html: String(response.data || ''), status: response.status, url: response.request?.res?.responseUrl || url };
+}
+
+async function fetchYifySubtitleResults(type, rawId) {
+    const imdbId = String(rawId || '').match(/tt\d+/i)?.[0];
+    if (!imdbId) throw new Error('IMDb ID invalid pentru YIFY');
+    if (String(type || '').toLowerCase() !== 'movie') return [];
+
+    const listingUrl = `https://yts-subs.com/movie-imdb/${imdbId}`;
+    const { html } = await fetchSubtitleSourceHtml(listingUrl, 'https://yts-subs.com/');
+    const rows = [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m => m[1]);
+    if (!rows.length) throw new Error('pagina YIFY nu conține tabelul de subtitrări');
+
+    const results = [];
+    const seen = new Set();
+    for (const row of rows) {
+        const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(m => subtitleHtmlText(m[1]));
+        if (!cells.some(cell => /^english$/i.test(cell))) continue;
+
+        const anchors = subtitleHtmlAnchors(row);
+        const detail = anchors.find(a => /\/subtitles\/[^/?#]+/i.test(a.href));
+        if (!detail) continue;
+
+        let detailUrl;
+        try { detailUrl = new URL(detail.href, listingUrl); } catch (_) { continue; }
+        if (!['yts-subs.com', 'www.yts-subs.com'].includes(detailUrl.hostname.toLowerCase())) continue;
+        const slugMatch = detailUrl.pathname.match(/^\/subtitles\/([^/]+)\/?$/i);
+        if (!slugMatch) continue;
+        const slug = decodeURIComponent(slugMatch[1]);
+
+        const directDownload = anchors.find(a => /\.zip(?:$|[?#])/i.test(a.href));
+        let downloadUrl = directDownload ? new URL(directDownload.href, listingUrl).toString() : `https://yts-subs.com/subtitle/${encodeURIComponent(slug)}.zip`;
+        if (!seen.has(downloadUrl)) {
+            seen.add(downloadUrl);
+            const releaseName = detail.text || slug.replace(/-+/g, ' ');
+            results.push({
+                id: `yify_${slug}`,
+                lang: 'eng',
+                title: releaseName,
+                releaseName,
+                movieReleaseName: releaseName,
+                url: downloadUrl
+            });
+        }
+        if (results.length >= 40) break;
+    }
+
+    if (!results.length && !/404\s*!?\s*Page Not Found/i.test(html)) {
+        throw new Error('pagina YIFY accesibilă, dar formatul listei EN nu a fost recunoscut');
+    }
+    return results;
+}
+
+function extractSubdlMovieLinks(html, baseUrl) {
+    const anchors = subtitleHtmlAnchors(html);
+    const found = [];
+    const seen = new Set();
+    for (const anchor of anchors) {
+        let parsed;
+        try { parsed = new URL(anchor.href, baseUrl); } catch (_) { continue; }
+        const match = parsed.pathname.match(/^\/subtitle\/(sd\d+)\/([^/]+)(?:\/english)?\/?$/i);
+        if (!match) continue;
+        const path = `/subtitle/${match[1]}/${match[2]}`;
+        if (seen.has(path)) continue;
+        seen.add(path);
+        found.push({ path, text: anchor.text });
+    }
+    return found;
+}
+
+function extractSubdlDownloadLinks(html, pageUrl) {
+    const anchors = subtitleHtmlAnchors(html);
+    const results = [];
+    const seen = new Set();
+
+    for (let i = 0; i < anchors.length; i++) {
+        const anchor = anchors[i];
+        let parsed;
+        try { parsed = new URL(anchor.href, pageUrl); } catch (_) { continue; }
+        const zipLike = /\.zip(?:$|[?#])/i.test(parsed.pathname) &&
+            (/^dl\.subdl\.com$/i.test(parsed.hostname) || /^subdl\.com$/i.test(parsed.hostname) || /^www\.subdl\.com$/i.test(parsed.hostname));
+        const rawSubtitleFile = /^dl\.subdl\.com$/i.test(parsed.hostname) && /\/subtitle\//i.test(parsed.pathname);
+        if (!zipLike && !rawSubtitleFile) continue;
+        if (seen.has(parsed.toString())) continue;
+        seen.add(parsed.toString());
+
+        let releaseName = '';
+        for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
+            const prior = anchors[j];
+            if (!prior.text || /^(quick download|download|translate now|translate with pro|download english subtitle)$/i.test(prior.text)) continue;
+            if (/^\/s\/info\//i.test(prior.href)) {
+                releaseName = prior.text;
+                break;
+            }
+            if (!releaseName && prior.text.length >= 8 && !/^(english|download|author|mobile)$/i.test(prior.text)) releaseName = prior.text;
+        }
+        if (!releaseName) releaseName = decodeURIComponent(parsed.pathname.split('/').pop() || '').replace(/\.zip$/i, '').replace(/[-_.]+/g, ' ');
+
+        results.push({
+            id: `subdl_${parsed.pathname.split('/').pop()}`,
+            lang: 'eng',
+            title: releaseName,
+            releaseName,
+            movieReleaseName: releaseName,
+            url: parsed.toString()
+        });
+        if (results.length >= 40) break;
+    }
+    return results;
+}
+
+async function fetchSubdlSubtitleResults(type, rawId, userFilename) {
+    const imdbId = String(rawId || '').match(/tt\d+/i)?.[0];
+    if (!imdbId) throw new Error('IMDb ID invalid pentru SubDL');
+
+    const mediaTitle = await fetchMediaTitle(rawId).catch(() => '');
+    const filenameTitle = String(userFilename || '').replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[._]+/g, ' ').trim();
+    const queries = [...new Set([imdbId, mediaTitle, filenameTitle].map(x => String(x || '').trim()).filter(x => x.length >= 2))];
+    const searchUrls = [];
+    for (const query of queries) {
+        searchUrls.push(`https://subdl.com/search?query=${encodeURIComponent(query)}`);
+        if (query !== imdbId) searchUrls.push(`https://subdl.com/search?q=${encodeURIComponent(query)}`);
+        if (searchUrls.length >= 4) break;
+    }
+
+    let titleLinks = [];
+    let lastError = null;
+    for (const searchUrl of searchUrls) {
+        try {
+            const result = await fetchSubtitleSourceHtml(searchUrl, 'https://subdl.com/');
+            titleLinks = extractSubdlMovieLinks(result.html, result.url || searchUrl);
+            if (titleLinks.length) break;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    if (!titleLinks.length) {
+        if (lastError) throw new Error(`căutarea publică SubDL a eșuat (${subtitleSourceError(lastError)})`);
+        throw new Error('pagina publică SubDL nu a returnat linkuri de titlu; formatul de căutare trebuie reverificat');
+    }
+
+    const wanted = String(mediaTitle || filenameTitle || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (wanted) {
+        const wantedTokens = wanted.split(/\s+/).filter(x => x.length > 2);
+        titleLinks.sort((a, b) => {
+            const score = item => {
+                const hay = `${item.text} ${item.path}`.toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+                return wantedTokens.filter(t => hay.includes(t)).length;
+            };
+            return score(b) - score(a);
+        });
+    }
+
+    const allResults = [];
+    const errors = [];
+    for (const titleLink of titleLinks.slice(0, 3)) {
+        const languagePage = `https://subdl.com${titleLink.path}/english`;
+        try {
+            const page = await fetchSubtitleSourceHtml(languagePage, 'https://subdl.com/');
+            const parsed = extractSubdlDownloadLinks(page.html, page.url || languagePage);
+            allResults.push(...parsed);
+            if (allResults.length >= 40) break;
+        } catch (error) {
+            errors.push(subtitleSourceError(error));
+        }
+    }
+
+    const unique = [];
+    const seen = new Set();
+    for (const sub of allResults) {
+        if (!seen.has(sub.url)) { seen.add(sub.url); unique.push(sub); }
+        if (unique.length >= 40) break;
+    }
+    if (!unique.length && errors.length) throw new Error(`paginile SubDL au eșuat (${[...new Set(errors)].join(', ')})`);
+    if (!unique.length) throw new Error('am găsit pagina titlului SubDL, dar nu și linkuri de descărcare EN');
+    return unique;
+}
+
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
     
@@ -352,20 +600,49 @@ async function handleSubtitles(req, res) {
     console.log(`${c.cyan}[Subtitrări] cerere ${type}/${id} | ${extra ? 'extra: ' + (extraKeys.join(',') || 'nerecunoscut') : 'fără extra'}${userFilename ? ' | filename: ' + userFilename.slice(0, 100) : ''} | client: ${req.headers['user-agent'] ? String(req.headers['user-agent']).slice(0, 40) : 'necunoscut'}${c.reset}`);
 
     const urlsToFetch = [
-        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`, 
-        `https://yifysubtitles.strem.io/subtitles/${type}/${id}${extraString}.json`,
-        `https://subdl.strem.io/subtitles/${type}/${id}${extraString}.json`
+        `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`,
+        `https://yts-subs.com/movie-imdb/${String(id).match(/tt\d+/i)?.[0] || id}`,
+        `https://subdl.com/search?query=${encodeURIComponent(String(id).match(/tt\d+/i)?.[0] || id)}`
     ];
 
     try {
-        const fetchPromises = urlsToFetch.map(u => 
-            axios.get(u, { 
-                timeout: 3500, 
-                headers: { 'User-Agent': BROWSER_USER_AGENT_FETCH } 
-            }).catch(() => ({ data: { subtitles: [] } }))
-        );
+        const sourceDiagnostics = ['în așteptare', 'în așteptare', 'în așteptare'];
+        const fetchPromises = [
+            axios.get(urlsToFetch[0], {
+                timeout: 6500,
+                maxContentLength: 8 * 1024 * 1024,
+                headers: { 'User-Agent': BROWSER_USER_AGENT_FETCH }
+            }).then(response => {
+                sourceDiagnostics[0] = `HTTP ${response.status}`;
+                return response;
+            }).catch(error => {
+                sourceDiagnostics[0] = subtitleSourceError(error);
+                return { data: { subtitles: [] } };
+            }),
+            (async () => {
+                try {
+                    const subtitles = await fetchYifySubtitleResults(type, id);
+                    sourceDiagnostics[1] = `HTML OK, ${subtitles.length} EN`;
+                    return { data: { subtitles } };
+                } catch (error) {
+                    sourceDiagnostics[1] = subtitleSourceError(error);
+                    return { data: { subtitles: [] } };
+                }
+            })(),
+            (async () => {
+                try {
+                    const subtitles = await fetchSubdlSubtitleResults(type, id, userFilename);
+                    sourceDiagnostics[2] = `HTML OK, ${subtitles.length} EN`;
+                    return { data: { subtitles } };
+                } catch (error) {
+                    sourceDiagnostics[2] = subtitleSourceError(error);
+                    return { data: { subtitles: [] } };
+                }
+            })()
+        ];
 
         const results = await Promise.all(fetchPromises);
+        console.log(`${c.cyan}[Subtitrări] diagnostic preluare: OpenSubtitles: ${sourceDiagnostics[0]} | YIFY: ${sourceDiagnostics[1]} | SubDL: ${sourceDiagnostics[2]}${c.reset}`);
         
         // Păstrăm proveniența fiecărui candidat; limita se aplică separat
         // fiecărei surse, nu listei concatenate în ordinea furnizorilor.
@@ -656,7 +933,11 @@ async function handleSubtitles(req, res) {
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
         // ============================================================
         const generatedSubs = diverseSubs.map((s, index) => {
-            const encodedUrl = encodeURIComponent(s.originalUrl);
+            const sourceProvider = s.sourceIndex === 1 ? 'yify' : (s.sourceIndex === 2 ? 'subdl' : '');
+            const subtitleUrl = sourceProvider
+                ? `${baseUrl}/source-subtitle?provider=${sourceProvider}&url=${encodeURIComponent(s.originalUrl)}`
+                : s.originalUrl;
+            const encodedUrl = encodeURIComponent(subtitleUrl);
             
             let vizualName = s.realName.replace(/[^a-zA-Z0-9.-]/g, ' ');
             const foundTags = [];
@@ -6653,6 +6934,238 @@ async function fetchValidatedSubtitleUrl(initialUrl) {
 
     throw new Error('Prea multe redirecționări pentru URL-ul sursă.');
 }
+
+// ============================================================
+// DOWNLOAD/UNPACK SUBTITLE ARCHIVES FOR YIFY + SUBDL
+// ============================================================
+
+function allowedSubtitleSourceHost(provider, hostname) {
+    const host = String(hostname || '').toLowerCase();
+    const allowed = provider === 'yify'
+        ? ['yts-subs.com', 'www.yts-subs.com', 'yifysubtitles.org', 'www.yifysubtitles.org']
+        : ['subdl.com', 'www.subdl.com', 'dl.subdl.com'];
+    return allowed.includes(host);
+}
+
+function makeSubtitleDownloadFallbacks(provider, initialUrl) {
+    const result = [initialUrl];
+    let parsed;
+    try { parsed = new URL(initialUrl); } catch (_) { return result; }
+    if (provider === 'yify') {
+        const match = parsed.pathname.match(/^\/subtitle\/([^/]+\.zip)$/i);
+        if (match) {
+            for (const host of ['yts-subs.com', 'yifysubtitles.org']) {
+                const candidate = `https://${host}/subtitle/${match[1]}`;
+                if (!result.includes(candidate)) result.push(candidate);
+            }
+        }
+    } else if (provider === 'subdl') {
+        const match = parsed.pathname.match(/^\/subtitle\/([^/]+\.zip)$/i);
+        if (match) {
+            for (const host of ['dl.subdl.com', 'subdl.com']) {
+                const candidate = `https://${host}/subtitle/${match[1]}`;
+                if (!result.includes(candidate)) result.push(candidate);
+            }
+        }
+    }
+    return [...new Set(result)];
+}
+
+async function fetchSubtitleSourceBytes(provider, initialUrl) {
+    const allowedProvider = provider === 'yify' || provider === 'subdl';
+    if (!allowedProvider) throw new Error('Sursă de subtitrare nepermisă.');
+
+    const starts = makeSubtitleDownloadFallbacks(provider, initialUrl);
+    let lastError = null;
+    for (const startUrl of starts) {
+        let currentUrl = startUrl;
+        try {
+            for (let redirects = 0; redirects <= 5; redirects++) {
+                const parsed = new URL(currentUrl);
+                if (parsed.protocol !== 'https:' || !allowedSubtitleSourceHost(provider, parsed.hostname)) {
+                    throw new Error('domeniu de descărcare nepermis');
+                }
+                const validation = await validateTargetUrl(currentUrl);
+                const response = await axios.get(validation.url, {
+                    timeout: 18000,
+                    maxContentLength: 25 * 1024 * 1024,
+                    maxBodyLength: 25 * 1024 * 1024,
+                    responseType: 'arraybuffer',
+                    maxRedirects: 0,
+                    validateStatus: status => status >= 200 && status < 400,
+                    headers: {
+                        'User-Agent': BROWSER_USER_AGENT_FETCH,
+                        'Accept': 'application/zip, application/octet-stream, text/plain, */*',
+                        'Referer': provider === 'yify' ? 'https://yts-subs.com/' : 'https://subdl.com/'
+                    },
+                    lookup: (hostname, options, callback) => callback(null, validation.address, validation.family)
+                });
+
+                if (response.status >= 300) {
+                    const location = response.headers.location;
+                    if (!location) throw new Error('redirecționare fără destinație');
+                    currentUrl = new URL(location, validation.url).toString();
+                    continue;
+                }
+                return Buffer.from(response.data);
+            }
+            throw new Error('prea multe redirecționări');
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw new Error(`descărcarea arhivei a eșuat (${subtitleSourceError(lastError)})`);
+}
+
+function decodeSubtitleBytes(buffer) {
+    let text = Buffer.from(buffer).toString('utf8');
+    const replacementCount = (text.match(/\uFFFD/g) || []).length;
+    if (replacementCount > 2) {
+        try { text = new TextDecoder('windows-1252').decode(buffer); } catch (_) {}
+    }
+    return text.replace(/^\uFEFF/, '').replace(/\0/g, '');
+}
+
+function convertAssSubtitleToSrt(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    let inEvents = false;
+    let format = null;
+    const cues = [];
+    const toSrtTime = value => {
+        const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2}):(\d{2})[.](\d{1,2})$/);
+        if (!match) return '';
+        return `${match[1].padStart(2, '0')}:${match[2]}:${match[3]},${String(match[4]).padEnd(3, '0').slice(0, 3)}`;
+    };
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (/^\[Events\]/i.test(trimmed)) { inEvents = true; continue; }
+        if (/^\[[^\]]+\]/.test(trimmed)) { inEvents = false; continue; }
+        if (!inEvents) continue;
+        if (/^Format\s*:/i.test(trimmed)) {
+            format = trimmed.slice(trimmed.indexOf(':') + 1).split(',').map(x => x.trim().toLowerCase());
+            continue;
+        }
+        if (!/^Dialogue\s*:/i.test(trimmed) || !format) continue;
+        const fields = trimmed.slice(trimmed.indexOf(':') + 1).split(',');
+        const textIndex = format.indexOf('text');
+        if (textIndex < 0 || fields.length < format.length) continue;
+        // ASS text is the final field; rejoin commas in dialogue text.
+        const values = fields.slice(0, format.length - 1);
+        values.push(fields.slice(format.length - 1).join(','));
+        const start = toSrtTime(values[format.indexOf('start')]);
+        const end = toSrtTime(values[format.indexOf('end')]);
+        let dialogue = String(values[textIndex] || '')
+            .replace(/\{[^}]*\}/g, '')
+            .replace(/\\[Nn]/g, '\n')
+            .replace(/<[^>]+>/g, '')
+            .trim();
+        if (!start || !end || !dialogue) continue;
+        cues.push(`${cues.length + 1}\n${start} --> ${end}\n${dialogue}`);
+    }
+    return cues.join('\n\n');
+}
+
+function normalizeSubtitleText(text, filename) {
+    const extension = String(filename || '').toLowerCase().match(/\.(srt|vtt|ass|ssa)$/i)?.[1] || '';
+    let normalized = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+    if (extension === 'ass' || extension === 'ssa') {
+        normalized = convertAssSubtitleToSrt(normalized);
+    } else if (extension === 'vtt' || /^\s*WEBVTT\b/i.test(normalized)) {
+        normalized = normalized
+            .replace(/^\s*WEBVTT[^\n]*\n+/i, '')
+            .replace(/^NOTE[^\n]*(?:\n(?!\n)[^\n]*)*/gim, '')
+            .replace(/(^|\s)(\d{2}):(\d{2})\.(\d{3})(?=\s*-->|\s*$)/gm, (match, prefix, minutes, seconds, millis) => `${prefix}00:${minutes}:${seconds},${millis}`)
+            .replace(/(\d{2}:\d{2}:\d{2})\.(\d{3})/g, '$1,$2');
+    }
+    normalized = normalized.trim();
+    if (!normalized || !/\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[,.]\d{3}/.test(normalized)) {
+        throw new Error('fișierul descărcat nu conține subtitrare SRT/VTT/ASS recunoscută');
+    }
+    return normalized.replace(/\n{3,}/g, '\n\n') + '\n';
+}
+
+function extractSubtitleFromZip(buffer) {
+    const bytes = Buffer.from(buffer);
+    if (bytes.length < 22) throw new Error('arhivă ZIP prea scurtă');
+    const minEocd = Math.max(0, bytes.length - 22 - 0xFFFF);
+    let eocd = -1;
+    for (let i = bytes.length - 22; i >= minEocd; i--) {
+        if (bytes.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('arhiva ZIP nu are director central valid');
+
+    const entryCount = bytes.readUInt16LE(eocd + 10);
+    const centralOffset = bytes.readUInt32LE(eocd + 16);
+    if (!entryCount || entryCount > 300 || centralOffset >= bytes.length) throw new Error('arhivă ZIP goală sau cu structură neacceptată');
+
+    const files = [];
+    let offset = centralOffset;
+    for (let i = 0; i < entryCount && offset + 46 <= bytes.length; i++) {
+        if (bytes.readUInt32LE(offset) !== 0x02014b50) break;
+        const flags = bytes.readUInt16LE(offset + 8);
+        const method = bytes.readUInt16LE(offset + 10);
+        const compressedSize = bytes.readUInt32LE(offset + 20);
+        const uncompressedSize = bytes.readUInt32LE(offset + 24);
+        const nameLength = bytes.readUInt16LE(offset + 28);
+        const extraLength = bytes.readUInt16LE(offset + 30);
+        const commentLength = bytes.readUInt16LE(offset + 32);
+        const localOffset = bytes.readUInt32LE(offset + 42);
+        const filename = bytes.subarray(offset + 46, offset + 46 + nameLength).toString('utf8');
+        offset += 46 + nameLength + extraLength + commentLength;
+
+        if ((flags & 1) !== 0 || /(^|\/)__MACOSX\//i.test(filename) || /(^|\/)\._/.test(filename) || /\/$/.test(filename)) continue;
+        if (!/\.(srt|vtt|ass|ssa)$/i.test(filename)) continue;
+        if (compressedSize > bytes.length || uncompressedSize > 16 * 1024 * 1024 || localOffset + 30 > bytes.length) continue;
+        if (bytes.readUInt32LE(localOffset) !== 0x04034b50) continue;
+        const localNameLength = bytes.readUInt16LE(localOffset + 26);
+        const localExtraLength = bytes.readUInt16LE(localOffset + 28);
+        const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+        const dataEnd = dataOffset + compressedSize;
+        if (dataOffset < 0 || dataEnd > bytes.length) continue;
+        try {
+            const compressed = bytes.subarray(dataOffset, dataEnd);
+            let content;
+            if (method === 0) content = Buffer.from(compressed);
+            else if (method === 8) content = zlib.inflateRawSync(compressed, { maxOutputLength: 16 * 1024 * 1024 });
+            else continue;
+            if (content.length > 16 * 1024 * 1024) continue;
+            files.push({ filename, content, priority: /\.srt$/i.test(filename) ? 0 : (/\.vtt$/i.test(filename) ? 1 : 2) });
+        } catch (_) {}
+    }
+
+    files.sort((a, b) => a.priority - b.priority);
+    for (const file of files) {
+        try { return normalizeSubtitleText(decodeSubtitleBytes(file.content), file.filename); } catch (_) {}
+    }
+    throw new Error('arhiva nu conține un fișier SRT/VTT/ASS valid');
+}
+
+async function serveSubtitleSource(req, res) {
+    const provider = String(req.query.provider || '').trim().toLowerCase();
+    const sourceUrl = String(req.query.url || '').trim();
+    if (!['yify', 'subdl'].includes(provider) || !sourceUrl || sourceUrl.length > 2048) {
+        return res.status(400).send('Parametri de sursă invalidi.');
+    }
+    try {
+        const bytes = await fetchSubtitleSourceBytes(provider, sourceUrl);
+        let subtitleText;
+        if (bytes.length >= 4 && bytes.readUInt32LE(0) === 0x04034b50) {
+            subtitleText = extractSubtitleFromZip(bytes);
+        } else {
+            const pathExtension = (() => { try { return new URL(sourceUrl).pathname; } catch (_) { return ''; } })();
+            subtitleText = normalizeSubtitleText(decodeSubtitleBytes(bytes), pathExtension);
+        }
+        res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
+        res.setHeader('Cache-Control', 'private, max-age=60');
+        return res.send(subtitleText);
+    } catch (error) {
+        console.log(`${c.yellow}[Subtitrări] proxy ${provider.toUpperCase()} eșuat: ${subtitleSourceError(error)}${c.reset}`);
+        return res.status(502).send('Nu s-a putut prelua sau extrage subtitrarea sursă.');
+    }
+}
+
+app.get('/source-subtitle', serveSubtitleSource);
 
 // ============================================================
 // TRANSLATION ROUTE
