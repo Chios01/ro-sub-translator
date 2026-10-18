@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.237',
+    version: '12.78.238',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5690,16 +5690,17 @@ function markIntentionalSoundCueSuppressed(item, translatedById, keyStates) {
     translatedById[id] = '';
 }
 
-function buildEmptyRecoveryPrompt(batch, strictJsonRetry = false, stageLabel = 'Empty Recovery') {
+function buildEmptyRecoveryPrompt(batch, strictJsonRetry = false, stageLabel = 'Empty Recovery', forceTranslate = false) {
     return `
 ${stageLabel.toUpperCase()} — TRADUCERI RĂMASE GOALE.
 
 Tradu în română naturală fiecare replică din lista de mai jos. Aceste blocuri au trecut deja de filtrarea inițială a subtitrărilor. Pentru dialogul obișnuit, fragmente incomplete, replici de un singur cuvânt, întrebări și reacții cu sens, întoarce întotdeauna o traducere română nevidă. Nu lăsa câmpul text gol și nu omite niciun ID. Pentru dialog normal, returnează numai textul tradus, fără paranteze rotunde/drepte adăugate în jurul replicii.
 
-EXCEPȚIE EXPLICITĂ: dacă și numai dacă textul-sursă este exclusiv o descriere non-dialogată de sunet/muzică, o indicație scenică sau o acțiune vocală fără niciun cuvânt rostit, pune valoarea exactă ${JSON.stringify(EMPTY_RECOVERY_SOUND_CUE_SKIP)} în câmpul text. Nu folosi acest marker pentru dialog, pentru o replică scurtă sau pentru o propoziție care doar menționează sunetul. Markerul înseamnă „omitere intenționată”, nu traducere lipsă; programul îl va scoate din rezultat și nu va mai reîncerca ID-ul.
-
+Fiecare ID din listă trebuie să primească o traducere românească nevidă. Dacă sursa este o descriere de sunet, muzică sau o indicație scenică, trad-o în română în loc să o omiți. Nu inventa omisiuni intenționate.
+Nu folosi niciun marker intern, token special sau placeholder în câmpul text. Clasificarea și omiterea cue-urilor sonore sunt responsabilitatea verificării locale, nu a modelului.
+${forceTranslate ? '\nRECUPERARE OBLIGATORIE: răspunsul anterior a folosit un marker de omitere nepermis pentru aceste ID-uri. Tradu fiecare ID de mai jos; markerul special este interzis, inclusiv pentru replici scurte sau descrieri de sunet. Nu omite nimic.' : ''}
 Returnează DOAR un array JSON valid, cu exact un obiect per ID, în aceeași ordine. Fiecare obiect trebuie să aibă câmpurile id (număr întreg) și text (șir). Nu include markdown, explicații sau alte câmpuri.
-${strictJsonRetry ? '\nRETRY TEHNIC: întoarce numai JSON valid, păstrează exact ID-urile și nu lăsa niciun câmp text gol; folosește markerul doar pentru o descriere sonoră pură.' : ''}
+${strictJsonRetry ? '\nRETRY TEHNIC: întoarce numai JSON valid, păstrează exact ID-urile și nu lăsa niciun câmp text gol.' : ''}
 
 REPLICILE DE TRADUS:
 ${JSON.stringify(batch.map(item => ({ id: item.id, text: item.text })), null, 2)}
@@ -5710,6 +5711,20 @@ ${JSON.stringify(batch.map(item => ({ id: item.id, text: item.text })), null, 2)
 // după un retry JSON, acesta se împarte treptat. Erorile API (mai ales 503) opresc etapa
 // fără cereri suplimentare în rafală; traducerile deja recuperate rămân păstrate.
 async function recoverEmptyTranslationsBatched(items, translatedById, keyStates, stageLabel = 'Empty Recovery') {
+    // Doar clasificatorul local poate decide omiterea intenționată a unui cue sonor.
+    // Nu cerem Gemini să decidă asta: marker-ele returnate pentru dialog produceau
+    // split-uri repetate, cereri individuale și consum inutil al cotei 429.
+    const locallyRecognizedSoundCues = items.filter(item => isStandaloneNonDialogueSoundCue(item.text));
+    for (const item of locallyRecognizedSoundCues) {
+        markIntentionalSoundCueSuppressed(item, translatedById, keyStates);
+    }
+    if (locallyRecognizedSoundCues.length) {
+        console.log(`${c.cyan}[${stageLabel}] ${locallyRecognizedSoundCues.length} cue-uri sonore recunoscute local; omise fără cereri Gemini.${c.reset}`);
+    }
+    items = items.filter(item => !isStandaloneNonDialogueSoundCue(item.text));
+    if (!items.length) {
+        return { recoveredCount: 0, recoveredIds: [], failedItems: [], unresolvedItems: [], parsedAnyResponse: false, apiFailure: false };
+    }
     const batches = chunkArray(items, FINAL_EMPTY_RECOVERY_BATCH_SIZE);
     const failedById = new Map();
     // Păstrăm separat numai ID-urile care au primit un răspuns JSON valid,
@@ -5813,8 +5828,56 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
 
         const unresolved = [];
         const rejectionReasons = new Map();
+        const markerRetryAttemptedIds = new Set();
         let intentionalSoundSkips = 0;
         let repeatedEmptyResponseSkips = 0;
+
+        // Dacă Gemini folosește markerul interzis pentru dialog, reîncercăm o singură
+        // dată ID-urile afectate împreună, cu instrucțiune de traducere obligatorie.
+        // Nu împărțim apoi aceleași ID-uri în multe loturi: asta cauza rafala de cereri
+        // observată în log și deschidea circuitul 429 înainte de recuperare.
+        const markerRejectedItems = batch.filter(item => {
+            const id = String(item.id);
+            return !String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim() &&
+                isEmptyRecoverySoundCueSkip(recoveryDict[id]) &&
+                !isStandaloneNonDialogueSoundCue(item.text);
+        });
+        if (markerRejectedItems.length) {
+            markerRejectedItems.forEach(item => markerRetryAttemptedIds.add(String(item.id)));
+            console.log(`${c.yellow}[${stageLabel}] ${markerRejectedItems.length} marker(e) de omitere respinse pentru replici neclasificate local ca cue sonor; o singură reîncercare grupată cu traducere obligatorie.${c.reset}`);
+            try {
+                const forcedRaw = await callGeminiWithKeyRotation(
+                    buildEmptyRecoveryPrompt(markerRejectedItems, true, `${stageLabel} — traducere obligatorie`, true),
+                    keyStates,
+                    {
+                        requestLabel: `${stageLabel} — traducere obligatorie (${markerRejectedItems.length} ID-uri)`,
+                        responseSchema: buildTranslationResponseSchema(markerRejectedItems)
+                    }
+                );
+                const forcedDict = normalizeTranslationPayload(safeJsonParse(forcedRaw));
+                parsedAnyResponse = true;
+                for (const item of markerRejectedItems) {
+                    const id = String(item.id);
+                    if (Object.prototype.hasOwnProperty.call(forcedDict, id)) {
+                        recoveryDict[id] = forcedDict[id];
+                    }
+                }
+            } catch (forcedError) {
+                if (isRecoverableJsonParseError(forcedError)) {
+                    console.log(`${c.yellow}[${stageLabel}] Răspunsul de recuperare obligatorie a fost JSON invalid; ID-urile rămân pentru QA FINAL, fără split suplimentar.${c.reset}`);
+                } else {
+                    const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, forcedError);
+                    const is429 = forcedError?.isRateLimit429 === true || /\b429\b/i.test(String(forcedError?.message || ''));
+                    if (!is429) {
+                        console.log(`${c.yellow}[${stageLabel}] Eroare API la traducerea obligatorie: ${String(forcedError?.message || forcedError).slice(0, 200)}${quotaBlocked ? ' Recuperarea AI se oprește pentru această procesare.' : ''}${c.reset}`);
+                    }
+                    apiFailure = true;
+                    batch.forEach(rememberFailed);
+                    return;
+                }
+            }
+        }
+
         for (const item of batch) {
             const id = String(item.id);
             if (isEmptyRecoverySoundCueSkip(recoveryDict[id]) && isStandaloneNonDialogueSoundCue(item.text)) {
@@ -5832,7 +5895,8 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
             const hasIdInResponse = Object.prototype.hasOwnProperty.call(recoveryDict, id);
             const recoveredValue = recoveryDict[id];
             if (batch.length <= FINAL_EMPTY_RECOVERY_BATCH_SIZE && hasIdInResponse &&
-                typeof recoveredValue === 'string' && recoveredValue.trim() === '') {
+                typeof recoveredValue === 'string' && recoveredValue.trim() === '' &&
+                !markerRetryAttemptedIds.has(id)) {
                 // ID-ul a fost deja gol în traducerea principală, iar Empty Recovery
                 // a întors din nou explicit text gol pentru el. Conform regulii cerute,
                 // îl suprimăm aici și nu îl mai împărțim sau retrimitem individual.
@@ -5857,7 +5921,11 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
             } else {
                 unresolved.push(item);
                 failedById.set(id, item);
-                individualRetryById.set(id, item);
+                if (markerRetryAttemptedIds.has(id)) {
+                    individualRetryById.delete(id);
+                } else {
+                    individualRetryById.set(id, item);
+                }
                 const reason = assessment.reason || 'motiv necunoscut';
                 rejectionReasons.set(reason, (rejectionReasons.get(reason) || 0) + 1);
             }
@@ -5875,13 +5943,19 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
             const reasonSummary = [...rejectionReasons.entries()].map(([reason, count]) => `${reason}: ${count}`).join('; ');
             console.log(`${c.yellow}[${stageLabel}] Răspuns pentru grupul ${batchLabel}: ${unresolved.length}/${batch.length} ID-uri încă neacceptate${reasonSummary ? ` (${reasonSummary})` : ''}.${c.reset}`);
         }
-        if (unresolved.length > 1 && depth < FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH && !apiFailure) {
-            const middle = Math.ceil(unresolved.length / 2);
-            const left = unresolved.slice(0, middle);
-            const right = unresolved.slice(middle);
-            console.log(`${c.yellow}⚠ [${stageLabel}] ${unresolved.length} ID-uri lipsă sau respinse; reîncerc în loturi ${left.length}+${right.length}.${c.reset}`);
+        const unresolvedEligibleForSplit = unresolved.filter(item => !markerRetryAttemptedIds.has(String(item.id)));
+        if (unresolvedEligibleForSplit.length > 1 && depth < FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH && !apiFailure) {
+            const middle = Math.ceil(unresolvedEligibleForSplit.length / 2);
+            const left = unresolvedEligibleForSplit.slice(0, middle);
+            const right = unresolvedEligibleForSplit.slice(middle);
+            console.log(`${c.yellow}⚠ [${stageLabel}] ${unresolvedEligibleForSplit.length} ID-uri lipsă sau respinse; reîncerc în loturi ${left.length}+${right.length}.${c.reset}`);
             await processBatch(left, depth + 1, `${batchLabel}.missing-a`, true);
             await processBatch(right, depth + 1, `${batchLabel}.missing-b`, true);
+        } else if (unresolved.length) {
+            const noMoreRetry = unresolved.length - unresolvedEligibleForSplit.length;
+            if (noMoreRetry > 0) {
+                console.log(`${c.yellow}[${stageLabel}] ${noMoreRetry} ID-uri au epuizat reîncercarea grupată pentru marker; rămân pentru QA FINAL, fără cereri suplimentare în rafală.${c.reset}`);
+            }
         }
     };
 
@@ -6114,12 +6188,12 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
     // apelurile în timpul unui 503/429; numai erorile de format JSON sunt izolate prin split.
     let stopAfterRecoveryApiFailure = false;
 
-    const buildRecoveryPrompt = (batch, strictJsonRetry = false) =>
-        buildEmptyRecoveryPrompt(batch, strictJsonRetry, 'Final Empty Recovery');
+    const buildRecoveryPrompt = (batch, strictJsonRetry = false, forceTranslate = false) =>
+        buildEmptyRecoveryPrompt(batch, strictJsonRetry, 'Final Empty Recovery', forceTranslate);
 
-    const requestRecoveryBatch = async (batch, batchLabel, strictJsonRetry = false) => {
+    const requestRecoveryBatch = async (batch, batchLabel, strictJsonRetry = false, forceTranslate = false) => {
         const raw = await callGeminiWithKeyRotation(
-            buildRecoveryPrompt(batch, strictJsonRetry),
+            buildRecoveryPrompt(batch, strictJsonRetry, forceTranslate),
             keyStates,
             {
                 timeout: 20000,
@@ -6194,7 +6268,48 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
         }
 
         const unresolved = [];
+        const markerRetryAttemptedIds = new Set();
         let intentionalSoundSkips = 0;
+
+        // La recuperarea finală aplicăm aceeași limită: markerul invalid pentru
+        // dialog primește o singură reîncercare grupată, nu split-uri în cascadă.
+        const markerRejectedItems = batch.filter(item => {
+            const id = String(item.id);
+            return !String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim() &&
+                isEmptyRecoverySoundCueSkip(recoveryDict[id]) &&
+                !isStandaloneNonDialogueSoundCue(item.text);
+        });
+        if (markerRejectedItems.length) {
+            markerRejectedItems.forEach(item => markerRetryAttemptedIds.add(String(item.id)));
+            console.log(`${c.yellow}[Final Empty Recovery] ${markerRejectedItems.length} marker(e) de omitere respinse; o singură reîncercare grupată cu traducere obligatorie.${c.reset}`);
+            try {
+                const forcedDict = await requestRecoveryBatch(
+                    markerRejectedItems,
+                    `${batchLabel} — traducere obligatorie`,
+                    true,
+                    true
+                );
+                for (const item of markerRejectedItems) {
+                    const id = String(item.id);
+                    if (Object.prototype.hasOwnProperty.call(forcedDict, id)) {
+                        recoveryDict[id] = forcedDict[id];
+                    }
+                }
+            } catch (forcedError) {
+                if (isRecoverableJsonParseError(forcedError)) {
+                    console.log(`${c.yellow}[Final Empty Recovery] JSON invalid la traducerea obligatorie; ID-urile rămân pentru QA FINAL, fără split suplimentar.${c.reset}`);
+                } else {
+                    const quotaBlocked = markEmptyRecoveryQuotaBlock(keyStates, forcedError);
+                    const is429 = forcedError?.isRateLimit429 === true || /\b429\b/i.test(String(forcedError?.message || ''));
+                    if (!is429) {
+                        console.log(`${c.yellow}[Final Empty Recovery] Eroare API la traducerea obligatorie: ${String(forcedError?.message || forcedError).slice(0, 240)}${quotaBlocked ? ' Recuperarea AI se oprește pentru această procesare.' : ''}${c.reset}`);
+                    }
+                    stopAfterRecoveryApiFailure = true;
+                    return;
+                }
+            }
+        }
+
         for (const item of batch) {
             const id = String(item.id);
             if (isEmptyRecoverySoundCueSkip(recoveryDict[id]) && isStandaloneNonDialogueSoundCue(item.text)) {
@@ -6221,10 +6336,12 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
         // Dacă JSON-ul este valid, dar lipsesc rezultate sau unele texte nu trec
         // validarea, reluăm numai ID-urile respective în grupuri mai mici.
         if (unresolved.length) {
-            if (depth < FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH && unresolved.length > 0) {
-                await splitAndRecover(unresolved, depth, batchLabel, `${unresolved.length} ID-uri lipsă sau respinse după JSON valid`);
+            const unresolvedEligibleForSplit = unresolved.filter(item => !markerRetryAttemptedIds.has(String(item.id)));
+            if (depth < FINAL_EMPTY_RECOVERY_MAX_JSON_SPLIT_DEPTH && unresolvedEligibleForSplit.length > 0) {
+                await splitAndRecover(unresolvedEligibleForSplit, depth, batchLabel, `${unresolvedEligibleForSplit.length} ID-uri lipsă sau respinse după JSON valid`);
             } else {
-                console.log(`${c.yellow}[Final Empty Recovery] Grupul ${batchLabel}: ${unresolved.length} ID-uri nu au trecut validarea; rămân pentru QA FINAL.${c.reset}`);
+                const noMoreRetry = unresolved.length - unresolvedEligibleForSplit.length;
+                console.log(`${c.yellow}[Final Empty Recovery] Grupul ${batchLabel}: ${unresolved.length} ID-uri nu au trecut validarea; ${noMoreRetry ? `${noMoreRetry} după reîncercarea obligatorie` : ''} rămân pentru QA FINAL.${c.reset}`);
             }
         }
     };
