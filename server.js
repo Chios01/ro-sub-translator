@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.245',
+    version: '12.78.246',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5084,7 +5084,7 @@ function repeatedTranslationSourceSimilarity(firstSource, secondSource) {
 // au vocabular semnificativ diferit. Nu modifică textele: cere verificare contextuală.
 function findRepeatedTranslationIssues(items, translatedById) {
     const issues = [];
-    const MAX_SOURCE_TOKEN_SIMILARITY = 0.25;
+    const MAX_SOURCE_TOKEN_SIMILARITY = 0.15;
 
     for (let i = 0; i < items.length - 1; i++) {
         const first = items[i];
@@ -5106,11 +5106,11 @@ function findRepeatedTranslationIssues(items, translatedById) {
         const secondSource = normalizeRepeatedTranslationCheckText(second.text);
         if (!firstSource || !secondSource || firstSource === secondSource) continue;
 
-        // Fragmente foarte scurte („Here's...”) pot avea legitim aceeași
-        // traducere ca replica următoare („There you go.”). Evităm alarmele
-        // slabe dacă unul dintre originale are mai puțin de două cuvinte.
+        // Repetiția aceleiași traduceri este un semnal slab pentru replici scurte.
+        // Păstrăm verificarea pentru surse mai consistente și numai când vocabularul
+        // englezesc diferă aproape complet; detectorul nu modifică textul automat.
         const sourceWordCount = value => (String(value || '').match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || []).length;
-        if (sourceWordCount(first.text) < 2 || sourceWordCount(second.text) < 2) continue;
+        if (sourceWordCount(first.text) < 3 || sourceWordCount(second.text) < 3) continue;
 
         const similarity = repeatedTranslationSourceSimilarity(first.text, second.text);
         if (similarity >= MAX_SOURCE_TOKEN_SIMILARITY) continue;
