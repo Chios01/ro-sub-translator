@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.248',
+    version: '12.78.249',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3236,10 +3236,13 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
     const hitsByIndex = new Map();
     const mergedCueBoundaryIssues = [];
 
-    const addHit = (index, reason, strength = 1) => {
-        if (!hitsByIndex.has(index)) hitsByIndex.set(index, { index, reasons: [], strength: 0 });
+    const addHit = (index, reason, strength = 1, evidenceType = 'word-ratio') => {
+        if (!hitsByIndex.has(index)) {
+            hitsByIndex.set(index, { index, reasons: [], strength: 0, evidenceTypes: [] });
+        }
         const hit = hitsByIndex.get(index);
         if (!hit.reasons.includes(reason)) hit.reasons.push(reason);
+        if (!hit.evidenceTypes.includes(evidenceType)) hit.evidenceTypes.push(evidenceType);
         hit.strength += strength;
     };
 
@@ -3295,13 +3298,13 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
         }
 
         if (sourceChars <= 25 && targetChars >= 55 && targetChars / Math.max(1, sourceChars) >= 2.5) {
-            addHit(index, `expansiune de caractere (${sourceChars}→${targetChars})`, 2);
+            addHit(index, `expansiune de caractere (${sourceChars}→${targetChars})`, 2, 'character-expansion');
         }
 
         const sourceSentences = localAlignmentSentenceCount(original);
         const targetSentences = localAlignmentSentenceCount(translated);
         if (sourceSentences <= 1 && targetSentences >= 3 && targetChars >= 55) {
-            addHit(index, `mai multe propoziții în traducere decât sugerează replica-sursă (${sourceSentences}→${targetSentences})`, 2);
+            addHit(index, `mai multe propoziții în traducere decât sugerează replica-sursă (${sourceSentences}→${targetSentences})`, 2, 'sentence-count');
         }
     }
 
@@ -3317,8 +3320,8 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
         if (normalizedSources[index] === normalizedSources[index + 1]) continue;
         if (isJunkOrInterjection(firstSource) || isJunkOrInterjection(secondSource)) continue;
         if (localAlignmentWords(firstTarget) < 4 || firstTarget.length < 18) continue;
-        addHit(index, 'traduceri consecutive identice pentru originale diferite', 3);
-        addHit(index + 1, 'traduceri consecutive identice pentru originale diferite', 3);
+        addHit(index, 'traduceri consecutive identice pentru originale diferite', 3, 'duplicate-translation');
+        addHit(index + 1, 'traduceri consecutive identice pentru originale diferite', 3, 'duplicate-translation');
     }
 
     const hits = [...hitsByIndex.values()].sort((a, b) => a.index - b.index);
@@ -3345,8 +3348,11 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
         }
     }
 
-    // Cerem mai multe indicii locale în aceeași zonă. O singură replică atipică
-    // poate fi o traducere validă și nu trebuie să coste un apel suplimentar.
+    // Prag mai maleabil: diferențele de număr de cuvinte sunt un semnal slab,
+    // deoarece româna poate formula firesc o replică mult mai scurt sau mai lung.
+    // Trei anomalii bazate numai pe raportul cuvintelor NU mai declanșează singure
+    // apeluri Gemini. Cerem fie 4 replici distincte atipice, fie 3 plus o confirmare
+    // de alt tip (caractere/propoziții), fie ramura separată pentru duplicate repetate.
     const structuralIssues = clusters
         .filter(cluster => {
             const structuralHits = cluster.hits.filter(hit =>
@@ -3355,9 +3361,13 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
             const duplicateHits = cluster.hits.filter(hit =>
                 hit.reasons.some(reason => reason.startsWith('traduceri consecutive identice'))
             );
-            // Două traduceri identice pot fi un refren/replică repetată; duplicarea
-            // singură nu declanșează apel API fără și alt indiciu structural.
-            return (structuralHits.length >= 3 && cluster.strength >= 6) ||
+            const hasIndependentEvidence = cluster.hits.some(hit =>
+                hit.evidenceTypes.some(type => type === 'character-expansion' || type === 'sentence-count')
+            );
+            // Două traduceri identice pot fi refren/replică repetată; păstrăm ramura
+            // istorică numai dacă există și un indiciu structural suplimentar.
+            return (structuralHits.length >= 4 && cluster.strength >= 8) ||
+                (structuralHits.length >= 3 && cluster.strength >= 6 && hasIndependentEvidence) ||
                 (structuralHits.length >= 1 && duplicateHits.length >= 2 && cluster.strength >= 9);
         })
         .map(cluster => ({
@@ -3369,10 +3379,16 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
             reasons: cluster.reasons
         }));
 
-    // Detectarea statistică a deplasărilor pe baza lungimilor este păstrată separat,
-    // doar pentru diagnostic. Reparațiile locale folosesc aici indicii structurale
-    // concrete, nu o a doua corelație de lungimi care nu este independentă semantic.
-    return [...mergedCueBoundaryIssues, ...structuralIssues]
+    // Un singur indiciu „sursă neterminată + traducere lungă cu virgulă” este
+    // ambiguu: poate fi și o formulare românească validă. Îl folosim la reparare
+    // doar dacă este susținut de o anomalie structurală confirmată în aceeași zonă.
+    const confirmedMergedCueBoundaryIssues = mergedCueBoundaryIssues.filter(boundary =>
+        structuralIssues.some(issue => issue.start <= boundary.end && issue.end >= boundary.start)
+    );
+
+    // Corelațiile globale de lungime și indiciile izolate rămân doar diagnostice;
+    // nu consumă bugetul limitat de retraduceri fără corroborare locală independentă.
+    return [...confirmedMergedCueBoundaryIssues, ...structuralIssues]
         .sort((a, b) => b.strength - a.strength || a.start - b.start);
 }
 
@@ -6393,7 +6409,9 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
                 for (const localIssue of selectedLocalIssues) {
                     const startId = sourceChunk[localIssue.start]?.id ?? localIssue.start;
                     const endId = sourceChunk[localIssue.end]?.id ?? localIssue.end;
-                    const reasonText = localIssue.reasons.slice(0, 3).join('; ');
+                    const visibleReasons = localIssue.reasons.slice(0, 5);
+                    const hiddenReasonCount = Math.max(0, localIssue.reasons.length - visibleReasons.length);
+                    const reasonText = `${visibleReasons.join('; ')}${hiddenReasonCount ? `; +${hiddenReasonCount} alte indicii` : ''}`;
                     const issueLabel = 'indicii structurale';
                     console.log(`${c.yellow}⚠ [Aliniere locală] ${issueLabel} în zona ID ${startId}–${endId}: ${reasonText}. Retraduc numai zona suspectă.${c.reset}`);
 
