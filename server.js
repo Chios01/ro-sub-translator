@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.238',
+    version: '12.78.240',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -911,11 +911,44 @@ const SOUND_CUE_EXTENDED_LABEL_PATTERNS = [
     /^(?:(?:(?:heavy|deep|shallow|trembling|shuddering|rapid|ragged|labou?red|wheezy|shaky|gruff|sharp|gasping|long|slow|soft|quiet|loud)(?:\s*,\s*|\s+)){1,3})(?:breaths?|breathing)(?:\s+(?:continues?|nearby|deeply|calms\s+down|trembling|heavily|softly))?[.!…]*$/iu,
     /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|heavy|rapid|sharp|muffled|electronic|electrical|power|device|piano|metallic|softly)\s+){0,4}(?:whirr(?:s|ed|ing)?|whoosh(?:es|ed|ing)?|crackl(?:e|es|ed|ing)|warbl(?:e|es|ed|ing)|thrumm?(?:s|ed|ing)?|sizzl(?:e|es|ed|ing)|clack(?:s|ed|ing)?|clink(?:s|ed|ing)?|flutter(?:s|ed|ing)?|jingl(?:e|es|ed|ing)|ding(?:s|ed|ing)?|resonat(?:e|es|ed|ing)|boom(?:s|ed|ing)|ricochet(?:s|ed|ing)?|tear(?:s|ed|ing)|shatter(?:s|ed|ing)|snarl(?:s|ed|ing)|scoff(?:s|ed|ing))[.!…]*$/iu,
     /^(?:(?:backpack\s+drops?\s+to\s+(?:the\s+)?ground)|(?:snips?\s+(?:the\s+)?zip\s+tie)|(?:dialing\s+(?:the\s+)?phone)|(?:elevator\s+bell\s+chimes?)|(?:(?:entry|crossing|elevator)\s+bell\s+(?:jingling|dinging|chimes?))|(?:bell\s+(?:jingling|dinging|rings?))|(?:music\s+(?:ends|shuts\s+off))|(?:door\s+opens?\s+and\s+closes?)|(?:(?:vehicle|car)\s+door\s+(?:opens?|closes?))|(?:door\s+opens?)|(?:rapid\s+footsteps?)|(?:footsteps?\s+approaching)|(?:truck\s+departing)|(?:vehicles?\s+approaching)|(?:snaps?\s+fingers)|(?:taps?\s+(?:the\s+)?key)|(?:gunfire|gun\s+fires?)|(?:shower\s+water\s+running)|(?:air\s+pumping)|(?:glass\s+shards\s+clinking)|(?:voice\s+breaking)|(?:soft\s+clicking\s+vocalizations?)|(?:makes\s+whooshing\s+sound)|(?:piano\s+strings\s+resonating)|(?:piano\s+strings\s+thrumming)|(?:device\s+thrumming)|(?:device\s+sizzling)|(?:wings\s+fluttering)|(?:hailstones\s+clacking)|(?:conversing\s+in\s+Korean)|(?:praying\s+in\s+Latin)|(?:Park\s+continues\s+in\s+Korean)|(?:hisses\s+in\s+pain)|(?:Daniel\s+inhales\s+deeply)|(?:inhales?\s+deeply)|(?:breathing\s+calms\s+down)|(?:breathing\s+deeply)|(?:deep\s+breathing)|(?:muffled\s+shattering)|(?:glass\s+shattering)|(?:explosion\s+booming))[.!…]*$/iu,
-    /^(?:soft\s+electrical\s+warbling|soft\s+electrical\s+whooshing|soft\s+electrical\s+crackling|soft\s+whooshing\s*,\s*crackling|sharp\s+whoosh|soft\s+whirring|power\s+whirring|jet\s+engine\s+whirring|long\s*,\s*slow\s+gasp|rapid\s*,\s*gasping\s+breaths?|heavy\s*,\s*gasping\s+breaths?|heavy\s*,\s*labored\s+breathing|heavy\s*,\s*shaky\s+breathing|sharp\s*,\s*heavy\s+breathing|gruff\s*,\s*heavy\s+breathing\s+nearby|deep\s*,\s*wheezy\s+breathing|whimpering\s*,\s*straining|distressed\s+shrieking\s*,\s*clicking)[.!…]*$/iu
+    /^(?:soft\s+electrical\s+warbling|soft\s+electrical\s+whooshing|soft\s+electrical\s+crackling|soft\s+whooshing\s*,\s*crackling|sharp\s+whoosh|soft\s+whirring|power\s+whirring|jet\s+engine\s+whirring|long\s*,\s*slow\s+gasp|rapid\s*,\s*gasping\s+breaths?|heavy\s*,\s*gasping\s+breaths?|heavy\s*,\s*labored\s+breathing|heavy\s*,\s*shaky\s+breathing|sharp\s*,\s*heavy\s+breathing|gruff\s*,\s*heavy\s+breathing\s+nearby|deep\s*,\s*wheezy\s+breathing|whimpering\s*,\s*straining|distressed\s+shrieking\s*,\s*clicking)[.!…]*$/iu,
+    // Captions vocale autonome cu subiect (JOHN MUMBLES, HE BREATHES DEEPLY etc.).
+    // Acest pattern suplimentar este intenționat limitat la text scris integral cu majuscule.
+    /^(?:HE|SHE|THEY|SOMEONE|MAN|WOMAN|[A-Z][A-Z'’.-]*(?:\s+[A-Z][A-Z'’.-]*){0,2})\s+(?:INHALES?|EXHALES?|BREATHES?(?:\s+(?:DEEPLY|DEEP|HEAVILY|UNEVENLY|SOFTLY|SHALLOWLY|RAGGEDLY|RAPIDLY|SHARPLY))?|MUMBLES?|MUTTERS?(?:\s+TO\s+(?:HIMSELF|HERSELF|THEMSELVES))?|STAMMERS?|SIGHS?|GASPS?|GROANS?|GRUNTS?|SOBS?(?:\s+(?:LOUDLY|SOFTLY|QUIETLY))?|CHUCKLES?|CHIRPS?(?:\s+NONSENSE)?|CLEARS?\s+(?:HIS\s+|HER\s+|THEIR\s+)?THROAT|COUGHS?|LAUGHS?|CRIES?|WHIMPERS?|SNIFFS?|SPLUTTERS?|REVS?)(?:\s+(?:SOFTLY|QUIETLY|LOUDLY|DEEPLY|HEAVILY|GENTLY|UNEVENLY|SHALLOWLY|RAGGEDLY|RAPIDLY|SHARPLY|ANXIOUSLY|CAUTIOUSLY))?[.!…]*$/u
 ];
 
 function isExtendedSoundCueLabel(text) {
     return SOUND_CUE_EXTENDED_LABEL_PATTERNS.some(pattern => pattern.test(text));
+}
+
+
+// Clasificator structural pentru caption-uri SDH scrise în stil editorial (de regulă cu majuscule).
+// În loc să enumerăm fiecare expresie completă („KEYS JANGLE”, „CAR HORN TOOTS” etc.),
+// recunoaștem forma tipică: etichetă scurtă, fără punctuație de dialog, cu verb de eveniment
+// sonor sau substantiv acustic. Este intenționat conservator: textul ambiguu rămâne la traducere.
+const SOUND_CUE_STRUCTURAL_ACTION_RE = /\b(?:jangle(?:s|d|ing)?|crunch(?:es|ed|ing)?|toot(?:s|ed|ing)?|rev(?:s|ved|ving)?|stall(?:s|ed|ing)?|grind(?:s|ed|ing)?|squeal(?:s|ed|ing)?|screech(?:es|ed|ing)?|blare(?:s|d|ing)?|jam(?:s|med|ming)?|ping(?:s|ed|ing)?|clink(?:s|ed|ing)?|whine(?:s|d|ing)?|shatter(?:s|ed|ing)?|murmur(?:s|ed|ing)?|slurp(?:s|ed|ing)?|snicker(?:s|ed|ing)?|erupt(?:s|ed|ing)?|crackle(?:s|d|ing)?|sizzle(?:s|d|ing)?|hiss(?:es|ed|ing)?|drone(?:s|d|ing)?|splash(?:es|ed|ing)?|argu(?:e|es|ed|ing)|turns?\s+over|cuts?\s+(?:out|off)|go(?:es)?\s+off|falls?\s+silent|reverberat(?:e|es|ed|ing)|amplif(?:y|ies|ied|ying)|shuts?(?:\s+off)?|opens?(?:\s+and\s+closes?)?)\b/iu;
+const SOUND_CUE_STRUCTURAL_NOUN_RE = /\b(?:tone|chatter|hubbub|commentary|comms|applause|footsteps?|music|silence|static|ringing|beeping|buzzing|whistle|whistling|crunching|squeaking|creaking|crying|laughter|breathing|sound|noise|siren|fireworks?)\b/iu;
+const SOUND_CUE_STRUCTURAL_SOURCE_RE = /\b(?:keys?|lock|radio|program(?:me)?|biscuit|car|horn|phone|sms|engine|gearbox|tyres?|tires?|whiteboard|door|office|metal|seat\s+belt|glass|sports?\s+commentary)\b/iu;
+
+function isGenericUppercaseSoundCaption(text, words) {
+    if (!text || words.length < 2 || words.length > 8) return false;
+    const letters = text.match(/\p{L}/gu) || [];
+    if (letters.length < 3 || text !== text.toLocaleUpperCase('en-US')) return false;
+
+    // Întrebările, citatele, formulele de conversație și construcțiile gramaticale complete
+    // nu sunt eliminate de fallback-ul structural, chiar dacă menționează râs/respirație etc.
+    if (/[?"“”]/u.test(text)) return false;
+    if (/\b(?:I|ME|MY|MINE|YOU|YOUR|YOURS|WE|US|OUR|OURS|HE|SHE|THEY|IT|PLEASE|YES|NO|OK|OKAY|WHAT|WHY|HOW|WHERE|WHEN|WHO|HELP|STOP|WAIT|GET|COME|LET|DON'T|CANNOT|CAN'T|WON'T|WOULD|SHOULD|COULD|MUST|AM|ARE|IS|WAS|WERE|HAVE|HAS|HAD|DO|DOES|DID|NOT|ALWAYS|NEVER|EVERYONE|EVERYBODY|NOBODY|SOMEBODY|SOMETHING|ANYTHING|ABOUT|BECAUSE|WHENEVER|WHILE|ALTHOUGH|THAT|THIS|THESE|THOSE|AT|WITH|FROM|FOR|AFTER|BEFORE)\b/u.test(text)) return false;
+    if (/[;,:]/u.test(text)) return false;
+
+    // Este fallback se aplică doar dacă există și un indiciu semantic acustic.
+    // Astfel, majusculele singure nu sunt suficiente pentru a șterge dialogul.
+    const hasSoundVerb = SOUND_CUE_STRUCTURAL_ACTION_RE.test(text) || SOUND_CUE_ACTION_RE.test(text);
+    const hasAcousticNoun = SOUND_CUE_STRUCTURAL_NOUN_RE.test(text);
+    const hasSoundSource = SOUND_CUE_STRUCTURAL_SOURCE_RE.test(text);
+    const hasMediaPlayback = /\b(?:radio|program(?:me)?|commentary|music|song|recording|broadcast)\b.*\bplays?\b/iu.test(text);
+    const hasSourceEvent = hasSoundSource && /\b(?:cuts?|idles?|turns?\s+over|shuts?(?:\s+off)?|opens?(?:\s+and\s+closes?)?)\b/iu.test(text);
+    return hasAcousticNoun || hasSoundVerb || (hasSoundSource && hasMediaPlayback) || hasSourceEvent;
 }
 
 const SOUND_CUE_LABEL_RE = /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|background|gentle|heavy|slight|small|short|brief|off-screen|în fundal|încet|încetișor|tare|ușor|scurt|scurtă|puternic|puternică|îndepărtat(?:ă|e)?|slab(?:ă|e)?)\s+)*(?:sound(?:s)?(?:\s+of)?|noise(?:s)?(?:\s+of)?|music(?:\s+(?:playing|continues|swells|fades|starts|stops|in background))?|applause|laughter|laugh(?:s|ing)?|footsteps?|knocking|banging|pounding|thudding|thumping|doorbell|ringing|beeping|buzzing|clicking|clattering|crashing|slamming|creaking|cough(?:ing|s)?|sigh(?:ing|s)?|gasp(?:ing|s)?|groan(?:ing|s)?|grunt(?:ing|s)?|snoring|heavy breathing|breathing heavily|breathing|whispering|singing|humming|babbling|murmuring|whimpering|growling|snorting|sniffing|sneezing|screaming|shouting|panting|chirping|howling|rustling|rattling|rumbling|whistling|clapping|shuffling|swallowing|gulping|squeaking|squealing|scraping|scratching|wind howling|birds? chirping|doorbell ringing|phone ringing|background music|bătaie(?:\s+în\s+ușă)?|bătăi(?:\s+în\s+ușă)?|gângurit(?:ul)?|mormăit(?:ul|uri)?|suspin(?:ând|e|uri)?|oftat(?:ul)?|râs(?:ul)?|râde|râzând|râsete|plâns(?:ul)?|plânge|plângând|plânsete|pași|aplauze|urale|tușit(?:ul)?|tușește|tușind|gâfâit(?:ul|uri)?|gâfâie|gâfâind|bufnet(?:ul|e)?|bufnește|bufnire|bufniri|pufnet(?:ul|e)?|pufnește|pufnire|foșnet(?:ul|e|uri)?|foșnește|fâșâit(?:ul|uri)?|fâșâie|trosnet(?:ul|e)?|trosnește|zgomot(?:e)?(?:\s+de\s+[^.!?]{1,60})?|sunet(?:e)?(?:\s+de\s+[^.!?]{1,60})?|șuieră|șuierând|șuierături|fluieră|fluierând|fluierături|geme|gemând|geamăt(?:e)?|gemete|horcăie|horcăit(?:ul|uri)?|sforăie|sforăit|adulmecă|fornăie|sughiță|sughițuri|fredonează|cântă\s+încet|face\s+fâ+|bate\s+din\s+palme|clopoțel|răpăit|zdrăngănit|vibrează|hârâit)(?:\s+(?:in the background|from outside|from inside|în fundal|se aude|continuă|încet|tare|ușor|puternic|loudly|softly))?[.!…]*$/iu;
@@ -960,8 +993,17 @@ function isStandaloneNonDialogueSoundCue(value) {
         .trim();
     if (!text || text.length > 180) return false;
 
-    // Lista închisă rămâne testul principal pentru etichete sonore explicite.
+    // „Cheers.” este frecvent o replică de dialog (de ex. salut/încheiere),
+    // nu o descriere de public care aplaudă. O păstrăm ca text dialogat.
+    if (/^cheers[.!…]*$/iu.test(text)) return false;
+
+    // Etichetele explicite deja recunoscute rămân tratamentul cu cea mai mare încredere.
     if (SOUND_CUE_LABEL_RE.test(text) || isExtendedSoundCueLabel(text)) return true;
+
+    // Regula generală pentru caption-uri SDH: folosește structura, stilul editorial și
+    // semantica acustică, nu o listă de expresii complete specifice unui singur film.
+    const words = text.match(/[\p{L}\p{N}]+/gu) || [];
+    if (isGenericUppercaseSoundCaption(text, words)) return true;
 
     // Nu interpretăm ca efect sonor propoziții din perspectiva vorbitorului sau adresate interlocutorului.
     // Exemple păstrate: "I laugh when I'm nervous", "You gasp every time", "We scream about it".
@@ -970,7 +1012,6 @@ function isStandaloneNonDialogueSoundCue(value) {
 
     // Unele piste scriu cue-ul fără paranteze și numai la forma verbală:
     // "Screams", "Yelps", "Man gasps". Acceptăm forme foarte scurte, nu fraze explicative.
-    const words = text.match(/[\p{L}\p{N}]+/gu) || [];
     if (words.length <= 2 && SOUND_CUE_ACTION_RE.test(text)) return true;
 
     // Acceptăm descriptori de tip closed caption (subiect nominal + acțiune sonoră),
