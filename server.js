@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.243',
+    version: '12.78.244',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3234,6 +3234,18 @@ const LOCAL_SEQUENCE_SHIFT_WINDOW_SIZE = 10;
 const LOCAL_SEQUENCE_SHIFT_WINDOW_STEP = 5;
 const LOCAL_SEQUENCE_SHIFT_MIN_PAIRS = 7;
 
+// Semnalul statistic pe ferestre mari nu declanșează singur apeluri Gemini.
+// Cerem o a doua confirmare, la altă scară, în aceeași zonă și cu același offset.
+function hasIndependentLocalSequenceConfirmation(alignmentIssue, localIssues) {
+    if (!alignmentIssue?.confirmed || !Array.isArray(localIssues)) return false;
+    return localIssues.some(issue =>
+        issue.kind === 'sequence-shift' &&
+        issue.shift === alignmentIssue.shift &&
+        issue.start <= alignmentIssue.end + LOCAL_SEQUENCE_SHIFT_WINDOW_SIZE &&
+        issue.end >= alignmentIssue.start - LOCAL_SEQUENCE_SHIFT_WINDOW_SIZE
+    );
+}
+
 function localAlignmentPearson(xs, ys) {
     if (xs.length !== ys.length || xs.length < LOCAL_SEQUENCE_SHIFT_MIN_PAIRS) return null;
     const meanX = xs.reduce((sum, value) => sum + value, 0) / xs.length;
@@ -3365,6 +3377,7 @@ function detectLocalTranslationSequenceShift(sourceItems, translatedItems) {
     return {
         start: cluster.start,
         end: cluster.end,
+        shift: cluster.shift,
         evidenceCount: cluster.hits.length,
         strength: 50 + cluster.hits.length * 3,
         kind: 'sequence-shift',
@@ -6519,11 +6532,27 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
             const sourceChunk = chunks[batchResult.globalIndex];
             let chunkResult = batchResult.result;
             const alignmentIssue = detectTranslationAlignmentShift(sourceChunk, chunkResult);
+            // O corelație statistică pe ferestre de 28 de replici poate fi produsă
+            // și de tiparul natural al dialogului, chiar când traducerea este aliniată.
+            // Pentru apelurile Gemini costisitoare cerem confirmare separată pe ferestre
+            // mai scurte, cu același offset și în aceeași zonă aproximativă.
+            const localAlignmentPrecheck = alignmentIssue?.confirmed
+                ? detectLocalTranslationAlignmentAnomalies(sourceChunk, chunkResult)
+                : [];
+            const alignmentRepairApproved = hasIndependentLocalSequenceConfirmation(
+                alignmentIssue,
+                localAlignmentPrecheck
+            );
+            let alignmentRepairApplied = false;
             if (alignmentIssue && !alignmentIssue.confirmed) {
                 const signalStart = sourceChunk[alignmentIssue.start]?.id ?? alignmentIssue.start;
                 const signalEnd = sourceChunk[alignmentIssue.end]?.id ?? alignmentIssue.end;
                 console.log(`${c.yellow}ℹ [Aliniere] Semnal statistic izolat ${alignmentIssue.shift > 0 ? '+' : ''}${alignmentIssue.shift} în zona ID ${signalStart}–${signalEnd} (o singură fereastră; caractere ${alignmentIssue.charsScore.toFixed(2)}, cuvinte ${alignmentIssue.wordsScore.toFixed(2)}, bază ${alignmentIssue.baseline.toFixed(2)}). Nu retraduc automat fără confirmare în a doua fereastră independentă.${c.reset}`);
-            } else if (alignmentIssue && alignmentIssue.confirmed) {
+            } else if (alignmentIssue && alignmentIssue.confirmed && !alignmentRepairApproved) {
+                const signalStart = sourceChunk[Math.max(0, alignmentIssue.start - 2)]?.id ?? alignmentIssue.start;
+                const signalEnd = sourceChunk[Math.min(sourceChunk.length - 1, alignmentIssue.end + 2)]?.id ?? alignmentIssue.end;
+                console.log(`${c.yellow}ℹ [Aliniere] Semnal statistic multi-fereastră în zona ID ${signalStart}–${signalEnd}, dar fără confirmare independentă pe ferestre scurte în aceeași direcție. Nu retraduc automat și evit cereri Gemini suplimentare; verificarea locală rămâne activă.${c.reset}`);
+            } else if (alignmentIssue && alignmentIssue.confirmed && alignmentRepairApproved) {
                 const suspectStart = Math.max(0, alignmentIssue.start - 2);
                 const suspectEnd = Math.min(sourceChunk.length - 1, alignmentIssue.end + 2);
                 const startId = sourceChunk[suspectStart]?.id ?? sourceChunk[alignmentIssue.start]?.id;
@@ -6539,6 +6568,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
                     batchResult.globalIndex,
                     chunks.length
                 );
+                alignmentRepairApplied = true;
                 const residualIssue = detectTranslationAlignmentShift(sourceChunk, chunkResult);
                 if (residualIssue && residualIssue.confirmed) {
                     const residualStart = sourceChunk[Math.max(0, residualIssue.start - 2)]?.id ?? sourceChunk[residualIssue.start]?.id;
@@ -6555,7 +6585,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
             // Detectorul local rulează fără cost API după eventuala reparație statistică.
             // Astfel poate depista și o a doua zonă rămasă greșită în același calup.
             // Nu mutăm niciodată texte între ID-uri; corectarea pornește mereu de la original.
-            if (alignmentIssue?.confirmed) {
+            if (alignmentRepairApplied) {
                 console.log(`${c.cyan}[Aliniere locală] Verific din nou rezultatul după repararea statistică.${c.reset}`);
             }
             const localAlignmentIssues = detectLocalTranslationAlignmentAnomalies(sourceChunk, chunkResult);
