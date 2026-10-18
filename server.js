@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.241',
+    version: '12.78.242',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5156,9 +5156,9 @@ function findPossibleBoundaryOverlapIssues(items, translatedById) {
     };
 
     // Dacă originalul englezesc repetă explicit aceeași secvență la limita
-    // dintre cue-uri, suprapunerea românească este susținută de sursă. Nu o
-    // semnalăm automat ca posibilă contaminare: exemplu „It's too soon to...” /
-    // „It's too soon to determine” → „E prea devreme să...” / „E prea devreme să stabilim”.
+    // dintre cue-uri, suprapunerea românească este susținută de sursă. Acceptăm
+    // și reluări ezitante înaintea secvenței complete, de tipul „Let's... let's...
+    // let's take a look at today”, nu doar potriviri de la primul cuvânt.
     const hasSourceBoundaryRepeat = (firstSource, secondSource) => {
         const sourceWords = value => clean(value)
             .normalize('NFC')
@@ -5177,13 +5177,20 @@ function findPossibleBoundaryOverlapIssues(items, translatedById) {
             'when', 'where', 'which', 'who', 'will', 'with', 'you', 'your'
         ]);
         const maxLength = Math.min(8, firstWords.length, secondWords.length);
+        // Căutăm sufixul primului cue în primele cuvinte ale celui de-al doilea.
+        // Astfel, reluări precum „Let's... let's... let's take...” sunt recunoscute,
+        // fără a trata o expresie îndepărtată din replică drept dovadă de continuitate.
         for (let length = maxLength; length >= 3; length--) {
             const suffix = firstWords.slice(-length);
-            if (!suffix.every((word, index) => word === secondWords[index])) continue;
             // Cel puțin un termen cu conținut trebuie să facă parte din suprapunere;
             // evităm să suprimăm semnale pe baza unor formule doar gramaticale.
             const informative = suffix.some(word => word.length >= 4 && !sourceLowInformationWords.has(word));
-            if (informative) return true;
+            if (!informative) continue;
+
+            const maxStart = Math.min(8, secondWords.length - length);
+            for (let start = 0; start <= maxStart; start++) {
+                if (suffix.every((word, index) => word === secondWords[start + index])) return true;
+            }
         }
         return false;
     };
