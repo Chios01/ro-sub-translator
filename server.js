@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.240',
+    version: '12.78.241',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5115,13 +5115,10 @@ function findRepeatedTranslationIssues(items, translatedById) {
         });
     }
 
-    for (let i = 0; i < issues.length; i += 2) {
-        const issue = issues[i];
-        const paired = issue?.pairedItem;
-        if (!issue || !paired) continue;
-        console.log(`${c.yellow}⚠ [QA Traducere duplicată] ID ${issue.item.id} și ${paired.id}: traducere identică pe originale diferite; ambele merg la verificare contextuală.${c.reset}`);
-    }
-
+    // Nu emitem avertisment aici: acesta este un semnal preliminar, înainte de
+    // verificarea contextuală. Raportarea se face la QA final numai dacă duplicatul
+    // persistă după toate corectările; altfel logul ar prezenta drept problemă rămasă
+    // o situație pe care verificarea tocmai a reparat-o.
     return issues;
 }
 
@@ -5396,12 +5393,9 @@ function findAdjacentSemanticOverlapIssues(items, translatedById) {
         });
     }
 
-    for (let i = 0; i < issues.length; i += 2) {
-        const issue = issues[i];
-        const paired = issue?.pairedItem;
-        if (!issue || !paired) continue;
-        console.log(`${c.yellow}⚠ [QA Suprapunere semantică] ID ${issue.item.id} și ${paired.id}: expresie românească repetată la limita dintre cue-uri („${issue.reason.match(/„([^”]+)”/)?.[1] || 'expresie'}”); verificare contextuală.${c.reset}`);
-    }
+    // Ca și la traducerile duplicate, avertismentul se amână până la QA final.
+    // O suprapunere detectată înainte de Quality Retry nu este o problemă rămasă
+    // dacă verificarea contextuală a eliminat-o.
     return issues;
 }
 
@@ -7190,6 +7184,25 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     for (const flag of finalQualityFlags) {
         addFinalReviewWarning(flag.item.id, flag.reasons);
     }
+
+    // Verificările pentru traduceri duplicate și suprapuneri semantice rulează
+    // din nou numai după toate etapele de reparare. Doar semnalele care încă există
+    // în textul final intră în raport și pot genera avertismente.
+    const finalRepeatedTranslationIssues = findRepeatedTranslationIssues(items, translatedById);
+    for (const issue of finalRepeatedTranslationIssues) {
+        const id = String(issue.item.id);
+        const pairedId = String(issue.pairedItem?.id ?? '');
+        if (!pairedId || suppressedFinalOutputIdSet.has(id) || suppressedFinalOutputIdSet.has(pairedId)) continue;
+        addFinalReviewWarning(id, issue.reason);
+    }
+    const finalAdjacentSemanticOverlapIssues = findAdjacentSemanticOverlapIssues(items, translatedById);
+    for (const issue of finalAdjacentSemanticOverlapIssues) {
+        const id = String(issue.item.id);
+        const pairedId = String(issue.pairedItem?.id ?? '');
+        if (!pairedId || suppressedFinalOutputIdSet.has(id) || suppressedFinalOutputIdSet.has(pairedId)) continue;
+        addFinalReviewWarning(id, issue.reason);
+    }
+
     for (const item of finalSuspicious) {
         const id = String(item.id);
         const translated = String(translatedById[id] || '');
@@ -7211,6 +7224,32 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         const ids = unresolvedFinalItems.map(item => item.id).join(', ');
         console.log(`${c.red}[QA FINAL] EROARE: ${unresolvedFinalItems.length} replici fără traducere (ID: ${ids}).${c.reset}`);
     }
+    // Mesajele specifice sunt afișate numai dacă semnalul este încă prezent
+    // după reparare. Perechile care au fost corectate nu mai produc avertismente.
+    const logRemainingPairIssues = (issues, label, describe) => {
+        const seenPairs = new Set();
+        for (const issue of issues) {
+            const id = String(issue.item.id);
+            const pairedId = String(issue.pairedItem?.id ?? '');
+            if (!pairedId || suppressedFinalOutputIdSet.has(id) || suppressedFinalOutputIdSet.has(pairedId)) continue;
+            if (!finalReviewWarnings.has(id) && !finalReviewWarnings.has(pairedId)) continue;
+            const pairKey = [id, pairedId].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(':');
+            if (seenPairs.has(pairKey)) continue;
+            seenPairs.add(pairKey);
+            console.log(`${c.yellow}⚠ [QA FINAL ${label}] ID ${id} și ${pairedId}: ${describe(issue)}; semnalul persistă după verificarea contextuală.${c.reset}`);
+        }
+    };
+    logRemainingPairIssues(
+        finalRepeatedTranslationIssues,
+        'Traducere duplicată',
+        () => 'traduceri identice pe originale diferite'
+    );
+    logRemainingPairIssues(
+        finalAdjacentSemanticOverlapIssues,
+        'Suprapunere semantică',
+        issue => `expresie repetată la limita dintre cue-uri („${issue.reason.match(/„([^”]+)”/)?.[1] || 'expresie'}”)`
+    );
+
     if (finalReviewWarnings.size) {
         const warningSamples = [...finalReviewWarnings.entries()].slice(0, 12).map(([id, reasons]) =>
             `ID ${id}: ${reasons.slice(0, 2).join('; ').slice(0, 140)}`
