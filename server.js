@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.246',
+    version: '12.78.247',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3516,7 +3516,7 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
             );
             // Două traduceri identice pot fi un refren/replică repetată; duplicarea
             // singură nu declanșează apel API fără și alt indiciu structural.
-            return (structuralHits.length >= 2 && cluster.strength >= 4) ||
+            return (structuralHits.length >= 3 && cluster.strength >= 6) ||
                 (structuralHits.length >= 1 && duplicateHits.length >= 2 && cluster.strength >= 9);
         })
         .map(cluster => ({
