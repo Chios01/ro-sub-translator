@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.244',
+    version: '12.78.245',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3227,11 +3227,11 @@ function localAlignmentNormalize(value) {
         .trim();
 }
 
-// Detectare suplimentară pe ferestre scurte. Este folosită după orice reparare
-// statistică: caută o relație consecventă între măsurile sursei i±1 și traducerea
-// de la i. Nu mută texte; doar delimitează o zonă ce poate fi retradusă din sursă.
+// Detectare suplimentară pe ferestre scurte fără suprapunere. Este folosită ca
+// o confirmare separată a semnalului statistic principal: fiecare fereastră locală
+// aduce replici distincte. Nu mută texte; doar delimitează o zonă de verificare.
 const LOCAL_SEQUENCE_SHIFT_WINDOW_SIZE = 10;
-const LOCAL_SEQUENCE_SHIFT_WINDOW_STEP = 5;
+const LOCAL_SEQUENCE_SHIFT_WINDOW_STEP = LOCAL_SEQUENCE_SHIFT_WINDOW_SIZE; // ferestre locale fără suprapunere
 const LOCAL_SEQUENCE_SHIFT_MIN_PAIRS = 7;
 
 // Semnalul statistic pe ferestre mari nu declanșează singur apeluri Gemini.
