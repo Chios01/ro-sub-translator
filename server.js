@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.252',
+    version: '12.78.253',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -266,8 +266,10 @@ app.get('/download-srt/:index', (req, res) => {
 // VALIDATE GEMINI KEY & CONFIGURE
 // ============================================================
 
-app.get('/validate-key', async (req, res) => {
-    const key = String(req.query.key || '').trim();
+app.post('/validate-key', async (req, res) => {
+    // Cheia este primită în corpul POST, nu în URL, pentru a evita expunerea
+    // în URL-uri, istoricul browserului și logurile de acces.
+    const key = String(req.body?.key || '').trim();
 
     if (!key) {
         return res.status(400).json({ valid: false, error: 'Missing API key' });
@@ -276,7 +278,10 @@ app.get('/validate-key', async (req, res) => {
     try {
         const response = await axios.get(
             'https://generativelanguage.googleapis.com/v1beta/models',
-            { params: { key }, timeout: 20000 }
+            {
+                headers: { 'x-goog-api-key': key },
+                timeout: 20000
+            }
         );
         return res.json({ valid: true, models: response.data?.models || [] });
     } catch (error) {
@@ -2732,7 +2737,13 @@ async function callGemini(prompt, keyState, options = {}) {
                     { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
                 ]
             },
-            { params: { key: keyState.key }, timeout, headers: { 'Content-Type': 'application/json' } }
+            {
+                timeout,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': keyState.key
+                }
+            }
         );
 
         const raw = response.data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';

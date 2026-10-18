@@ -227,7 +227,11 @@
                 try {
                     await new Promise(r => setTimeout(r, 200)); 
 
-                    let res = await fetch('/validate-key?key=' + encodeURIComponent(keyObj.value));
+                    let res = await fetch('/validate-key', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: keyObj.value })
+                    });
                     
                     if (!res.ok) {
                         input.style.borderColor = "#ff3333";
