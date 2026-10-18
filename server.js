@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.242',
+    version: '12.78.243',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -7192,16 +7192,11 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         addFinalReviewWarning(flag.item.id, flag.reasons);
     }
 
-    // Verificările pentru traduceri duplicate și suprapuneri semantice rulează
-    // din nou numai după toate etapele de reparare. Doar semnalele care încă există
-    // în textul final intră în raport și pot genera avertismente.
-    const finalRepeatedTranslationIssues = findRepeatedTranslationIssues(items, translatedById);
-    for (const issue of finalRepeatedTranslationIssues) {
-        const id = String(issue.item.id);
-        const pairedId = String(issue.pairedItem?.id ?? '');
-        if (!pairedId || suppressedFinalOutputIdSet.has(id) || suppressedFinalOutputIdSet.has(pairedId)) continue;
-        addFinalReviewWarning(id, issue.reason);
-    }
+    // Traducerile duplicate pe originale diferite rămân un semnal pentru verificarea
+    // contextuală/Quality Retry (în runLocalGrammarQualityPass), dar identitatea textului
+    // românesc nu este, singură, dovadă de eroare. Nu o raportăm din nou ca avertisment
+    // QA FINAL; numai alte indicii concrete, independente, pot păstra ID-ul în avertismente.
+    // Suprapunerile semantice rămân verificate separat după toate etapele de reparare.
     const finalAdjacentSemanticOverlapIssues = findAdjacentSemanticOverlapIssues(items, translatedById);
     for (const issue of finalAdjacentSemanticOverlapIssues) {
         const id = String(issue.item.id);
@@ -7246,11 +7241,6 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
             console.log(`${c.yellow}⚠ [QA FINAL ${label}] ID ${id} și ${pairedId}: ${describe(issue)}; semnalul persistă după verificarea contextuală.${c.reset}`);
         }
     };
-    logRemainingPairIssues(
-        finalRepeatedTranslationIssues,
-        'Traducere duplicată',
-        () => 'traduceri identice pe originale diferite'
-    );
     logRemainingPairIssues(
         finalAdjacentSemanticOverlapIssues,
         'Suprapunere semantică',
