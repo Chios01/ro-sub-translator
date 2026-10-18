@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.250',
+    version: '12.78.252',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3563,155 +3563,21 @@ function hasCorruptedSubtitleText(text, originalText) {
 }
 
 // ============================================================
-// SOURCE-TERM FIDELITY GUARD — TERMENI ANATOMICI EXPLICIȚI
-// Adaugă o verificare conservatoare când sursa numește direct un organ.
-// Nu înlocuiește formularea automat; doar declanșează o reverificare țintită
-// și împiedică Grammar Review să accepte o rescriere care pierde termenul.
+// SOURCE-FIDELITY HEURISTIC — DEZACTIVATĂ ÎN v12.78.252
+// După testele repetate, această euristică a produs suspiciuni neconfirmate.
+// Funcțiile rămân ca wrapper-e compatibile; post-check, grammar review, semantic
+// spot-check, empty recovery și celelalte verificări independente rămân active.
 // ============================================================
-const EXPLICIT_ANATOMICAL_TERM_GUARDS = [
-    {
-        label: 'vagina',
-        source: /\bvagina(?:s)?\b/i,
-        target: /vagin[\p{L}-]*/iu
-    },
-    {
-        label: 'vulva',
-        source: /\bvulva(?:s)?\b/i,
-        target: /vulv[\p{L}-]*/iu
-    },
-    {
-        label: 'clitoris',
-        source: /\bclitoris\b|\bclitoral\b/i,
-        target: /clitor[\p{L}-]*/iu
-    },
-    {
-        label: 'penis',
-        source: /\bpenis(?:es)?\b/i,
-        target: /(?:^|[^\p{L}])(?:penis[\p{L}-]*|pul(?:ă|a|ii|ile|e|ului))(?=$|[^\p{L}])/iu
-    },
-    {
-        label: 'breasts/boobs/tits',
-        source: /\bbreasts?\b|\bboobs?\b|\btits?\b/i,
-        target: /(?:^|[^\p{L}])(?:sân(?:ul|ului|i|ii|ilor)?|țâț[\p{L}-]*|tâț[\p{L}-]*)(?=$|[^\p{L}])/iu
-    },
-    {
-        label: 'nipples',
-        source: /\bnipples?\b/i,
-        target: /sfârc[\p{L}-]*|mamel[\p{L}-]*/iu
-    }
-];
-
 function getMissingExplicitAnatomicalTerms(original, translation) {
-    const sourceText = String(original || '').replace(/<[^>]+>/g, ' ');
-    const translatedText = String(translation || '').replace(/<[^>]+>/g, ' ');
-    if (!sourceText.trim() || !translatedText.trim()) return [];
-
-    return EXPLICIT_ANATOMICAL_TERM_GUARDS
-        .filter(rule => {
-            if (!rule.source.test(sourceText) || rule.target.test(translatedText)) return false;
-
-            // În română, „silicoane” este o echivalare naturală pentru „breast implants”.
-            // Nu forțăm adăugarea cuvântului „sâni” dacă originalul spune explicit
-            // „breast implants” și traducerea transmite deja același sens.
-            if (rule.label === 'breasts/boobs/tits' &&
-                /\bbreast\s+implants?\b/i.test(sourceText) &&
-                /\bsilicoan[\p{L}]*\b/iu.test(translatedText)) {
-                return false;
-            }
-
-            return true;
-        })
-        .map(rule => rule.label);
+    return [];
 }
 
 function getSourceFidelityIssues(original, translation) {
-    const sourceText = String(original || '').replace(/<[^>]+>/g, ' ');
-    const targetText = String(translation || '').replace(/<[^>]+>/g, ' ');
-    if (!sourceText.trim() || !targetText.trim()) return [];
-
-    const issues = getMissingExplicitAnatomicalTerms(sourceText, targetText)
-        .map(term => `termen explicit „${term}” absent sau înlocuit cu o formulare vagă`);
-    const sourceNorm = sourceText.toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
-    const targetNorm = targetText.toLocaleLowerCase('ro-RO').replace(/\s+/g, ' ').trim();
-
-    // Semnale conservatoare pentru câteva forme românești evident suspecte.
-    // Nu rescriem automat replica; post-check-ul o retrimite contextual.
-    const obviousRomanianQualityGuards = [
-        {
-            pattern: /(?<![\p{L}])lucrura(?![\p{L}])/iu,
-            message: 'posibilă eroare ortografică în forma „lucrura”'
-        },
-        {
-            pattern: /(?<![\p{L}])acesa(?![\p{L}])/iu,
-            message: 'posibilă eroare ortografică în forma „acesa”'
-        },
-        {
-            pattern: /(?<![\p{L}])întregă(?![\p{L}])/iu,
-            message: 'posibilă eroare de acord în forma „întregă”'
-        },
-        {
-            pattern: /(?<![\p{L}])din\s+cauză\s+la(?![\p{L}])/iu,
-            message: 'construcție gramaticală suspectă „din cauză la”'
-        }
-    ];
-    for (const guard of obviousRomanianQualityGuards) {
-        if (guard.pattern.test(targetNorm)) issues.push(guard.message);
-    }
-
-    // Relație semantică: „dries my vagina” numește vaginul ca obiect direct.
-    // Prezența cuvântului „vagin” într-o construcție locativă nu este suficientă.
-    if (/\b(?:dry|dries|dried|drying)\s+(?:my|your|her|his|their|the)\s+vagina\b/i.test(sourceNorm) &&
-        /\b(?:mă|ma)\s+usuc[ăa]\s+(?:în|in|la)\s+vagin(?:ul)?\b/iu.test(targetNorm)) {
-        issues.push('relație semantică greșită: „dry my vagina” a devenit „mă usucă în vagin” în locul unei construcții cu „vaginul” ca obiect direct');
-    }
-
-    // Inversare semantică documentată: în context auto, „put it in drive” nu înseamnă
-    // „pune-o în marșarier”. Semnalăm cazul pentru verificare contextuală, fără a
-    // impune o formulare românească fixă în lipsa contextului complet.
-    if (/\bput\s+it\s+in\s+drive\b/i.test(sourceNorm) &&
-        /\b(?:marșarier|marsarier|mers\s+înapoi|mers\s+inapoi|în\s+revers|in\s+revers|înapoi)\b/iu.test(targetNorm)) {
-        issues.push('inversare semantică: „put it in drive” nu trebuie tradus cu sensul de marșarier/înapoi');
-    }
-
-    // Conservă numărul gramatical pentru substantive uzuale de tip „hat/cap”.
-    // Este activ doar când sursa are clar un singur obiect numărabil.
-    const hasSingularHatSource = /\b(?:a|an|one)\s+(?:(?:[a-z]+)\s+){0,2}(?:hat|cap|beanie|bonnet)\b/i.test(sourceNorm);
-    const sourceAlsoNamesPluralHats = /\b(?:hats|caps|beanies|bonnets)\b/i.test(sourceNorm);
-    if (hasSingularHatSource && !sourceAlsoNamesPluralHats) {
-        const pluralHat = /(?<![\p{L}\p{N}_])(?:căciuli(?:le)?|caciuli(?:le)?|căciulițe|caciulite|șepci|sepci|fesuri|bonete|pălării|palarii)(?![\p{L}\p{N}_])/iu.test(targetNorm);
-        const singularHat = /(?<![\p{L}\p{N}_])(?:căciulă|caciula|căciuliță|caciulita|șapcă|sapca|fes|bonetă|boneta|pălărie|palarie)(?![\p{L}\p{N}_])/iu.test(targetNorm);
-        if (pluralHat && !singularHat) {
-            issues.push('număr gramatical schimbat: un obiect singular „hat/cap/beanie” a fost tradus la plural');
-        }
-        const diminutivesWithoutSourceCue = /(?<![\p{L}\p{N}_])(?:căciuliță|caciulita|șepcuță|sepcuta)(?![\p{L}\p{N}_])/iu.test(targetNorm) &&
-            !/\b(?:little|small|tiny|miniature|cute|baby|adorable)\b/i.test(sourceNorm);
-        if (diminutivesWithoutSourceCue) {
-            issues.push('diminutiv introdus fără suport evident în sursă');
-        }
-    }
-
-    // NU folosim o euristică generică de tipul „sursa conține o negație, iar
-    // traducerea nu conține «nu/nici»”. Aceasta produce alarme false pentru
-    // propoziții reformulate firesc în română și pentru replici împărțite între
-    // blocuri. O posibilă pierdere de sens nu se deduce doar din absența unui
-    // marcator lexical; rămân active verificările de engleză netradusă,
-    // text corupt și regulile semantice înguste, legate de expresii concrete.
-
-    // „following orders” înseamnă a urma/a executa ordinele, nu „ordinea de zi”.
-    // Semnalăm numai combinația de sursă și traducere care indică precis acest
-    // schimb de sens; remedierea se face prin retry-ul contextual deja existent.
-    if (/\bfollow(?:ing|ed)?\s+(?:the\s+)?orders\b/i.test(sourceNorm) &&
-        /(?<![\p{L}])(?:la\s+)?ordinea\s+(?:de\s+zi|zilei)(?![\p{L}])/iu.test(targetNorm)) {
-        issues.push('expresia „following orders” pare tradusă cu sensul de „ordinea de zi”');
-    }
-
-    return issues;
+    return [];
 }
 
 function hasLostExplicitSourceTerm(original, translation) {
-    // Păstrăm numele funcției pentru compatibilitate cu toate protecțiile existente,
-    // dar verificarea acoperă acum și relația semantică și numărul, nu doar vocabularul.
-    return getSourceFidelityIssues(original, translation).length > 0;
+    return false;
 }
 
 function applyBecauseOfWhatISaidCorrection(original, translation) {
@@ -6373,77 +6239,10 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         results.sort((a, b) => a.globalIndex - b.globalIndex);
 
         for (const batchResult of results) {
-            const sourceChunk = chunks[batchResult.globalIndex];
-            let chunkResult = batchResult.result;
-            const alignmentIssue = detectTranslationAlignmentShift(sourceChunk, chunkResult);
-            // Corelațiile lungime-caractere/cuvinte pot sugera o decalare, dar nu
-            // dovedesc că replicile sunt mapate greșit. Nu retraducem automat doar
-            // pe baza acestor statistici; anomaliile structurale locale rămân active.
-            if (alignmentIssue && !alignmentIssue.confirmed) {
-                const signalStart = sourceChunk[alignmentIssue.start]?.id ?? alignmentIssue.start;
-                const signalEnd = sourceChunk[alignmentIssue.end]?.id ?? alignmentIssue.end;
-                console.log(`${c.yellow}ℹ [Aliniere] Semnal statistic izolat ${alignmentIssue.shift > 0 ? '+' : ''}${alignmentIssue.shift} în zona ID ${signalStart}–${signalEnd} (o singură fereastră; caractere ${alignmentIssue.charsScore.toFixed(2)}, cuvinte ${alignmentIssue.wordsScore.toFixed(2)}, bază ${alignmentIssue.baseline.toFixed(2)}). Doar diagnostic; fără retraducere automată.${c.reset}`);
-            } else if (alignmentIssue?.confirmed) {
-                const signalStart = sourceChunk[alignmentIssue.start]?.id ?? alignmentIssue.start;
-                const signalEnd = sourceChunk[alignmentIssue.end]?.id ?? alignmentIssue.end;
-                console.log(`${c.yellow}ℹ [Aliniere] Semnal statistic multi-fereastră ${alignmentIssue.shift > 0 ? '+' : ''}${alignmentIssue.shift} în zona ID ${signalStart}–${signalEnd} (corelație ${alignmentIssue.score.toFixed(2)}, bază ${alignmentIssue.baseline.toFixed(2)}, caractere ${alignmentIssue.charsScore.toFixed(2)}, cuvinte ${alignmentIssue.wordsScore.toFixed(2)}, ${alignmentIssue.windows} ferestre independente). Corelațiile de lungime rămân informative; nu declanșează singure apeluri Gemini.${c.reset}`);
-            }
-
-            // Verificarea locală cu semnale structurale rămâne activă și poate repara
-            // anomalii concrete fără ca detectorul statistic de lungimi să lanseze retry.
-            const localAlignmentIssues = detectLocalTranslationAlignmentAnomalies(sourceChunk, chunkResult);
-            const localRepairsUsed = Math.max(0, Number(keyStates._localAlignmentRepairCount) || 0);
-            const localRepairsRemaining = Math.max(0, LOCAL_ALIGNMENT_MAX_REPAIRS_PER_SUBTITLE - localRepairsUsed);
-            const localRepairBudget = Math.min(LOCAL_ALIGNMENT_MAX_REPAIRS_PER_CHUNK, localRepairsRemaining);
-            const selectedLocalIssues = localAlignmentIssues
-                .slice(0, localRepairBudget)
-                .sort((a, b) => a.start - b.start);
-
-            if (localAlignmentIssues.length > selectedLocalIssues.length) {
-                console.log(`${c.yellow}[Aliniere locală] ${localAlignmentIssues.length} zone suspecte găsite; ${selectedLocalIssues.length} selectate. Bugetul de corectare locală este de maximum ${LOCAL_ALIGNMENT_MAX_REPAIRS_PER_SUBTITLE} zone pentru întreaga subtitrare, indiferent de lungime.${c.reset}`);
-            }
-
-            if (selectedLocalIssues.length && (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold)) {
-                console.log(`${c.yellow}[Aliniere locală] ${selectedLocalIssues.length} zone suspecte detectate, dar retraducerea este omisă cât timp circuitul 429 este în pauză. Nu se lansează apeluri suplimentare.${c.reset}`);
-            } else {
-                for (const localIssue of selectedLocalIssues) {
-                    const startId = sourceChunk[localIssue.start]?.id ?? localIssue.start;
-                    const endId = sourceChunk[localIssue.end]?.id ?? localIssue.end;
-                    const visibleReasons = localIssue.reasons.slice(0, 5);
-                    const hiddenReasonCount = Math.max(0, localIssue.reasons.length - visibleReasons.length);
-                    const reasonText = `${visibleReasons.join('; ')}${hiddenReasonCount ? `; +${hiddenReasonCount} alte indicii` : ''}`;
-                    const issueLabel = 'indicii structurale';
-                    console.log(`${c.yellow}⚠ [Aliniere locală] ${issueLabel} în zona ID ${startId}–${endId}: ${reasonText}. Retraduc numai zona suspectă.${c.reset}`);
-
-                    // Numărăm încercarea înainte de apel, inclusiv dacă API-ul eșuează,
-                    // astfel încât retry-urile și calupurile următoare să nu depășească bugetul.
-                    keyStates._localAlignmentRepairCount = (Number(keyStates._localAlignmentRepairCount) || 0) + 1;
-                    chunkResult = await repairTranslationAlignmentRange(
-                        sourceChunk,
-                        chunkResult,
-                        localIssue,
-                        items,
-                        batchResult.globalIndex * CHUNK_SIZE,
-                        keyStates,
-                        batchResult.globalIndex,
-                        chunks.length
-                    );
-
-                    const residualLocalIssues = detectLocalTranslationAlignmentAnomalies(sourceChunk, chunkResult);
-                    const marginStart = Math.max(0, localIssue.start - 2);
-                    const marginEnd = Math.min(sourceChunk.length - 1, localIssue.end + 2);
-                    const residual = residualLocalIssues.find(issue => issue.start <= marginEnd && issue.end >= marginStart);
-                    if (residual) {
-                        console.log(`${c.yellow}ℹ [Aliniere locală] După retraducere mai există indicii structurale în/în jurul ID ${sourceChunk[residual.start]?.id ?? residual.start}–${sourceChunk[residual.end]?.id ?? residual.end}. Nu repet automat încă o cerere pentru aceeași zonă.${c.reset}`);
-                    } else {
-                        console.log(`${c.green}✔ [Aliniere locală] Indiciile structurale care au declanșat retraducerea nu mai sunt detectate. Acesta este un semnal structural, nu o garanție semantică absolută.${c.reset}`);
-                    }
-                }
-            }
-            if (selectedLocalIssues.length && !(keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold)) {
-                batchResult.result = chunkResult;
-            }
-
+            // v12.78.252: dezactivate intenționat detectorul statistic și detectorul local
+            // de aliniere. În testele anterioare nu au produs reparații confirmate și au
+            // declanșat false positive. Nu mai generează apeluri Gemini sau alarme.
+            // Maparea normală ID→replică și toate verificările independente rămân active.
             for (const item of batchResult.result) {
                 translatedById[String(item.id)] = item.text;
             }
@@ -7064,7 +6863,13 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         const reasons = [];
         if (hasUntranslatedEnglish(item.text, translated)) reasons.push('posibil text englezesc rămas');
         if (hasCorruptedSubtitleText(translated, item.text)) reasons.push('text posibil corupt');
-        if (hasLostExplicitSourceTerm(item.text, translated)) reasons.push('posibil termen explicit pierdut');
+        // Raportăm cauza reală din verificarea fidelității sursei, în loc să o
+        // etichetăm automat ca „termen explicit pierdut”. Funcția-wrapper
+        // hasLostExplicitSourceTerm acoperă și gramatică/inversări semantice.
+        const sourceFidelityIssues = getSourceFidelityIssues(item.text, translated);
+        for (const fidelityIssue of sourceFidelityIssues) {
+            if (!reasons.includes(fidelityIssue)) reasons.push(fidelityIssue);
+        }
         if (!reasons.length) reasons.push('traducere suspectă la verificarea finală');
         addFinalReviewWarning(id, reasons);
     }
