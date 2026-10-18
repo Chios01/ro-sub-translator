@@ -165,7 +165,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '12.78.249',
+    version: '12.78.250',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6972,18 +6972,36 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         }
     }
 
-    // Ultima verificare diagnostică după formatarea finală. O repetiție la limită este
-    // ambiguă și poate fi legitimă; ea produce avertisment, dar nu blochează livrarea/cache-ul.
+    // Ultima verificare diagnostică după formatarea finală. O repetiție lexicală
+    // la limita dintre două cue-uri este ambiguă și poate fi legitimă; singură,
+    // nu este suficientă pentru a produce un avertisment QA FINAL. Dacă ID-ul are
+    // deja un alt semnal independent de calitate, atașăm suprapunerea ca informație
+    // suplimentară; altfel păstrăm doar un mesaj diagnostic, fără alarmă QA.
     const finalBoundaryOverlapIssues = findPossibleBoundaryOverlapIssues(items, translatedById);
+    const independentFinalFlagIds = new Set(finalQualityFlags.map(entry => String(entry.item.id)));
+    const boundaryOverlapDiagnostics = [];
     for (const issue of finalBoundaryOverlapIssues) {
         const id = String(issue.item.id);
-        if (suppressedFinalOutputIdSet.has(id)) continue;
-        const existing = finalQualityFlags.find(entry => String(entry.item.id) === id);
+        const pairedId = String(issue.pairedItem?.id ?? '');
+        if (suppressedFinalOutputIdSet.has(id) || !pairedId || suppressedFinalOutputIdSet.has(pairedId)) continue;
+        const existing = independentFinalFlagIds.has(id)
+            ? finalQualityFlags.find(entry => String(entry.item.id) === id)
+            : null;
         if (existing) {
             if (!existing.reasons.includes(issue.reason)) existing.reasons.push(issue.reason);
-        } else {
-            finalQualityFlags.push({ item: issue.item, reasons: [issue.reason] });
+        } else if (!independentFinalFlagIds.has(pairedId)) {
+            boundaryOverlapDiagnostics.push(issue);
         }
+    }
+    const loggedBoundaryPairs = new Set();
+    for (const issue of boundaryOverlapDiagnostics) {
+        const id = String(issue.item.id);
+        const pairedId = String(issue.pairedItem?.id ?? '');
+        const pairKey = [id, pairedId].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(':');
+        if (loggedBoundaryPairs.has(pairKey)) continue;
+        loggedBoundaryPairs.add(pairKey);
+        const phrase = issue.reason.match(/„([^”]+)”/)?.[1] || 'expresie repetată';
+        console.log(`${c.cyan}ℹ [QA diagnostic] Posibilă suprapunere lexicală între ID ${id} și ${pairedId} („${phrase}”); fără un indiciu independent, nu este raportată ca avertisment QA FINAL.${c.reset}`);
     }
     const finalSuspicious = items.filter(item => {
         const id = String(item.id);
