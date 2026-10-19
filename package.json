@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.12",
+  "version": "13.2.13",
   "private": true,
-  "description": "RO Sub Translator — cache translation prompt source index per SRT list",
+  "description": "Restore OpenSubtitles video-hash ranking and guard release-group extraction; retains v13.2.12 fixes",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -178,7 +178,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.12',
+    version: '13.2.13',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1117,6 +1117,24 @@ async function handleSubtitles(req, res) {
             _selectionSourceOrder: sourceOrder
         }));
 
+        // OpenSubtitles v3 indică metoda potrivirii prin câmpul `m`;
+        // `m: "h"` înseamnă potrivire după movie hash. Folosim semnalul
+        // numai dacă Stremio a trimis efectiv videoHash.
+        const isReportedHashMatch = (candidate) => {
+            const data = candidate && candidate.sourceData ? candidate.sourceData : (candidate || {});
+            const sourceIndex = candidate && candidate.sourceIndex !== undefined
+                ? candidate.sourceIndex
+                : candidate && candidate._selectionSourceIndex !== undefined
+                    ? candidate._selectionSourceIndex
+                    : 0;
+            if (!userVideoHash || sourceIndex !== 0) return false;
+            const matchMethod = String(data.m || data.matchMethod || data.match_method || data.matchType || '')
+                .trim().toLowerCase();
+            const explicitHashFlag = [data.moviehash_match, data.hashMatch, data.hash_match]
+                .some(value => value === true || /^(?:true|1|yes)$/i.test(String(value || '')));
+            return explicitHashFlag || ['h', 'hash', 'moviehash', 'movie_hash'].includes(matchMethod);
+        };
+
         // Păstrăm validarea URL-urilor și filtrul anti-release-uri nedorite.
         let engSubs = allSubs.filter(sub =>
             (sub.lang === 'eng' || sub.lang === 'en' || sub.lang === 'English') &&
@@ -1144,7 +1162,8 @@ async function handleSubtitles(req, res) {
             sourceData: sub,
             sourceIndex: 0,
             sourceOrder: sub._selectionSourceOrder,
-            sourceName: subtitleSourceNames[0]
+            sourceName: subtitleSourceNames[0],
+            hashMatch: isReportedHashMatch(sub)
         }));
 
         const fNameLower = userFilename.toLowerCase();
@@ -1189,9 +1208,13 @@ async function handleSubtitles(req, res) {
         };
 
         const extractReleaseGroup = (name) => {
-            const raw = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '');
-            const bracket = raw.match(/\[([^\]]+)\](?:\s*)$/);
+            const raw = String(name || '').replace(/\.[a-z0-9]{2,4}$/i, '').trim();
+            const bracket = raw.match(/\[([^\]]+)\]\s*$/);
             if (bracket) return bracket[1].trim().toLowerCase();
+
+            // Fără un tag tehnic de release, ultimul cuvânt poate fi doar
+            // titlul filmului (ex. "Disclosure Day"), nu un release group.
+            if (!/\b(?:2160p|1080p|720p|576p|480p|webrip|web[ .-]?dl|bluray|blu[ .-]?ray|brrip|bdrip|hdtv|x264|x265|h264|h265|hevc|avc|19\d{2}|20\d{2})\b/i.test(raw)) return '';
 
             const tokens = normalizeReleaseName(raw).split(' ').filter(Boolean);
             const stop = new Set([
@@ -1339,13 +1362,34 @@ async function handleSubtitles(req, res) {
             if (/forced|machine|auto|translated|resync|re-sync|retime|syncfix/i.test(subName)) s.score -= 250;
         });
 
-        // Clasăm toți candidații eligibili din sursa OpenSubtitles, apoi păstrăm
-        // maximum 4. SubDL are propriul buget separat și este combinat ulterior.
+        // Hash-ul confirmat de OpenSubtitles are prioritate asupra scorului local:
+        // numele release-ului nu trebuie să împingă în jos o potrivire video exactă.
+        // Între potrivirile confirmate păstrăm ordinea upstream a OpenSubtitles.
+        const hasReportedHashMatches = Boolean(userVideoHash && diverseSubs.some(s => s.hashMatch));
+        if (userVideoHash) {
+            const hashMatchCount = diverseSubs.filter(s => s.hashMatch).length;
+            console.log(`${c.cyan}[Subtitrări] videoHash ${hashMatchCount ? `confirmat pentru ${hashMatchCount} variante OpenSubtitles` : 'transmis, dar fără potrivire explicită; fallback la scorul release-ului'}${c.reset}`);
+        }
+        const compareOpenSubtitlesCandidates = (a, b) => {
+            if (hasReportedHashMatches && Boolean(a.hashMatch) !== Boolean(b.hashMatch)) {
+                return a.hashMatch ? -1 : 1;
+            }
+            if (hasReportedHashMatches && a.hashMatch && b.hashMatch) {
+                return (Number(a.sourceOrder) || 0) - (Number(b.sourceOrder) || 0)
+                    || (a._rankingOrder - b._rankingOrder);
+            }
+            return (b.score - a.score)
+                || ((Number(a.sourceOrder) || 0) - (Number(b.sourceOrder) || 0))
+                || (a._rankingOrder - b._rankingOrder);
+        };
+
+        // Clasăm candidații eligibili OpenSubtitles, apoi păstrăm maximum 4.
+        // SubDL are propriul buget separat și este combinat ulterior.
         const sourceBalancedCandidates = [];
         for (let sourceIndex = 0; sourceIndex < urlsToFetch.length; sourceIndex++) {
             const rankedSource = diverseSubs
                 .filter(s => s.sourceIndex === sourceIndex)
-                .sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder));
+                .sort(compareOpenSubtitlesCandidates);
             sourceBalancedCandidates.push(...rankedSource.slice(0, openSubtitlesLimit));
         }
 
@@ -1363,7 +1407,7 @@ async function handleSubtitles(req, res) {
         }
 
         diverseSubs = [...bestCandidateByUrl.values()]
-            .sort((a, b) => (b.score - a.score) || (a._rankingOrder - b._rankingOrder))
+            .sort(compareOpenSubtitlesCandidates)
             .slice(0, openSubtitlesLimit);
         
 
