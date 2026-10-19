@@ -178,7 +178,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.2',
+    version: '13.2.3',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -544,6 +544,37 @@ function sanitizeSubtitleLogValue(value, maxLength = 220) {
         .slice(0, maxLength);
 }
 
+function isOpaqueSubdlSubtitleName(value) {
+    const name = sanitizeSubtitleLogValue(value, 300);
+    if (!name) return true;
+    if (/^https?:\/\//i.test(name)) return true;
+    // SubDL sometimes exposes an internal token such as
+    // tt15047880.<hex-token>.EN in a field normally used for a release filename.
+    if (/^tt\d+[._-][a-f0-9]{16,}(?:[._-][a-z]{2,4})?$/i.test(name)) return true;
+    if (/^[a-f0-9]{24,}(?:[._-][a-z]{2,4})?$/i.test(name)) return true;
+    if (/^(?:subdl subtitle|subtitle|unknown|n\/?a|none)$/i.test(name)) return true;
+    return false;
+}
+
+function resolveSubdlSubtitleName(row, expectedTitle, sourceOrder) {
+    // Check multiple provider fields rather than trusting release_name blindly:
+    // it may contain an opaque token while filename/title still contains a real name.
+    const values = [
+        row?.filename, row?.file_name, row?.fileName, row?.subtitle_filename, row?.subtitleFilename,
+        row?.release_name, row?.releaseName, row?.original_name, row?.originalName,
+        row?.name, row?.title, row?.release
+    ];
+    for (const value of values) {
+        const name = sanitizeSubtitleLogValue(value, 300);
+        if (name && !isOpaqueSubdlSubtitleName(name)) return name;
+    }
+    const title = sanitizeSubtitleLogValue(expectedTitle, 150);
+    const index = Number.isFinite(Number(sourceOrder)) ? Number(sourceOrder) + 1 : 1;
+    // Be explicit when the provider did not supply a human-readable filename;
+    // never print the internal token as though it were a subtitle's real name.
+    return title ? `${title} — SubDL variant ${index}` : `SubDL variant ${index}`;
+}
+
 function parseMediaIdentity(type, rawId) {
     const match = String(rawId || '').match(/^(tt\d+)(?::(\d+)(?::(\d+))?)?$/i);
     if (!match) return null;
@@ -788,25 +819,6 @@ function flattenSubdlRows(data) {
     return { rows: [], match };
 }
 
-function subdlResponseDiagnostic(kind, mediaId, response, flattened) {
-    const data = response?.data || {};
-    const rows = Array.isArray(flattened?.rows) ? flattened.rows : [];
-    // Distinguish a genuine nId supplied as a field from legacy IDs inferred from
-    // dl.subdl.com URL paths. The latter are valid for direct downloads but are not
-    // proof that /api/v2/subtitles/{nId}/download will accept the first path segment.
-    const explicitNIdCount = rows.filter(row => Boolean(String(
-        row?.n_id ?? row?.nId ?? row?.nid ?? row?.subtitle_n_id ?? row?.subtitleNId ??
-        row?.subtitle_id ?? row?.subtitleId ?? row?.id ?? ''
-    ).trim())).length;
-    const urlIdCount = rows.filter(row => {
-        const rawUrl = row?.url ?? row?.download_url ?? row?.downloadUrl ?? row?.direct_url;
-        return Boolean(subdlIdsFromDirectUrl(rawUrl)?.nId);
-    }).length;
-    const urlCount = rows.filter(row => Boolean(subdlDirectDownloadUrl(row?.url ?? row?.download_url ?? row?.downloadUrl ?? row?.direct_url))).length;
-    const languages = [...new Set(rows.map(row => String(row?.lang ?? row?.language ?? row?.language_name ?? row?.lang_name ?? '').toLowerCase().trim()).filter(Boolean))].slice(0, 4);
-    console.log(`[SubDL] Diagnostic ${kind} ${mediaId}: HTTP ${response?.status || '?'}; fields=${Object.keys(data).slice(0, 12).join(',') || '(none)'}; rows=${rows.length}; explicitNId=${explicitNIdCount}; idsFromDirectUrl=${urlIdCount}; rowsWithDirectUrl=${urlCount}; languages=${languages.join('/') || '(none)'}.`);
-}
-
 function subdlCandidateRows(rows, identity, expectedTitle = '', options = {}) {
     const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
     const seen = new Set();
@@ -849,14 +861,12 @@ function subdlCandidateRows(rows, identity, expectedTitle = '', options = {}) {
             : nId.startsWith('api_')
                 ? !/^api_[A-Za-z0-9_-]{16,4096}$/.test(nId)
                 : !/^[A-Za-z0-9_-]{1,128}$/.test(nId)) || seen.has(nId)) return;
-        const realName = String(row.release_name || row.releaseName || row.filename || row.file_name || row.name || row.title || 'SubDL subtitle').trim();
+        const realName = resolveSubdlSubtitleName(row, expectedTitle, sourceOrder);
         const supplementalReason = subdlSupplementalTitleReason(realName, expectedTitle);
         if (supplementalReason) {
-            console.log(`[SubDL] Candidat ignorat ca material auxiliar (${supplementalReason}): ${sanitizeSubtitleLogValue(realName, 140)}.`);
             return;
         }
         if (!subdlRowIdentityCompatible(row, identity, expectedTitle)) {
-            console.log(`[SubDL] Candidat ignorat: metadate de identificare incompatibile (${sanitizeSubtitleLogValue(realName, 140)}).`);
             return;
         }
         if (trashRegex.test(realName)) return;
@@ -900,9 +910,7 @@ async function fetchSubdlLegacyV1Candidates(apiKey, identity, expectedTitle) {
             validateStatus: status => status >= 200 && status < 300
         });
         const flattened = flattenSubdlRows(response.data);
-        subdlResponseDiagnostic('legacy-v1-unpack', identity.imdbId, response, flattened);
         const candidates = subdlCandidateRows(flattened.rows, identity, expectedTitle, { forceDirectOnly: true });
-        console.log(`[SubDL] Candidati API v1 pentru ${identity.imdbId}: ${candidates.length}; URL-uri directe valide: ${candidates.filter(item => item.nId.startsWith('url_')).length}.`);
         return candidates;
     } catch (error) {
         console.log(`[SubDL] Căutarea legacy v1 cu unpack a eșuat (${error.response?.status || 'rețea'}); păstrez fallback-ul v2.`);
@@ -932,14 +940,11 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
                 headers, timeout: 12000, maxContentLength: 4 * 1024 * 1024
             });
             const flattened = flattenSubdlRows(response.data);
-            subdlResponseDiagnostic('filename', mediaId, response, flattened);
             // Filename matching is accepted only when the returned match identifies
             // the expected IMDb title or has a plausible title/episode match.
             if (flattened.rows.length && subdlMatchIsCompatible(flattened.match, identity, expectedTitle, true)) {
                 filenameRows = flattened.rows;
-                console.log(`[SubDL] Candidati din filename ${mediaId}: ${subdlCandidateRows(filenameRows, identity, expectedTitle).length}.`);
             } else if (flattened.rows.length) {
-                console.log(`[SubDL] Potrivirea după filename nu a putut fi confirmată pentru ${mediaId}; trec la căutarea exactă IMDb.`);
             }
         } catch (error) {
             console.log(`[SubDL] Căutarea după filename a eșuat (${error.response?.status || 'rețea'}); încerc căutarea exactă IMDb.`);
@@ -957,11 +962,9 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
         // This endpoint already ranked candidates by release match. Keep that native
         // order across explicit v2 nIds and direct-URL fallback rows; transport method
         // must not outrank the provider's match score.
-        console.log(`[SubDL] Potrivire filename: ${filenameIdCandidates.length} candidați cu nId explicit și ${filenameDirectCandidates.length} cu URL direct; păstrez ordinea scorului SubDL.`);
         return filenameCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
     }
     if (filenameDirectCandidates.length) {
-        console.log(`[SubDL] Filename a returnat doar URL-uri directe fără nId (${filenameDirectCandidates.length}); încerc căutarea IMDb pentru a obține identificatori API descărcabili.`);
     }
 
     try {
@@ -977,7 +980,6 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
             headers, timeout: 12000, maxContentLength: 8 * 1024 * 1024
         });
         const flattened = flattenSubdlRows(response.data);
-        subdlResponseDiagnostic('IMDb', mediaId, response, flattened);
         // This request is explicitly scoped to the IMDb ID, so absence of an echoed
         // match object is acceptable; any provided contradictory identity is not.
         if (flattened.match && !subdlMatchIsCompatible(flattened.match, identity, expectedTitle, false)) {
@@ -987,7 +989,6 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
         const imdbCandidates = subdlCandidateRows(flattened.rows, identity, expectedTitle);
         const imdbIdCandidates = imdbCandidates.filter(item => !item.nId.startsWith('url_'));
         const imdbDirectCandidates = imdbCandidates.filter(item => item.nId.startsWith('url_'));
-        console.log(`[SubDL] Candidati IMDb ${mediaId}: ${imdbCandidates.length}; cu nId API: ${imdbIdCandidates.length}; doar URL direct: ${imdbDirectCandidates.length}.`);
         if (imdbIdCandidates.length) {
             // Use the authenticated, documented /api/v2/subtitles/{nId}/download
             // route first. URL-only filename results remain last as a safety fallback.
@@ -1006,7 +1007,6 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
         const legacyCandidates = await fetchSubdlLegacyV1Candidates(apiKey, identity, expectedTitle);
         const legacyApiCandidates = legacyCandidates.filter(item => item.nId.startsWith('api_') || !item.nId.startsWith('url_'));
         if (legacyApiCandidates.length) {
-            console.log(`[SubDL] API v1 fallback a furnizat ${legacyApiCandidates.length} candidați cu identificatori de descărcare utilizabili.`);
             const seen = new Set();
             return [...legacyApiCandidates, ...directOnly].filter(item => {
                 if (seen.has(item.nId)) return false;
@@ -1014,7 +1014,6 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
                 return true;
             }).slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
         }
-        if (legacyCandidates.length) console.log(`[SubDL] API v1 fallback a returnat doar URL-uri directe fără identificatori; le păstrez ca ultimă rezervă.`);
         const combined = [...directOnly, ...legacyCandidates];
         const seen = new Set();
         return combined.filter(item => {
@@ -1089,6 +1088,8 @@ async function handleSubtitles(req, res) {
         }
         if (!subdlCandidates.length) {
             console.log(`${c.yellow}[SubDL] Nicio subtitrare EN sigură potrivită pentru ${id}; folosesc OpenSubtitles.${c.reset}`);
+        } else {
+            console.log(`[SubDL] ${subdlCandidates.length} variante EN eligibile pentru ${id}.`);
         }
     }
     if (subdlCandidates.length) openSubtitlesLimit = OPENSUBTITLES_MAX_WITH_SUBDL;
