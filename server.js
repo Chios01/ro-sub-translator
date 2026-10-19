@@ -100,8 +100,8 @@ async function fetchMediaTitle(mediaId) {
         mediaTitleCache[cacheKey] = title;
         return title;
     } catch (_) {
-        // O eroare la preluarea numelui nu trebuie să oprească traducerea.
-        mediaTitleCache[cacheKey] = '';
+        // O eroare temporară (timeout/Cinemeta indisponibil) nu se memorează:
+        // următoarea cerere trebuie să poată încerca din nou recuperarea titlului.
         return '';
     }
 }
@@ -178,7 +178,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.7',
+    version: '13.2.9',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1609,9 +1609,11 @@ const STANDALONE_SOURCE_FILLERS = new Set((
 // Elimină „oh/ah” folosite ca umplutură la începutul replicii („Oh, I know” → „I know”),
 // dar păstrează expresii/reacții cu sens consacrate. Nu atinge „Oh my God” fără virgulă.
 function stripLeadingOhAhInterjections(value) {
-    const meaningfulRemainder = /^(?:my\s+god\b|god\b|no\b|yes\b|yeah\b|yep\b|wow\b|dear\b|boy\b|come\s+on\b|well\b|right\b|okay\b|ok\b|really\b|whoa\b)/iu;
+    // Păstrăm reacțiile consacrate, dar eliminăm „oh/ah” de umplutură și când
+    // sursa nu are punctuație după ele: „Oh, I know” / „Oh I know” → „I know”.
+    const meaningfulRemainder = /^(?:my\s+god\b|god\b|no\b|yes\b|yeah\b|yep\b|wow\b|dear\b|boy\b|man\b|come\s+on\b|well\b|right\b|okay\b|ok\b|really\b|whoa\b|hell\b|shit\b|fuck\b|damn\b|jeez\b)/iu;
     return String(value || '').split('\n').map(line => {
-        const match = line.match(/^(\s*[-–—]?\s*)(?:oh|ah)\s*[,;:!?.…–—-]+\s+/iu);
+        const match = line.match(/^(\s*[-–—]?\s*)(?:oh|ah)\b(?:\s*[,;:!?.…–—-]+)?\s+/iu);
         if (!match) return line;
         const remainder = line.slice(match[0].length).trimStart();
         if (!remainder || meaningfulRemainder.test(remainder)) return line;

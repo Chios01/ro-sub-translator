@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.8",
+  "version": "13.2.9",
   "private": true,
-  "description": "RO Sub Translator — mixed-bracket SDH cleanup and leading oh/ah filler filtering",
+  "description": "RO Sub Translator — transient Cinemeta cache fix, mixed-bracket SDH cleanup and leading oh/ah filler filtering",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
