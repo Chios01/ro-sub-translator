@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.13",
+  "version": "13.2.14",
   "private": true,
-  "description": "Restore OpenSubtitles video-hash ranking and guard release-group extraction; retains v13.2.12 fixes",
+  "description": "Full-audit fixes: protected QA archive, bounded caches and downloads, exact SubDL file selection, safer fallback routing",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

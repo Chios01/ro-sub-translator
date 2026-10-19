@@ -71,7 +71,10 @@ const secretArchive = [];
 
 // Textul englez sursă, păstrat temporar ca să poată fi descărcat din arhivă (comparație calitate).
 const originalSources = Object.create(null);
-const mediaTitleCache = Object.create(null);
+// Cache LRU limitat: o instanță Render poate procesa permanent titluri noi.
+// Evităm creșterea fără limită și nu păstrăm răspunsurile valide dar fără titlu.
+const MEDIA_TITLE_CACHE_MAX = 500;
+const mediaTitleCache = new Map();
 
 // Rezolvă numele filmului/serialului din Cinemeta pentru antetul de început.
 // Dacă metadatele lipsesc, traducerea continuă folosind ID-ul.
@@ -83,8 +86,12 @@ async function fetchMediaTitle(mediaId) {
     const baseId = match[1];
     const mediaType = rawId.includes(':') ? 'series' : 'movie';
     const cacheKey = `${mediaType}:${baseId}`;
-    if (Object.prototype.hasOwnProperty.call(mediaTitleCache, cacheKey)) {
-        return mediaTitleCache[cacheKey];
+    if (mediaTitleCache.has(cacheKey)) {
+        const cachedTitle = mediaTitleCache.get(cacheKey);
+        // Mutăm accesul la final pentru a păstra în cache titlurile folosite recent.
+        mediaTitleCache.delete(cacheKey);
+        mediaTitleCache.set(cacheKey, cachedTitle);
+        return cachedTitle;
     }
 
     try {
@@ -97,7 +104,13 @@ async function fetchMediaTitle(mediaId) {
             .replace(/[\r\n\t]+/g, ' ')
             .replace(/\s+/g, ' ')
             .trim();
-        mediaTitleCache[cacheKey] = title;
+        if (title) {
+            mediaTitleCache.set(cacheKey, title);
+            if (mediaTitleCache.size > MEDIA_TITLE_CACHE_MAX) {
+                const oldestKey = mediaTitleCache.keys().next().value;
+                if (oldestKey !== undefined) mediaTitleCache.delete(oldestKey);
+            }
+        }
         return title;
     } catch (_) {
         // O eroare temporară (timeout/Cinemeta indisponibil) nu se memorează:
@@ -178,7 +191,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.13',
+    version: '13.2.14',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -230,7 +243,46 @@ function safeAttachmentId(value) {
     return safe || 'subtitle';
 }
 
-app.get('/arhiva-secreta', (req, res) => {
+function safeTimingSafeStringEqual(left, right) {
+    const leftBuffer = Buffer.from(String(left ?? ''), 'utf8');
+    const rightBuffer = Buffer.from(String(right ?? ''), 'utf8');
+    return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function protectSecretArchive(req, res, next) {
+    const expectedUser = String(process.env.ARCHIVE_USERNAME || '');
+    const expectedPassword = String(process.env.ARCHIVE_PASSWORD || '');
+
+    // The QA archive contains users' source and translated subtitles. Keep it disabled
+    // unless the owner explicitly configures credentials in the hosting environment.
+    if (!expectedUser || !expectedPassword) return res.status(404).send('Not found');
+
+    const authorization = String(req.headers.authorization || '');
+    const match = authorization.match(/^Basic\s+([A-Za-z0-9+/=]+)$/i);
+    let providedUser = '';
+    let providedPassword = '';
+    if (match) {
+        try {
+            const decoded = Buffer.from(match[1], 'base64').toString('utf8');
+            const separator = decoded.indexOf(':');
+            if (separator >= 0) {
+                providedUser = decoded.slice(0, separator);
+                providedPassword = decoded.slice(separator + 1);
+            }
+        } catch (_) {}
+    }
+
+    const authorized = safeTimingSafeStringEqual(providedUser, expectedUser) &&
+        safeTimingSafeStringEqual(providedPassword, expectedPassword);
+    if (!authorized) {
+        res.setHeader('WWW-Authenticate', 'Basic realm="RO Sub Translator QA Archive", charset="UTF-8"');
+        return res.status(401).send('Autentificare necesară.');
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    return next();
+}
+
+app.get('/arhiva-secreta', protectSecretArchive, (req, res) => {
     let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
     html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
     html += '<h2 style="color:#0f0;">Arhiva Subtitrări (Ultimele 10)</h2>';
@@ -253,7 +305,7 @@ app.get('/arhiva-secreta', (req, res) => {
     res.send(html);
 });
 
-app.get('/download-srt-en/:index', (req, res) => {
+app.get('/download-srt-en/:index', protectSecretArchive, (req, res) => {
     const index = parseInt(req.params.index);
     if (isNaN(index) || !secretArchive[index] || !secretArchive[index].original) {
         return res.status(404).send('Originalul nu există sau a fost șters automat din memorie.');
@@ -264,7 +316,7 @@ app.get('/download-srt-en/:index', (req, res) => {
     res.send(item.original);
 });
 
-app.get('/download-srt/:index', (req, res) => {
+app.get('/download-srt/:index', protectSecretArchive, (req, res) => {
     const index = parseInt(req.params.index);
     if (isNaN(index) || !secretArchive[index]) {
         return res.status(404).send('Fișierul nu există sau a fost șters automat din memorie.');
@@ -831,7 +883,11 @@ function subdlCandidateRows(rows, identity, expectedTitle = '', options = {}) {
         ).trim();
         let directUrl = subdlDirectDownloadUrl(row.url ?? row.download_url ?? row.downloadUrl ?? row.direct_url);
         const idsFromUrl = directUrl ? subdlIdsFromDirectUrl(directUrl) : null;
-        const rowFileNId = String(row.file_n_id ?? row.fileNId ?? row.file_nid ?? row.fileId ?? row.file_id ?? idsFromUrl?.fileNId ?? '').trim();
+        const explicitRowFileNId = String(row.file_n_id ?? row.fileNId ?? row.file_nid ?? row.fileId ?? row.file_id ?? '').trim();
+        const rowFileNId = explicitRowFileNId || String(idsFromUrl?.fileNId || '').trim();
+        if (!directUrl && explicitNId && explicitRowFileNId && /^[A-Za-z0-9_-]{1,128}$/.test(explicitNId) && /^[A-Za-z0-9_-]{1,128}$/.test(explicitRowFileNId)) {
+            directUrl = subdlDirectDownloadUrl(`https://dl.subdl.com/subtitle/${encodeURIComponent(explicitNId)}/${encodeURIComponent(explicitRowFileNId)}`);
+        }
 
         // API v2's download endpoint must receive a real nId supplied by the API
         // search response. IDs inferred from legacy dl.subdl.com paths are only
@@ -846,7 +902,10 @@ function subdlCandidateRows(rows, identity, expectedTitle = '', options = {}) {
             }
             if (directUrl) nId = `url_${Buffer.from(directUrl, 'utf8').toString('base64url')}`;
         } else if (directUrl && explicitNId) {
-            nId = makeSubdlApiReference(explicitNId, rowFileNId, directUrl);
+            // Only an explicit file_n_id or a canonical /subtitle/{nId}/{fileNId}
+            // URL proves the row is a single file. A {nId}-{fileNId}.zip path may be a pack.
+            const exactFileNId = explicitRowFileNId || (idsFromUrl?.pattern === 'path-pair' ? rowFileNId : '');
+            nId = makeSubdlApiReference(explicitNId, exactFileNId, directUrl);
         } else if (!directUrl && explicitNId) {
             // nId supplied in the API result, with no direct URL fallback.
             nId = explicitNId;
@@ -968,10 +1027,9 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
     }
 
     try {
-        // Use the documented v2 subtitle search without unpack=1. Only a genuine nId field
-        // returned by the API is eligible for /api/v2/subtitles/{nId}/download?format=file.
-        // If this API response exposes only a dl.subdl.com URL, keep it as a direct fallback.
-        const params = new URLSearchParams({ imdb_id: identity.imdbId, languages: 'en' });
+        // Request the exact per-file URLs for entries inside packs. When file_n_id is
+        // present, the download route below prioritizes that file rather than the parent pack.
+        const params = new URLSearchParams({ imdb_id: identity.imdbId, languages: 'en', unpack: '1' });
         if (identity.isSeries && identity.season !== null && identity.episode !== null) {
             params.set('season', String(identity.season));
             params.set('episode', String(identity.episode));
@@ -1214,7 +1272,9 @@ async function handleSubtitles(req, res) {
 
             // Fără un tag tehnic de release, ultimul cuvânt poate fi doar
             // titlul filmului (ex. "Disclosure Day"), nu un release group.
-            if (!/\b(?:2160p|1080p|720p|576p|480p|webrip|web[ .-]?dl|bluray|blu[ .-]?ray|brrip|bdrip|hdtv|x264|x265|h264|h265|hevc|avc|19\d{2}|20\d{2})\b/i.test(raw)) return '';
+            const hasTechnicalReleaseTag = /\b(?:2160p|1080p|720p|576p|480p|webrip|web[ .-]?dl|bluray|blu[ .-]?ray|brrip|bdrip|hdtv|x264|x265|h264|h265|hevc|avc)\b/i.test(raw);
+            const hasExplicitYearGroupSuffix = /\b(?:19\d{2}|20\d{2})[-._][A-Za-z0-9][A-Za-z0-9._-]*$/i.test(raw);
+            if (!hasTechnicalReleaseTag && !hasExplicitYearGroupSuffix) return '';
 
             const tokens = normalizeReleaseName(raw).split(' ').filter(Boolean);
             const stop = new Set([
@@ -1494,6 +1554,28 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
         }
     }
 
+    // An unpacked API result may identify a single member of a pack. Use that
+    // documented direct-file URL so we don't accidentally translate the parent archive.
+    if (isApiReference && apiReference?.fileNId) {
+        const sourceIds = subdlIdsFromDirectUrl(directDownloadUrl);
+        const directIsExact = sourceIds?.pattern === 'path-pair' &&
+            sourceIds.nId === apiReference.nId && sourceIds.fileNId === apiReference.fileNId;
+        if (!directIsExact) {
+            const exact = new URL(`https://dl.subdl.com/subtitle/${encodeURIComponent(apiReference.nId)}/${encodeURIComponent(apiReference.fileNId)}`);
+            // Preserve provider-issued signed parameters while stripping API-key credentials.
+            try {
+                const supplied = new URL(directDownloadUrl);
+                for (const [key, value] of supplied.searchParams.entries()) {
+                    if (!['api_key', 'x-api-key'].includes(key.toLowerCase()) && !exact.searchParams.has(key)) {
+                        exact.searchParams.append(key, value);
+                    }
+                }
+            } catch (_) {}
+            const exactFileUrl = subdlDirectDownloadUrl(exact.toString());
+            if (exactFileUrl) directDownloadUrl = exactFileUrl;
+        }
+    }
+
     const addonConfig = decodeAddonConfigSegment(configId);
     if (!addonConfig?.subdlKey) {
         const error = new Error('SubDL nu este configurat pentru această instalare.');
@@ -1507,6 +1589,21 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
         if (isDirectUrlRef) {
             bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
         } else {
+            // When file_n_id is known, first fetch that exact file from SubDL's documented
+            // /subtitle/{n_id}/{file_n_id} route; the parent nId endpoint can otherwise select
+            // a different member of a multi-file pack.
+            let exactFileAttempted = false;
+            let exactFileError = null;
+            if (isApiReference && apiReference?.fileNId && directDownloadUrl) {
+                exactFileAttempted = true;
+                try {
+                    bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
+                } catch (error) {
+                    exactFileError = error;
+                    console.log(`[SubDL] Descărcarea fișierului exact a eșuat (${error.response?.status || error.subdlDownloadMeta?.status || 'rețea'}); încerc API v2 ca rezervă.`);
+                }
+            }
+
             // API v2 download contract: /subtitles/{nId}/download?format=file.
             const makeApiUrl = () => {
                 const url = new URL(`https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(plainNId)}/download`);
@@ -1523,15 +1620,19 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
                 validateStatus: status => status >= 200 && status < 400
             });
 
-            try {
-                response = await requestApi();
-            } catch (apiError) {
-                const apiStatus = Number(apiError?.response?.status || 0);
-                if (directDownloadUrl && [400, 401, 403, 404, 409, 422].includes(apiStatus)) {
-                    console.log(`[SubDL] Descărcarea oficială API v2 a eșuat (${apiStatus}); încerc URL-ul direct original, păstrat ca fallback.`);
-                    bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
-                } else {
-                    throw apiError;
+            if (!bytes) {
+                try {
+                    response = await requestApi();
+                } catch (apiError) {
+                    const apiStatus = Number(apiError?.response?.status || 0);
+                    if (!exactFileAttempted && directDownloadUrl && [400, 401, 403, 404, 409, 422].includes(apiStatus)) {
+                        console.log(`[SubDL] Descărcarea oficială API v2 a eșuat (${apiStatus}); încerc URL-ul direct original, păstrat ca fallback.`);
+                        bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
+                    } else if (exactFileError) {
+                        throw exactFileError;
+                    } else {
+                        throw apiError;
+                    }
                 }
             }
 
@@ -1561,9 +1662,11 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
             const safeResolvedUrl = subdlDirectDownloadUrl(resolvedDirectUrl);
             if (safeResolvedUrl) {
                 bytes = await fetchSubdlDirectWithFallback(safeResolvedUrl, addonConfig.subdlKey);
-            } else if (directDownloadUrl) {
+            } else if (directDownloadUrl && !(isApiReference && apiReference?.fileNId && exactFileError)) {
                 console.log('[SubDL] API v2 a răspuns JSON fără URL descărcabil; încerc URL-ul original al rezultatului.');
                 bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
+            } else if (exactFileError) {
+                throw exactFileError;
             } else {
                 throw new Error('SubDL nu a returnat o subtitrare descărcabilă.');
             }
@@ -1645,29 +1748,20 @@ function isEffectivelyEmptySubtitleText(text) {
 
 const STANDALONE_SOURCE_FILLERS = new Set((
     // Aceste vocalizări nu sunt păstrate ca traduceri autonome.
-    // „Oh/Ah” de la început sunt eliminate și când urmează alte cuvinte;
-    // sensul restului replicii trebuie tradus natural.
-    // „Hmm”, „Mhm” și „Mm-hmm” continuă să fie evaluate contextual de Gemini.
+    // Nu ștergem „Oh/Ah” din expresii dialogate valide; filtrăm doar liniile formate
+    // exclusiv din interjecții. „Hmm”, „Mhm” și „Mm-hmm” rămân evaluate contextual.
     'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu'
 ).split(/\s+/));
 
-// Elimină „oh/ah” de la începutul fiecărei linii, indiferent de context.
-// Exemple: „Oh, no!” → „no!”, „Ah, yes!” → „yes!”, „Oh my God” → „my God”.
-// Elimină temporar marcajele HTML pentru ca <i>Oh, no</i> să nu ocolească regula;
-// formatterul final oricum elimină aceste marcaje din textul afișat.
+// Elimină „oh/ah” numai când linia conține exclusiv interjecții și punctuație.
+// Expresii dialogate precum „Oh, no!”, „Ah, yes!” și „Oh my God” rămân intacte.
+// Marcajele HTML sunt ignorate doar pentru clasificarea unei linii de interjecție izolată.
 function stripLeadingOhAhInterjections(value) {
     return String(value || '').split('\n').map(line => {
-        const visibleLine = line.replace(/<[^>]*>/g, '');
-        const prefixMatch = visibleLine.match(/^(\s*[-–—]?\s*)/u);
-        const prefix = prefixMatch ? prefixMatch[1] : '';
-        let remainder = visibleLine.slice(prefix.length).trimStart();
-        let removed = false;
-        let match;
-        while ((match = remainder.match(/^(?:oh|ah)\b(?:\s*[,;:!?.…–—-]+)?(?:\s+|$)/iu))) {
-            remainder = remainder.slice(match[0].length).trimStart();
-            removed = true;
-        }
-        return removed ? prefix + remainder : line;
+        const visibleLine = line.replace(/<[^>]*>/g, '').trim();
+        if (!visibleLine) return line;
+        if (/^(?:[-–—]\s*)?(?:(?:oh|ah)\b[\s,;:!?.…–—-]*)+$/iu.test(visibleLine)) return '';
+        return line;
     }).join('\n');
 }
 
@@ -1881,8 +1975,8 @@ function cleanTextForJson(text) {
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
-    // Eliminăm „oh/ah” de umplutură de la începutul unei propoziții înainte de Gemini.
-    // Expresiile cu sens cunoscute sunt păstrate de stripLeadingOhAhInterjections().
+    // Eliminăm înainte de Gemini doar liniile formate exclusiv din interjecții Oh/Ah.
+    // Cuvintele și nuanța expresiilor dialogate sunt păstrate.
     clean = stripLeadingOhAhInterjections(clean);
 
     // Normalize spacing left behind after removed sound labels.
@@ -1906,7 +2000,7 @@ function cleanTextForJson(text) {
 function deepCleanSubtitleText(text) {
     if (!text) return text;
 
-    // Plasă de siguranță pentru „Oh/Ah” de umplutură care ar fi putut fi păstrate de model.
+    // Plasă de siguranță doar pentru replici formate exclusiv din interjecții Oh/Ah.
     text = stripLeadingOhAhInterjections(text);
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
@@ -7898,6 +7992,8 @@ async function fetchValidatedSubtitleUrl(initialUrl) {
         const response = await axios.get(validation.url, {
             headers: { 'User-Agent': BROWSER_USER_AGENT },
             timeout: 30000,
+            // Refuse oversized remote responses before they exhaust the Render process.
+            maxContentLength: 25 * 1024 * 1024,
             responseType: 'text',
             maxRedirects: 0,
             validateStatus: status => status >= 200 && status < 400,
@@ -8035,12 +8131,18 @@ function parseOpenSubtitlesFallbackUrls(rawValue, failedUrl) {
     const failed = String(failedUrl || '');
     const result = [];
     const seen = new Set([failed]);
+    const allowedHosts = new Set([
+        'dl.opensubtitles.com', 'opensubtitles.com', 'www.opensubtitles.com',
+        'dl.opensubtitles.org', 'opensubtitles.org', 'www.opensubtitles.org'
+    ]);
     for (const value of parsed) {
         if (typeof value !== 'string' || value.length > 2048 || !isValidSubtitleSourceUrl(value)) continue;
         let url;
         try { url = new URL(value); } catch (_) { continue; }
-        // Fallback-urile sunt URL-uri HTTPS primite din lista OpenSubtitles.
-        if (url.protocol !== 'https:' || seen.has(url.toString())) continue;
+        // The endpoint is public; fallback URLs must actually belong to OpenSubtitles,
+        // not be arbitrary public URLs that turn it into a general-purpose fetch proxy.
+        if (url.protocol !== 'https:' || !allowedHosts.has(url.hostname.toLowerCase()) ||
+            (url.port && url.port !== '443') || seen.has(url.toString())) continue;
         seen.add(url.toString());
         result.push(url.toString());
         if (result.length >= 3) break;
@@ -8252,6 +8354,8 @@ function extractSubtitleFromZip(buffer, preferredVideoFilename = '') {
     if (!entryCount || entryCount > 300 || centralOffset >= bytes.length) throw new Error('arhivă ZIP goală sau cu structură neacceptată');
 
     const files = [];
+    const MAX_TOTAL_UNCOMPRESSED_SUBTITLE_BYTES = 32 * 1024 * 1024;
+    let totalUncompressedSubtitleBytes = 0;
     let offset = centralOffset;
     for (let i = 0; i < entryCount && offset + 46 <= bytes.length; i++) {
         if (bytes.readUInt32LE(offset) !== 0x02014b50) break;
@@ -8282,6 +8386,10 @@ function extractSubtitleFromZip(buffer, preferredVideoFilename = '') {
             else if (method === 8) content = zlib.inflateRawSync(compressed, { maxOutputLength: 16 * 1024 * 1024 });
             else continue;
             if (content.length > 16 * 1024 * 1024) continue;
+            // Bound aggregate decompression too: a small ZIP can contain hundreds of
+            // individually permitted files and otherwise amplify memory use.
+            if (content.length > MAX_TOTAL_UNCOMPRESSED_SUBTITLE_BYTES - totalUncompressedSubtitleBytes) continue;
+            totalUncompressedSubtitleBytes += content.length;
             files.push({
                 filename,
                 content,
@@ -8412,12 +8520,11 @@ app.get('/:configData/translate', async (req, res) => {
     res.flushHeaders();
 
     const keepAlive = setInterval(() => {
-        res.write(' \n');
+        if (!res.writableEnded && !res.destroyed) res.write(' \n');
     }, 8000);
-
-    req.on('close', () => {
-        clearInterval(keepAlive);
-    });
+    const stopKeepAlive = () => clearInterval(keepAlive);
+    res.on('close', stopKeepAlive);
+    res.on('finish', stopKeepAlive);
 
     try {
         let processPromise;
