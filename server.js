@@ -249,13 +249,32 @@ function safeTimingSafeStringEqual(left, right) {
     return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function protectSecretArchive(req, res, next) {
-    const expectedUser = String(process.env.ARCHIVE_USERNAME || '');
-    const expectedPassword = String(process.env.ARCHIVE_PASSWORD || '');
+function getSecretArchiveCredentials() {
+    // Support the canonical names plus common shortened variants, so a harmless
+    // Render key-name mismatch does not silently make the endpoint look nonexistent.
+    const username = String(
+        process.env.ARCHIVE_USERNAME || process.env.ARCHIVE_USER || process.env.ARCHIVE_USER_NAME || ''
+    ).trim();
+    const password = String(
+        process.env.ARCHIVE_PASSWORD || process.env.ARCHIVE_PASS || process.env.ARCHIVE_PASSWD || ''
+    );
+    return { username, password };
+}
 
-    // The QA archive contains users' source and translated subtitles. Keep it disabled
-    // unless the owner explicitly configures credentials in the hosting environment.
-    if (!expectedUser || !expectedPassword) return res.status(404).send('Not found');
+function protectSecretArchive(req, res, next) {
+    const { username: expectedUser, password: expectedPassword } = getSecretArchiveCredentials();
+    const hasUser = Boolean(expectedUser);
+    const hasPassword = Boolean(expectedPassword);
+    const hasAuthorization = Boolean(req.headers.authorization);
+    console.log(`[QA Archive] ${req.method} ${req.path}; userConfigured=${hasUser}; passwordConfigured=${hasPassword}; authorizationHeader=${hasAuthorization}`);
+
+    // Return a diagnostic status rather than disguising a deployment configuration issue as 404.
+    if (!hasUser || !hasPassword) {
+        console.warn('[QA Archive] Credentials are missing in the running Node process. Expected ARCHIVE_USERNAME/ARCHIVE_PASSWORD (aliases ARCHIVE_USER/ARCHIVE_PASS are also supported). Values are not logged.');
+        return res.status(503).type('text/plain').send(
+            'Arhiva QA nu este configurată în procesul activ. Verifică Environment pentru ARCHIVE_USERNAME și ARCHIVE_PASSWORD, apoi redeploy.'
+        );
+    }
 
     const authorization = String(req.headers.authorization || '');
     const match = authorization.match(/^Basic\s+([A-Za-z0-9+/=]+)$/i);
@@ -275,6 +294,7 @@ function protectSecretArchive(req, res, next) {
     const authorized = safeTimingSafeStringEqual(providedUser, expectedUser) &&
         safeTimingSafeStringEqual(providedPassword, expectedPassword);
     if (!authorized) {
+        console.warn('[QA Archive] Request reached the archive route but Basic authentication did not match. Credential values are not logged.');
         res.setHeader('WWW-Authenticate', 'Basic realm="RO Sub Translator QA Archive", charset="UTF-8"');
         return res.status(401).send('Autentificare necesară.');
     }
@@ -8747,6 +8767,8 @@ app.get('/health', (req, res) => {
 
 const PORT = Number(process.env.PORT) || 7000;
 app.listen(PORT, '0.0.0.0', () => {
+    const archiveCredentials = getSecretArchiveCredentials();
+    console.log(`[QA Archive] Config: username=${Boolean(archiveCredentials.username)}, password=${Boolean(archiveCredentials.password)} (valorile nu sunt afișate)`);
     console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
     console.log(`${c.cyan}🧠 Model Gemini activ: ${MODEL_NAME}${c.reset}`);
 });

@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.14",
+  "version": "13.2.15",
   "private": true,
-  "description": "Full-audit fixes: protected QA archive, bounded caches and downloads, exact SubDL file selection, safer fallback routing",
+  "description": "Archive access diagnostic fix: supports common environment-key aliases and reports safe configuration status without exposing secrets",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
