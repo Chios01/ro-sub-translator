@@ -191,7 +191,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.14',
+    version: '13.2.16',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -243,66 +243,7 @@ function safeAttachmentId(value) {
     return safe || 'subtitle';
 }
 
-function safeTimingSafeStringEqual(left, right) {
-    const leftBuffer = Buffer.from(String(left ?? ''), 'utf8');
-    const rightBuffer = Buffer.from(String(right ?? ''), 'utf8');
-    return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function getSecretArchiveCredentials() {
-    // Support the canonical names plus common shortened variants, so a harmless
-    // Render key-name mismatch does not silently make the endpoint look nonexistent.
-    const username = String(
-        process.env.ARCHIVE_USERNAME || process.env.ARCHIVE_USER || process.env.ARCHIVE_USER_NAME || ''
-    ).trim();
-    const password = String(
-        process.env.ARCHIVE_PASSWORD || process.env.ARCHIVE_PASS || process.env.ARCHIVE_PASSWD || ''
-    );
-    return { username, password };
-}
-
-function protectSecretArchive(req, res, next) {
-    const { username: expectedUser, password: expectedPassword } = getSecretArchiveCredentials();
-    const hasUser = Boolean(expectedUser);
-    const hasPassword = Boolean(expectedPassword);
-    const hasAuthorization = Boolean(req.headers.authorization);
-    console.log(`[QA Archive] ${req.method} ${req.path}; userConfigured=${hasUser}; passwordConfigured=${hasPassword}; authorizationHeader=${hasAuthorization}`);
-
-    // Return a diagnostic status rather than disguising a deployment configuration issue as 404.
-    if (!hasUser || !hasPassword) {
-        console.warn('[QA Archive] Credentials are missing in the running Node process. Expected ARCHIVE_USERNAME/ARCHIVE_PASSWORD (aliases ARCHIVE_USER/ARCHIVE_PASS are also supported). Values are not logged.');
-        return res.status(503).type('text/plain').send(
-            'Arhiva QA nu este configurată în procesul activ. Verifică Environment pentru ARCHIVE_USERNAME și ARCHIVE_PASSWORD, apoi redeploy.'
-        );
-    }
-
-    const authorization = String(req.headers.authorization || '');
-    const match = authorization.match(/^Basic\s+([A-Za-z0-9+/=]+)$/i);
-    let providedUser = '';
-    let providedPassword = '';
-    if (match) {
-        try {
-            const decoded = Buffer.from(match[1], 'base64').toString('utf8');
-            const separator = decoded.indexOf(':');
-            if (separator >= 0) {
-                providedUser = decoded.slice(0, separator);
-                providedPassword = decoded.slice(separator + 1);
-            }
-        } catch (_) {}
-    }
-
-    const authorized = safeTimingSafeStringEqual(providedUser, expectedUser) &&
-        safeTimingSafeStringEqual(providedPassword, expectedPassword);
-    if (!authorized) {
-        console.warn('[QA Archive] Request reached the archive route but Basic authentication did not match. Credential values are not logged.');
-        res.setHeader('WWW-Authenticate', 'Basic realm="RO Sub Translator QA Archive", charset="UTF-8"');
-        return res.status(401).send('Autentificare necesară.');
-    }
-    res.setHeader('Cache-Control', 'no-store');
-    return next();
-}
-
-app.get('/arhiva-secreta', protectSecretArchive, (req, res) => {
+app.get('/arhiva-secreta', (req, res) => {
     let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
     html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
     html += '<h2 style="color:#0f0;">Arhiva Subtitrări (Ultimele 10)</h2>';
@@ -325,7 +266,7 @@ app.get('/arhiva-secreta', protectSecretArchive, (req, res) => {
     res.send(html);
 });
 
-app.get('/download-srt-en/:index', protectSecretArchive, (req, res) => {
+app.get('/download-srt-en/:index', (req, res) => {
     const index = parseInt(req.params.index);
     if (isNaN(index) || !secretArchive[index] || !secretArchive[index].original) {
         return res.status(404).send('Originalul nu există sau a fost șters automat din memorie.');
@@ -336,7 +277,7 @@ app.get('/download-srt-en/:index', protectSecretArchive, (req, res) => {
     res.send(item.original);
 });
 
-app.get('/download-srt/:index', protectSecretArchive, (req, res) => {
+app.get('/download-srt/:index', (req, res) => {
     const index = parseInt(req.params.index);
     if (isNaN(index) || !secretArchive[index]) {
         return res.status(404).send('Fișierul nu există sau a fost șters automat din memorie.');
@@ -8767,8 +8708,7 @@ app.get('/health', (req, res) => {
 
 const PORT = Number(process.env.PORT) || 7000;
 app.listen(PORT, '0.0.0.0', () => {
-    const archiveCredentials = getSecretArchiveCredentials();
-    console.log(`[QA Archive] Config: username=${Boolean(archiveCredentials.username)}, password=${Boolean(archiveCredentials.password)} (valorile nu sunt afișate)`);
+    console.log('[QA Archive] Arhivă publică activă; autentificarea este dezactivată.');
     console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
     console.log(`${c.cyan}🧠 Model Gemini activ: ${MODEL_NAME}${c.reset}`);
 });

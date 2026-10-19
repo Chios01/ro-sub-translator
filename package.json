@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.15",
+  "version": "13.2.16",
   "private": true,
-  "description": "Archive access diagnostic fix: supports common environment-key aliases and reports safe configuration status without exposing secrets",
+  "description": "QA archive accessible without password; existing translation providers and addon configuration preserved",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
