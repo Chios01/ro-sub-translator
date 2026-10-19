@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.9",
+  "version": "13.2.11",
   "private": true,
-  "description": "RO Sub Translator — transient Cinemeta cache fix, mixed-bracket SDH cleanup and leading oh/ah filler filtering",
+  "description": "RO Sub Translator — Empty Recovery treats locally eligible items as short dialogue fragments",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

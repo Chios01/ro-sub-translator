@@ -178,7 +178,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.9',
+    version: '13.2.11',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1600,24 +1600,30 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const STANDALONE_SOURCE_FILLERS = new Set((
-    // Eliminăm vocalizările fără conținut și „oh/ah” când apar singure.
-    // Reacțiile din expresii cu sens („Oh, no”, „Oh my God”, „Ah, yes”) rămân.
+    // Aceste vocalizări nu sunt păstrate ca traduceri autonome.
+    // „Oh/Ah” de la început sunt eliminate și când urmează alte cuvinte;
+    // sensul restului replicii trebuie tradus natural.
     // „Hmm”, „Mhm” și „Mm-hmm” continuă să fie evaluate contextual de Gemini.
     'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu'
 ).split(/\s+/));
 
-// Elimină „oh/ah” folosite ca umplutură la începutul replicii („Oh, I know” → „I know”),
-// dar păstrează expresii/reacții cu sens consacrate. Nu atinge „Oh my God” fără virgulă.
+// Elimină „oh/ah” de la începutul fiecărei linii, indiferent de context.
+// Exemple: „Oh, no!” → „no!”, „Ah, yes!” → „yes!”, „Oh my God” → „my God”.
+// Elimină temporar marcajele HTML pentru ca <i>Oh, no</i> să nu ocolească regula;
+// formatterul final oricum elimină aceste marcaje din textul afișat.
 function stripLeadingOhAhInterjections(value) {
-    // Păstrăm reacțiile consacrate, dar eliminăm „oh/ah” de umplutură și când
-    // sursa nu are punctuație după ele: „Oh, I know” / „Oh I know” → „I know”.
-    const meaningfulRemainder = /^(?:my\s+god\b|god\b|no\b|yes\b|yeah\b|yep\b|wow\b|dear\b|boy\b|man\b|come\s+on\b|well\b|right\b|okay\b|ok\b|really\b|whoa\b|hell\b|shit\b|fuck\b|damn\b|jeez\b)/iu;
     return String(value || '').split('\n').map(line => {
-        const match = line.match(/^(\s*[-–—]?\s*)(?:oh|ah)\b(?:\s*[,;:!?.…–—-]+)?\s+/iu);
-        if (!match) return line;
-        const remainder = line.slice(match[0].length).trimStart();
-        if (!remainder || meaningfulRemainder.test(remainder)) return line;
-        return match[1] + remainder;
+        const visibleLine = line.replace(/<[^>]*>/g, '');
+        const prefixMatch = visibleLine.match(/^(\s*[-–—]?\s*)/u);
+        const prefix = prefixMatch ? prefixMatch[1] : '';
+        let remainder = visibleLine.slice(prefix.length).trimStart();
+        let removed = false;
+        let match;
+        while ((match = remainder.match(/^(?:oh|ah)\b(?:\s*[,;:!?.…–—-]+)?(?:\s+|$)/iu))) {
+            remainder = remainder.slice(match[0].length).trimStart();
+            removed = true;
+        }
+        return removed ? prefix + remainder : line;
     }).join('\n');
 }
 
@@ -2454,10 +2460,10 @@ SUBTITLE FORMATTING
 - Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
 INTERJECTIONS AND FILLERS
-- Remove standalone filler sounds and meaningless hesitation tokens only when they are genuinely non-informative in context. Typical disposable examples include “Um”, “Erm”, “Mwah”, “ă”, and “ăă” when they function only as hesitation/noise.
-- Do NOT automatically delete meaningful acknowledgments, questions, reactions, or commands. Preserve and translate “Okay”, “Mhm/Mm-hmm” when they express agreement, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief, and “Aha” when expressing realization.
-- Use neighboring subtitles and the scene context to distinguish a meaningless filler from a meaningful reaction. If the function is ambiguous, prefer preserving its communicative/emotional meaning in concise Romanian rather than deleting it automatically.
-- Remove an embedded filler only when it is clearly hesitation and not part of a meaningful expression; then repair punctuation and capitalization. Do not delete a meaningful multi-word expression simply because it begins with an interjection; translate the expression by meaning.
+- Remove standalone filler sounds and meaningless hesitation tokens rather than returning them as translations. Typical disposable examples include “Um”, “Erm”, “Mwah”, “ă”, and “ăă” when they function only as hesitation/noise.
+- NEVER preserve the English interjections “Oh” or “Ah” literally in Romanian output, whether they appear alone or at the start of a longer expression. Remove the leading “Oh/Ah” and translate the remaining message naturally: for example, “Oh, no!” → „Nu!” / „Vai, nu!” according to context; “Ah, yes!” → „Da!”; “Oh my God!” → „Doamne!”. The rest of the message must not be discarded.
+- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Mhm/Mm-hmm” when they express agreement, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief, and “Aha” when expressing realization.
+- Use neighboring subtitles and the scene context to preserve the meaning of the remaining dialogue while removing standalone filler tokens. Repair punctuation and capitalization after removal.
 - REGULĂ STRICTĂ PENTRU PARANTEZE: elimină integral orice text dintre paranteze rotunde (...) sau drepte [...], indiferent dacă este descriere sonoră, indicație de acțiune sau alt text. Acest conținut nu trebuie să apară în subtitrarea română. Dacă într-un bloc există dialog și în afara parantezelor, păstrează tot dialogul exterior.
 - PENTRU DIALOG NORMAL, returnează traducerea ca text simplu: nu pune replica tradusă între paranteze rotunde sau drepte și nu adăuga paranteze decorative în jurul întregii traduceri. Parantezele/parantezele drepte nu se folosesc ca ambalaj pentru o replică normală.
 - NEVER include non-dialogue sound effects, music cues, stage directions, or vocal-action captions in the Romanian subtitle output. Remove cues such as “(sighs)”, “[whistling]”, „(bufnește)”, „(șuierături)”, „(bufnire)” and „(plângând)” completely. Do not remove dialogue that mentions a sound, laughter, singing, or music when that dialogue is outside parentheses/brackets.
@@ -6219,9 +6225,9 @@ ${stageLabel.toUpperCase()} — TRADUCERI RĂMASE GOALE.
 
 Tradu în română naturală fiecare replică din lista de mai jos. Aceste blocuri au trecut deja de filtrarea inițială a subtitrărilor. Pentru dialogul obișnuit, fragmente incomplete, replici de un singur cuvânt, întrebări și reacții cu sens, întoarce întotdeauna o traducere română nevidă. Nu lăsa câmpul text gol și nu omite niciun ID. Pentru dialog normal, returnează numai textul tradus, fără paranteze rotunde/drepte adăugate în jurul replicii.
 
-Fiecare ID din listă trebuie să primească o traducere românească nevidă. Dacă sursa este o descriere de sunet, muzică sau o indicație scenică, trad-o în română în loc să o omiți. Nu inventa omisiuni intenționate.
+Toate elementele de mai jos au trecut deja de filtrul local pentru cue-uri sonore. Tratează fiecare intrare ca pe un fragment scurt de replică/rostire și redă-i sensul în română ca text de dialog, nu ca etichetă de acțiune sau indicație scenică/sonoră. Nu transforma textul în formulări precum „oftează”, „râsete”, „muzică în fundal” sau „suspină” și nu adăuga paranteze pentru a-l prezenta ca indicație. Pentru o sursă foarte scurtă, alege cea mai firească formulare orală pe care o susține textul, fără să inventezi informații. Fiecare ID trebuie să primească o traducere românească nevidă. Nu inventa omisiuni intenționate.
 Nu folosi niciun marker intern, token special sau placeholder în câmpul text. Clasificarea și omiterea cue-urilor sonore sunt responsabilitatea verificării locale, nu a modelului.
-${forceTranslate ? '\nRECUPERARE OBLIGATORIE: răspunsul anterior a folosit un marker de omitere nepermis pentru aceste ID-uri. Tradu fiecare ID de mai jos; markerul special este interzis, inclusiv pentru replici scurte sau descrieri de sunet. Nu omite nimic.' : ''}
+${forceTranslate ? '\nRECUPERARE OBLIGATORIE: răspunsul anterior a folosit un marker de omitere nepermis pentru aceste ID-uri. Tradu fiecare ID de mai jos ca fragment scurt de dialog; markerul special este interzis. Nu îl reformula ca etichetă de sunet sau indicație scenică și nu omite nimic.' : ''}
 Returnează DOAR un array JSON valid, cu exact un obiect per ID, în aceeași ordine. Fiecare obiect trebuie să aibă câmpurile id (număr întreg) și text (șir). Nu include markdown, explicații sau alte câmpuri.
 ${strictJsonRetry ? '\nRETRY TEHNIC: întoarce numai JSON valid, păstrează exact ID-urile și nu lăsa niciun câmp text gol.' : ''}
 
