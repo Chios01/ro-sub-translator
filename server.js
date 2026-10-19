@@ -178,7 +178,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.11',
+    version: '13.2.12',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2477,11 +2477,24 @@ Before returning JSON, proofread every translation against its English source an
 // PROMPT BUILDER CU CONTEXT
 // ============================================================
 
+// Reutilizează indexul ID→poziție pentru aceeași listă SRT pe durata traducerii.
+// WeakMap evită păstrarea listei sau a indexului după ce lista nu mai este folosită.
+const translationSourceIndexCache = new WeakMap();
+
+function getTranslationSourceIndexById(allItems) {
+    let sourceIndexById = translationSourceIndexCache.get(allItems);
+    if (sourceIndexById) return sourceIndexById;
+
+    sourceIndexById = new Map(allItems.map((item, index) => [String(item.id), index]));
+    translationSourceIndexCache.set(allItems, sourceIndexById);
+    return sourceIndexById;
+}
+
 function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext) {
     const contextBefore = allItems.slice(Math.max(0, chunkStart - CONTEXT_LINES_BEFORE), chunkStart);
     const contextAfter = allItems.slice(chunkEnd, Math.min(allItems.length, chunkEnd + CONTEXT_LINES_AFTER));
 
-    const sourceIndexById = new Map(allItems.map((item, index) => [String(item.id), index]));
+    const sourceIndexById = getTranslationSourceIndexById(allItems);
     const keysToTranslate = chunk.map(obj => {
         const absoluteIndex = sourceIndexById.get(String(obj.id));
         const previous = Number.isInteger(absoluteIndex) ? allItems[absoluteIndex - 1] : null;

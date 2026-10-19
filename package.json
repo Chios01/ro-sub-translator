@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.11",
+  "version": "13.2.12",
   "private": true,
-  "description": "RO Sub Translator — Empty Recovery treats locally eligible items as short dialogue fragments",
+  "description": "RO Sub Translator — cache translation prompt source index per SRT list",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
