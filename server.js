@@ -178,7 +178,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.3',
+    version: '13.2.4',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1089,7 +1089,7 @@ async function handleSubtitles(req, res) {
         if (!subdlCandidates.length) {
             console.log(`${c.yellow}[SubDL] Nicio subtitrare EN sigură potrivită pentru ${id}; folosesc OpenSubtitles.${c.reset}`);
         } else {
-            console.log(`[SubDL] ${subdlCandidates.length} variante EN eligibile pentru ${id}.`);
+            // Nu jurnalizăm fiecare răspuns SubDL reușit; rezultatul este vizibil în lista Stremio.
         }
     }
     if (subdlCandidates.length) openSubtitlesLimit = OPENSUBTITLES_MAX_WITH_SUBDL;
