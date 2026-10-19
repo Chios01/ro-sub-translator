@@ -178,7 +178,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.5',
+    version: '13.2.6',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1371,13 +1371,11 @@ async function handleSubtitles(req, res) {
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
         // ============================================================
         const generatedSubdlSubs = subdlCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS).map((s, index) => {
-            const sourceUrl = `${baseUrl}/${configData}/subdl-file/${encodeURIComponent(s.nId)}?filename=${encodeURIComponent(String(userFilename || '').slice(0, 500))}`;
-            const encodedUrl = encodeURIComponent(sourceUrl);
             const scoreTag = s.matchScore === null ? '' : ` • ${Math.round(s.matchScore * 100)}% match`;
             return {
                 id: `subdl_ai_sub_${index}`,
                 title: `🇷🇴 RO AI · SubDL [${index + 1}]${scoreTag} · ${String(s.realName).replace(/[^\p{L}\p{N} ._\-()[\]]/gu, ' ').slice(0, 100)}`,
-                url: `${baseUrl}/${configData}/translate?id=${encodeURIComponent(id)}&targetUrl=${encodedUrl}&v=subdl-${index + 1}&source=SubDL&subtitleName=${encodeURIComponent(String(s.realName || 'SubDL subtitle').slice(0, 300))}`,
+                url: `${baseUrl}/${configData}/translate?id=${encodeURIComponent(id)}&subdlRef=${encodeURIComponent(s.nId)}&filename=${encodeURIComponent(String(userFilename || '').slice(0, 500))}&v=subdl-${index + 1}&source=SubDL&subtitleName=${encodeURIComponent(String(s.realName || 'SubDL subtitle').slice(0, 300))}`,
                 lang: 'ron'
             };
         });
@@ -1414,9 +1412,7 @@ async function handleSubtitles(req, res) {
     }
 }
 
-app.get('/:configData/subdl-file/:nId', async (req, res) => {
-    const configId = req.params.configData;
-    const reference = String(req.params.nId || '');
+async function getSubdlSubtitleText(configId, reference, requestedFilename = '') {
     const isApiReference = reference.startsWith('api_');
     const isDirectUrlRef = reference.startsWith('url_');
     let apiReference = null;
@@ -1425,21 +1421,41 @@ app.get('/:configData/subdl-file/:nId', async (req, res) => {
 
     if (isApiReference) {
         apiReference = decodeSubdlApiReference(reference);
-        if (!apiReference) return res.status(400).send('Referință SubDL API invalidă.');
+        if (!apiReference) {
+            const error = new Error('Referință SubDL API invalidă.');
+            error.statusCode = 400;
+            throw error;
+        }
         directDownloadUrl = apiReference.directUrl;
         plainNId = apiReference.nId;
     } else if (isDirectUrlRef) {
-        if (!/^url_[A-Za-z0-9_-]{8,2048}$/.test(reference)) return res.status(400).send('Referință SubDL invalidă.');
+        if (!/^url_[A-Za-z0-9_-]{8,2048}$/.test(reference)) {
+            const error = new Error('Referință SubDL invalidă.');
+            error.statusCode = 400;
+            throw error;
+        }
         try { directDownloadUrl = subdlDirectDownloadUrl(Buffer.from(reference.slice(4), 'base64url').toString('utf8')); }
         catch (_) { directDownloadUrl = ''; }
-        if (!directDownloadUrl) return res.status(400).send('URL SubDL nepermis.');
+        if (!directDownloadUrl) {
+            const error = new Error('URL SubDL nepermis.');
+            error.statusCode = 400;
+            throw error;
+        }
     } else {
         plainNId = reference;
-        if (!/^[A-Za-z0-9_-]{1,128}$/.test(plainNId)) return res.status(400).send('Identificator SubDL invalid.');
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(plainNId)) {
+            const error = new Error('Identificator SubDL invalid.');
+            error.statusCode = 400;
+            throw error;
+        }
     }
 
     const addonConfig = decodeAddonConfigSegment(configId);
-    if (!addonConfig?.subdlKey) return res.status(404).send('SubDL nu este configurat pentru această instalare.');
+    if (!addonConfig?.subdlKey) {
+        const error = new Error('SubDL nu este configurat pentru această instalare.');
+        error.statusCode = 404;
+        throw error;
+    }
 
     let response = null;
     let bytes;
@@ -1447,11 +1463,7 @@ app.get('/:configData/subdl-file/:nId', async (req, res) => {
         if (isDirectUrlRef) {
             bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
         } else {
-            // The official API v2 download contract is /subtitles/{nId}/download?format=file.
-            // file_n_id is not a documented parameter for this endpoint (it is used by
-            // the AI translation API for packs), so never send it here. Crucially, only
-            // actual API nIds reach this branch; IDs inferred from legacy direct URL paths
-            // use the url_ route and go straight to the preserved direct-download fallback.
+            // API v2 download contract: /subtitles/{nId}/download?format=file.
             const makeApiUrl = () => {
                 const url = new URL(`https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(plainNId)}/download`);
                 url.searchParams.set('format', 'file');
@@ -1482,8 +1494,8 @@ app.get('/:configData/subdl-file/:nId', async (req, res) => {
             if (response) {
                 const redirectLocation = response.status >= 300 ? response.headers?.location : '';
                 if (redirectLocation) {
-                    // Follow redirects manually: never forward Authorization: Bearer to another host.
-                    const redirectUrl = new URL(redirectLocation, makeApiUrl(Boolean(apiReference?.fileNId))).toString();
+                    // Do not forward the API bearer token across hosts.
+                    const redirectUrl = new URL(redirectLocation, makeApiUrl()).toString();
                     bytes = await fetchSubdlDirectWithFallback(redirectUrl, addonConfig.subdlKey);
                     response = { headers: { 'content-type': 'application/x-subrip' }, status: 200 };
                 } else {
@@ -1495,8 +1507,8 @@ app.get('/:configData/subdl-file/:nId', async (req, res) => {
         if (!bytes?.length) throw new Error('SubDL a returnat un fișier gol.');
         const contentType = String(response?.headers?.['content-type'] || '').toLowerCase();
 
-        // Unele răspunsuri JSON ale endpoint-ului de download conțin URL-ul direct.
-        // Rezolvăm relative paths împotriva dl.subdl.com, nu a api.subdl.com.
+        // Resolve download URLs only against SubDL's download host and validate the
+        // resulting public destination before making any outbound request.
         if (contentType.includes('application/json') || bytes.toString('utf8', 0, Math.min(bytes.length, 20)).trimStart().startsWith('{')) {
             let parsed = null;
             try { parsed = JSON.parse(bytes.toString('utf8')); } catch (_) {}
@@ -1512,18 +1524,34 @@ app.get('/:configData/subdl-file/:nId', async (req, res) => {
                 throw new Error('SubDL nu a returnat o subtitrare descărcabilă.');
             }
         }
-        const filename = String(req.query.filename || '').slice(0, 500);
-        const normalized = normalizeDownloadedSubtitle(bytes, directDownloadUrl || `https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(plainNId)}/download`, filename);
+
+        return normalizeDownloadedSubtitle(
+            bytes,
+            directDownloadUrl || `https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(plainNId)}/download`,
+            String(requestedFilename || '').slice(0, 500)
+        );
+    } catch (error) {
+        const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
+        console.log(`[SubDL] Descărcare nereușită (${isApiReference ? 'ID derivat din URL' : isDirectUrlRef ? 'URL direct' : 'nId'}; ${status || 'eroare de rețea'}); nu se expune cheia.`);
+        error.statusCode = error.statusCode || 502;
+        throw error;
+    }
+}
+
+app.get('/:configData/subdl-file/:nId', async (req, res) => {
+    try {
+        const normalized = await getSubdlSubtitleText(req.params.configData, String(req.params.nId || ''), req.query.filename);
         res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
         res.setHeader('Cache-Control', 'private, max-age=60');
         return res.send(normalized);
     } catch (error) {
-        const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
-        console.log(`[SubDL] Descărcare nereușită (${isApiReference ? 'ID derivat din URL' : isDirectUrlRef ? 'URL direct' : 'nId'}; ${status || 'eroare de rețea'}); nu se expune cheia.`);
-        return res.status(502).send('SubDL nu a putut furniza această subtitrare.');
+        const statusCode = Number(error?.statusCode || 502);
+        const publicMessage = statusCode === 400 || statusCode === 404
+            ? error.message
+            : 'SubDL nu a putut furniza această subtitrare.';
+        return res.status(statusCode).send(publicMessage);
     }
 });
-
 
 app.get('/:configData/subtitles/:type/:id.json', handleSubtitles);
 app.get('/:configData/subtitles/:type/:id/:extra.json', handleSubtitles);
@@ -8208,19 +8236,19 @@ app.get('/:configData/translate', async (req, res) => {
     const imdbId = req.query.id;
     const targetUrl = req.query.targetUrl || req.query.url;
     const configData = req.params.configData;
+    const subdlRef = String(req.query.subdlRef || '');
+    const isInternalSubdl = subdlRef.length > 0;
+    const subdlFilename = String(req.query.filename || '').slice(0, 500);
 
-
-    if (!targetUrl) {
+    if (isInternalSubdl && (targetUrl || req.query.source !== 'SubDL')) {
+        return res.status(400).send('Parametri SubDL interni invalizi.');
+    }
+    if (!targetUrl && !isInternalSubdl) {
         console.log(`${c.red}✖ EROARE: Lipsă URL sursă.${c.reset}`);
         return res.status(400).send('Lipsă URL sursă.');
     }
-
-    let validatedTarget;
-    try {
-        validatedTarget = await validateTargetUrl(targetUrl);
-    } catch (error) {
-        console.log(`${c.red}✖ EROARE: URL sursă respins: ${error.message}${c.reset}`);
-        return res.status(400).send(error.message);
+    if (isInternalSubdl && !/^(?:api_[A-Za-z0-9_-]{16,4096}|url_[A-Za-z0-9_-]{8,2048}|[A-Za-z0-9_-]{1,128})$/.test(subdlRef)) {
+        return res.status(400).send('Referință SubDL invalidă.');
     }
 
     const decodedConfig = decodeAddonConfigSegment(configData);
@@ -8228,14 +8256,30 @@ app.get('/:configData/translate', async (req, res) => {
         console.log(`${c.red}✖ EROARE: Configurare invalidă.${c.reset}`);
         return res.status(400).send('Configurare invalidă. Instalează addon-ul din nou.');
     }
-    let userKeys = decodedConfig.geminiKeys;
-
+    const userKeys = decodedConfig.geminiKeys;
     if (!userKeys.length) {
         console.log(`${c.red}✖ EROARE: Nu s-au putut extrage chei API valide.${c.reset}`);
         return res.status(400).send('Nu există chei Gemini configurate.');
     }
+    if (isInternalSubdl && !decodedConfig.subdlKey) {
+        return res.status(400).send('SubDL nu este configurat pentru această instalare.');
+    }
 
-    const cacheKey = validatedTarget.url;
+    let validatedTarget = null;
+    let cacheKey;
+    if (isInternalSubdl) {
+        // Opaque SubDL references never become URLs. Downloads are performed in-process
+        // by getSubdlSubtitleText(), while every external download still uses SSRF checks.
+        cacheKey = `subdl-ref:${configData}:${subdlRef}:${subdlFilename}`;
+    } else {
+        try {
+            validatedTarget = await validateTargetUrl(targetUrl);
+        } catch (error) {
+            console.log(`${c.red}✖ EROARE: URL sursă respins: ${error.message}${c.reset}`);
+            return res.status(400).send(error.message);
+        }
+        cacheKey = validatedTarget.url;
+    }
 
     const cachedEntry = getMemoryCacheEntry(cacheKey);
     if (typeof cachedEntry === 'string') {
@@ -8271,7 +8315,9 @@ app.get('/:configData/translate', async (req, res) => {
             
             processPromise = (async () => {
                 const [srtRes, mediaTitle] = await Promise.all([
-                    fetchValidatedSubtitleUrl(validatedTarget.url),
+                    isInternalSubdl
+                        ? getSubdlSubtitleText(configData, subdlRef, subdlFilename).then(data => ({ data }))
+                        : fetchValidatedSubtitleUrl(validatedTarget.url),
                     fetchMediaTitle(imdbId)
                 ]);
                 rememberOriginalSource(cacheKey, String(srtRes.data || ''));

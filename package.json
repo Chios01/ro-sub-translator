@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.2",
+  "version": "13.2.6",
   "private": true,
-  "description": "RO Sub Translator — tested release candidate based on v12.78.253; optional SubDL",
+  "description": "RO Sub Translator — in-process SubDL download path with SSRF validation retained for external URLs",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
