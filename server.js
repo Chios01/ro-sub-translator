@@ -1600,10 +1600,24 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const STANDALONE_SOURCE_FILLERS = new Set((
-    // Doar ezitări/vocalizări cu risc mic de a fi răspunsuri sau reacții semantice.
-    // „Oh”, „Hmm”, „Mhm”, „Mm-hmm” și reacțiile clare merg la Gemini pentru decizie contextuală.
-    'aaaa aaaaah aaaah aaah ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu'
+    // Eliminăm vocalizările fără conținut și „oh/ah” când apar singure.
+    // Reacțiile din expresii cu sens („Oh, no”, „Oh my God”, „Ah, yes”) rămân.
+    // „Hmm”, „Mhm” și „Mm-hmm” continuă să fie evaluate contextual de Gemini.
+    'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu'
 ).split(/\s+/));
+
+// Elimină „oh/ah” folosite ca umplutură la începutul replicii („Oh, I know” → „I know”),
+// dar păstrează expresii/reacții cu sens consacrate. Nu atinge „Oh my God” fără virgulă.
+function stripLeadingOhAhInterjections(value) {
+    const meaningfulRemainder = /^(?:my\s+god\b|god\b|no\b|yes\b|yeah\b|yep\b|wow\b|dear\b|boy\b|come\s+on\b|well\b|right\b|okay\b|ok\b|really\b|whoa\b)/iu;
+    return String(value || '').split('\n').map(line => {
+        const match = line.match(/^(\s*[-–—]?\s*)(?:oh|ah)\s*[,;:!?.…–—-]+\s+/iu);
+        if (!match) return line;
+        const remainder = line.slice(match[0].length).trimStart();
+        if (!remainder || meaningfulRemainder.test(remainder)) return line;
+        return match[1] + remainder;
+    }).join('\n');
+}
 
 function isOnlyStandaloneFillerSequence(text) {
     const clean = String(text || '').replace(/<[^>]*>/g, ' ').trim();
@@ -1689,7 +1703,7 @@ function stripBracketedSegments(text) {
 
     // Regula cerută: nimic din interiorul parantezelor rotunde sau drepte
     // nu ajunge în subtitrarea finală. Repetăm pentru a acoperi și delimitări imbricate.
-    const bracketedSegmentPattern = /\([^()]*\)|\[[^\[\]]*\]/g;
+    const bracketedSegmentPattern = /\([^()\[\]]*\)|\[[^()\[\]]*\]|\([^()\[\]\r\n]{1,80}\]|\[[^()\[\]\r\n]{1,80}\)/g;
     let previous;
     do {
         previous = clean;
@@ -1815,6 +1829,10 @@ function cleanTextForJson(text) {
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
+    // Eliminăm „oh/ah” de umplutură de la începutul unei propoziții înainte de Gemini.
+    // Expresiile cu sens cunoscute sunt păstrate de stripLeadingOhAhInterjections().
+    clean = stripLeadingOhAhInterjections(clean);
+
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
 
@@ -1835,7 +1853,9 @@ function cleanTextForJson(text) {
 
 function deepCleanSubtitleText(text) {
     if (!text) return text;
-    
+
+    // Plasă de siguranță pentru „Oh/Ah” de umplutură care ar fi putut fi păstrate de model.
+    text = stripLeadingOhAhInterjections(text);
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 

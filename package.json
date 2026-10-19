@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.7",
+  "version": "13.2.8",
   "private": true,
-  "description": "RO Sub Translator — direct in-process SubDL flow and hardened IPv4-mapped IPv6 SSRF validation",
+  "description": "RO Sub Translator — mixed-bracket SDH cleanup and leading oh/ah filler filtering",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
