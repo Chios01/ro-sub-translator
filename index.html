@@ -1,277 +1,260 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ro">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Configurare - RO Sub Translator</title>
-    <style>
-        body {
-            background-color: #121212;
-            color: #ffffff;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 15px;
-            box-sizing: border-box;
-        }
-        .container {
-            max-width: 400px;
-            width: 100%;
-            padding: 15px;
-            padding-bottom: 20px;
-            box-sizing: border-box;
-        }
-        h1 {
-            color: #00ff7f;
-            font-size: 24px;
-            margin-top: 0;
-            margin-bottom: 5px;
-            text-align: center;
-            font-weight: bold;
-        }
-        .version-badge {
-            font-size: 0.45em;
-            background-color: #8a5ae9;
-            color: #ffffff;
-            padding: 3px 8px;
-            border-radius: 20px;
-            vertical-align: middle;
-            margin-left: 6px;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        }
-        p.subtitle {
-            text-align: center;
-            color: #999999;
-            margin-top: 0;
-            margin-bottom: 20px;
-            font-size: 13px;
-        }
-        .input-group {
-            margin-bottom: 8px;
-        }
-        label {
-            display: block;
-            margin-bottom: 3px;
-            font-size: 12px;
-            color: #bbbbbb;
-        }
-        input[type="text"] {
-            width: 100%;
-            background-color: #1e1e1e;
-            color: #ffffff;
-            border: 1px solid #333333;
-            border-radius: 6px;
-            padding: 8px 12px;
-            font-size: 13px;
-            font-family: monospace;
-            box-sizing: border-box;
-            transition: border-color 0.3s, box-shadow 0.3s;
-        }
-        input[type="text"]:focus {
-            outline: none;
-            border-color: #8a5ae9;
-        }
-        
-        .btn-validate {
-            display: block;
-            width: 100%;
-            background-color: #8a5ae9;
-            color: #ffffff;
-            border: none;
-            padding: 14px;
-            border-radius: 6px;
-            font-size: 15px;
-            font-weight: bold;
-            cursor: pointer;
-            text-align: center;
-            margin-top: 20px;
-            box-sizing: border-box;
-            transition: background-color 0.3s ease;
-        }
-        .btn-validate:hover {
-            background-color: #7241d6;
-        }
-        .btn-validate:disabled {
-            background-color: #555555;
-            cursor: not-allowed;
-            opacity: 0.8;
-        }
-
-        .btn-install {
-            display: none; 
-            width: 100%;
-            background-color: #00e676;
-            color: #000000;
-            border: none;
-            padding: 14px;
-            border-radius: 6px;
-            font-size: 15px;
-            font-weight: bold;
-            cursor: pointer;
-            text-align: center;
-            text-decoration: none;
-            margin-top: 20px;
-            box-sizing: border-box;
-            transition: background-color 0.3s ease;
-        }
-        .btn-install:hover {
-            background-color: #00c853;
-        }
-
-        #statusMsg {
-            text-align: center;
-            color: #ff3333;
-            font-size: 13px;
-            margin-top: 15px;
-            margin-bottom: 0;
-            font-weight: bold;
-            display: none;
-        }
-
-        .footer {
-            text-align: center;
-            color: #00ffff;
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 14px;
-            margin-top: 15px;
-            line-height: 1.4;
-        }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Configurare RO Sub Translator</title>
+  <style>
+    :root{color-scheme:dark;--bg:#101018;--panel:#191925;--panel2:#202031;--text:#f4f1ff;--muted:#aaa7bf;--purple:#8c5cff;--green:#35e6a2;--border:#343148;--danger:#ff727e}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 10% 0%,#262044 0,transparent 34%),var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;min-height:100vh;padding:8px 12px;display:flex;justify-content:center;align-items:flex-start}
+    .wrap{width:100%;max-width:720px}.brand{text-align:center;margin:0 0 10px}.mark{display:inline-flex;align-items:center;justify-content:center;width:54px;height:54px;border-radius:17px;background:linear-gradient(135deg,var(--purple),#5432af);font-size:26px;box-shadow:0 8px 30px #8c5cff3a}.brand h1{font-size:24px;margin:2px 0 5px;letter-spacing:.1px}.ver{font-size:11px;vertical-align:middle;color:#d8caff;border:1px solid #5b4789;border-radius:30px;padding:3px 8px;margin-left:5px}.brand p{font-size:13px;line-height:1.45;color:var(--muted);margin:0 auto;max-width:390px}
+    .card{background:linear-gradient(180deg,#1b1b29,#171721);border:1px solid var(--border);border-radius:18px;padding:16px;margin:10px 0;box-shadow:0 12px 35px #0002}.section-title{display:flex;align-items:center;gap:10px;margin:0 0 5px;font-size:16px}.section-icon{width:34px;height:34px;border-radius:10px;background:#8c5cff22;display:flex;align-items:center;justify-content:center;color:#c5adff;font-size:18px;flex:0 0 auto}.desc{font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 14px}.key-grid{display:grid;grid-template-columns:1fr;gap:9px}.field label{display:block;font-size:12px;color:#c8c4d9;margin:0 0 5px}.field input{width:100%;background:#101019;border:1px solid #3b394d;border-radius:9px;color:white;font-size:13px;padding:11px 12px;outline:none;min-width:0}.field input:focus{border-color:var(--purple);box-shadow:0 0 0 2px #8c5cff20}.field input::placeholder{color:#69667a}.field input.status-valid{border-color:var(--green);box-shadow:0 0 0 1px #35e6a233}.field input.status-invalid{border-color:var(--danger);box-shadow:0 0 0 1px #ff727e33}.field input.status-testing{border-color:#c7b6ff}.field-status{display:block;min-height:0;margin-top:5px;font-size:11px;line-height:1.4;color:var(--muted)}.field-status:empty{display:none}.field-status.success{color:var(--green)}.field-status.error{color:var(--danger)}.field-status.testing{color:#d5c8ff}.subdl-link a{color:#c7b6ff;text-decoration:underline;text-underline-offset:3px}.legacy-signature{margin:8px 0 2px;color:#00ffff;font-family:"Courier New",Courier,monospace;font-size:16px;font-weight:700;line-height:1.45;text-align:center}.hint{font-size:11px;color:var(--muted);line-height:1.45;margin-top:7px}.row{display:flex;align-items:center;justify-content:space-between;gap:10px}.toggle,.text-button{background:transparent;border:0;color:#c7b6ff;padding:8px 0;font-size:12px;cursor:pointer}.key-list{display:none;grid-template-columns:1fr;gap:9px;margin-top:12px}.key-list.open{display:grid}.key-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}.key-entry input{width:100%}.key-entry .text-button{white-space:nowrap}.status-row{display:flex;align-items:center;gap:9px;background:#2c263d;border:1px solid #493b68;border-radius:10px;padding:10px 12px;margin-top:12px;font-size:12px}.dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:0 0 auto}.pill{font-size:10px;font-weight:700;color:#9bffd7;background:#35e6a218;border:1px solid #35e6a250;border-radius:20px;padding:4px 8px;margin-left:auto;white-space:nowrap}.subdl-field{margin-top:13px}.actions{display:grid;gap:10px;margin:18px 0}.primary,.install{width:100%;border:0;border-radius:11px;padding:14px 16px;font-weight:750;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;min-height:48px}.primary{color:#fff;background:linear-gradient(135deg,#9065ff,#693dde);box-shadow:0 7px 20px #8058ef25}.primary:disabled{opacity:.55;cursor:wait}.install{display:none;color:#08140f;background:var(--green)}.message{display:none;border-radius:10px;padding:11px 12px;font-size:12px;line-height:1.5;margin-top:12px}.message.error{display:block;background:#4a2028;border:1px solid #813943;color:#ffd8dc}.message.success{display:block;background:#17382d;border:1px solid #2c7358;color:#c3ffe6}.foot{text-align:center;font-size:11px;color:#7f7b94;line-height:1.6;margin:20px auto 4px;max-width:440px}.install-help{display:none;text-align:center;color:var(--muted);font-size:12px;margin:4px 0 0;line-height:1.5}.badge-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.subdl-note{font-size:12px;line-height:1.5;color:#c9c4db;margin:0}
+    @media(min-width:560px){.key-list{grid-template-columns:1fr 1fr}.card{padding:18px}.brand h1{font-size:26px}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto;transition:none!important}}
+  </style>
 </head>
 <body>
+  <main class="wrap">
+    <header class="brand">
+      <h1>RO Sub Translator <span class="ver">v{{VERSION}}</span></h1>
+    </header>
 
-    <div class="container">
-        <h1>RO Sub Translator <span class="version-badge">v{{VERSION}}</span></h1>
-        <p class="subtitle">Introdu cele 10 token-uri de acces</p>
-        
-        <div id="keys-container">
-            <div class="input-group"><label>Token 1:</label><input type="text" id="key1" placeholder="..."></div>
-            <div class="input-group"><label>Token 2:</label><input type="text" id="key2" placeholder="..."></div>
-            <div class="input-group"><label>Token 3:</label><input type="text" id="key3" placeholder="..."></div>
-            <div class="input-group"><label>Token 4:</label><input type="text" id="key4" placeholder="..."></div>
-            <div class="input-group"><label>Token 5:</label><input type="text" id="key5" placeholder="..."></div>
-            <div class="input-group"><label>Token 6:</label><input type="text" id="key6" placeholder="..."></div>
-            <div class="input-group"><label>Token 7:</label><input type="text" id="key7" placeholder="..."></div>
-            <div class="input-group"><label>Token 8:</label><input type="text" id="key8" placeholder="..."></div>
-            <div class="input-group"><label>Token 9:</label><input type="text" id="key9" placeholder="..."></div>
-            <div class="input-group"><label>Token 10:</label><input type="text" id="key10" placeholder="..."></div>
-        </div>
-        
-        <button id="validateBtn" class="btn-validate" onclick="validateKeys()">Verifică Datele</button>
-        
-        <a href="#" id="installLink" class="btn-install">Instalează în Stremio</a>
-        
-        <p id="statusMsg"></p>
-        
-        <div class="footer">
-            // System status: Operational. Powered<br>by Chios.
-        </div>
+    <section class="card" aria-labelledby="geminiTitle">
+      <div class="row"><h2 class="section-title" id="geminiTitle"><span class="section-icon">✦</span>Conexiune Gemini</h2><span class="pill">OBLIGATORIU</span></div>
+      <p class="desc">Toate cele 10 tokenuri Gemini sunt obligatorii și sunt verificate separat. Configurația este inclusă în linkul Stremio în format Base64, compatibil cu instalările existente; Base64 nu este criptare.</p>
+      <div class="row key-reveal-row"><span class="hint">Completează toate cele 10 tokenuri Gemini obligatorii.</span><button class="toggle" type="button" id="toggleKeys" aria-expanded="false" aria-controls="keyList">Arată câmpurile</button></div>
+      <div class="key-list" id="keyList">
+        <div class="key-entry"><div class="field"><label for="key1">Token Gemini 1</label><input id="key1" type="password" required aria-required="true" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token obligatoriu 1"><span class="field-status" id="status-key1" role="status" aria-live="polite"></span></div><button type="button" class="text-button show-one" data-for="key1">Arată</button></div>
+        <div class="key-entry"><div class="field"><label for="key2">Token Gemini 2</label><input id="key2" type="password" required aria-required="true" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token obligatoriu 2"><span class="field-status" id="status-key2" role="status" aria-live="polite"></span></div><button type="button" class="text-button show-one" data-for="key2">Arată</button></div>
+        <div class="key-entry"><div class="field"><label for="key3">Token Gemini 3</label><input id="key3" type="password" required aria-required="true" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token obligatoriu 3"><span class="field-status" id="status-key3" role="status" aria-live="polite"></span></div><button type="button" class="text-button show-one" data-for="key3">Arată</button></div>
+        <div class="key-entry"><div class="field"><label for="key4">Token Gemini 4</label><input id="key4" type="password" required aria-required="true" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token obligatoriu 4"><span class="field-status" id="status-key4" role="status" aria-live="polite"></span></div><button type="button" class="text-button show-one" data-for="key4">Arată</button></div>
+        <div class="key-entry"><div class="field"><label for="key5">Token Gemini 5</label><input id="key5" type="password" required aria-required="true" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token obligatoriu 5"><span class="field-status" id="status-key5" role="status" aria-live="polite"></span></div><button type="button" class="text-button show-one" data-for="key5">Arată</button></div>
+        <div class="key-entry"><div class="field"><label for="key6">Token Gemini 6</label><input id="key6" type="password" required aria-required="true" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token obligatoriu 6"><span class="field-status" id="status-key6" role="status" aria-live="polite"></span></div><button type="button" class="text-button show-one" data-for="key6">Arată</button></div>
+        <div class="key-entry"><div class="field"><label for="key7">Token Gemini 7</label><input id="key7" type="password" required aria-required="true" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token obligatoriu 7"><span class="field-status" id="status-key7" role="status" aria-live="polite"></span></div><button type="button" class="text-button show-one" data-for="key7">Arată</button></div>
+        <div class="key-entry"><div class="field"><label for="key8">Token Gemini 8</label><input id="key8" type="password" required aria-required="true" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token obligatoriu 8"><span class="field-status" id="status-key8" role="status" aria-live="polite"></span></div><button type="button" class="text-button show-one" data-for="key8">Arată</button></div>
+        <div class="key-entry"><div class="field"><label for="key9">Token Gemini 9</label><input id="key9" type="password" required aria-required="true" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token obligatoriu 9"><span class="field-status" id="status-key9" role="status" aria-live="polite"></span></div><button type="button" class="text-button show-one" data-for="key9">Arată</button></div>
+        <div class="key-entry"><div class="field"><label for="key10">Token Gemini 10</label><input id="key10" type="password" required aria-required="true" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Token obligatoriu 10"><span class="field-status" id="status-key10" role="status" aria-live="polite"></span></div><button type="button" class="text-button show-one" data-for="key10">Arată</button></div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="sourcesTitle">
+      <h2 class="section-title" id="sourcesTitle"><span class="section-icon">▣</span>Surse de subtitrări</h2>
+      <div class="status-row"><span class="dot"></span><span><strong>OpenSubtitles</strong><br><span class="hint">Activ permanent; furnizează rezultate de rezervă și completare.</span></span><span class="pill">ACTIV</span></div>
+      <div class="subdl-field">
+        <div class="row"><label for="subdlKey">Token SubDL (opțional)</label><button type="button" class="text-button" id="toggleSubdl">Arată</button></div>
+        <div class="field"><input id="subdlKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Introdu tokenul SubDL dacă vrei să-l folosești"><span class="field-status" id="status-subdlKey" role="status" aria-live="polite"></span></div>
+        <p class="hint">Dacă este configurat, SubDL apare primul și folosește potrivirea nativă a versiunii video. OpenSubtitles rămâne ca sursă de completare. Fără token SubDL, funcționarea rămâne ca înainte.</p>
+        <p class="hint subdl-link"><a href="https://subdl.com/" target="_blank" rel="noopener noreferrer">Nu ai cont SubDL? Intră pe site-ul oficial pentru cont și token de acces ↗</a></p>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button class="primary" type="button" id="createBtn">Verifică tokenurile și generează linkul de instalare</button>
+      <div class="legacy-signature">// System status: Operational. Powered<br>by Chios.</div>
+      <a class="install" id="installLink" href="#">⇧ Instalează în Stremio</a>
+      <p class="install-help" id="installHelp">Linkul folosește formatul de configurare compatibil cu v12.78.253. Păstrează linkul privat dacă nu dorești să distribui accesul la tokenurile din configurație.</p>
+      <div class="message" id="message" role="status" aria-live="polite"></div>
     </div>
+    <footer class="foot">RO Sub Translator · Configurația din link este codificată Base64, nu criptată. Păstrează linkul privat dacă vrei să limitezi accesul la tokenurile tale.</footer>
+  </main>
 
-    <script>
-        for (let i = 1; i <= 10; i++) {
-            document.getElementById('key' + i).addEventListener('input', function() {
-                document.getElementById('installLink').style.display = 'none';
-                document.getElementById('validateBtn').style.display = 'block';
-                document.getElementById('statusMsg').style.display = 'none';
-                this.style.borderColor = "#333333";
-            });
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const button = $('createBtn');
+  const keyList = $('keyList');
+  const toggleKeys = $('toggleKeys');
+  const installLink = $('installLink');
+  const installHelp = $('installHelp');
+  const message = $('message');
+  const defaultButtonText = 'Verifică tokenurile și generează linkul de instalare';
+
+  toggleKeys.addEventListener('click', () => {
+    const open = keyList.classList.toggle('open');
+    toggleKeys.textContent = open ? 'Ascunde câmpurile' : 'Arată câmpurile';
+    toggleKeys.setAttribute('aria-expanded', String(open));
+  });
+
+  document.querySelectorAll('.show-one').forEach(btn => btn.addEventListener('click', () => {
+    const input = $(btn.dataset.for);
+    input.type = input.type === 'password' ? 'text' : 'password';
+    btn.textContent = input.type === 'password' ? 'Arată' : 'Ascunde';
+  }));
+  $('toggleSubdl').addEventListener('click', () => {
+    const input = $('subdlKey');
+    input.type = input.type === 'password' ? 'text' : 'password';
+    $('toggleSubdl').textContent = input.type === 'password' ? 'Arată' : 'Ascunde';
+  });
+
+  function showMessage(text, kind) {
+    message.textContent = text;
+    message.className = `message ${kind}`;
+  }
+  function setFieldStatus(inputId, state, text) {
+    const input = $(inputId);
+    const status = $(`status-${inputId}`);
+    input.classList.remove('status-valid', 'status-invalid', 'status-testing');
+    status.classList.remove('success', 'error', 'testing');
+    if (state === 'success') {
+      input.classList.add('status-valid');
+      status.classList.add('success');
+    } else if (state === 'error') {
+      input.classList.add('status-invalid');
+      status.classList.add('error');
+    } else if (state === 'testing') {
+      input.classList.add('status-testing');
+      status.classList.add('testing');
+    }
+    status.textContent = text || '';
+  }
+  function resetStatuses() {
+    for (let i = 1; i <= 10; i++) setFieldStatus(`key${i}`, '', '');
+    setFieldStatus('subdlKey', '', '');
+  }
+  async function postJson(path, body) {
+    const response = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify(body)
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+    return { response, data };
+  }
+  async function checkGeminiToken(value) {
+    try {
+      const result = await postJson('/validate-key', { key: value });
+      return result.response.ok && result.data.valid === true;
+    } catch (_) {
+      return false;
+    }
+  }
+  async function checkSubdlToken(value) {
+    try {
+      const result = await postJson('/validate-subdl-key', { key: value });
+      return result.response.ok && result.data.valid === true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Any edit clears the old test result so green never implies an edited token is still valid.
+  for (let i = 1; i <= 10; i++) {
+    $(`key${i}`).addEventListener('input', () => {
+      setFieldStatus(`key${i}`, '', '');
+      installLink.style.display = 'none';
+      installHelp.style.display = 'none';
+      message.className = 'message';
+      button.dataset.complete = 'false';
+    });
+  }
+  $('subdlKey').addEventListener('input', () => {
+    setFieldStatus('subdlKey', '', '');
+    installLink.style.display = 'none';
+    installHelp.style.display = 'none';
+    message.className = 'message';
+    button.dataset.complete = 'false';
+  });
+
+  button.addEventListener('click', async () => {
+    // Open the token fields automatically before displaying any validation states.
+    // This keeps missing/invalid token feedback visible even if the user had collapsed the form.
+    if (!keyList.classList.contains('open')) {
+      keyList.classList.add('open');
+      toggleKeys.textContent = 'Ascunde câmpurile';
+      toggleKeys.setAttribute('aria-expanded', 'true');
+    }
+    installLink.style.display = 'none';
+    installHelp.style.display = 'none';
+    message.className = 'message';
+    button.dataset.complete = 'false';
+    resetStatuses();
+
+    const tokens = [];
+    const missingGemini = [];
+    for (let i = 1; i <= 10; i++) {
+      const value = $(`key${i}`).value.trim();
+      if (!value) {
+        missingGemini.push(i);
+        setFieldStatus(`key${i}`, 'error', 'Obligatoriu — completează acest câmp');
+      } else {
+        tokens.push({ index: i, value });
+      }
+    }
+    const subdlToken = $('subdlKey').value.trim();
+
+    button.disabled = true;
+    const invalidGemini = [];
+    let subdlValid = true;
+    try {
+      // Validate each provided token in order, even if an earlier one fails.
+      for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        button.textContent = `Se verifică Token Gemini ${token.index} (${i + 1}/${tokens.length})…`;
+        setFieldStatus(`key${token.index}`, 'testing', 'Se verifică…');
+        const valid = await checkGeminiToken(token.value);
+        if (valid) {
+          setFieldStatus(`key${token.index}`, 'success', 'Token valid');
+        } else {
+          invalidGemini.push(token.index);
+          setFieldStatus(`key${token.index}`, 'error', 'Token invalid sau serviciul nu este disponibil');
         }
+      }
 
-        async function validateKeys() {
-            const validateBtn = document.getElementById('validateBtn');
-            const installLink = document.getElementById('installLink');
-            const statusMsg = document.getElementById('statusMsg');
-            
-            statusMsg.style.display = 'none';
-            let keysArray = [];
-            
-            for (let i = 1; i <= 10; i++) {
-                let input = document.getElementById('key' + i);
-                let val = input.value.trim();
-                input.style.borderColor = "#333333";
-                
-                if (val === "") {
-                    statusMsg.innerText = `Eroare: Câmpul ${i} este obligatoriu.`;
-                    statusMsg.style.display = 'block';
-                    input.style.borderColor = "#ff3333";
-                    input.focus();
-                    return;
-                }
-                
-                if (!val.startsWith("AIza") && !val.startsWith("AQ")) {
-                    statusMsg.innerText = `Eroare: Format invalid la câmpul ${i}.`;
-                    statusMsg.style.display = 'block';
-                    input.style.borderColor = "#ff3333";
-                    input.focus();
-                    return;
-                }
-                
-                keysArray.push({ id: 'key' + i, value: val });
-            }
-
-            validateBtn.innerText = "Se verifică pe rând... (așteaptă)";
-            validateBtn.disabled = true;
-            
-            let allValid = true;
-
-            for (let i = 0; i < keysArray.length; i++) {
-                let keyObj = keysArray[i];
-                let input = document.getElementById(keyObj.id);
-                
-                try {
-                    await new Promise(r => setTimeout(r, 200)); 
-
-                    let res = await fetch('/validate-key', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ key: keyObj.value })
-                    });
-                    
-                    if (!res.ok) {
-                        input.style.borderColor = "#ff3333";
-                        allValid = false;
-                        continue;
-                    }
-
-                    let data = await res.json();
-                    
-                    if (data.valid === true) {
-                        input.style.borderColor = "#00ff7f";
-                    } else {
-                        input.style.borderColor = "#ff3333";
-                        allValid = false;
-                    }
-                } catch (e) {
-                    input.style.borderColor = "#ff3333";
-                    allValid = false;
-                }
-            }
-
-            validateBtn.innerText = "Verifică Datele";
-            validateBtn.disabled = false;
-
-            if (allValid) {
-                validateBtn.style.display = 'none';
-                
-                const configJson = JSON.stringify(keysArray.map(k => k.value));
-                const base64Config = btoa(configJson);
-                
-                const currentUrl = window.location.href.replace('https://', '').replace('http://', '').split('/')[0];
-                const installUrl = `stremio://${currentUrl}/${base64Config}/manifest.json`;
-                
-                installLink.href = installUrl;
-                installLink.style.display = 'block';
-            } else {
-                statusMsg.innerText = "Eroare: Datele marcate cu roșu sunt greșite sau blocate!";
-                statusMsg.style.display = 'block';
-            }
+      if (subdlToken) {
+        button.textContent = 'Se verifică Token SubDL…';
+        setFieldStatus('subdlKey', 'testing', 'Se verifică…');
+        subdlValid = await checkSubdlToken(subdlToken);
+        if (subdlValid) {
+          setFieldStatus('subdlKey', 'success', 'Token SubDL valid');
+        } else {
+          setFieldStatus('subdlKey', 'error', 'Token invalid sau serviciul nu este disponibil');
         }
-    </script>
+      }
+
+      const errors = [];
+      if (missingGemini.length) {
+        errors.push(`Lipsesc tokenurile Gemini obligatorii din câmpurile: ${missingGemini.join(', ')}.`);
+      }
+      if (invalidGemini.length) {
+        errors.push(`Tokenurile Gemini din câmpurile ${invalidGemini.join(', ')} nu au fost validate.`);
+      }
+      if (subdlToken && !subdlValid) {
+        errors.push('Tokenul SubDL marcat cu roșu nu a fost validat. Corectează-l sau lasă câmpul gol pentru a folosi OpenSubtitles.');
+      }
+      if (errors.length) {
+        showMessage(errors.join(' '), 'error');
+        const firstBad = missingGemini.length ? `key${missingGemini[0]}` : (invalidGemini.length ? `key${invalidGemini[0]}` : 'subdlKey');
+        $(firstBad).focus();
+        return;
+      }
+
+      button.textContent = 'Se generează linkul de instalare…';
+      const payload = {
+        schemaVersion: 1,
+        geminiKeys: tokens.map(item => item.value),
+        subdlKey: subdlToken || ''
+      };
+      const encodedConfig = btoa(JSON.stringify(payload))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+      const installUrl = `stremio://${window.location.host}/${encodedConfig}/manifest.json`;
+      installLink.href = installUrl;
+      installLink.style.display = 'flex';
+      installHelp.style.display = 'block';
+      showMessage('Tokenurile Gemini au fost validate, iar linkul compatibil a fost generat. SubDL va fi folosit numai dacă ai completat tokenul opțional.', 'success');
+      button.dataset.complete = 'true';
+      button.textContent = 'Generează alt link de instalare';
+    } catch (error) {
+      showMessage(error?.message || 'A apărut o eroare de rețea. Încearcă din nou.', 'error');
+    } finally {
+      button.disabled = false;
+      if (button.dataset.complete !== 'true') button.textContent = defaultButtonText;
+    }
+  });
+})();
+</script>
 </body>
 </html>
