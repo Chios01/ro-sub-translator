@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.6",
+  "version": "13.2.7",
   "private": true,
-  "description": "RO Sub Translator — in-process SubDL download path with SSRF validation retained for external URLs",
+  "description": "RO Sub Translator — direct in-process SubDL flow and hardened IPv4-mapped IPv6 SSRF validation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

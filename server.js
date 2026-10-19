@@ -178,7 +178,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.6',
+    version: '13.2.7',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -7669,6 +7669,42 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
 // TARGET URL VALIDATION / SSRF PROTECTION
 // ============================================================
 
+function ipv4FromMappedIpv6(address) {
+    // IPv4-mapped IPv6 poate apărea atât cu octeți punctați, cât și în format
+    // hexadecimal comprimat (ex. ::ffff:7f00:1 pentru 127.0.0.1). Normalizăm
+    // ambele forme înainte de a aplica aceleași filtre IPv4.
+    let value = String(address || '').toLowerCase().replace(/%.+$/, '');
+    if (net.isIP(value) !== 6) return null;
+
+    if (value.includes('.')) {
+        const lastColon = value.lastIndexOf(':');
+        const dotted = value.slice(lastColon + 1);
+        if (net.isIP(dotted) !== 4) return null;
+        const octets = dotted.split('.').map(Number);
+        const high = ((octets[0] << 8) | octets[1]).toString(16);
+        const low = ((octets[2] << 8) | octets[3]).toString(16);
+        value = `${value.slice(0, lastColon + 1)}${high}:${low}`;
+    }
+
+    const halves = value.split('::');
+    if (halves.length > 2) return null;
+    const left = halves[0] ? halves[0].split(':') : [];
+    const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+    let groups;
+    if (halves.length === 2) {
+        const missing = 8 - left.length - right.length;
+        if (missing < 1) return null;
+        groups = [...left, ...Array(missing).fill('0'), ...right];
+    } else {
+        groups = left;
+    }
+    if (groups.length !== 8 || groups.some(group => !/^[0-9a-f]{1,4}$/i.test(group))) return null;
+
+    const words = groups.map(group => Number.parseInt(group, 16));
+    if (!(words.slice(0, 5).every(word => word === 0) && words[5] === 0xffff)) return null;
+    return [words[6] >> 8, words[6] & 0xff, words[7] >> 8, words[7] & 0xff].join('.');
+}
+
 function isPrivateOrReservedIp(address) {
     const family = net.isIP(address);
 
@@ -7700,6 +7736,8 @@ function isPrivateOrReservedIp(address) {
 
     if (family === 6) {
         const normalized = address.toLowerCase().replace(/%.+$/, '');
+        const mappedIpv4 = ipv4FromMappedIpv6(normalized);
+        if (mappedIpv4) return isPrivateOrReservedIp(mappedIpv4);
 
         if (
             normalized === '::' ||
@@ -7711,11 +7749,6 @@ function isPrivateOrReservedIp(address) {
             normalized.startsWith('2001:db8:')
         ) {
             return true;
-        }
-
-        const mappedMatch = normalized.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
-        if (mappedMatch) {
-            return isPrivateOrReservedIp(mappedMatch[1]);
         }
 
         return false;
