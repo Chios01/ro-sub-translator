@@ -191,7 +191,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.20',
+    version: '13.2.23',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2536,7 +2536,7 @@ OUTPUT — CRITICAL
 
 TRANSLATION AND CONTEXT
 - Translate every meaningful sentence, phrase, joke, idiom, slang expression, and fragment into Romanian. Preserve names and established foreign expressions only when they genuinely belong in the source.
-- SUNG LYRICS — IMPORTANT: actual sung words marked with music notes such as ♪, ♫, ♬ or ♩ are still dialogue and MUST be translated into natural Romanian. Do not leave an English lyric unchanged merely because it is sung, recognizable, or surrounded by music notes. Preserve the music-note markers, speaker dashes, slash-separated voices, and subtitle ID boundaries. Keep real proper names or artist names (for example, “Soulja Boy”) unchanged, but translate the ordinary English words around them. A sung “Oh/Ah” may remain when it is a musical vocable/refrain; this exception applies only to sung lyrics, not ordinary dialogue. Distinguish lyrics from non-dialogue music descriptions such as “[music playing]”, which are removed by the cue rules below.
+- MUSIC LYRICS EXCLUSION — Any text enclosed by paired music-note markers such as ♪...♪, ♫...♫, ♬...♬ or ♩...♩ is protected by the code before translation and is removed entirely from the final subtitle output. Do not try to translate, reconstruct, or replace the protected token. Copy the token exactly once in the same position. Translate only real dialogue outside the music-note markers; preserve its original subtitle ID and speaker separation. The exclusion applies whether the source is a regular subtitle or SDH; non-song dialogue near the lyrics must remain.
 - Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
 - If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
@@ -2627,6 +2627,8 @@ Nu modifica ID-urile, nu omite nicio replică și nu duplica ID-uri.
 Câmpurile context_anterior și context_urmator sunt DOAR pentru înțelegerea replicii curente; NU le traduce și NU le include în răspuns.
 Folosește contextul pentru acord, pronume, continuitate, topică și sens, dar modifică DOAR câmpul text al ID-ului curent.
 Nu reasocia textul unei replici cu alt ID. Șirurile alcătuite doar din cifre și semne de punctuație trebuie copiate exact; nu le înlocui cu traducerea replicii vecine.
+
+EXCLUDEREA VERSURILOR MUZICALE: tokenurile care încep cu ZXQKEEPSONG și se termină cu QXZ reprezintă text încadrat de marcatori muzicali și vor fi eliminate complet din subtitrarea finală. Copiază fiecare token identic, o singură dată și în aceeași poziție relativă. Nu îl traduce, nu îl elimina, nu îl modifica și nu îl despărți. Dacă o replică conține dialog în afara tokenului, traduce numai dialogul din afara tokenului; textul încadrat de marcatorii muzicali nu trebuie să apară în rezultat.
 
 REPLICILE DE TRADUS:
 ${JSON.stringify(keysToTranslate, null, 2)}
@@ -4270,6 +4272,7 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
 }
 
 function canRetranslateAlignmentItem(item) {
+    if (item?.musicOnly) return false;
     const source = String(item?.text || '').trim();
     if (!source || isEffectivelyEmptySubtitleText(source) || isJunkOrInterjection(source)) return false;
     // Formatterul curent elimină cifrele și punctuația fără litere; nu repetăm
@@ -4582,11 +4585,17 @@ function normalizeTranslationPayload(parsed) {
 }
 
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, alignmentRepair = false, deferred429Retry = false) {
-    const requestChunk = chunk.filter(obj => !isNumericVerbatimCue(obj.text));
+    const requestChunk = chunk.filter(obj => !isNumericVerbatimCue(obj.text) && !obj.musicOnly);
     const prompt = requestChunk.length
         ? buildTranslationPrompt(requestChunk, allItems, chunkStart, chunkEnd, previousTranslatedContext)
         : '';
     const verbatimCueCount = chunk.length - requestChunk.length;
+    const musicOnlyCount = chunk.filter(obj => obj.musicOnly).length;
+    const numericVerbatimCount = chunk.filter(obj => isNumericVerbatimCue(obj.text)).length;
+    const passthroughNote = [
+        numericVerbatimCount ? `${numericVerbatimCount} coduri numerice copiate exact` : '',
+        musicOnlyCount ? `${musicOnlyCount} blocuri cu versuri păstrate` : ''
+    ].filter(Boolean).join('; ');
     if (!requestChunk.length) {
         return chunk.map(obj => ({ id: obj.id, text: String(obj.text || '') }));
     }
@@ -4670,29 +4679,34 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
             // Cue-urile strict numerice sunt copiate byte-for-byte după parsare;
             // toate celelalte ID-uri folosesc exclusiv răspunsul asociat explicit de model.
-            const results = chunk.map(obj => ({
-                id: obj.id,
-                text: isNumericVerbatimCue(obj.text)
-                    ? String(obj.text || '')
-                    : (getUsableFormattedTranslation(obj.id, dict[String(obj.id)]) || ' ')
-            }));
+            const results = chunk.map(obj => {
+                if (isNumericVerbatimCue(obj.text) || obj.musicOnly) {
+                    return { id: obj.id, text: String(obj.text || '') };
+                }
+                const candidate = getUsableFormattedTranslation(obj.id, dict[String(obj.id)]);
+                if (candidate && !hasAllProtectedMusicTokens(obj, candidate)) {
+                    console.log(`${c.yellow}[Versuri muzicale] ID ${obj.id}: Gemini a modificat/eliminat un token protejat; păstrez sursa acestui cue pentru a nu altera versurile.${c.reset}`);
+                    return { id: obj.id, text: String(obj.text || '') };
+                }
+                return { id: obj.id, text: candidate || ' ' };
+            });
 
             // Verificările de limbă și fidelitate rulează o singură dată după toate calupurile,
             // unde pot corecta problemele contextual în loc să emită avertismente premature.
 
             if (missingItems.length > 0) {
                 const usableCount = chunk.length - missingItems.length;
-                const passthroughNote = verbatimCueCount ? `; ${verbatimCueCount} coduri numerice copiate exact` : '';
+                const passthroughSuffix = passthroughNote ? `; ${passthroughNote}` : '';
                 if (alignmentRepair) {
-                    console.log(`${c.yellow}⚠ [Aliniere] Segment punctual: ${usableCount}/${chunk.length} traduceri utilizabile${passthroughNote}; ${missingItems.length} ID-uri goale lăsate pentru recuperarea existentă.${c.reset}`);
+                    console.log(`${c.yellow}⚠ [Aliniere] Segment punctual: ${usableCount}/${chunk.length} intrări păstrate/utilizabile${passthroughSuffix}; ${missingItems.length} ID-uri goale lăsate pentru recuperarea existentă.${c.reset}`);
                 } else {
-                    console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: ${usableCount}/${chunk.length} traduceri utilizabile${passthroughNote}; ${missingItems.length} de recuperat (chei absente: ${missingKeyCount}; valori prezente dar goale/eliminate de formatter: ${presentButUnusableCount}); fără split.${c.reset}`);
+                    console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: ${usableCount}/${chunk.length} intrări păstrate/utilizabile${passthroughSuffix}; ${missingItems.length} de recuperat (chei absente: ${missingKeyCount}; valori prezente dar goale/eliminate de formatter: ${presentButUnusableCount}); fără split.${c.reset}`);
                 }
             } else if (alignmentRepair) {
-                console.log(`${c.green}✔ [Aliniere] Segment punctual finalizat (${chunk.length}/${chunk.length} replici).${c.reset}`);
+                console.log(`${c.green}✔ [Aliniere] Segment punctual finalizat (${chunk.length}/${chunk.length} replici păstrate).${c.reset}`);
             } else {
-                const passthroughNote = verbatimCueCount ? `; ${verbatimCueCount} coduri numerice copiate exact` : '';
-                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii${passthroughNote})${c.reset}`);
+                const passthroughSuffix = passthroughNote ? `; ${passthroughNote}` : '';
+                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii${passthroughSuffix})${c.reset}`);
             }
             return results;
         } catch (error) {
@@ -4795,7 +4809,10 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     if (finalIs5xx) {
         // Split-ul nu repară indisponibilitatea serviciului; QA va raporta explicit
         // replicile lipsă, fără multiplicarea apelurilor Gemini pentru aceleași linii.
-        return chunk.map(item => ({ id: item.id, text: ' ' }));
+        return chunk.map(item => ({
+            id: item.id,
+            text: (isNumericVerbatimCue(item.text) || item.musicOnly) ? String(item.text || '') : ' '
+        }));
     }
 
     if (sawRateLimit429 && (lastError?.isRateLimit429 || /\b429\b/i.test(String(lastError?.message || '')))) {
@@ -4817,7 +4834,10 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
         } else {
             keyStates._deferred429RetryFailedCount = Number(keyStates._deferred429RetryFailedCount || 0) + 1;
         }
-        return chunk.map(item => ({ id: item.id, text: ' ' }));
+        return chunk.map(item => ({
+            id: item.id,
+            text: (isNumericVerbatimCue(item.text) || item.musicOnly) ? String(item.text || '') : ' '
+        }));
     }
 
     if (chunk.length > 20 && depth < 2) {
@@ -4852,6 +4872,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
     let totalFixed = 0;
 
     const findSuspicious = () => items.filter(item => {
+        if (item.musicOnly) return false;
         if (getIntentionallySuppressedTranslationIds(keyStates).has(String(item.id))) return false;
         const originalClean = isEffectivelyEmptySubtitleText(item.text)
             ? ''
@@ -4979,6 +5000,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     const isTargetedReview = options.mode === 'targeted';
 
     const candidates = items.filter(item => {
+        if (item.musicOnly) return false;
         const original = String(item.text || '').replace(/<[^>]+>/g, '').trim();
         const translated = String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim();
         if (!original || (!translated && !isTargetedReview)) return false;
@@ -5045,7 +5067,7 @@ VERIFICĂ ÎN ORDINE
 4. Păstrează singularul/pluralul și referentul. De exemplu, “a hat” nu trebuie tradus „căciuli”. Nu adăuga diminutive precum „căciuliță” dacă sursa nu exprimă micime, afecțiune sau diminutiv.
 5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase.
 6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
-7. VERSURI CÂNTATE: când originalul conține cuvinte cântate marcate cu ♪, ♫, ♬ sau ♩, tratează-le ca dialog și traduce cuvintele englezești în română. Dacă traducerea a păstrat versurile obișnuite în engleză, corectează efectiv replica; nu considera versurile „muzică de fundal” doar din cauza notelor muzicale. Păstrează marcatorii muzicali, numele proprii/artistice și delimitarea vocilor. Poți păstra „Oh/Ah” numai când funcționează ca vocabilă cântată, nu ca dialog obișnuit.
+7. VERSURI MUZICALE EXCLUSE: textul dintre marcatorii muzicali este înlocuit înaintea verificării cu tokenuri tehnice de forma ZXQKEEPSONG...QXZ și va fi eliminat complet din SRT-ul final. Copiază fiecare token identic, o singură dată, în poziția lui; NU îl traduce, nu îl șterge, nu îl modifica și nu reconstrui versurile ascunse. Dacă replica are și dialog în afara tokenului, corectează numai dialogul și păstrează tokenurile identice. Textul protejat nu trebuie să apară în rezultat.
 8. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
 9. Dacă avertismentul menționează un conector repetat între două subtitrări consecutive, compară ambele originale și ambele traduceri din context. Păstrează conectorul în fragmentul al cărui original îl conține. Dacă originalul fragmentului curent NU începe/nu se termină cu acel conector, dar traducerea îl adaugă la limită, elimină doar conectorul adăugat inutil din replica curentă; nu șterge conectorul justificat de următorul/precedentul original. Dacă dovezile nu sunt clare, nu rescrie.
 10. Dacă avertismentul indică un fragment englezesc netradus, o secvență englezească deteriorată sau un text corupt și originalul/contextul permit stabilirea sensului, corectează efectiv fragmentul în română. Nu lăsa secvența deteriorată în text și nu omite corectura doar pentru că restul replicii este românește. Dacă semnalul este un fals pozitiv și formularea românească transmite deja sensul originalului, păstreaz-o.
@@ -5114,6 +5136,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 const candidate = formatSubtitleLine(String(candidateRaw || ''));
 
                 if (!candidate || candidate === current) continue;
+                if (!hasAllProtectedMusicTokens(item, candidate)) continue;
 
                 // Filtrul suplimentar poate aplica doar o corecție care rămâne
                 // compatibilă cu verificările deja existente.
@@ -5270,6 +5293,9 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
                         if (!candidate) throw new Error('răspunsul plain-text a fost gol, JSON sau conținea explicații');
 
                         if (candidate !== current) {
+                            if (!hasAllProtectedMusicTokens(item, candidate)) {
+                                throw new Error('corectura plain-text a modificat un token de versuri muzicale protejat');
+                            }
                             if (hasUntranslatedEnglish(item.text, candidate) ||
                                 hasCorruptedSubtitleText(candidate, item.text) ||
                                 hasLostExplicitSourceTerm(item.text, candidate)) {
@@ -5677,7 +5703,7 @@ function findRepeatedTranslationIssues(items, translatedById) {
     for (let i = 0; i < items.length - 1; i++) {
         const first = items[i];
         const second = items[i + 1];
-        if (isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
+        if (first.musicOnly || second.musicOnly || isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
 
         const firstId = String(first.id);
         const secondId = String(second.id);
@@ -5832,7 +5858,7 @@ function findPossibleBoundaryOverlapIssues(items, translatedById) {
     for (let i = 0; i < items.length - 1; i++) {
         const first = items[i];
         const second = items[i + 1];
-        if (isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
+        if (first.musicOnly || second.musicOnly || isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
 
         const firstId = String(first.id);
         const secondId = String(second.id);
@@ -5968,7 +5994,7 @@ function findAdjacentSemanticOverlapIssues(items, translatedById) {
     for (let i = 0; i < items.length - 1; i++) {
         const first = items[i];
         const second = items[i + 1];
-        if (isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
+        if (first.musicOnly || second.musicOnly || isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
 
         const firstId = String(first.id);
         const secondId = String(second.id);
@@ -6031,7 +6057,7 @@ function findRepeatedBoundaryConnectorIssues(items, translatedById) {
     for (let i = 0; i < items.length - 1; i++) {
         const currentItem = items[i];
         const nextItem = items[i + 1];
-        if (isJunkOrInterjection(currentItem.text) || isJunkOrInterjection(nextItem.text)) continue;
+        if (currentItem.musicOnly || nextItem.musicOnly || isJunkOrInterjection(currentItem.text) || isJunkOrInterjection(nextItem.text)) continue;
 
         const currentText = String(translatedById[String(currentItem.id)] || '')
             .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -6092,7 +6118,7 @@ function applyDeterministicBoundaryConnectorFixes(items, translatedById) {
     for (let i = 0; i < items.length - 1; i++) {
         const current = items[i];
         const next = items[i + 1];
-        if (isJunkOrInterjection(current.text) || isJunkOrInterjection(next.text)) continue;
+        if (current.musicOnly || next.musicOnly || isJunkOrInterjection(current.text) || isJunkOrInterjection(next.text)) continue;
         const currentId = String(current.id);
         const nextId = String(next.id);
         const currentRo = String(translatedById[currentId] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -6129,6 +6155,7 @@ async function runLocalGrammarQualityPass(items, translatedById) {
     const flagged = [];
 
     for (const item of items) {
+        if (item.musicOnly) continue;
         const id = String(item.id);
         const current = String(translatedById[id] || '');
         if (!current.trim()) continue;
@@ -6261,6 +6288,7 @@ function runSemanticSpotCheck(items, translatedById) {
     const flagged = [];
 
     for (const item of items) {
+        if (item.musicOnly) continue;
         const current = String(translatedById[String(item.id)] || '');
         if (!current.trim()) continue;
         if (isJunkOrInterjection(item.text)) continue;
@@ -6779,6 +6807,7 @@ async function retryEmptyTranslationIndividually(item, translatedById, keyStates
 
 async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
     const detectedEmptyTranslations = items.filter(item => {
+        if (item.musicOnly) return false;
         const id = String(item.id);
         if (getIntentionallySuppressedTranslationIds(keyStates).has(id)) return false;
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
@@ -7046,6 +7075,7 @@ function isContinuationBlock(prevEnglish, currentEnglish) {
 function applyContinuationCase(items, translatedById) {
     let changed = 0;
     for (let i = 1; i < items.length; i++) {
+        if (items[i - 1].musicOnly || items[i].musicOnly) continue;
         if (!isContinuationBlock(items[i - 1].text, items[i].text)) continue;
 
         const id = String(items[i].id);
@@ -7147,6 +7177,7 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
     const speakerDashAtLineStart = /(?:^|\n)\s*[-–—]\s*$/u;
 
     for (const item of items) {
+        if (item.musicOnly) continue;
         const id = String(item.id);
         const original = String(translatedById[id] || '');
         if (!original.trim()) continue;
@@ -7198,9 +7229,11 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     if (!items.length) throw new Error('Nu s-au găsit subtitrări valide.');
 
     const verbatimNumericCueCount = items.filter(item => isNumericVerbatimCue(item.text)).length;
-    const sentToGeminiCount = items.length - verbatimNumericCueCount;
+    const musicOnlyCueCount = items.filter(item => item.musicOnly).length;
+    const musicSegmentCount = items.reduce((sum, item) => sum + (item.musicSegments?.length || 0), 0);
+    const sentToGeminiCount = items.filter(item => !isNumericVerbatimCue(item.text) && !item.musicOnly).length;
     const accountingDelta = sourceBlockCount - items.length - parseStats.fillerBlocksFiltered - parseStats.otherBlocksFiltered - parseStats.invalidBlocksSkipped - parseStats.nonDialogueBlocksFiltered;
-    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${sentToGeminiCount} | coduri numerice copiate exact: ${verbatimNumericCueCount} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${parseStats.nonDialogueBlocksFiltered ? ` | blocuri eliminate prin filtrarea parantezelor/cue-urilor: ${parseStats.nonDialogueBlocksFiltered}` : ''}${parseStats.nonDialogueSegmentsRemoved ? ` | segmente între paranteze/cue-uri eliminate: ${parseStats.nonDialogueSegmentsRemoved}` : ''}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${parseStats.duplicateIdsRenumbered ? ` | ID-uri duplicate normalizate: ${parseStats.duplicateIdsRenumbered}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
+    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${sentToGeminiCount} | coduri numerice copiate exact: ${verbatimNumericCueCount} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${musicSegmentCount ? ` | segmente muzicale protejate: ${musicSegmentCount}` : ''}${musicOnlyCueCount ? ` | blocuri numai cu versuri eliminate din rezultat: ${musicOnlyCueCount}` : ''}${parseStats.nonDialogueBlocksFiltered ? ` | blocuri eliminate prin filtrarea parantezelor/cue-urilor: ${parseStats.nonDialogueBlocksFiltered}` : ''}${parseStats.nonDialogueSegmentsRemoved ? ` | segmente între paranteze/cue-uri eliminate: ${parseStats.nonDialogueSegmentsRemoved}` : ''}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${parseStats.duplicateIdsRenumbered ? ` | ID-uri duplicate normalizate: ${parseStats.duplicateIdsRenumbered}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
 
     const cleanKeys = Array.from(new Set(apiKeys.map(k => String(k).trim()).filter(Boolean)));
     if (!cleanKeys.length) throw new Error('Nu există chei Gemini valide.');
@@ -7209,6 +7242,10 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     const chunks = chunkArray(items, CHUNK_SIZE);
 
     const translatedById = Object.create(null);
+    // Cue-urile alcătuite numai din versuri muzicale nu trebuie să consume Gemini și vor fi omise din SRT-ul final.
+    for (const item of items) {
+        if (item.musicOnly) translatedById[String(item.id)] = item.text;
+    }
     let previousTranslatedContext = [];
 
     for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY_LIMIT) {
@@ -7358,6 +7395,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     }
 
     const eligibleMainItems = items.filter(item => {
+        if (item.musicOnly) return false;
         const source = String(item.text || '').replace(/<[^>]+>/g, '').trim();
         return Boolean(source) && !isJunkOrInterjection(item.text);
     });
@@ -7368,6 +7406,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
 
     let sourceGroundedCorrections = 0;
     for (const item of items) {
+        if (item.musicOnly) continue;
         const id = String(item.id);
         const before = String(translatedById[id] || '');
         const after = applyBecauseOfWhatISaidCorrection(item.text, before);
@@ -7381,6 +7420,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     }
 
     const emptyTranslations = items.filter(item => {
+        if (item.musicOnly) return false;
         const id = String(item.id);
         if (getIntentionallySuppressedTranslationIds(keyStates).has(id)) return false;
         const originalClean = isEffectivelyEmptySubtitleText(item.text) ? '' : String(item.text || '').replace(/<[^>]+>/g, '').trim();
@@ -7543,6 +7583,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     // formatSubtitleLine() este idempotent pentru aceste corecții și reaplică
     // dicționarul determinist la final.
     for (const item of items) {
+        if (item.musicOnly) continue;
         const id = String(item.id);
         const current = translatedById[id];
         if (current == null || String(current).trim() === '') continue;
@@ -7577,6 +7618,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     const finalRepairReasonById = Object.create(null);
     const finalRepairCandidates = [];
     for (const item of items) {
+        if (item.musicOnly) continue;
         const id = String(item.id);
         const originalClean = isEffectivelyEmptySubtitleText(item.text)
             ? ''
@@ -7742,18 +7784,36 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
             return isJunkOrInterjection(item.text) || isOnlyStandaloneFillerSequence(translated);
         })
         .map(item => String(item.id));
+    // Dacă un model de reparare a eliminat un token dintr-un cue mixt, folosim sursa
+    // mascată ca fallback sigur. Versurile nu se pierd; dialogul rămas în engleză
+    // rămâne vizibil pentru QA, în loc să declarăm în mod fals că totul este OK.
+    let musicTokenFallbackCount = 0;
+    for (const item of items) {
+        if (item.musicOnly || !item.musicSegments?.length) continue;
+        const id = String(item.id);
+        const current = String(translatedById[id] || '');
+        if (!hasAllProtectedMusicTokens(item, current)) {
+            translatedById[id] = item.text;
+            musicTokenFallbackCount++;
+        }
+    }
+    if (musicTokenFallbackCount) {
+        console.log(`${c.yellow}[Versuri muzicale] ${musicTokenFallbackCount} cue-uri mixte au revenit la sursa mascată deoarece un token protejat nu a supraviețuit; versurile vor fi eliminate din rezultat, iar QA poate semnala dialogul netradus.${c.reset}`);
+    }
+
     const suppressedFillerIdSet = new Set(suppressedFillerIds);
     const suppressedFinalOutputIdSet = new Set([
         ...suppressedFillerIdSet,
         ...suppressedSourceSoundCueIds,
         ...suppressedTranslatedNonDialogueOnlyIds,
-        ...getIntentionallySuppressedTranslationIds(keyStates)
+        ...getIntentionallySuppressedTranslationIds(keyStates),
+        ...items.filter(item => item.musicOnly).map(item => String(item.id))
     ]);
 
     const finalQualityFlags = [];
     for (const item of items) {
         const id = String(item.id);
-        if (isJunkOrInterjection(item.text) || suppressedFinalOutputIdSet.has(id)) continue;
+        if (item.musicOnly || isJunkOrInterjection(item.text) || suppressedFinalOutputIdSet.has(id)) continue;
         const text = String(translatedById[id] || '');
         const reasons = collectQualityReviewReasons(item, text, items, translatedById);
         if (reasons.length) finalQualityFlags.push({ item, reasons: [...new Set(reasons)] });
@@ -7914,15 +7974,34 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         console.log(`${c.green}[QA FINAL] OK: toate replicile relevante au traducere și nu au fost detectate probleme de calitate rămase.${c.reset}`);
     }
 
+    let removedMusicSegmentsFromOutput = 0;
+    let omittedMusicOnlyCuesFromOutput = 0;
     const output = items
-        .filter(item => {
+        .flatMap(item => {
             const id = String(item.id);
-            return !suppressedFinalOutputIdSet.has(id) && String(translatedById[id] ?? '').trim().length > 0;
-        })
-        .map(item => {
-            const translated = String(translatedById[String(item.id)]);
-            return `${item.id}\n${item.start} --> ${item.end}\n${translated}\n`;
+            // Un cue compus exclusiv din versuri nu trebuie afișat deloc.
+            if (item.musicOnly) {
+                omittedMusicOnlyCuesFromOutput++;
+                removedMusicSegmentsFromOutput += Array.isArray(item.musicSegments) ? item.musicSegments.length : 0;
+                return [];
+            }
+            if (suppressedFinalOutputIdSet.has(id)) return [];
+
+            const translated = String(translatedById[id] ?? '');
+            if (!translated.trim()) return [];
+
+            // Din cue-urile mixte eliminăm numai segmentele muzicale protejate;
+            // dialogul din afara lor rămâne în subtitrarea finală.
+            const cleaned = removeProtectedMusicTokens(translated, item);
+            removedMusicSegmentsFromOutput += cleaned.removedCount;
+            if (!cleaned.text.trim()) return [];
+
+            return [`${item.id}\n${item.start} --> ${item.end}\n${cleaned.text}\n`];
         }).join('\n');
+
+    if (removedMusicSegmentsFromOutput || omittedMusicOnlyCuesFromOutput) {
+        console.log(`${c.cyan}[Versuri muzicale] Excluse din SRT-ul final: ${removedMusicSegmentsFromOutput} segmente marcate și ${omittedMusicOnlyCuesFromOutput} blocuri compuse exclusiv din versuri.${c.reset}`);
+    }
 
     return output.trim() ? output.trim() + '\n' : '';
 }
@@ -8704,6 +8783,90 @@ app.get('/:configData/translate', async (req, res) => {
 });
 
 // ============================================================
+// PROTECȚIE PENTRU VERSURILE MUZICALE MARCATE EXPLICIT
+// Segmentele dintre perechi ♪...♪ / ♫...♫ / ♬...♬ / ♩...♩ sunt mascate
+// înaintea filtrelor și a trimiterii la Gemini, apoi restaurate byte-for-byte.
+// Un cue alcătuit numai din astfel de segmente este păstrat integral și nu este tradus.
+// ============================================================
+function protectMusicalLyricSegments(text, cueSequence) {
+    const segments = [];
+    const maskedText = String(text || '').replace(/([♪♫♬♩])([\s\S]*?)\1/gu, (whole, _marker, inner) => {
+        const visibleInner = String(inner || '')
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
+            .trim();
+        // Nu mascăm perechi goale de note sau separatori fără conținut cântat.
+        if (!/[\p{L}\p{N}]/u.test(visibleInner)) return whole;
+
+        const token = `ZXQKEEPSONG${cueSequence}PART${segments.length}QXZ`;
+        segments.push({ token, original: whole });
+        return token;
+    });
+    return { text: maskedText, segments };
+}
+
+function isMusicOnlyMaskedCue(text, musicSegments) {
+    if (!Array.isArray(musicSegments) || musicSegments.length === 0) return false;
+    let visible = String(text || '');
+    for (const segment of musicSegments) {
+        visible = visible.split(segment.token).join(' ');
+    }
+    visible = visible
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
+        .trim();
+    // Rămân doar eventuale marcatoare de vorbitor, slash-uri, spații și punctuație.
+    return !/[\p{L}\p{N}]/u.test(visible);
+}
+
+function hasAllProtectedMusicTokens(item, text) {
+    const segments = Array.isArray(item?.musicSegments) ? item.musicSegments : [];
+    if (!segments.length) return true;
+    const value = String(text || '');
+    return segments.every(segment => value.toLocaleUpperCase('en-US').includes(segment.token.toLocaleUpperCase('en-US')));
+}
+
+function removeProtectedMusicTokens(text, item) {
+    let output = String(text || '');
+    const segments = Array.isArray(item?.musicSegments) ? item.musicSegments : [];
+    let removedCount = 0;
+
+    for (const segment of segments) {
+        // Eliminăm exclusiv tokenul protejat; textul original al versului nu este restaurat.
+        const escaped = segment.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        output = output.replace(new RegExp(escaped, 'giu'), () => {
+            removedCount++;
+            return ' ';
+        });
+    }
+
+    if (!removedCount) {
+        return { text: String(text || '').trim(), removedCount: 0 };
+    }
+
+    // Eliminăm wrapper-ele HTML rămase goale (de ex. <i>TOKEN</i> după ștergere).
+    for (let i = 0; i < 3; i++) {
+        output = output.replace(/<([a-z][\w:-]*)\b[^>]*>\s*<\/\1>/giu, ' ');
+    }
+
+    // Îndepărtăm separatorii/dash-urile vocilor muzicale care au rămas orfani.
+    // Dialogul rămas și propriul său dash de vorbitor sunt păstrate.
+    output = output.replace(/^\s*(?:[-–—]\s*)?(?:\/\s*)+/u, ' ');
+    output = output.replace(/\s*(?:\/\s*)+(?:[-–—]\s*)?$/u, ' ');
+    output = output.replace(/\s*\/\s*(?:[-–—]\s*)?\/\s*/gu, ' / ');
+    output = output.replace(/^\s*(?:[-–—]\s*)?(?:\/\s*)+/u, ' ');
+    output = output.replace(/\s*(?:\/\s*)+(?:[-–—]\s*)?$/u, ' ');
+
+    output = output
+        .replace(/&(?:nbsp);/giu, ' ')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/ *\n */g, '\n')
+        .trim();
+
+    return { text: output, removedCount };
+}
+
+// ============================================================
 // SRT PARSER NATIV 
 // ============================================================
 
@@ -8711,12 +8874,15 @@ function parseSrt(srt, stats = null) {
     const normalized = String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, '');
     const blocks = normalized.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
     const result = [];
+    let musicTokenCueSequence = 0;
     if (stats) {
         stats.fillerBlocksFiltered = 0;
         stats.otherBlocksFiltered = 0;
         stats.invalidBlocksSkipped = 0;
         stats.nonDialogueBlocksFiltered = 0;
         stats.nonDialogueSegmentsRemoved = 0;
+        stats.musicSegmentsProtected = 0;
+        stats.musicOnlyBlocksProtected = 0;
         stats.duplicateIdsRenumbered = 0;
     }
 
@@ -8749,8 +8915,13 @@ function parseSrt(srt, stats = null) {
             continue;
         }
 
+        // Mascăm mai întâi versurile explicit încadrate de note muzicale, pentru ca
+        // filtrele de paranteze/interjecții și curățarea markerelor ♪ să nu le altereze.
+        const protectedMusic = protectMusicalLyricSegments(rawText, ++musicTokenCueSequence);
+        rawText = protectedMusic.text;
+
         // Eliminăm orice segment dintre paranteze rotunde sau drepte. Dacă rămâne text
-        // în afara lor, îl păstrăm; dacă nu rămâne nimic, blocul este omis înainte de Gemini.
+        // în afara lor, îl păstrăm; segmentele muzicale mascate nu sunt afectate.
         const soundStripped = stripNonDialogueSoundMarkup(rawText);
         rawText = soundStripped.text;
         if (stats && soundStripped.removedCount) {
@@ -8790,7 +8961,19 @@ function parseSrt(srt, stats = null) {
             continue;
         }
 
-        result.push({ id, start: match[1], end: match[2], text });
+        const musicOnly = isMusicOnlyMaskedCue(text, protectedMusic.segments);
+        if (stats && protectedMusic.segments.length) {
+            stats.musicSegmentsProtected += protectedMusic.segments.length;
+            if (musicOnly) stats.musicOnlyBlocksProtected++;
+        }
+        result.push({
+            id,
+            start: match[1],
+            end: match[2],
+            text,
+            musicSegments: protectedMusic.segments,
+            musicOnly
+        });
     }
 
     // ID-urile SRT sunt folosite drept chei interne în traducere, QA și repararea
