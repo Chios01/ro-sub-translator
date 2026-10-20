@@ -191,7 +191,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.23',
+    version: '13.2.24',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2536,7 +2536,7 @@ OUTPUT — CRITICAL
 
 TRANSLATION AND CONTEXT
 - Translate every meaningful sentence, phrase, joke, idiom, slang expression, and fragment into Romanian. Preserve names and established foreign expressions only when they genuinely belong in the source.
-- MUSIC LYRICS EXCLUSION — Any text enclosed by paired music-note markers such as ♪...♪, ♫...♫, ♬...♬ or ♩...♩ is protected by the code before translation and is removed entirely from the final subtitle output. Do not try to translate, reconstruct, or replace the protected token. Copy the token exactly once in the same position. Translate only real dialogue outside the music-note markers; preserve its original subtitle ID and speaker separation. The exclusion applies whether the source is a regular subtitle or SDH; non-song dialogue near the lyrics must remain.
+- MUSIC LYRICS EXCLUSION — The preprocessing code removes text enclosed by paired music-note markers (♪...♪, ♫...♫, ♬...♬, ♩...♩) BEFORE this prompt is built. Such lyrics must not appear in this request. Translate only the remaining real dialogue, including dialogue sharing a source block with lyrics; never invent replacement text for removed song lyrics. This applies to regular and SDH subtitles and must not remove non-song dialogue.
 - Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
 - If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
@@ -7226,14 +7226,30 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     const sourceBlockCount = (String(srtText || '').match(/-->/g) || []).length;
     const parseStats = { fillerBlocksFiltered: 0, otherBlocksFiltered: 0, invalidBlocksSkipped: 0, duplicateIdsRenumbered: 0 };
     const items = parseSrt(srtText, parseStats);
-    if (!items.length) throw new Error('Nu s-au găsit subtitrări valide.');
 
     const verbatimNumericCueCount = items.filter(item => isNumericVerbatimCue(item.text)).length;
-    const musicOnlyCueCount = items.filter(item => item.musicOnly).length;
-    const musicSegmentCount = items.reduce((sum, item) => sum + (item.musicSegments?.length || 0), 0);
     const sentToGeminiCount = items.filter(item => !isNumericVerbatimCue(item.text) && !item.musicOnly).length;
-    const accountingDelta = sourceBlockCount - items.length - parseStats.fillerBlocksFiltered - parseStats.otherBlocksFiltered - parseStats.invalidBlocksSkipped - parseStats.nonDialogueBlocksFiltered;
-    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${sentToGeminiCount} | coduri numerice copiate exact: ${verbatimNumericCueCount} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${musicSegmentCount ? ` | segmente muzicale protejate: ${musicSegmentCount}` : ''}${musicOnlyCueCount ? ` | blocuri numai cu versuri eliminate din rezultat: ${musicOnlyCueCount}` : ''}${parseStats.nonDialogueBlocksFiltered ? ` | blocuri eliminate prin filtrarea parantezelor/cue-urilor: ${parseStats.nonDialogueBlocksFiltered}` : ''}${parseStats.nonDialogueSegmentsRemoved ? ` | segmente între paranteze/cue-uri eliminate: ${parseStats.nonDialogueSegmentsRemoved}` : ''}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${parseStats.duplicateIdsRenumbered ? ` | ID-uri duplicate normalizate: ${parseStats.duplicateIdsRenumbered}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
+    const musicSegmentCount = parseStats.musicSegmentsRemovedBeforeTranslation || 0;
+    const musicOnlyCueCount = parseStats.musicOnlyBlocksRemovedBeforeTranslation || 0;
+    const accountingDelta = sourceBlockCount - items.length - parseStats.fillerBlocksFiltered - parseStats.otherBlocksFiltered - parseStats.invalidBlocksSkipped - parseStats.nonDialogueBlocksFiltered - musicOnlyCueCount;
+    console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${sentToGeminiCount} | coduri numerice copiate exact: ${verbatimNumericCueCount} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${musicSegmentCount ? ` | versuri muzicale eliminate înainte de Gemini: ${musicSegmentCount} segmente` : ''}${musicOnlyCueCount ? ` | blocuri exclusiv muzicale eliminate înainte de Gemini: ${musicOnlyCueCount}` : ''}${parseStats.nonDialogueBlocksFiltered ? ` | blocuri eliminate prin filtrarea parantezelor/cue-urilor: ${parseStats.nonDialogueBlocksFiltered}` : ''}${parseStats.nonDialogueSegmentsRemoved ? ` | segmente între paranteze/cue-uri eliminate: ${parseStats.nonDialogueSegmentsRemoved}` : ''}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${parseStats.duplicateIdsRenumbered ? ` | ID-uri duplicate normalizate: ${parseStats.duplicateIdsRenumbered}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
+    if (musicSegmentCount || musicOnlyCueCount) {
+        console.log(`${c.cyan}[Versuri muzicale] Excluse înainte de Gemini: ${musicSegmentCount} segmente marcate și ${musicOnlyCueCount} blocuri compuse exclusiv din versuri; aceste texte nu au fost incluse în calupuri.${c.reset}`);
+    }
+
+    // Este posibil ca o sursă să conțină numai versuri muzicale. În acest caz
+    // filtrarea timpurie produce un SRT gol valid, fără a consuma Gemini.
+    if (!items.length && musicSegmentCount > 0) {
+        console.log(`${c.cyan}[Versuri muzicale] Nu a rămas dialog după filtrare; Gemini nu a fost apelat.${c.reset}`);
+        if (qaStatus && typeof qaStatus === 'object') {
+            qaStatus.hasErrors = false;
+            qaStatus.hasWarnings = false;
+            qaStatus.unresolvedIds = [];
+            qaStatus.warningIds = [];
+        }
+        return '';
+    }
+    if (!items.length) throw new Error('Nu s-au găsit subtitrări valide.');
 
     const cleanKeys = Array.from(new Set(apiKeys.map(k => String(k).trim()).filter(Boolean)));
     if (!cleanKeys.length) throw new Error('Nu există chei Gemini valide.');
@@ -8000,7 +8016,9 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
         }).join('\n');
 
     if (removedMusicSegmentsFromOutput || omittedMusicOnlyCuesFromOutput) {
-        console.log(`${c.cyan}[Versuri muzicale] Excluse din SRT-ul final: ${removedMusicSegmentsFromOutput} segmente marcate și ${omittedMusicOnlyCuesFromOutput} blocuri compuse exclusiv din versuri.${c.reset}`);
+        // Plasă de siguranță pentru un cue muzical care ar putea apărea în viitor
+        // pe un traseu alternativ; fluxul normal le elimină deja în parseSrt.
+        console.log(`${c.cyan}[Versuri muzicale] Plasă de siguranță la export: eliminate ${removedMusicSegmentsFromOutput} segmente și ${omittedMusicOnlyCuesFromOutput} blocuri exclusiv muzicale.${c.reset}`);
     }
 
     return output.trim() ? output.trim() + '\n' : '';
@@ -8783,10 +8801,10 @@ app.get('/:configData/translate', async (req, res) => {
 });
 
 // ============================================================
-// PROTECȚIE PENTRU VERSURILE MUZICALE MARCATE EXPLICIT
-// Segmentele dintre perechi ♪...♪ / ♫...♫ / ♬...♬ / ♩...♩ sunt mascate
-// înaintea filtrelor și a trimiterii la Gemini, apoi restaurate byte-for-byte.
-// Un cue alcătuit numai din astfel de segmente este păstrat integral și nu este tradus.
+// FILTRARE TIMPURIE PENTRU VERSURILE MUZICALE MARCATE EXPLICIT
+// Segmentele dintre perechi ♪...♪ / ♫...♫ / ♬...♬ / ♩...♩ sunt mascate numai
+// temporar pentru ca filtrele intermediare să nu le corupă, apoi eliminate în parseSrt
+// înainte de formarea calupurilor. Cue-urile numai muzicale nu intră deloc în lista items.
 // ============================================================
 function protectMusicalLyricSegments(text, cueSequence) {
     const segments = [];
@@ -8881,8 +8899,9 @@ function parseSrt(srt, stats = null) {
         stats.invalidBlocksSkipped = 0;
         stats.nonDialogueBlocksFiltered = 0;
         stats.nonDialogueSegmentsRemoved = 0;
-        stats.musicSegmentsProtected = 0;
-        stats.musicOnlyBlocksProtected = 0;
+        stats.musicSegmentsDetected = 0;
+        stats.musicSegmentsRemovedBeforeTranslation = 0;
+        stats.musicOnlyBlocksRemovedBeforeTranslation = 0;
         stats.duplicateIdsRenumbered = 0;
     }
 
@@ -8918,6 +8937,9 @@ function parseSrt(srt, stats = null) {
         // Mascăm mai întâi versurile explicit încadrate de note muzicale, pentru ca
         // filtrele de paranteze/interjecții și curățarea markerelor ♪ să nu le altereze.
         const protectedMusic = protectMusicalLyricSegments(rawText, ++musicTokenCueSequence);
+        if (stats && protectedMusic.segments.length) {
+            stats.musicSegmentsDetected += protectedMusic.segments.length;
+        }
         rawText = protectedMusic.text;
 
         // Eliminăm orice segment dintre paranteze rotunde sau drepte. Dacă rămâne text
@@ -8937,7 +8959,7 @@ function parseSrt(srt, stats = null) {
         }
 
         const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(rawText);
-        const text = cleanTextForJson(rawText);
+        let text = cleanTextForJson(rawText);
 
         if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) {
             if (stats) {
@@ -8947,10 +8969,33 @@ function parseSrt(srt, stats = null) {
             continue;
         }
 
+        // Eliminarea muzicii are loc ACUM, înainte de formarea calupurilor și
+        // înainte de orice cerere Gemini. Detectăm cue-urile compuse exclusiv
+        // din versuri în forma mascată, apoi scoatem tokenurile din cue-urile mixte.
+        // Astfel nici versurile, nici tokenurile lor de protecție nu ajung în prompt.
+        const musicOnlyBeforeTranslation = isMusicOnlyMaskedCue(text, protectedMusic.segments);
+        if (protectedMusic.segments.length) {
+            if (stats) stats.musicSegmentsRemovedBeforeTranslation += protectedMusic.segments.length;
+
+            if (musicOnlyBeforeTranslation) {
+                if (stats) stats.musicOnlyBlocksRemovedBeforeTranslation++;
+                continue;
+            }
+
+            const lyricsRemoved = removeProtectedMusicTokens(text, { musicSegments: protectedMusic.segments });
+            text = cleanTextForJson(lyricsRemoved.text);
+
+            // Dacă un bloc mixt conținea numai versuri plus marcatori/separatori
+            // de vorbitor, nu păstrăm un cue gol de forma „- / -”.
+            if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text) || !/[\p{L}\p{N}]/u.test(text.replace(/<[^>]*>/g, ' '))) {
+                if (stats) stats.musicOnlyBlocksRemovedBeforeTranslation++;
+                continue;
+            }
+        }
+
         // Ultima verificare pe textul SURSEI după toate normalizările.
-        // Dacă normalizarea a lăsat doar un cue sonor sau o secvență de ezitări,
-        // blocul este exclus înainte de formarea calupurilor. Nu va ajunge la
-        // Gemini, Empty Recovery, Grammar Review sau QA ca replică lipsă.
+        // Doar textul de dialog rămas poate ajunge la Gemini, Empty Recovery,
+        // Grammar Review sau QA; segmentele muzicale au fost deja eliminate.
         const normalizedSoundOnly = isStandaloneNonDialogueSoundCue(text);
         const normalizedFillerOnly = isOnlyStandaloneFillerSequence(text);
         if (normalizedSoundOnly || normalizedFillerOnly) {
@@ -8961,18 +9006,13 @@ function parseSrt(srt, stats = null) {
             continue;
         }
 
-        const musicOnly = isMusicOnlyMaskedCue(text, protectedMusic.segments);
-        if (stats && protectedMusic.segments.length) {
-            stats.musicSegmentsProtected += protectedMusic.segments.length;
-            if (musicOnly) stats.musicOnlyBlocksProtected++;
-        }
         result.push({
             id,
             start: match[1],
             end: match[2],
             text,
-            musicSegments: protectedMusic.segments,
-            musicOnly
+            musicSegments: [],
+            musicOnly: false
         });
     }
 
