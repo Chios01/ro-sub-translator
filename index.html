@@ -139,6 +139,80 @@
     }
   }
 
+
+  // Când pagina este deschisă din rotița addonului, Stremio trimite
+  // configurația existentă în segmentul URL înainte de /configure.
+  // O citim local, fără să trimitem cheile către un endpoint de recuperare.
+  function decodeExistingConfig(segment) {
+    const encoded = String(segment || '').trim();
+    if (!encoded || encoded.length > 20000 || !/^[A-Za-z0-9_+\-/=]+$/.test(encoded)) return null;
+
+    try {
+      let base64 = encoded.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/g, '');
+      base64 += '='.repeat((4 - (base64.length % 4)) % 4);
+      const binary = window.atob(base64);
+      const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+      const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      let parsed;
+      let parsedAsJson = true;
+      try { parsed = JSON.parse(decoded); } catch (_) { parsed = decoded; parsedAsJson = false; }
+
+      let geminiKeys = [];
+      let subdlKey = '';
+      if (Array.isArray(parsed)) {
+        geminiKeys = parsed;
+      } else if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.geminiKeys)) geminiKeys = parsed.geminiKeys;
+        else if (Array.isArray(parsed.keys)) geminiKeys = parsed.keys;
+        else if (parsed.key) geminiKeys = [parsed.key];
+        else {
+          geminiKeys = Object.entries(parsed)
+            .filter(([key]) => !/^(?:subdl|subdlKey|sources|schemaVersion|version)$/i.test(key))
+            .map(([, value]) => value);
+        }
+        subdlKey = String(parsed.subdlKey || parsed.subdl || '').trim();
+      } else if (typeof parsed === 'string') {
+        // Forma veche cu o singură cheie brută: acceptăm numai forma plauzibilă
+        // a unei chei Google, nu textul arbitrar rezultat din Base64 corupt.
+        if (!parsedAsJson && !/^AIza[A-Za-z0-9_-]{20,1000}$/.test(parsed.trim())) return null;
+        geminiKeys = [parsed];
+      }
+
+      geminiKeys = geminiKeys.map(value => String(value || '').trim())
+        .filter(value => value && value.length <= 1000 && !/[\r\n\u0000]/.test(value))
+        .slice(0, 10);
+      if (subdlKey.length > 1000 || /[\r\n\u0000]/.test(subdlKey)) subdlKey = '';
+      if (!geminiKeys.length) return null;
+      return { geminiKeys, subdlKey };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function loadExistingConfigFromUrl() {
+    const segments = window.location.pathname.split('/').filter(Boolean);
+    if (segments.length !== 2 || segments[1] !== 'configure') return;
+
+    const configSegment = segments[0];
+    const config = decodeExistingConfig(configSegment);
+    if (!config) return;
+
+    config.geminiKeys.forEach((key, index) => {
+      if (index < 10) $(`key${index + 1}`).value = key;
+    });
+    $('subdlKey').value = config.subdlKey;
+
+    // Păstrăm segmentul exact primit, inclusiv forma legacy, astfel încât
+    // linkul copiat să rămână compatibil cu configurația deja instalată.
+    configUrl = `${window.location.origin}/${configSegment}/manifest.json`;
+    installUrl = `stremio://${window.location.host}/${configSegment}/manifest.json`;
+    button.dataset.complete = 'true';
+    button.classList.add('ready');
+    button.textContent = '⇧ Install on Stremio';
+    copyLinkButton.style.display = 'flex';
+    showMessage('Configurația existentă a fost încărcată. Poți copia imediat linkul sau reinstala în Stremio. Cheile nu au fost reverificate online.', 'success');
+  }
+
   // Any edit clears the old test result so green never implies an edited token is still valid.
   for (let i = 1; i <= 10; i++) {
     $(`key${i}`).addEventListener('input', () => {
@@ -289,6 +363,10 @@
       if (button.dataset.complete !== 'true') button.textContent = defaultButtonText;
     }
   });
+
+  // Dacă venim din configurația deja instalată, populăm câmpurile și expunem
+  // ambele acțiuni fără să cerem din nou validarea fiecărei chei.
+  loadExistingConfigFromUrl();
 })();
 </script>
 </body>
