@@ -191,7 +191,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.16',
+    version: '13.2.19',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -7070,6 +7070,122 @@ function applyContinuationCase(items, translatedById) {
 
 
 // ============================================================
+// NORMALIZARE CONSERVATOARE A MAJUSCULELOR ÎN MIJLOCUL FRAZEI
+// Corectează doar cuvinte românești uzuale dintr-o listă explicită, când apar
+// cu inițială mare după text fără punctuație de încheiere. Nu atinge începutul
+// replicii, începutul unei propoziții, acronimele sau cuvintele care nu sunt
+// în lista sigură (de ex. nume proprii necunoscute).
+// ============================================================
+const COMMON_ROMANIAN_MID_SENTENCE_WORDS = new Set((`
+    acesta aceasta aceștia acestea acest acea acei acele acelea acela acelora
+    acelasi aceeași aceleași asemenea alt alta alte alți altor altă altul altele
+    am ai a are ar as avem aveți aveau avea aveam aveați avut fiind fost este e sunt
+    suntem sunteți erau era erai eram erați fi fie fii fiind fusesem fusese
+    fac faci face facem faceți fac ei făcut făcută făcute făcuți făcea făceau
+    pot poți poate putem puteți pot putea puteam puteți puteați putea
+    vreau vrei vrea vrem vreți vor vrea voiam voiai voia voiau vrut vrută
+    trebuie trebuia trebuiau trebuit trebuiește pare părea par păreau
+    și iar dar sau însă deci fiindcă deoarece pentru că să ca decât dacă
+    când cum unde cine ce care că cât câți câte câtva câteva câțiva
+    toate toți tot toată toată tuturor tuturor fiecare fiecăruia fiecarei
+    nimeni nimic cineva ceva oricine orice altcineva altceva însuși însăși
+    un una unele unul unei unor niște orice oricare vreun vreuna vreunul
+    mă te se ne vă îl o îl își îmi îți îi lor lui ei mea meu mei mele
+    tău ta tale tăi său sa sale săi noastră nostru noștri noastre voastră
+    vostru voștri voastre dumneavoastră dumneata dumnealui dumneaei
+    aici acolo apoi acum atunci astăzi ieri mâine deja încă iarăși mereu
+    nici numai doar chiar foarte prea mult multe mulți multă puțin puține
+    puțini mai mai mult mai puțin aproape departe bine rău poate sigur
+    absolut aproape destul suficient aproape astfel așa altfel totuși
+    în întru din dintre spre către până după înainte peste sub lângă
+    fără despre contra între prin pe la cu asupra afară înăuntru
+    acesta aici acolo acasă undeva nicăieri oriunde pretutindeni
+    nu da ba oare încă nici niciodată întotdeauna uneori deseori rar
+    apoi astfel asemenea altminteri tocmai măcar măcară poate bineînțeles
+    lucru lucruri lucrul lucrurile treabă treaba treburile problema probleme
+    problemele persoană persoane omul oameni omului oamenii femeie femeia
+    femei bărbat bărbatul bărbați copil copii copilul copiii familie familia
+    viață viața vieți zile ziua zilele noapte noaptea dimineață seară
+    bani timpul timp vremea loc locul locuri locurile casă casa case
+    mașină mașina mașini ușă ușa uși drum drumul drumuri lume lumea
+    lumei parte partea părți fel felul lucru lucruri nume numele
+    ochi ochii mână mâna mâini cap capul față fața spate corp
+    voce vocea mâine ieri azi acum înainte după aceea totul nimic
+    adevăr adevărul minciună minciuna motiv motivul motive întâmplare
+    întâmplarea situație situația situații moment momentul momente
+    întrebare întrebarea întrebări răspuns răspunsul răspunsuri
+    idee ideea idei lucru chestie chestia chestii gen felul parte
+    început începutul sfârșit sfârșitul final finalul punct cazul
+    caz cazuri motiv motive motivul rezultat rezultate plan planul
+    nevoie nevoie nevoiele nevoie de ajutor ajutor ajutorul
+    lucru important importantă importante importantul posibil posibilă
+    imposibil adevărat adevărată adevărate fals falsă bine rău
+    nou nouă noi noul vechi veche vechiul mare marele mari mic mică
+    mici bun bună bune buni rău rea rele răi frumos frumoasă
+    sigur sigură sigură clar clară clară normal normală normale
+    simplu simplă simplu simplă greu grea ușor ușoară diferit
+    diferită diferite corect corectă greșit greșită interesant
+    interesantă gata liber liberă ocupat ocupată obosit obosită
+    fericit fericită supărat supărată trist tristă mort moartă viu vie
+    primul prima primul primele primii ultima ultimul ultimele ultimii
+    altădată între timp înapoi afară înainte în plus în schimb
+    imediat repede încet deja poate probabil evident sigur desigur
+    oricum totuși așadar prin urmare de fapt de obicei în general
+    măcar aproape foarte chiar atât tocmai inclusiv exclusiv
+    apoi acum aici acolo sus jos înapoi înainte în față în urmă
+    nu-i n-am n-ai n-are n-avem n-aveți n-au s-a s-au mi-a ți-a
+    ți-am mi-am i-am i-a le-a l-a l-au într-o într-un dintr-o dintr-un
+`).trim().split(/\s+/));
+
+function applyMidSentenceCapitalizationFixes(items, translatedById) {
+    let changedWords = 0;
+    let changedSubtitles = 0;
+    const terminalPunctuation = /[.!?…:]+["'’”»)}\]]*$/u;
+    const openingQuoteOrBracket = /["'„“«‘(\[]\s*$/u;
+    const speakerDashAtLineStart = /(?:^|\n)\s*[-–—]\s*$/u;
+
+    for (const item of items) {
+        const id = String(item.id);
+        const original = String(translatedById[id] || '');
+        if (!original.trim()) continue;
+
+        let localChanges = 0;
+        const normalized = original.replace(/(?<![\p{L}\p{N}_])([A-ZĂÂÎȘȚ][a-zăâîșț]+)(?![\p{L}\p{N}_])/gu,
+            (wholeWord, _first, offset) => {
+                // Nu procesăm atribute sau nume de tag HTML.
+                const beforeRaw = original.slice(0, offset);
+                if (beforeRaw.lastIndexOf('<') > beforeRaw.lastIndexOf('>')) return wholeWord;
+
+                const word = wholeWord.toLocaleLowerCase('ro-RO');
+                if (!COMMON_ROMANIAN_MID_SENTENCE_WORDS.has(word)) return wholeWord;
+
+                const before = beforeRaw.replace(/<[^>]*>/g, '').trimEnd();
+                // Cuvântul este la începutul replicii/fragmentului, nu în mijlocul frazei.
+                if (!/[\p{L}\p{N}]/u.test(before)) return wholeWord;
+                // Nu schimbăm începuturile de propoziție sau începutul unui citat/paranteze.
+                if (terminalPunctuation.test(before) || openingQuoteOrBracket.test(before) || speakerDashAtLineStart.test(before)) {
+                    return wholeWord;
+                }
+
+                localChanges++;
+                return word;
+            });
+
+        if (localChanges) {
+            translatedById[id] = normalized;
+            changedWords += localChanges;
+            changedSubtitles++;
+        }
+    }
+
+    if (changedWords) {
+        console.log(`${c.green}[Majuscule în frază] Corectate ${changedWords} inițiale nejustificat de mari în ${changedSubtitles} replici.${c.reset}`);
+    }
+    return changedWords;
+}
+
+
+// ============================================================
 // MOTORUL PRINCIPAL DE TRADUCERE SRT
 // ============================================================
 
@@ -7608,6 +7724,10 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null) {
     if (finalBracketedOrCueSegmentsRemoved) {
         console.log(`${c.cyan}[Filtru paranteze/cue-uri] Eliminate ${finalBracketedOrCueSegmentsRemoved} segmente delimitate sau cue-uri sonore din traducerile finale.${c.reset}`);
     }
+
+    // Corectare locală conservatoare a majusculelor după toate reviziile AI și
+    // filtrele finale, înainte ca QA și exportul SRT să citească textul rezultat.
+    applyMidSentenceCapitalizationFixes(items, translatedById);
 
     // Interjecțiile generate ca traducere izolată sunt eliminate din ieșire și
     // scoase din numitorul QA; nu trebuie raportate ca eroare de fidelitate.
