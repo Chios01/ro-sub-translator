@@ -48,382 +48,6 @@ const MODEL_NAME =
     process.env.GEMINI_MODEL ||
     'gemini-3.5-flash-lite';
 
-// AutoSync is enabled for the isolated AUTO-SYNC TEST build. Earlier test deployments
-// still have AUTO_SYNC_MODE=shadow in Render; do not let that stale setting turn the
-// repair into a log-only check. Only an explicit AUTO_SYNC_MODE=off disables retiming.
-// The real production addon has a different manifest/repository and is not affected.
-const requestedAutoSyncMode = String(process.env.AUTO_SYNC_MODE || '').trim().toLowerCase();
-const AUTO_SYNC_MODE = requestedAutoSyncMode === 'off' ? 'off' : 'apply';
-const AUTO_SYNC_REFERENCE_TIMEOUT_MS = 4500;
-// AutoSync core inclus direct în server.js pentru deploy autonom.
-'use strict';
-
-// Nucleu local de analiză sincronizare SRT. Fără rețea și fără dependențe externe.
-// Nu modifică niciun fișier: analyzeAutoSyncSrt doar estimează; applyAutoSyncToSrt
-// rescrie timpii doar după ce apelantul decide explicit că analiza este acceptată.
-
-const AUTO_SYNC_RATES = [
-  { name: '1:1', ratio: 1 },
-  { name: '25→23.976', ratio: 23.976 / 25 },
-  { name: '23.976→25', ratio: 25 / 23.976 },
-  { name: '25→24', ratio: 24 / 25 },
-  { name: '24→25', ratio: 25 / 24 },
-  { name: '24→23.976', ratio: 23.976 / 24 },
-  { name: '23.976→24', ratio: 24 / 23.976 }
-];
-
-function autoSyncToMs(timestamp) {
-  const match = /^(\d{2,}):(\d{2}):(\d{2})[,.](\d{3})$/.exec(String(timestamp || '').trim());
-  if (!match) return null;
-  const h = Number(match[1]), m = Number(match[2]), s = Number(match[3]), ms = Number(match[4]);
-  if (![h, m, s, ms].every(Number.isFinite) || m > 59 || s > 59 || ms > 999) return null;
-  return (((h * 60 + m) * 60 + s) * 1000) + ms;
-}
-
-function autoSyncFormatTime(totalMs) {
-  const value = Math.round(totalMs);
-  const h = Math.floor(value / 3600000);
-  const m = Math.floor((value % 3600000) / 60000);
-  const s = Math.floor((value % 60000) / 1000);
-  const ms = value % 1000;
-  const pad = (n, len = 2) => String(n).padStart(len, '0');
-  return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms, 3)}`;
-}
-
-function parseAutoSyncSrt(srtText) {
-  const normalized = String(srtText || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
-  if (!normalized) return { blocks: [], cues: [] };
-
-  const blocks = normalized.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
-  const cues = [];
-  const timingRegex = /^(\s*)(\d{2,}:\d{2}:\d{2}[,.]\d{3})(\s*-->\s*)(\d{2,}:\d{2}:\d{2}[,.]\d{3})(.*)$/;
-
-  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
-    const lines = blocks[blockIndex].split('\n');
-    const timeLineIndex = lines.findIndex(line => line.includes('-->'));
-    if (timeLineIndex < 0) continue;
-    const match = timingRegex.exec(lines[timeLineIndex]);
-    if (!match) continue;
-    const start = autoSyncToMs(match[2]);
-    const end = autoSyncToMs(match[4]);
-    if (start === null || end === null || end <= start) continue;
-    cues.push({
-      blockIndex,
-      timeLineIndex,
-      start,
-      end,
-      text: lines.slice(timeLineIndex + 1).join('\n'),
-      normalizedText: normalizeAutoSyncCueText(lines.slice(timeLineIndex + 1).join('\n'))
-    });
-  }
-  return { blocks, cues };
-}
-
-function normalizeAutoSyncCueText(text) {
-  let value = String(text || '')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;|&#160;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&apos;|&#39;/gi, "'")
-    .replace(/&quot;/gi, '"')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&#(\d+);/g, (_, n) => {
-      const code = Number(n);
-      return code > 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : ' ';
-    })
-    .replace(/&#x([\da-f]+);/gi, (_, n) => {
-      const code = parseInt(n, 16);
-      return code > 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : ' ';
-    })
-    .toLowerCase();
-
-  // Eliminăm etichetele SDH dintre paranteze pentru a compara textul vorbit.
-  value = value.replace(/\[[^\]]{0,160}\]|\([^)]{0,160}\)/g, ' ');
-  value = value.replace(/[♪♫♬♩]/g, ' ')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
-
-  if (value.length < 8 || value.split(' ').length < 2) return '';
-  return value;
-}
-
-function collectAutoSyncAnchors(targetCues, referenceCues) {
-  const targetMap = new Map();
-  const referenceMap = new Map();
-  const collect = (cues, map) => {
-    cues.forEach((cue, index) => {
-      const normalized = cue.normalizedText || normalizeAutoSyncCueText(cue.text);
-      if (!normalized) return;
-      if (!map.has(normalized)) map.set(normalized, []);
-      map.get(normalized).push(index);
-    });
-  };
-  collect(targetCues, targetMap);
-  collect(referenceCues, referenceMap);
-
-  const anchors = [];
-  for (const [normalized, targetIndexes] of targetMap) {
-    const referenceIndexes = referenceMap.get(normalized);
-    // Doar frazele unice în ambele fișiere sunt ancore sigure; replicile repetate
-    // („yes”, „come on” etc.) sunt ambigue și nu sunt folosite pentru potrivire.
-    if (targetIndexes.length !== 1 || !referenceIndexes || referenceIndexes.length !== 1) continue;
-    const targetCue = targetCues[targetIndexes[0]];
-    const referenceCue = referenceCues[referenceIndexes[0]];
-    anchors.push({ x: targetCue.start, y: referenceCue.start, text: normalized });
-  }
-  anchors.sort((a, b) => a.x - b.x);
-  return anchors;
-}
-
-function fitAutoSyncLine(points) {
-  if (!points.length) return { ratio: 1, offset: 0 };
-  const meanX = points.reduce((sum, point) => sum + point.x, 0) / points.length;
-  const meanY = points.reduce((sum, point) => sum + point.y, 0) / points.length;
-  let covariance = 0;
-  let variance = 0;
-  for (const point of points) {
-    covariance += (point.x - meanX) * (point.y - meanY);
-    variance += (point.x - meanX) ** 2;
-  }
-  if (variance <= 0) return { ratio: 1, offset: meanY - meanX };
-  const ratio = covariance / variance;
-  return { ratio, offset: meanY - ratio * meanX };
-}
-
-function autoSyncMedian(values) {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
-function autoSyncQuantile(values, q) {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const position = (sorted.length - 1) * q;
-  const lower = Math.floor(position);
-  const upper = Math.ceil(position);
-  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
-}
-
-function analyzeAutoSyncSrt(targetSrt, referenceSrt) {
-  const target = parseAutoSyncSrt(targetSrt);
-  const reference = parseAutoSyncSrt(referenceSrt);
-  const base = { accepted: false, reason: '', anchors: 0, inliers: 0 };
-
-  if (target.cues.length < 15 || reference.cues.length < 15) {
-    return { ...base, reason: 'subtitrări prea scurte pentru o estimare sigură', targetCues: target.cues.length, referenceCues: reference.cues.length };
-  }
-
-  const anchors = collectAutoSyncAnchors(target.cues, reference.cues);
-  if (anchors.length < 25) {
-    return { ...base, reason: 'prea puține ancore textuale unice', anchors: anchors.length, targetCues: target.cues.length, referenceCues: reference.cues.length };
-  }
-
-  let inliers = anchors.slice();
-  for (let iteration = 0; iteration < 4; iteration++) {
-    if (inliers.length < 25) break;
-    const model = fitAutoSyncLine(inliers);
-    const residuals = inliers.map(point => point.y - (model.ratio * point.x + model.offset));
-    const medianResidual = autoSyncMedian(residuals);
-    const next = inliers.filter((point, index) => Math.abs(residuals[index] - medianResidual) <= 400);
-    if (next.length === inliers.length) break;
-    inliers = next;
-  }
-
-  if (inliers.length < 25) {
-    return { ...base, reason: 'prea puține ancore după eliminarea potrivirilor ambigue', anchors: anchors.length, inliers: inliers.length };
-  }
-
-  const fitted = fitAutoSyncLine(inliers);
-  const allowed = AUTO_SYNC_RATES.reduce((best, item) => {
-    const distance = Math.abs(fitted.ratio - item.ratio);
-    return distance < best.distance ? { ...item, distance } : best;
-  }, { name: '', ratio: 1, distance: Infinity });
-
-  if (!Number.isFinite(fitted.ratio) || allowed.distance > 0.002) {
-    return { ...base, reason: 'raport temporal diferit de conversiile FPS acceptate', anchors: anchors.length, inliers: inliers.length, estimatedRatio: fitted.ratio };
-  }
-
-  // Restricționăm raportul la rate FPS uzuale pentru a evita întinderi arbitrare.
-  const ratio = allowed.ratio;
-  const offset = autoSyncMedian(inliers.map(point => point.y - ratio * point.x));
-  const residuals = inliers.map(point => Math.abs(point.y - (ratio * point.x + offset)));
-  const p90 = autoSyncQuantile(residuals, 0.90);
-  const p95 = autoSyncQuantile(residuals, 0.95);
-  const within250 = residuals.filter(value => value <= 250).length / residuals.length;
-  const targetMin = Math.min(...target.cues.map(cue => cue.start));
-  const targetMax = Math.max(...target.cues.map(cue => cue.end));
-  const targetSpan = Math.max(1, targetMax - targetMin);
-  const inlierMin = Math.min(...inliers.map(point => point.x));
-  const inlierMax = Math.max(...inliers.map(point => point.x));
-  const coverage = (inlierMax - inlierMin) / targetSpan;
-  const quartiles = [0, 0, 0, 0];
-  for (const point of inliers) {
-    const index = Math.max(0, Math.min(3, Math.floor(((point.x - targetMin) / targetSpan) * 4)));
-    quartiles[index]++;
-  }
-
-  const reasons = [];
-  if (coverage < 0.65) reasons.push('ancorele nu acoperă suficient durata');
-  if (within250 < 0.80 || p90 > 250 || p95 > 400) reasons.push('eroare temporală prea mare');
-  if (Math.min(...quartiles) < 5) reasons.push('ancore insuficiente într-un sfert al subtitrării');
-  if (Math.abs(offset) > 120000) reasons.push('decalaj estimat prea mare pentru aplicare automată');
-
-  // Verificăm că transformarea nu ar împinge începuturi înainte de zero sau inversa cue-uri.
-  for (const cue of target.cues) {
-    const newStart = Math.round(cue.start * ratio + offset);
-    const newEnd = Math.round(cue.end * ratio + offset);
-    if (newStart < 0 || newEnd <= newStart) {
-      reasons.push('transformarea ar genera timpi invalizi');
-      break;
-    }
-  }
-
-  return {
-    accepted: reasons.length === 0,
-    reason: reasons.join('; ') || 'aliniere globală cu încredere ridicată',
-    anchors: anchors.length,
-    inliers: inliers.length,
-    targetCues: target.cues.length,
-    referenceCues: reference.cues.length,
-    ratio,
-    fpsRate: allowed.name,
-    offsetMs: offset,
-    p90ResidualMs: p90,
-    p95ResidualMs: p95,
-    within250Ms: within250,
-    coverage,
-    anchorsByQuartile: quartiles
-  };
-}
-
-function combineAutoSyncAnalyses(entries, options = {}) {
-  const maxSpread = Number.isFinite(options.maxOffsetSpreadMs)
-    ? Math.max(0, Number(options.maxOffsetSpreadMs))
-    : 250;
-  const byFingerprint = new Map();
-  for (const entry of Array.isArray(entries) ? entries : []) {
-    const analysis = entry && entry.analysis;
-    const fingerprint = String(entry && entry.fingerprint || '');
-    if (!analysis || !analysis.accepted || !fingerprint ||
-        !Number.isFinite(analysis.ratio) || !Number.isFinite(analysis.offsetMs)) continue;
-    // Two URLs with the same cue-timeline fingerprint carry the same timing evidence;
-    // they count once, even if their filenames/providers differ.
-    if (!byFingerprint.has(fingerprint)) byFingerprint.set(fingerprint, {
-      name: String(entry.name || 'reference'),
-      kind: String(entry.kind || 'unknown'),
-      fingerprint,
-      analysis
-    });
-  }
-  const valid = [...byFingerprint.values()];
-  if (valid.length < 2) {
-    return {
-      accepted: false,
-      reason: 'mai puțin de două cronologii de referință distincte au trecut validarea',
-      distinctReferences: valid.length,
-      consensusCount: 0
-    };
-  }
-
-  const clusters = [];
-  let sawSameProviderAgreement = false;
-  for (const seed of valid) {
-    const ratio = seed.analysis.ratio;
-    let members = valid.filter(item => Math.abs(item.analysis.ratio - ratio) <= 0.000001);
-    for (let iteration = 0; iteration < 3; iteration++) {
-      if (members.length < 2) break;
-      const center = autoSyncMedian(members.map(item => item.analysis.offsetMs));
-      const next = members.filter(item => Math.abs(item.analysis.offsetMs - center) <= maxSpread);
-      if (next.length === members.length) break;
-      members = next;
-    }
-    if (members.length < 2) continue;
-    // Without a verified videoHash reference, same-provider subtitle variants
-    // cannot prove absolute sync: they may share the same timing defect. Require
-    // independent evidence from both SubDL and OpenSubtitles for relative consensus.
-    const providerKinds = new Set(members.map(item => String(item.kind || '').toLowerCase()));
-    if (!providerKinds.has('subdl') || !providerKinds.has('opensubtitles')) {
-      sawSameProviderAgreement = true;
-      continue;
-    }
-    const offsets = members.map(item => item.analysis.offsetMs);
-    const center = autoSyncMedian(offsets);
-    members = members.filter(item => Math.abs(item.analysis.offsetMs - center) <= maxSpread);
-    if (members.length < 2) continue;
-    const finalOffsets = members.map(item => item.analysis.offsetMs);
-    const medianOffset = autoSyncMedian(finalOffsets);
-    const spread = Math.max(...finalOffsets) - Math.min(...finalOffsets);
-    const totalInliers = members.reduce((sum, item) => sum + (Number(item.analysis.inliers) || 0), 0);
-    const worstP90 = Math.max(...members.map(item => Number(item.analysis.p90ResidualMs) || 0));
-    clusters.push({
-      members, ratio, medianOffset, spread, totalInliers, worstP90,
-      names: members.map(item => item.name),
-      kinds: [...new Set(members.map(item => item.kind))]
-    });
-  }
-  clusters.sort((a, b) => b.members.length - a.members.length ||
-    b.totalInliers - a.totalInliers || a.worstP90 - b.worstP90 || a.spread - b.spread);
-  const best = clusters[0];
-  if (!best || best.members.length < 2) {
-    return {
-      accepted: false,
-      reason: sawSameProviderAgreement
-        ? 'acordul provine doar de la același furnizor; sunt necesare referințe SubDL și OpenSubtitles sau un videoHash confirmat'
-        : 'referințele nu sunt de acord asupra aceluiași decalaj și raport temporal',
-      distinctReferences: valid.length,
-      consensusCount: 0
-    };
-  }
-  // Keep the strongest member's validated shape/FPS model, but use the median offset
-  // of the agreement cluster. applyAutoSyncToSrt requires an accepted temporal model.
-  const strongest = [...best.members].sort((a, b) =>
-    (Number(b.analysis.inliers) || 0) - (Number(a.analysis.inliers) || 0) ||
-    (Number(a.analysis.p90ResidualMs) || Infinity) - (Number(b.analysis.p90ResidualMs) || Infinity)
-  )[0];
-  return {
-    ...strongest.analysis,
-    accepted: true,
-    reason: 'consens între cronologii de referință distincte',
-    ratio: best.ratio,
-    offsetMs: best.medianOffset,
-    consensusCount: best.members.length,
-    distinctReferences: valid.length,
-    consensusOffsetSpreadMs: best.spread,
-    consensusOffsets: best.members.map(item => Math.round(item.analysis.offsetMs)),
-    consensusReferenceNames: best.names,
-    consensusKinds: best.kinds
-  };
-}
-
-function applyAutoSyncToSrt(targetSrt, analysis) {
-  if (!analysis || !analysis.accepted || !Number.isFinite(analysis.ratio) || !Number.isFinite(analysis.offsetMs)) return null;
-  const parsed = parseAutoSyncSrt(targetSrt);
-  if (!parsed.blocks.length || !parsed.cues.length) return null;
-  const cuesByBlock = new Map(parsed.cues.map(cue => [cue.blockIndex, cue]));
-  const timingRegex = /^(\s*)(\d{2,}:\d{2}:\d{2}[,.]\d{3})(\s*-->\s*)(\d{2,}:\d{2}:\d{2}[,.]\d{3})(.*)$/;
-
-  const outputBlocks = parsed.blocks.map((block, blockIndex) => {
-    const cue = cuesByBlock.get(blockIndex);
-    if (!cue) return block;
-    const lines = block.split('\n');
-    const currentTiming = lines[cue.timeLineIndex];
-    const match = timingRegex.exec(currentTiming);
-    if (!match) throw new Error('Linie de timp SRT invalidă în timpul sincronizării.');
-    const start = Math.round(cue.start * analysis.ratio + analysis.offsetMs);
-    const end = Math.round(cue.end * analysis.ratio + analysis.offsetMs);
-    if (start < 0 || end <= start) throw new Error('Sincronizarea ar produce timpi SRT invalizi.');
-    lines[cue.timeLineIndex] = `${match[1]}${autoSyncFormatTime(start)}${match[3]}${autoSyncFormatTime(end)}${match[5]}`;
-    return lines.join('\n');
-  });
-  return outputBlocks.join('\n\n') + '\n';
-}
-
-
-
 // ============================================================
 // CONSOLE COLORS
 // ============================================================
@@ -444,34 +68,6 @@ const c = {
 
 const memoryCache = new Map();
 const secretArchive = [];
-
-// Cache sursă SubDL pentru a evita descărcările repetate ale aceleiași subtitrări
-// (mai ales la referințele AutoSync) și pentru a reduce riscul de HTTP 429.
-const SUBDL_SOURCE_CACHE_TTL_MS = 20 * 60 * 1000;
-const SUBDL_SOURCE_CACHE_MAX = 100;
-const subdlSourceTextCache = new Map();
-let subdlDownloadPauseUntil = 0;
-
-function getSubdlRateLimitCooldownMs(error) {
-    const retryAfterRaw = String(error?.response?.headers?.['retry-after'] || '').trim();
-    if (retryAfterRaw) {
-        const seconds = Number(retryAfterRaw);
-        if (Number.isFinite(seconds) && seconds >= 0) {
-            return Math.max(5000, Math.min(5 * 60 * 1000, seconds * 1000));
-        }
-        const dateMs = Date.parse(retryAfterRaw);
-        if (Number.isFinite(dateMs)) {
-            return Math.max(5000, Math.min(5 * 60 * 1000, dateMs - Date.now()));
-        }
-    }
-    return 30 * 1000;
-}
-
-function registerSubdlRateLimit(error) {
-    if (error?.subdlRateLimited === true) return;
-    const cooldownMs = getSubdlRateLimitCooldownMs(error);
-    subdlDownloadPauseUntil = Math.max(subdlDownloadPauseUntil, Date.now() + cooldownMs);
-}
 
 // Textul englez sursă, păstrat temporar ca să poată fi descărcat din arhivă (comparație calitate).
 const originalSources = Object.create(null);
@@ -594,8 +190,8 @@ function cleanMemoryCache(protectedKey = null) {
 // ============================================================
 
 const manifest = {
-    id: 'community.chios.geminitranslator.autosync-test',
-    version: '13.2.31',
+    id: 'community.chios.geminitranslator',
+    version: '13.2.29',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1450,503 +1046,6 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
     }
 }
 
-// ============================================================
-// AUTO-SYNC TEST — referință OpenSubtitles/SubDL + analiză temporală locală
-// În mod shadow nu modifică sursa și nu așteaptă descărcarea de referință.
-// ============================================================
-function isAllowedAutoSyncReferenceUrl(rawUrl) {
-    let parsed;
-    try { parsed = new URL(String(rawUrl || '')); } catch (_) { return false; }
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return false;
-    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
-    return hostname === 'opensubtitles-v3.strem.io' ||
-        hostname === 'opensubtitles.com' || hostname.endsWith('.opensubtitles.com') ||
-        hostname === 'opensubtitles.org' || hostname.endsWith('.opensubtitles.org');
-}
-
-function buildAutoSyncReferenceParams(reference, selectedUrl = '') {
-    if (AUTO_SYNC_MODE === 'off' || !reference || !reference.originalUrl) return '';
-    const url = String(reference.originalUrl);
-    if (url === String(selectedUrl || '') || !isAllowedAutoSyncReferenceUrl(url) || !isValidSubtitleSourceUrl(url)) return '';
-    const params = new URLSearchParams({
-        syncRefUrl: url,
-        syncRefKind: reference.hashMatch ? 'videoHash' : 'rankedOpenSubtitles',
-        syncRefName: String(reference.realName || 'OpenSubtitles reference').replace(/[\r\n\u0000-\u001f]/g, ' ').slice(0, 120)
-    });
-    return `&${params.toString()}`;
-}
-
-function buildAutoSyncSubdlReferenceParams(reference, selectedNId = '', requestedFilename = '') {
-    if (AUTO_SYNC_MODE === 'off' || !reference || !reference.nId) return '';
-    const ref = String(reference.nId);
-    if (ref === String(selectedNId || '') ||
-        !/^(?:api_[A-Za-z0-9_-]{16,4096}|url_[A-Za-z0-9_-]{8,2048}|[A-Za-z0-9_-]{1,128})$/.test(ref)) return '';
-    const params = new URLSearchParams({
-        syncRefSubdlRef: ref,
-        syncRefSubdlFilename: String(requestedFilename || '').slice(0, 500),
-        syncRefKind: 'subdlAlternate',
-        syncRefName: String(reference.realName || 'SubDL reference').replace(/[\r\n\u0000-\u001f]/g, ' ').slice(0, 120)
-    });
-    return `&${params.toString()}`;
-}
-
-function buildAutoSyncConsensusParams(references, selectedUrl = '', selectedSubdlRef = '') {
-    const selectedExternalUrl = String(selectedUrl || '');
-    const selectedReferenceId = String(selectedSubdlRef || '');
-    const unique = new Map();
-    for (const candidate of (Array.isArray(references) ? references : [])) {
-        if (!candidate || typeof candidate !== 'object') continue;
-        if (candidate.type === 'subdl') {
-            const ref = String(candidate.reference || candidate.r || '');
-            if (ref === selectedReferenceId ||
-                !/^(?:api_[A-Za-z0-9_-]{16,4096}|url_[A-Za-z0-9_-]{8,2048}|[A-Za-z0-9_-]{1,128})$/.test(ref)) continue;
-            unique.set(`sd:${ref}`, {
-                t: 'sd', r: ref,
-                n: String(candidate.name || 'SubDL reference').replace(/[\r\n\u0000-\u001f]/g, ' ').slice(0, 100)
-            });
-        } else if (candidate.type === 'opensubtitles') {
-            const url = String(candidate.url || candidate.u || '');
-            if (url === selectedExternalUrl || candidate.hashMatch === true ||
-                !isAllowedAutoSyncReferenceUrl(url) || !isValidSubtitleSourceUrl(url)) continue;
-            unique.set(`os:${url}`, {
-                t: 'os', u: url,
-                n: String(candidate.name || 'OpenSubtitles reference').replace(/[\r\n\u0000-\u001f]/g, ' ').slice(0, 100)
-            });
-        }
-    }
-    // Four independent candidates are enough for a timing consensus without making
-    // Stremio subtitle URLs excessively long or triggering a burst of provider requests.
-    const list = [...unique.values()].slice(0, 4);
-    if (!list.length) return '';
-    return `&syncRefCandidates=${encodeURIComponent(JSON.stringify(list))}`;
-}
-
-function chooseSubdlAutoSyncReferences(candidates, selected, videoFilename = '', limit = 3) {
-    const selectedId = String(selected?.nId || '');
-    const pool = (Array.isArray(candidates) ? candidates : []).filter(candidate =>
-        candidate && String(candidate.nId || '') !== selectedId &&
-        !/\b(?:machine[ ._-]*translated|forced[ ._-]*only|resync|re[ ._-]?sync|syncfix|retimed)\b/i.test(String(candidate.realName || ''))
-    );
-    if (!pool.length) return [];
-
-    const tokenize = value => new Set(String(value || '').toLowerCase()
-        .replace(/\b(web[ ._-]?dl|web[ ._-]?rip)\b/g, 'web')
-        .replace(/[^a-z0-9]+/g, ' ')
-        .trim().split(/\s+/)
-        .filter(token => token.length >= 3 && !/^(?:the|and|with|h264|h265|x264|x265|ddp|aac|dts|eng|english|subtitle|subtitles)$/i.test(token)));
-    const videoTokens = tokenize(videoFilename);
-    const episode = String(videoFilename || '').match(/\bs(\d{1,2})e(\d{1,2})\b/i);
-    const episodeToken = episode ? `s${String(Number(episode[1])).padStart(2, '0')}e${String(Number(episode[2])).padStart(2, '0')}` : '';
-
-    const score = candidate => {
-        const name = String(candidate.realName || '');
-        const tokens = tokenize(name);
-        let overlap = 0;
-        for (const token of tokens) if (videoTokens.has(token)) overlap++;
-        const union = new Set([...tokens, ...videoTokens]).size || 1;
-        let value = videoFilename ? (100 * overlap / union) : 0;
-        if (episodeToken && tokens.has(episodeToken)) value += 45;
-        if (/\b(2160p|1080p|720p|480p)\b/i.test(videoFilename) &&
-            new RegExp(`\\b${(String(videoFilename).match(/\b(2160p|1080p|720p|480p)\b/i) || [])[1]}\\b`, 'i').test(name)) value += 12;
-        if (/\b(amzn|amazon)\b/i.test(videoFilename) && /\b(amzn|amazon)\b/i.test(name)) value += 12;
-        if (/\b(rawr)\b/i.test(videoFilename) && /\b(rawr)\b/i.test(name)) value += 18;
-        if (/\b(webrip|web[ ._-]?dl|bluray|hdtv)\b/i.test(videoFilename) &&
-            /\b(webrip|web[ ._-]?dl|bluray|hdtv)\b/i.test(name)) value += 7;
-        const nativeMatch = Number(candidate.matchScore);
-        if (Number.isFinite(nativeMatch)) value += Math.max(0, Math.min(1, nativeMatch)) * 8;
-        if (/\b(sdh|hearing impaired|hi)\b/i.test(name)) value -= 2;
-        return value;
-    };
-
-    const ranked = pool.map((candidate, index) => ({ candidate, index, score: score(candidate) }))
-        .sort((a, b) => b.score - a.score ||
-            (Number(b.candidate.matchScore) || 0) - (Number(a.candidate.matchScore) || 0) ||
-            a.index - b.index);
-    const result = [];
-    const seenIds = new Set();
-    const seenNames = new Set();
-    for (const item of ranked) {
-        const candidate = item.candidate;
-        const id = String(candidate.nId || '');
-        const normalizedName = String(candidate.realName || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-        if (!id || seenIds.has(id)) continue;
-        // Avoid treating duplicate listings of the same release as independent references.
-        if (normalizedName && seenNames.has(normalizedName)) continue;
-        seenIds.add(id);
-        if (normalizedName) seenNames.add(normalizedName);
-        result.push(candidate);
-        if (result.length >= Math.max(1, Math.min(3, Number(limit) || 3))) break;
-    }
-    return result;
-}
-
-function chooseSubdlAutoSyncReference(candidates, selected, videoFilename = '') {
-    return chooseSubdlAutoSyncReferences(candidates, selected, videoFilename, 1)[0] || null;
-}
-
-async function fetchAutoSyncReferenceSrt(rawUrl) {
-    if (!isAllowedAutoSyncReferenceUrl(rawUrl)) {
-        throw new Error('domeniul referinței nu aparține OpenSubtitles');
-    }
-    let currentUrl = String(rawUrl);
-    const startedAt = Date.now();
-    const maxRedirects = 3;
-    for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
-        if (!isAllowedAutoSyncReferenceUrl(currentUrl)) {
-            throw new Error('redirecționare în afara domeniilor OpenSubtitles');
-        }
-        const remainingBeforeValidation = AUTO_SYNC_REFERENCE_TIMEOUT_MS - (Date.now() - startedAt);
-        if (remainingBeforeValidation <= 250) throw new Error('timeout la descărcarea subtitrării de referință');
-        let validationTimer;
-        const validation = await Promise.race([
-            validateTargetUrl(currentUrl),
-            new Promise((_, reject) => {
-                validationTimer = setTimeout(() => reject(new Error('timeout la validarea DNS a referinței')), remainingBeforeValidation);
-            })
-        ]).finally(() => clearTimeout(validationTimer));
-        const remainingMs = AUTO_SYNC_REFERENCE_TIMEOUT_MS - (Date.now() - startedAt);
-        if (remainingMs <= 250) throw new Error('timeout la descărcarea subtitrării de referință');
-        const response = await axios.get(validation.url, {
-            headers: { 'User-Agent': BROWSER_USER_AGENT },
-            timeout: remainingMs,
-            maxContentLength: 8 * 1024 * 1024,
-            responseType: 'text',
-            responseEncoding: 'utf8',
-            maxRedirects: 0,
-            validateStatus: status => status >= 200 && status < 400,
-            lookup: (hostname, options, callback) => callback(null, validation.address, validation.family)
-        });
-        if (response.status >= 300) {
-            const location = response.headers.location;
-            if (!location) throw new Error('redirecționare fără destinație');
-            currentUrl = new URL(location, validation.url).toString();
-            continue;
-        }
-        const body = String(response.data || '');
-        if (!body.includes('-->') || body.length < 100) throw new Error('referința nu pare să fie un fișier SRT');
-        return body;
-    }
-    throw new Error('prea multe redirecționări pentru referința OpenSubtitles');
-}
-
-async function findHashConfirmedOpenSubtitlesReference(mediaId, videoHash, videoFilename = '', videoSize = '') {
-    const hash = String(videoHash || '').trim().slice(0, 128);
-    if (!/^[A-Za-z0-9_-]{8,128}$/.test(hash)) return null;
-
-    const id = String(mediaId || '').trim();
-    if (!/^tt[0-9]{5,12}(?::[0-9]{1,3}:[0-9]{1,3})?$/.test(id)) return null;
-    const type = id.includes(':') ? 'series' : 'movie';
-    const safeFilename = String(videoFilename || '').replace(/[\r\n\u0000-\u001f]/g, ' ').slice(0, 500);
-    const numericVideoSize = Number(videoSize);
-    const safeVideoSize = Number.isSafeInteger(numericVideoSize) && numericVideoSize > 0
-        ? String(numericVideoSize) : '';
-    const extras = [];
-    if (safeFilename) extras.push(`filename=${encodeURIComponent(safeFilename)}`);
-    extras.push(`videoHash=${encodeURIComponent(hash)}`);
-    if (safeVideoSize) extras.push(`videoSize=${encodeURIComponent(safeVideoSize)}`);
-    const base = `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}`;
-    const hashAndSize = [`videoHash=${encodeURIComponent(hash)}`, ...(safeVideoSize ? [`videoSize=${encodeURIComponent(safeVideoSize)}`] : [])].join('&');
-    const urls = [
-        `${base}/${extras.join('&')}.json`,
-        `${base}/${hashAndSize}.json`,
-        `${base}/videoHash=${encodeURIComponent(hash)}.json`,
-        `${base}.json`
-    ];
-    const seen = new Set();
-    for (const url of urls) {
-        if (seen.has(url)) continue;
-        seen.add(url);
-        let response;
-        try {
-            response = await axios.get(url, {
-                timeout: 6500,
-                maxContentLength: 8 * 1024 * 1024,
-                headers: { 'User-Agent': BROWSER_USER_AGENT_FETCH }
-            });
-        } catch (_) {
-            continue;
-        }
-        const subtitles = Array.isArray(response?.data?.subtitles) ? response.data.subtitles : [];
-        for (const sub of subtitles) {
-            const lang = String(sub?.lang || '').trim().toLowerCase();
-            const matchMethod = String(sub?.m || sub?.matchMethod || sub?.match_method || sub?.matchType || '').trim().toLowerCase();
-            const explicitHashFlag = [sub?.moviehash_match, sub?.hashMatch, sub?.hash_match]
-                .some(value => value === true || /^(?:true|1|yes)$/i.test(String(value || '')));
-            const hashMatched = explicitHashFlag || ['h', 'hash', 'moviehash', 'movie_hash'].includes(matchMethod);
-            const referenceUrl = String(sub?.url || '');
-            if (!['eng', 'en', 'english'].includes(lang) || !hashMatched ||
-                !isAllowedAutoSyncReferenceUrl(referenceUrl) || !isValidSubtitleSourceUrl(referenceUrl)) continue;
-            return {
-                url: referenceUrl,
-                kind: 'videoHash',
-                name: String(sub?.title || sub?.id || 'OpenSubtitles videoHash reference').slice(0, 120)
-            };
-        }
-    }
-    return null;
-}
-
-function parseAutoSyncReferenceCandidates(rawValue, options = {}) {
-    const raw = String(rawValue || '');
-    if (!raw || raw.length > 20000) return [];
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch (_) { return []; }
-    if (!Array.isArray(parsed)) return [];
-    const configId = String(options.configId || '');
-    const filename = String(options.filename || '').slice(0, 500);
-    const selectedUrl = String(options.selectedUrl || '');
-    const selectedSubdlRef = String(options.selectedSubdlRef || '');
-    const result = [];
-    const seen = new Set();
-    for (const item of parsed) {
-        if (!item || typeof item !== 'object') continue;
-        if (item.t === 'sd') {
-            const reference = String(item.r || '');
-            if (!configId || reference === selectedSubdlRef ||
-                !/^(?:api_[A-Za-z0-9_-]{16,4096}|url_[A-Za-z0-9_-]{8,2048}|[A-Za-z0-9_-]{1,128})$/.test(reference)) continue;
-            const key = `sd:${reference}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            result.push({
-                type: 'subdl', configId, reference, filename,
-                name: String(item.n || 'SubDL reference').replace(/[\r\n\u0000-\u001f]/g, ' ').slice(0, 100)
-            });
-        } else if (item.t === 'os') {
-            const url = String(item.u || '');
-            if (url === selectedUrl || !isAllowedAutoSyncReferenceUrl(url) || !isValidSubtitleSourceUrl(url)) continue;
-            const key = `os:${url}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            result.push({
-                type: 'opensubtitles', url,
-                name: String(item.n || 'OpenSubtitles reference').replace(/[\r\n\u0000-\u001f]/g, ' ').slice(0, 100)
-            });
-        }
-        if (result.length >= 4) break;
-    }
-    return result;
-}
-
-function autoSyncReferenceTimelineFingerprint(srt) {
-    const times = [...String(srt || '').matchAll(/(\d{2,}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2,}:\d{2}:\d{2}[,.]\d{3})/g)]
-        .map(match => `${match[1].replace(',', '.')}>${match[2].replace(',', '.')}`);
-    if (!times.length) return '';
-    return crypto.createHash('sha256').update(times.join('\n')).digest('hex');
-}
-
-async function maybeAutoSyncWithConsensus(sourceSrt, candidates, mode) {
-    const untouched = String(sourceSrt || '');
-    const uniqueCandidates = [];
-    const seen = new Set();
-    for (const candidate of (Array.isArray(candidates) ? candidates : [])) {
-        if (!candidate) continue;
-        const key = candidate.type === 'subdl'
-            ? `sd:${candidate.reference}`
-            : `os:${candidate.url}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        uniqueCandidates.push(candidate);
-        if (uniqueCandidates.length >= 4) break;
-    }
-    if (uniqueCandidates.length < 2) {
-        console.log(`[AutoSync TEST] Reper insuficient: sunt disponibile ${uniqueCandidates.length} referință(e) independente, minimum 2 necesare fără videoHash; sursa nemodificată.`);
-        return untouched;
-    }
-
-    const evaluated = await Promise.all(uniqueCandidates.map(async candidate => {
-        const name = String(candidate.name || (candidate.type === 'subdl' ? 'SubDL reference' : 'OpenSubtitles reference'))
-            .replace(/[\r\n\u0000-\u001f]/g, ' ').slice(0, 100);
-        try {
-            const referenceSrt = candidate.type === 'subdl'
-                ? await getSubdlSubtitleText(candidate.configId, candidate.reference, candidate.filename)
-                : await fetchAutoSyncReferenceSrt(candidate.url);
-            const analysis = analyzeAutoSyncSrt(untouched, referenceSrt);
-            const fingerprint = autoSyncReferenceTimelineFingerprint(referenceSrt);
-            if (!analysis.accepted) {
-                console.log(`[AutoSync TEST] Referință respinsă | ref=${name} | motiv=${analysis.reason || 'potrivire nesigură'} | ancore=${analysis.anchors || 0}.`);
-                return { name, kind: candidate.type, fingerprint, analysis, accepted: false };
-            }
-            console.log(`[AutoSync TEST] Referință analizată | ref=${name} | tip=${candidate.type} | offset=${Math.round(analysis.offsetMs)}ms | raport=${analysis.ratio.toFixed(6)} | ancore=${analysis.anchors}/${analysis.inliers} | p90=${Math.round(analysis.p90ResidualMs)}ms.`);
-            return { name, kind: candidate.type, fingerprint, analysis, accepted: true };
-        } catch (error) {
-            console.log(`[AutoSync TEST] Referință indisponibilă | ref=${name} | ${String(error.message || error).replace(/[\r\n]+/g, ' ').slice(0, 140)}.`);
-            return { name, kind: candidate.type, fingerprint: '', analysis: null, accepted: false };
-        }
-    }));
-
-    const usable = evaluated.filter(item => item.accepted && item.fingerprint && item.analysis?.accepted);
-    const consensus = combineAutoSyncAnalyses(usable.map(item => ({
-        name: item.name, kind: item.kind, fingerprint: item.fingerprint, analysis: item.analysis
-    })));
-    if (!consensus.accepted) {
-        console.log(`[AutoSync TEST] Fără consens temporal sigur | referințe valide=${usable.length} | distincte=${consensus.distinctReferences || 0} | motiv=${consensus.reason || 'referințele nu cad de acord'}; sursa originală păstrată.`);
-        return untouched;
-    }
-
-    const offset = Math.round(consensus.offsetMs);
-    const ratio = Number(consensus.ratio);
-    const spread = Math.round(consensus.consensusOffsetSpreadMs || 0);
-    const changeNeeded = Math.abs(ratio - 1) > 0.00001 || Math.abs(offset) >= 150;
-    if (!changeNeeded) {
-        console.log(`[AutoSync TEST] Offset relativ sub prag între referințe independente (${consensus.consensusKinds.join('+')}) | offset=${offset}ms | spread=${spread}ms; sursa nemodificată. Fără un videoHash potrivit, rezultatul NU confirmă sincronizarea absolută cu episodul.`);
-        return untouched;
-    }
-    if (mode !== 'apply') {
-        console.log(`[AutoSync TEST] CONSENS candidat în mod shadow | referințe=${consensus.consensusCount} | offset=${offset}ms | raport=${ratio.toFixed(6)} | spread=${spread}ms; fără modificări.`);
-        return untouched;
-    }
-
-    let synced;
-    try { synced = applyAutoSyncToSrt(untouched, consensus); }
-    catch (error) {
-        console.log(`[AutoSync TEST] Aplicarea consensului a eșuat (${String(error.message || error).slice(0, 120)}); sursa originală păstrată.`);
-        return untouched;
-    }
-    const originalCues = parseAutoSyncSrt(untouched).cues;
-    const syncedCues = parseAutoSyncSrt(String(synced || '')).cues;
-    const textPreserved = originalCues.length === syncedCues.length &&
-        originalCues.every((cue, index) => cue.text === syncedCues[index]?.text);
-    if (!synced || !synced.includes('-->') || originalCues.length !== syncedCues.length || !textPreserved) {
-        console.log('[AutoSync TEST] Validarea de după aplicare a eșuat; SRT-ul original a fost păstrat.');
-        return untouched;
-    }
-    console.log(`[AutoSync TEST] APLICAT prin consens între furnizori (fără videoHash exact) | referințe distincte=${consensus.consensusCount} (${consensus.consensusKinds.join('+')}) | offset=${offset}ms | raport=${ratio.toFixed(6)} | spread=${spread}ms | ancore=${consensus.anchors}/${consensus.inliers}; textul și numărul de replici au rămas neschimbate.`);
-    return synced;
-}
-
-async function maybeAutoSyncWithTrustedReference(sourceSrt, options, mode) {
-    const opts = options || {};
-    const untouched = String(sourceSrt || '');
-    const suppliedReferenceUrl = String(opts.referenceUrl || '');
-    const suppliedReferenceKind = String(opts.referenceKind || '');
-    const suppliedReferenceName = String(opts.referenceName || '');
-    const subdlReference = opts.referenceSubdl &&
-        opts.referenceSubdl.configId && opts.referenceSubdl.reference
-        ? opts.referenceSubdl
-        : null;
-
-    // A verified videoHash is the strongest reference and always has priority.
-    let referenceUrl = isAllowedAutoSyncReferenceUrl(suppliedReferenceUrl) &&
-        suppliedReferenceKind === 'videoHash' ? suppliedReferenceUrl : '';
-    let referenceKind = referenceUrl ? 'videoHash' : '';
-    let referenceName = referenceUrl ? suppliedReferenceName : '';
-
-    // In shadow mode, record the SubDL-to-SubDL comparison without changing timings.
-    if (mode === 'shadow' && subdlReference) {
-        await maybeAutoSyncSubtitleText(
-            untouched, '', 'subdlAlternate',
-            subdlReference.name || suppliedReferenceName || 'SubDL alternate',
-            'shadow', subdlReference
-        );
-    }
-
-    if (!referenceUrl && opts.videoHash) {
-        try {
-            const found = await findHashConfirmedOpenSubtitlesReference(opts.mediaId, opts.videoHash, opts.videoFilename, opts.videoSize);
-            if (found) {
-                referenceUrl = found.url;
-                referenceKind = found.kind;
-                referenceName = found.name;
-            }
-        } catch (error) {
-            console.log(`[AutoSync TEST] Căutarea referinței OpenSubtitles videoHash a eșuat (${String(error.message || error).slice(0, 120)}).`);
-        }
-    }
-
-    // Apply against an exact video-hash reference whenever available.
-    if (referenceUrl && isAllowedAutoSyncReferenceUrl(referenceUrl) && referenceKind === 'videoHash') {
-        return maybeAutoSyncSubtitleText(
-            untouched, referenceUrl, 'videoHash',
-            referenceName || 'OpenSubtitles videoHash reference', mode, null
-        );
-    }
-
-    // Without an exact videoHash, one alternate subtitle is not enough to tell whether
-    // BOTH subtitle files share the same timing defect. Build a consensus from independent
-    // references across available providers; source selection (SubDL/OpenSubtitles) is irrelevant.
-    if (mode === 'apply') {
-        const candidates = Array.isArray(opts.referenceCandidates) ? opts.referenceCandidates.slice() : [];
-        if (suppliedReferenceKind === 'rankedOpenSubtitles' && isAllowedAutoSyncReferenceUrl(suppliedReferenceUrl)) {
-            candidates.push({ type: 'opensubtitles', url: suppliedReferenceUrl, name: suppliedReferenceName || 'OpenSubtitles alternate' });
-        }
-        if (subdlReference) {
-            candidates.push({
-                type: 'subdl', configId: subdlReference.configId,
-                reference: subdlReference.reference, filename: subdlReference.filename,
-                name: subdlReference.name || suppliedReferenceName || 'SubDL alternate'
-            });
-        }
-        return maybeAutoSyncWithConsensus(untouched, candidates, 'apply');
-    }
-
-    if (mode === 'shadow') {
-        if (subdlReference) {
-            console.log('[AutoSync TEST] Există o referință alternativă SubDL; comparația este doar diagnostică în shadow.');
-        } else if (suppliedReferenceKind === 'rankedOpenSubtitles' && isAllowedAutoSyncReferenceUrl(suppliedReferenceUrl)) {
-            await maybeAutoSyncSubtitleText(
-                untouched, suppliedReferenceUrl, 'rankedOpenSubtitles',
-                suppliedReferenceName || 'OpenSubtitles alternate', 'shadow', null
-            );
-        } else {
-            console.log('[AutoSync TEST] OMIT — nu există reper videoHash și nici referință alternativă eligibilă; sursa nemodificată.');
-        }
-        return untouched;
-    }
-
-    console.log('[AutoSync TEST] OMIT — nu există reper temporal eligibil; sursa originală păstrată.');
-    return untouched;
-}
-
-async function maybeAutoSyncSubtitleText(sourceSrt, referenceUrl, referenceKind, referenceName, mode, referenceSubdl = null) {
-    const safeName = String(referenceName || (referenceSubdl ? 'SubDL reference' : 'OpenSubtitles')).replace(/[\r\n\u0000-\u001f]/g, ' ').slice(0, 100);
-    const untouched = String(sourceSrt || '');
-    try {
-        const referenceSrt = referenceSubdl
-            ? await getSubdlSubtitleText(referenceSubdl.configId, referenceSubdl.reference, referenceSubdl.filename)
-            : await fetchAutoSyncReferenceSrt(referenceUrl);
-        const result = analyzeAutoSyncSrt(untouched, referenceSrt);
-        const offset = Number.isFinite(result.offsetMs) ? `${Math.round(result.offsetMs)}ms` : 'n/a';
-        const ratio = Number.isFinite(result.ratio) ? result.ratio.toFixed(6) : 'n/a';
-        const p90 = Number.isFinite(result.p90ResidualMs) ? `${Math.round(result.p90ResidualMs)}ms` : 'n/a';
-        const coverage = Number.isFinite(result.coverage) ? `${(result.coverage * 100).toFixed(1)}%` : 'n/a';
-
-        if (!result.accepted) {
-            console.log(`[AutoSync TEST] Refuzată | ref=${safeName} | tip=${referenceKind || 'ranked'} | ancore=${result.anchors || 0} | offset=${offset} | raport=${ratio} | motiv=${result.reason || 'potrivire nesigură'}; sursa originală păstrată.`);
-            return untouched;
-        }
-
-        const changeNeeded = Math.abs(result.ratio - 1) > 0.00001 || Math.abs(result.offsetMs) >= 150;
-        if (!changeNeeded) {
-            if (referenceKind === 'subdlAlternate') {
-                console.log(`[AutoSync TEST] Diferență mică față de ALTĂ variantă SubDL — NU confirmă sincronizarea cu episodul | ref=${safeName} | tip=${referenceKind} | ancore=${result.anchors}/${result.inliers} | offset=${offset} | raport=${ratio} | p90=${p90} | acoperire=${coverage}; sursa nemodificată.`);
-            } else {
-                console.log(`[AutoSync TEST] Deja sincronizată FAȚĂ DE REFERINȚĂ | ref=${safeName} | tip=${referenceKind || 'ranked'} | ancore=${result.anchors}/${result.inliers} | offset=${offset} | raport=${ratio} | p90=${p90} | acoperire=${coverage}; sursa nemodificată.`);
-            }
-            return untouched;
-        }
-
-        if (mode !== 'apply') {
-            const trustNote = referenceKind === 'subdlAlternate' ? ' — COMPARAȚIE CU ALTĂ VARIANTĂ SubDL, reper neconfirmat pentru video' : '';
-            console.log(`[AutoSync TEST] CANDIDAT ACCEPTAT${trustNote} — mod shadow, fără modificări | ref=${safeName} | tip=${referenceKind || 'ranked'} | ancore=${result.anchors}/${result.inliers} | offset=${offset} | raport=${ratio} (${result.fpsRate}) | p90=${p90} | acoperire=${coverage}.`);
-            return untouched;
-        }
-
-        const relativeReferenceNote = ['subdlAlternate', 'rankedOpenSubtitles'].includes(referenceKind)
-            ? ' — corecție relativă la o variantă alternativă, fără confirmare videoHash'
-            : '';
-        const synced = applyAutoSyncToSrt(untouched, result);
-        if (!synced || !synced.includes('-->')) {
-            console.log('[AutoSync TEST] Aplicarea a eșuat la validarea finală; sursa originală păstrată.');
-            return untouched;
-        }
-        console.log(`[AutoSync TEST] APLICAT${relativeReferenceNote} | ref=${safeName} | tip=${referenceKind || 'ranked'} | ancore=${result.anchors}/${result.inliers} | offset=${offset} | raport=${ratio} (${result.fpsRate}) | p90=${p90} | acoperire=${coverage}.`);
-        return synced;
-    } catch (error) {
-        console.log(`[AutoSync TEST] Omis | ref=${safeName} | ${String(error.message || error).slice(0, 180)}; sursa originală păstrată.`);
-        return untouched;
-    }
-}
-
 async function handleSubtitles(req, res) {
     const { configData, type, id, extra } = req.params;
     const addonConfig = decodeAddonConfigSegment(configData) || { geminiKeys: [], subdlKey: '' };
@@ -1958,7 +1057,6 @@ async function handleSubtitles(req, res) {
     let extraString = '';
     let userFilename = '';
     let userVideoHash = '';
-    let userVideoSize = '';
     let extraKeys = [];
 
     if (extra) {
@@ -1986,48 +1084,19 @@ async function handleSubtitles(req, res) {
                         let value = part.slice(eq + 1);
                         try { value = decodeURIComponent(value); } catch (e) {}
                         userVideoHash = String(value || '').trim();
-                    } else if (key === 'videoSize') {
-                        let value = part.slice(eq + 1);
-                        try { value = decodeURIComponent(value); } catch (e) {}
-                        const size = Number(String(value || '').trim());
-                        userVideoSize = Number.isSafeInteger(size) && size > 0 ? String(size) : '';
                     }
                 }
             } else {
                 const params = new URLSearchParams(extra);
                 userFilename = params.get('filename') || '';
                 userVideoHash = params.get('videoHash') || '';
-                const parsedVideoSize = Number(params.get('videoSize') || 0);
-                userVideoSize = Number.isSafeInteger(parsedVideoSize) && parsedVideoSize > 0 ? String(parsedVideoSize) : '';
                 extraKeys = [...params.keys()];
             }
         } catch (e) {}
     }
 
-    // Unele transporturi/client builds pot trimite metadatele ca query parameters,
-    // nu în extra segmentul din path. Le acceptăm și de aici, fără să presupunem că există.
-    const incomingQuery = req.query || {};
-    if (!userFilename) {
-        userFilename = String(incomingQuery.filename || incomingQuery.videoFilename || incomingQuery.videoName || '').slice(0, 500);
-    }
-    if (!userVideoHash) {
-        userVideoHash = String(incomingQuery.videoHash || incomingQuery.syncVideoHash || '').trim().slice(0, 128);
-    }
-    if (!userVideoSize) {
-        const querySize = Number(incomingQuery.videoSize || incomingQuery.syncVideoSize || 0);
-        userVideoSize = Number.isSafeInteger(querySize) && querySize > 0 ? String(querySize) : '';
-    }
-    if (AUTO_SYNC_MODE !== 'off') {
-        const metadataTransport = [
-            extraKeys.length ? 'extra' : '',
-            (incomingQuery.videoHash || incomingQuery.syncVideoHash || incomingQuery.videoSize || incomingQuery.syncVideoSize || incomingQuery.filename || incomingQuery.videoFilename || incomingQuery.videoName) ? 'query' : ''
-        ].filter(Boolean).join('+') || 'absent';
-        console.log(`[AutoSync TEST] Metadate video la cererea Stremio | transport=${metadataTransport} | hash=${userVideoHash ? 'prezent' : 'absent'} | size=${userVideoSize || 'absent'} | filename=${userFilename ? 'prezent' : 'absent'}.`);
-    }
-
-    // SubDL este furnizorul principal când cheia API este configurată și există rezultate.
-    // OpenSubtitles rămâne listă de rezervă dacă SubDL nu întoarce subtitrări utilizabile; un reper
-    // OpenSubtitles confirmat prin videoHash poate fi folosit intern pentru verificarea AutoSync.
+    // Fără rezultate SubDL, păstrăm exact bugetul istoric v253 de până la 15 variante OpenSubtitles.
+    // Dacă SubDL aduce rezultate, folosim 8 SubDL + maximum 4 OpenSubtitles.
     let openSubtitlesLimit = OPENSUBTITLES_LEGACY_MAX_RESULTS;
     let subdlCandidates = [];
     if (addonConfig.subdlKey) {
@@ -2100,51 +1169,6 @@ async function handleSubtitles(req, res) {
 
         const trashRegex = /korsub|kor\.sub|hdcam|hd-ts|hdts|camrip|telesync|telecine|hardcoded|hc-eng|hc-sub|hc\.\w+|1xbet/i;
         engSubs = engSubs.filter(sub => !trashRegex.test(String(sub.title || sub.id || '')));
-
-        // AutoSync TEST fallback: dacă interogarea OpenSubtitles cu extra-urile Stremio
-        // nu oferă nicio adresă eligibilă drept referință, repetăm o singură dată
-        // căutarea pe ID-ul episodului/filmului fără extra-uri. Nu schimbă sursa SubDL
-        // selectată și nu aplică modificări de timp; doar încearcă să găsească un reper.
-        if (AUTO_SYNC_MODE !== 'off' && extraString &&
-            !engSubs.some(sub => isAllowedAutoSyncReferenceUrl(sub.url))) {
-            const fallbackUrl = `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}.json`;
-            const fallbackResult = await axios.get(fallbackUrl, {
-                timeout: 6500,
-                maxContentLength: 8 * 1024 * 1024,
-                headers: { 'User-Agent': BROWSER_USER_AGENT_FETCH }
-            }).catch(error => {
-                console.log(`[AutoSync TEST] Căutarea de referință OpenSubtitles fără extra-uri a eșuat (${subtitleSourceError(error)}).`);
-                return null;
-            });
-
-            const fallbackSubs = fallbackResult && fallbackResult.data && Array.isArray(fallbackResult.data.subtitles)
-                ? fallbackResult.data.subtitles
-                : [];
-            const knownUrls = new Set(engSubs.map(sub => String(sub.url || '')));
-            let fallbackAdded = 0;
-            for (let index = 0; index < fallbackSubs.length; index++) {
-                const sub = fallbackSubs[index];
-                const lang = String(sub && sub.lang || '').trim().toLowerCase();
-                const url = String(sub && sub.url || '');
-                if (!['eng', 'en', 'english'].includes(lang) ||
-                    !isAllowedAutoSyncReferenceUrl(url) || !isValidSubtitleSourceUrl(url) ||
-                    knownUrls.has(url) || trashRegex.test(String(sub.title || sub.id || ''))) {
-                    continue;
-                }
-                knownUrls.add(url);
-                engSubs.push({
-                    ...sub,
-                    _selectionSourceIndex: 0,
-                    _selectionSourceOrder: allSubs.length + index
-                });
-                fallbackAdded++;
-            }
-            if (fallbackAdded) {
-                console.log(`[AutoSync TEST] Referință recuperată prin căutarea OpenSubtitles fără extra-uri: ${fallbackAdded} variantă(e) eligibilă(e).`);
-            } else {
-                console.log('[AutoSync TEST] Nicio referință OpenSubtitles eligibilă nici după căutarea fără extra-uri.');
-            }
-        }
 
         if (engSubs.length === 0) {
             console.log(`${c.yellow}⚠ Nu s-au găsit subtitrări EN valide de la OpenSubtitles pentru: ${id}${c.reset}`);
@@ -2406,71 +1430,23 @@ async function handleSubtitles(req, res) {
         diverseSubs = [...bestCandidateByUrl.values()]
             .sort(compareOpenSubtitlesCandidates)
             .slice(0, openSubtitlesLimit);
-
-        // Reference priority for a selected SubDL subtitle:
-        // 1) exact OpenSubtitles videoHash match;
-        // 2) best-ranked English OpenSubtitles subtitle for this same IMDb item;
-        // 3) only if no OpenSubtitles result is usable, another SubDL result.
-        // The ranked OpenSubtitles fallback is relative evidence, not absolute video proof;
-        // timing changes still require strict shared-text/coverage/residual validation.
-        const autoSyncReferenceCandidate = AUTO_SYNC_MODE !== 'off'
-            ? (diverseSubs.find(s => s.hashMatch && isAllowedAutoSyncReferenceUrl(s.originalUrl)) ||
-               diverseSubs.find(s => isAllowedAutoSyncReferenceUrl(s.originalUrl) &&
-                   isValidSubtitleSourceUrl(s.originalUrl)) || null)
-            : null;
-        if (AUTO_SYNC_MODE !== 'off' && !autoSyncReferenceCandidate && subdlCandidates.length) {
-            console.log('[AutoSync TEST] Nu există variantă OpenSubtitles eligibilă pentru reper; SubDL alternativ rămâne ultima rezervă.');
-        } else if (AUTO_SYNC_MODE !== 'off' && autoSyncReferenceCandidate && !autoSyncReferenceCandidate.hashMatch && subdlCandidates.length) {
-            console.log(`[AutoSync TEST] Reper intern OpenSubtitles clasat după metadate pentru ${id}; nu este confirmat prin videoHash.`);
-        }
+        
 
         // ============================================================
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
         // ============================================================
-        const syncDiscoveryParams = `${userVideoHash ? `&syncVideoHash=${encodeURIComponent(userVideoHash.slice(0, 128))}` : ''}${userVideoSize ? `&syncVideoSize=${encodeURIComponent(userVideoSize)}` : ''}${userFilename ? `&syncVideoFilename=${encodeURIComponent(String(userFilename).slice(0, 500))}` : ''}`;
         const generatedSubdlSubs = subdlCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS).map((s, index) => {
             const scoreTag = s.matchScore === null ? '' : ` • ${Math.round(s.matchScore * 100)}% match`;
-            // Referințele sunt interne și nu schimbă subtitrarea prezentată/selectată de utilizator.
-            const subdlAlternateReferences = AUTO_SYNC_MODE !== 'off'
-                ? chooseSubdlAutoSyncReferences(subdlCandidates, s, userFilename, 3)
-                : [];
-            // When SubDL is the available source, use several distinct SubDL alternatives first.
-            // Any ranked OpenSubtitles reference already passed separately is added by the apply route.
-            const consensusCandidates = subdlAlternateReferences.map(candidate => ({
-                type: 'subdl', reference: candidate.nId, name: candidate.realName
-            }));
-
-            const referenceParams = buildAutoSyncReferenceParams(autoSyncReferenceCandidate, '') ||
-                buildAutoSyncSubdlReferenceParams(subdlAlternateReferences[0], s.nId, userFilename);
-            const consensusParams = buildAutoSyncConsensusParams(consensusCandidates, '', s.nId);
-            // Keep ranked OpenSubtitles URLs attached to every SubDL choice so the
-            // translation route can actually download a fallback if SubDL fails.
-            const openSubtitlesFallbacks = diverseSubs
-                .map(candidate => candidate.originalUrl)
-                .filter(url => isAllowedAutoSyncReferenceUrl(url) && isValidSubtitleSourceUrl(url))
-                .slice(0, 3);
-            const encodedOpenSubtitlesFallbacks = `&fallbackUrls=${encodeURIComponent(JSON.stringify(openSubtitlesFallbacks))}`;
             return {
                 id: `subdl_ai_sub_${index}`,
                 title: `🇷🇴 RO AI · SubDL [${index + 1}]${scoreTag} · ${String(s.realName).replace(/[^\p{L}\p{N} ._\-()[\]]/gu, ' ').slice(0, 100)}`,
-                url: `${baseUrl}/${configData}/translate?id=${encodeURIComponent(id)}&subdlRef=${encodeURIComponent(s.nId)}&filename=${encodeURIComponent(String(userFilename || '').slice(0, 500))}&v=subdl-${index + 1}&source=SubDL&subtitleName=${encodeURIComponent(String(s.realName || 'SubDL subtitle').slice(0, 300))}${encodedOpenSubtitlesFallbacks}${referenceParams}${consensusParams}${syncDiscoveryParams}`,
+                url: `${baseUrl}/${configData}/translate?id=${encodeURIComponent(id)}&subdlRef=${encodeURIComponent(s.nId)}&filename=${encodeURIComponent(String(userFilename || '').slice(0, 500))}&v=subdl-${index + 1}&source=SubDL&subtitleName=${encodeURIComponent(String(s.realName || 'SubDL subtitle').slice(0, 300))}`,
                 lang: 'ron'
             };
         });
 
         const generatedOpenSubtitles = diverseSubs.slice(0, openSubtitlesLimit).map((s, index) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
-            const alternateOpenSubtitlesReference = AUTO_SYNC_MODE !== 'off'
-                ? (diverseSubs.find(candidate => candidate.hashMatch && candidate.originalUrl !== s.originalUrl && isAllowedAutoSyncReferenceUrl(candidate.originalUrl)) ||
-                   diverseSubs.find(candidate => candidate.originalUrl !== s.originalUrl && isAllowedAutoSyncReferenceUrl(candidate.originalUrl)) || null)
-                : null;
-            const consensusCandidates = diverseSubs
-                .filter(candidate => candidate.originalUrl !== s.originalUrl && !candidate.hashMatch &&
-                    isAllowedAutoSyncReferenceUrl(candidate.originalUrl) && isValidSubtitleSourceUrl(candidate.originalUrl))
-                .slice(0, 3)
-                .map(candidate => ({ type: 'opensubtitles', url: candidate.originalUrl, name: candidate.realName }));
-            const referenceParams = buildAutoSyncReferenceParams(alternateOpenSubtitlesReference, s.originalUrl);
-            const consensusParams = buildAutoSyncConsensusParams(consensusCandidates, s.originalUrl, '');
             let visualName = String(s.realName || '').replace(/[^a-zA-Z0-9.-]/g, ' ');
             const foundTags = [];
             const resMatch = visualName.match(/\b(2160p|1080p|720p|4k|sd)\b/i);
@@ -2487,17 +1463,14 @@ async function handleSubtitles(req, res) {
             return {
                 id: `opensubtitles_ai_sub_${index}`,
                 title: labelName,
-                url: `${baseUrl}/${configData}/translate?id=${encodeURIComponent(id)}&targetUrl=${encodedUrl}&v=opensubtitles-${index + 1}&source=OpenSubtitles&subtitleName=${encodeURIComponent(String(s.realName || labelName).slice(0, 300))}${referenceParams}${consensusParams}${syncDiscoveryParams}`,
+                url: `${baseUrl}/${configData}/translate?id=${encodeURIComponent(id)}&targetUrl=${encodedUrl}&v=opensubtitles-${index + 1}&source=OpenSubtitles&subtitleName=${encodeURIComponent(String(s.realName || labelName).slice(0, 300))}`,
                 lang: 'ron'
             };
         });
 
-        // Show both providers when SubDL returns results. A SubDL result may still
-        // fail at download time (for example HTTP 429), so OpenSubtitles must remain
-        // directly selectable as well as being attached as an automatic fallback.
-        const finalSubtitles = subdlCandidates.length
-            ? [...generatedSubdlSubs, ...generatedOpenSubtitles].slice(0, TOTAL_MAX_SUBTITLE_RESULTS)
-            : generatedOpenSubtitles.slice(0, OPENSUBTITLES_LEGACY_MAX_RESULTS);
+        // SubDL păstrează ordinea de ranking nativă; OpenSubtitles rămâne fallback.
+        const finalSubtitles = [...generatedSubdlSubs, ...generatedOpenSubtitles]
+            .slice(0, subdlCandidates.length ? TOTAL_MAX_SUBTITLE_RESULTS : OPENSUBTITLES_LEGACY_MAX_RESULTS);
         return res.json({ subtitles: finalSubtitles });
     } catch (error) {
         return res.json({ subtitles: [] });
@@ -2505,82 +1478,6 @@ async function handleSubtitles(req, res) {
 }
 
 async function getSubdlSubtitleText(configId, reference, requestedFilename = '') {
-    const cacheKey = crypto.createHash('sha256')
-        .update(`${String(configId || '')}\0${String(reference || '')}\0${String(requestedFilename || '')}`)
-        .digest('hex');
-    const now = Date.now();
-    const cached = subdlSourceTextCache.get(cacheKey);
-    if (cached && (cached.inFlight || cached.expiresAt > now)) {
-        subdlSourceTextCache.delete(cacheKey);
-        subdlSourceTextCache.set(cacheKey, cached);
-        return cached.promise;
-    }
-    if (cached) subdlSourceTextCache.delete(cacheKey);
-
-    const entry = { promise: null, inFlight: true, expiresAt: Number.POSITIVE_INFINITY };
-    entry.promise = getSubdlSubtitleTextUncached(configId, reference, requestedFilename)
-        .then(text => {
-            entry.inFlight = false;
-            entry.expiresAt = Date.now() + SUBDL_SOURCE_CACHE_TTL_MS;
-            entry.promise = Promise.resolve(text);
-            // Enforce bounded memory; evict least-recently-used entries first.
-            while (subdlSourceTextCache.size > SUBDL_SOURCE_CACHE_MAX) {
-                const oldestKey = subdlSourceTextCache.keys().next().value;
-                if (oldestKey === undefined) break;
-                if (oldestKey === cacheKey && subdlSourceTextCache.size === 1) break;
-                subdlSourceTextCache.delete(oldestKey);
-            }
-            return text;
-        })
-        .catch(error => {
-            if (subdlSourceTextCache.get(cacheKey) === entry) subdlSourceTextCache.delete(cacheKey);
-            const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
-            if (status === 429 && error?.subdlRateLimited !== true) registerSubdlRateLimit(error);
-            throw error;
-        });
-    subdlSourceTextCache.set(cacheKey, entry);
-    while (subdlSourceTextCache.size > SUBDL_SOURCE_CACHE_MAX) {
-        const oldestKey = subdlSourceTextCache.keys().next().value;
-        if (oldestKey === undefined || oldestKey === cacheKey) break;
-        subdlSourceTextCache.delete(oldestKey);
-    }
-    return entry.promise;
-}
-
-async function fetchSubdlApiV2Bytes(nId, apiKey) {
-    const safeNId = String(nId || '').trim();
-    const safeApiKey = String(apiKey || '').trim();
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(safeNId) || !safeApiKey) {
-        throw new Error('nu există identificatori/cheie eligibili pentru fallback API v2 SubDL');
-    }
-    const apiUrl = `https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(safeNId)}/download?format=file`;
-    const response = await axios.get(apiUrl, {
-        headers: { Authorization: `Bearer ${safeApiKey}`, 'User-Agent': BROWSER_USER_AGENT_FETCH },
-        timeout: 25000,
-        maxContentLength: 25 * 1024 * 1024,
-        maxBodyLength: 25 * 1024 * 1024,
-        responseType: 'arraybuffer',
-        maxRedirects: 0,
-        validateStatus: status => status >= 200 && status < 400
-    });
-    if (response.status >= 300) {
-        const location = response.headers?.location;
-        if (!location) throw new Error('API v2 SubDL a returnat redirecționare fără destinație');
-        const redirectUrl = new URL(location, apiUrl).toString();
-        return fetchSubdlDirectWithFallback(redirectUrl, safeApiKey);
-    }
-    const bytes = Buffer.from(response.data || []);
-    if (!bytes.length) throw new Error('API v2 SubDL a returnat un fișier gol');
-    return bytes;
-}
-
-async function getSubdlSubtitleTextUncached(configId, reference, requestedFilename = '') {
-    if (Date.now() < subdlDownloadPauseUntil) {
-        const error = new Error('SubDL este temporar în cooldown după HTTP 429; se evită repetarea cererilor care ar fi refuzate.');
-        error.subdlRateLimited = true;
-        error.subdlDownloadMeta = { status: 429, host: 'dl.subdl.com', authMode: 'cooldown' };
-        throw error;
-    }
     const isApiReference = reference.startsWith('api_');
     const isDirectUrlRef = reference.startsWith('url_');
     let apiReference = null;
@@ -2651,27 +1548,7 @@ async function getSubdlSubtitleTextUncached(configId, reference, requestedFilena
     let bytes;
     try {
         if (isDirectUrlRef) {
-            try {
-                bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
-            } catch (directError) {
-                const directStatus = Number(directError?.response?.status || directError?.subdlDownloadMeta?.status || 0);
-                const ids = subdlIdsFromDirectUrl(directDownloadUrl);
-                // Dacă dl.subdl.com limitează URL-ul direct, încercăm o singură dată
-                // endpointul API v2 autentificat, când nId-ul poate fi recuperat sigur.
-                if (directStatus === 429 && ids?.nId && addonConfig.subdlKey) {
-                    console.log('[SubDL] HTTP 429 pe URL direct; încerc fallback-ul API v2 autentificat o singură dată.');
-                    try {
-                        bytes = await fetchSubdlApiV2Bytes(ids.nId, addonConfig.subdlKey);
-                    } catch (apiError) {
-                        const apiStatus = Number(apiError?.response?.status || apiError?.subdlDownloadMeta?.status || 0);
-                        if (apiStatus === 429) throw apiError;
-                        if (!apiError.response && directError.response) apiError.response = directError.response;
-                        throw apiError;
-                    }
-                } else {
-                    throw directError;
-                }
-            }
+            bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
         } else {
             // When file_n_id is known, first fetch that exact file from SubDL's documented
             // /subtitle/{n_id}/{file_n_id} route; the parent nId endpoint can otherwise select
@@ -2712,9 +1589,9 @@ async function getSubdlSubtitleTextUncached(configId, reference, requestedFilena
                     if (!exactFileAttempted && directDownloadUrl && [400, 401, 403, 404, 409, 422].includes(apiStatus)) {
                         console.log(`[SubDL] Descărcarea oficială API v2 a eșuat (${apiStatus}); încerc URL-ul direct original, păstrat ca fallback.`);
                         bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
+                    } else if (exactFileError) {
+                        throw exactFileError;
                     } else {
-                        // Eroarea API v2 este cea mai relevantă după tentativa de fallback;
-                        // nu ascundem statusul curent în spatele erorii anterioare de pe dl host.
                         throw apiError;
                     }
                 }
@@ -5652,16 +4529,6 @@ function applySourceGroundedSemanticFixes(original, translation) {
 
     // Corecții strict ancorate în sursă pentru erori de traducere demonstrate.
     // Se activează doar dacă originalul confirmă sensul; nu sunt reguli globale de vocabular.
-    // Cazuri confirmate în auditul QA tt34384900: păstrăm sensul temporal
-    // „used to” și reparăm forma agramaticală produsă pentru „do the dance”.
-    if (/\bi\s+used\s+to\s+hate\s+fado\b/i.test(sourceNorm) && /^\s*(?:eu\s+)?ur[ăa]sc\s+fado[.!?…]*\s*$/iu.test(text)) {
-        const punctuation = (text.match(/[.!?…]+\s*$/u) || sourceText.match(/[.!?…]+\s*$/u) || ['.'])[0].trim();
-        text = `Înainte uram fado${punctuation}`;
-    }
-    if (/\bi\s+could\s+do\s+the\s+dance\b/i.test(sourceNorm) && /\bsă[- ]l\s+dansul\b/iu.test(text)) {
-        text = text.replace(/\bsă[- ]l\s+dansul\b/iu, 'să fac dansul');
-    }
-
     if (/\bresponse\b/i.test(sourceNorm) && /(?<![\p{L}])retrasul(?![\p{L}])/iu.test(text)) {
         text = text.replace(/(?<![\p{L}])retrasul(?![\p{L}])/iu, match =>
             match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Răspunsul' : 'răspunsul');
@@ -5726,42 +4593,6 @@ function applySourceGroundedSemanticFixes(original, translation) {
             match => match[0] === match[0].toLocaleUpperCase('ro-RO')
                 ? 'Următoarea rundă e din partea mea'
                 : 'Următoarea rundă e din partea mea');
-    }
-
-    // Corecții suplimentare din auditul manual v13.2.26 — numai când sursa confirmă sensul.
-    // „Oh, my goodness” nu este formula religioasă românească „Doamne ajută”.
-    if (/\boh\s*,?\s*my\s+goodness\b/i.test(sourceNorm) &&
-        /^\s*doamne\s+ajută[.!?…]*\s*$/iu.test(text)) {
-        const punctuation = (text.match(/[.!?…]+\s*$/u) || sourceText.match(/[.!?…]+\s*$/u) || ['.'])[0].trim();
-        text = `Vai de mine${punctuation}`;
-    }
-
-    // „Yeah, well...” exprimă ezitare/rezervă; nu inventăm apelativul „puiule”.
-    if (/^\s*yeah\s*,\s*well\s*(?:[.!?…]{0,3})\s*$/i.test(sourceText) &&
-        /^\s*da\s*,\s*puiule\s*(?:[.!?…]{0,3})\s*$/iu.test(text)) {
-        const punctuation = (text.match(/[.!?…]+\s*$/u) || sourceText.match(/[.!?…]+\s*$/u) || ['...'])[0].trim();
-        text = `Da, păi${punctuation}`;
-    }
-
-    // Ortografie/punctuație clar coruptă în aceeași replică: colapsăm numai semne
-    // de punctuație identice repetate; păstrăm elipsele intenționate (.... / …).
-    text = text.replace(/([,;:])\s*\1+/gu, '$1');
-
-    if (/\bawe\s+and\s+admiration\b/i.test(sourceNorm) &&
-        /\buimire\s+și\s+și\s+de\s+admirație\b/iu.test(text)) {
-        text = text.replace(/\buimire\s+și\s+și\s+de\s+admirație\b/iu, 'uimire și de admirație');
-    }
-
-    if (/\blondon\s+boy\b/i.test(sourceNorm) &&
-        /\bbăiat\s+de\s+londra\b/iu.test(text)) {
-        text = text.replace(/\bbăiat\s+de\s+londra\b/iu, match =>
-            match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Băiat londonez' : 'băiat londonez');
-    }
-
-    if (/\bmozzarella\s+sticks\b/i.test(sourceNorm) && /\bmozzarella\s+sticks\b/i.test(text) &&
-        !/\bbatoane\s+de\s+mozzarella\b/iu.test(text)) {
-        text = text.replace(/\bmozzarella\s+sticks\b/giu, match =>
-            match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Batoane de mozzarella' : 'batoane de mozzarella');
     }
 
     if (/\bi\s+used\s+to\s+hate\s+fado\b/i.test(sourceNorm) &&
@@ -6808,26 +5639,6 @@ function detectSourceAwareQualityReviewReasons(item, translation, contextItems, 
     if (!source || !target || isJunkOrInterjection(item?.text)) return [];
 
     const reasons = [];
-
-    if (/\boh\s*,?\s*my\s+goodness\b/i.test(source) && /(?<![\p{L}])doamne\s+ajută(?![\p{L}])/iu.test(target)) {
-        reasons.push('echivalență idiomatică suspectă: „Oh, my goodness” → „Doamne ajută”');
-    }
-    if (/^yeah\s*,\s*well\s*[.!?…]*$/i.test(source) && /\bpuiule\b/iu.test(target)) {
-        reasons.push('apelativ afectiv posibil inventat pentru „Yeah, well...”');
-    }
-    if (/\blondon\s+boy\b/i.test(source) && /\bbăiat\s+de\s+londra\b/iu.test(target)) {
-        reasons.push('formulare de loc nenaturală: „băiat de Londra”');
-    }
-    if (/\bmozzarella\s+sticks\b/i.test(source) && /\bmozzarella\s+sticks\b/i.test(target)) {
-        reasons.push('termen culinar englezesc rămas netradus („mozzarella sticks”)');
-    }
-    if (/(?:,,|;;|::)/u.test(target)) {
-        reasons.push('punctuație duplicată accidental');
-    }
-    if (/\bawe\s+and\s+admiration\b/i.test(source) && /\buimire\s+și\s+și\s+de\s+admirație\b/iu.test(target)) {
-        reasons.push('conector duplicat în traducerea „uimire și și de admirație”');
-    }
-
     // Sursă „response” + traducere lexical greșită; corecția deterministă ar trebui
     // s-o repare înainte de review, iar acest semnal protejează cazul dacă reapare.
     if (/\bresponse\b/i.test(source) && /(?<![\p{L}])retras(?:ul|ului)?(?![\p{L}])/iu.test(target)) {
@@ -6848,13 +5659,6 @@ function detectSourceAwareQualityReviewReasons(item, translation, contextItems, 
         /(?<![\p{L}])ar\s+trebui\s+măcar\s+(?:le|îi|mi|ne|vă|te|mă)\s+\p{L}+/iu.test(target) &&
         !/(?<![\p{L}])ar\s+trebui\s+măcar\s+să\s+(?:le|îi|mi|ne|vă|te|mă)(?![\p{L}])/iu.test(target)) {
         reasons.push('lipsește „să” într-o construcție cu „ar trebui ... să”');
-    }
-
-    if (/\bi\s+used\s+to\s+hate\s+fado\b/i.test(source) && /^\s*(?:eu\s+)?ur[ăa]sc\s+fado[.!?…]*\s*$/iu.test(target)) {
-        reasons.push('timp verbal pierdut: „I used to hate fado” a devenit prezentul „Urăsc fado”');
-    }
-    if (/\bi\s+could\s+do\s+the\s+dance\b/i.test(source) && /\bsă[- ]l\s+dansul\b/iu.test(target)) {
-        reasons.push('construcție agramaticală: „să-l dansul” în loc de „să fac dansul”');
     }
 
     if (/\boutnumbered\b/i.test(source) && /\boutnumbered\b/i.test(target)) {
@@ -9586,50 +8390,9 @@ function normalizeDownloadedSubtitle(bytes, sourceUrl, preferredVideoFilename = 
     }
 }
 
-async function discoverOpenSubtitlesFallbackUrls(mediaId) {
-    const id = String(mediaId || '').trim();
-    if (!/^tt\d{5,12}(?::\d{1,3}:\d{1,3})?$/i.test(id)) return [];
-    const type = id.includes(':') ? 'series' : 'movie';
-    const endpoint = `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}.json`;
-    try {
-        const response = await axios.get(endpoint, {
-            timeout: 6500,
-            maxContentLength: 8 * 1024 * 1024,
-            headers: { 'User-Agent': BROWSER_USER_AGENT_FETCH, Accept: 'application/json' }
-        });
-        const subtitles = Array.isArray(response?.data?.subtitles) ? response.data.subtitles : [];
-        const englishUrls = subtitles
-            .filter(item => ['en', 'eng', 'english'].includes(String(item?.lang || item?.language || '').trim().toLowerCase()))
-            .map(item => String(item?.url || item?.downloadUrl || item?.download_url || '').trim())
-            .filter(url => url && url.length <= 4096 && isValidSubtitleSourceUrl(url));
-        const eligible = parseOpenSubtitlesFallbackUrls(JSON.stringify(englishUrls), '');
-        console.log(`[OpenSubtitles] Re-căutare fallback pentru ${id}: ${eligible.length} URL(uri) eligibile din ${englishUrls.length} rezultat(e) EN.`);
-        return eligible;
-    } catch (error) {
-        console.log(`[OpenSubtitles] Re-căutarea fallback a eșuat pentru ${id} (${subtitleSourceError(error)}).`);
-        return [];
-    }
-}
-
 function parseOpenSubtitlesFallbackUrls(rawValue, failedUrl) {
-    // Stremio/OpenSubtitles poate livra lista JSON codificată o dată sau de două ori.
-    let parsed = null;
-    let candidateText = String(rawValue || '[]');
-    for (let attempt = 0; attempt < 4; attempt++) {
-        try {
-            parsed = JSON.parse(candidateText);
-            if (Array.isArray(parsed)) break;
-            if (typeof parsed === 'string') { candidateText = parsed; continue; }
-            parsed = null;
-            break;
-        } catch (_) {
-            try {
-                const decoded = decodeURIComponent(candidateText);
-                if (decoded === candidateText) break;
-                candidateText = decoded;
-            } catch (_) { break; }
-        }
-    }
+    let parsed;
+    try { parsed = JSON.parse(String(rawValue || '[]')); } catch (_) { return []; }
     if (!Array.isArray(parsed)) return [];
 
     const failed = String(failedUrl || '');
@@ -9640,20 +8403,15 @@ function parseOpenSubtitlesFallbackUrls(rawValue, failedUrl) {
         'dl.opensubtitles.org', 'opensubtitles.org', 'www.opensubtitles.org'
     ]);
     for (const value of parsed) {
-        if (typeof value !== 'string' || value.length > 4096 || !isValidSubtitleSourceUrl(value)) continue;
+        if (typeof value !== 'string' || value.length > 2048 || !isValidSubtitleSourceUrl(value)) continue;
         let url;
         try { url = new URL(value); } catch (_) { continue; }
-        const host = url.hostname.toLowerCase().replace(/\.$/, '');
-        // Acceptăm HTTP doar pentru domeniile oficiale, convertindu-l la HTTPS.
-        // Nu permitem domenii arbitrare și nu permitem URL-ul JSON al addonului Stremio.
-        if (!allowedHosts.has(host) || !['https:', 'http:'].includes(url.protocol) ||
-            (url.port && !['80', '443'].includes(url.port)) || url.username || url.password) continue;
-        url.protocol = 'https:';
-        url.port = '';
-        const normalized = url.toString();
-        if (seen.has(normalized)) continue;
-        seen.add(normalized);
-        result.push(normalized);
+        // The endpoint is public; fallback URLs must actually belong to OpenSubtitles,
+        // not be arbitrary public URLs that turn it into a general-purpose fetch proxy.
+        if (url.protocol !== 'https:' || !allowedHosts.has(url.hostname.toLowerCase()) ||
+            (url.port && url.port !== '443') || seen.has(url.toString())) continue;
+        seen.add(url.toString());
+        result.push(url.toString());
         if (result.length >= 3) break;
     }
     return result;
@@ -9974,33 +8732,6 @@ app.get('/:configData/translate', async (req, res) => {
     const subdlRef = String(req.query.subdlRef || '');
     const isInternalSubdl = subdlRef.length > 0;
     const subdlFilename = String(req.query.filename || '').slice(0, 500);
-    const rawSyncReferenceUrl = String(req.query.syncRefUrl || '').slice(0, 4096);
-    const autoSyncReferenceUrl = AUTO_SYNC_MODE !== 'off' && isAllowedAutoSyncReferenceUrl(rawSyncReferenceUrl)
-        ? rawSyncReferenceUrl
-        : '';
-    const rawSyncReferenceSubdlRef = String(req.query.syncRefSubdlRef || '').slice(0, 4096);
-    const autoSyncReferenceSubdlRef = AUTO_SYNC_MODE !== 'off' &&
-        /^(?:api_[A-Za-z0-9_-]{16,4096}|url_[A-Za-z0-9_-]{8,2048}|[A-Za-z0-9_-]{1,128})$/.test(rawSyncReferenceSubdlRef) &&
-        rawSyncReferenceSubdlRef !== subdlRef
-        ? rawSyncReferenceSubdlRef
-        : '';
-    const autoSyncReferenceSubdlFilename = String(req.query.syncRefSubdlFilename || '').slice(0, 500);
-    const autoSyncReferenceKind = String(req.query.syncRefKind || '').slice(0, 40);
-    const autoSyncReferenceName = String(req.query.syncRefName || '').slice(0, 120);
-    const autoSyncReferenceCandidates = parseAutoSyncReferenceCandidates(req.query.syncRefCandidates, {
-        configId: configData,
-        filename: String(req.query.syncVideoFilename || req.query.filename || '').slice(0, 500),
-        selectedUrl: String(targetUrl || ''),
-        selectedSubdlRef: subdlRef
-    });
-    const autoSyncVideoHash = String(req.query.syncVideoHash || '').trim().slice(0, 128);
-    const autoSyncVideoFilename = String(req.query.syncVideoFilename || '').slice(0, 500);
-    const rawAutoSyncVideoSize = Number(req.query.syncVideoSize || 0);
-    const autoSyncVideoSize = Number.isSafeInteger(rawAutoSyncVideoSize) && rawAutoSyncVideoSize > 0 ? rawAutoSyncVideoSize : 0;
-
-    if (AUTO_SYNC_MODE !== 'off' && (isInternalSubdl || rawSyncReferenceUrl || req.query.syncVideoHash || req.query.syncVideoFilename)) {
-        console.log(`[AutoSync TEST] Date video primite | hash=${autoSyncVideoHash ? 'prezent' : 'absent'} | size=${autoSyncVideoSize || 'absent'} | filename=${autoSyncVideoFilename ? 'prezent' : 'absent'}.`);
-    }
 
     if (isInternalSubdl && (targetUrl || req.query.source !== 'SubDL')) {
         return res.status(400).send('Parametri SubDL interni invalizi.');
@@ -10042,21 +8773,6 @@ app.get('/:configData/translate', async (req, res) => {
         }
         cacheKey = validatedTarget.url;
     }
-    // În modul apply, rezultate sincronizate după referințe diferite nu trebuie să împartă cache-ul.
-    const autoSyncReferenceAvailable = Boolean(AUTO_SYNC_MODE !== 'off' && autoSyncReferenceUrl && autoSyncReferenceKind === 'videoHash');
-    if (AUTO_SYNC_MODE === 'apply' && (autoSyncReferenceAvailable || autoSyncReferenceSubdlRef || autoSyncVideoHash || autoSyncReferenceCandidates.length || autoSyncReferenceKind === 'rankedOpenSubtitles')) {
-        const referenceKey = JSON.stringify({
-            referenceUrl: autoSyncReferenceUrl,
-            referenceSubdlRef: autoSyncReferenceSubdlRef,
-            videoHash: autoSyncVideoHash,
-            videoSize: autoSyncVideoSize,
-            referenceKind: autoSyncReferenceKind,
-            candidates: autoSyncReferenceCandidates.map(candidate => candidate.type === 'subdl'
-                ? `sd:${candidate.reference}` : `os:${candidate.url}`)
-        });
-        const refHash = crypto.createHash('sha256').update(referenceKey).digest('hex').slice(0, 20);
-        cacheKey += `|autosync:${refHash}`;
-    }
 
     const cachedEntry = getMemoryCacheEntry(cacheKey);
     if (typeof cachedEntry === 'string') {
@@ -10092,76 +8808,19 @@ app.get('/:configData/translate', async (req, res) => {
             processPromise = (async () => {
                 const [srtRes, mediaTitle] = await Promise.all([
                     isInternalSubdl
-                        ? (async () => {
-                            try {
-                                return { data: await getSubdlSubtitleText(configData, subdlRef, subdlFilename) };
-                            } catch (subdlError) {
-                                let fallbacks = parseOpenSubtitlesFallbackUrls(req.query.fallbackUrls, '');
-                                if (!fallbacks.length) {
-                                    console.log('[SubDL] Lista fallback atașată lipsește sau nu conține URL-uri eligibile; refac căutarea OpenSubtitles pentru același titlu/episod.');
-                                    fallbacks = await discoverOpenSubtitlesFallbackUrls(imdbId);
-                                }
-                                let lastFallbackError = null;
-                                for (let index = 0; index < fallbacks.length; index++) {
-                                    const fallbackUrl = fallbacks[index];
-                                    try {
-                                        const bytes = await fetchValidatedSubtitleBytes(fallbackUrl);
-                                        const normalized = normalizeDownloadedSubtitle(bytes, fallbackUrl, subdlFilename);
-                                        console.log(`${c.yellow}[SubDL] Descărcarea a eșuat (${Number(subdlError?.response?.status || subdlError?.subdlDownloadMeta?.status || 0) || 'rețea'}); folosesc automat OpenSubtitles ${index + 1}/${fallbacks.length}.${c.reset}`);
-                                        return { data: normalized, usedFallback: true, fallbackName: `OpenSubtitles fallback ${index + 1}` };
-                                    } catch (fallbackError) {
-                                        lastFallbackError = fallbackError;
-                                        console.log(`${c.yellow}[OpenSubtitles] Fallback ${index + 1}/${fallbacks.length} eșuat (${subtitleSourceError(fallbackError)}).${c.reset}`);
-                                    }
-                                }
-                                if (fallbacks.length) {
-                                    console.log(`${c.yellow}[SubDL] Niciun fallback OpenSubtitles nu a putut fi descărcat (${subtitleSourceError(lastFallbackError)}).${c.reset}`);
-                                } else {
-                                    console.log(`${c.yellow}[SubDL] Nu există URL-uri OpenSubtitles alternative atașate acestei variante.${c.reset}`);
-                                }
-                                throw subdlError;
-                            }
-                        })()
+                        ? getSubdlSubtitleText(configData, subdlRef, subdlFilename).then(data => ({ data }))
                         : fetchValidatedSubtitleUrl(validatedTarget.url),
                     fetchMediaTitle(imdbId)
                 ]);
-                const originalSourceSrt = String(srtRes.data || '');
-                rememberOriginalSource(cacheKey, originalSourceSrt);
+                rememberOriginalSource(cacheKey, String(srtRes.data || ''));
 
                 logTranslationStart(imdbId, mediaTitle, {
-                    subtitleName: srtRes.fallbackName || req.query.subtitleName,
-                    subtitleSource: srtRes.usedFallback ? 'OpenSubtitles' : req.query.source,
-                    versionTag: srtRes.usedFallback ? 'opensubtitles-fallback' : req.query.v
+                    subtitleName: req.query.subtitleName,
+                    subtitleSource: req.query.source,
+                    versionTag: req.query.v
                 });
 
-                let sourceSrtForTranslation = originalSourceSrt;
-                const shouldAnalyzeAutoSync = AUTO_SYNC_MODE !== 'off' && (isInternalSubdl || Boolean(autoSyncReferenceUrl) || Boolean(autoSyncVideoHash) || autoSyncReferenceCandidates.length > 0 || Boolean(autoSyncReferenceSubdlRef));
-                const syncOptions = {
-                    mediaId: imdbId,
-                    videoHash: autoSyncVideoHash,
-                    videoSize: autoSyncVideoSize,
-                    videoFilename: autoSyncVideoFilename,
-                    referenceUrl: autoSyncReferenceUrl,
-                    referenceKind: autoSyncReferenceKind,
-                    referenceName: autoSyncReferenceName,
-                    referenceCandidates: autoSyncReferenceCandidates,
-                    referenceSubdl: autoSyncReferenceSubdlRef ? {
-                        configId: configData,
-                        reference: autoSyncReferenceSubdlRef,
-                        filename: autoSyncReferenceSubdlFilename,
-                        name: autoSyncReferenceName || 'SubDL alternate'
-                    } : null
-                };
-                if (shouldAnalyzeAutoSync && AUTO_SYNC_MODE === 'shadow') {
-                    // Diagnostic-only: compares SubDL alternatives first when a SubDL key is configured,
-                    // then separately checks an exact video-hash reference if one exists. Never edits timings.
-                    void maybeAutoSyncWithTrustedReference(originalSourceSrt, syncOptions, 'shadow');
-                } else if (shouldAnalyzeAutoSync && AUTO_SYNC_MODE === 'apply') {
-                    // Test service only; strict validation leaves the original SRT untouched on any uncertainty.
-                    sourceSrtForTranslation = await maybeAutoSyncWithTrustedReference(originalSourceSrt, syncOptions, 'apply');
-                }
-
-                return await translateSrtWithGemini(sourceSrtForTranslation, userKeys, qaStatus);
+                return await translateSrtWithGemini(String(srtRes.data || ''), userKeys, qaStatus);
             })();
             // Attach the shared QA state before publishing the promise to the cache.
             processPromise.qaStatus = qaStatus;
@@ -10513,12 +9172,11 @@ function sleep(ms) {
 }
 
 app.get('/health', (req, res) => {
-    res.json({ ok: true, service: 'RO Sub Translator', model: MODEL_NAME, version: manifest.version, autoSyncMode: AUTO_SYNC_MODE });
+    res.json({ ok: true, service: 'RO Sub Translator', model: MODEL_NAME, version: manifest.version });
 });
 
 const PORT = Number(process.env.PORT) || 7000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
     console.log(`${c.cyan}🧠 Model Gemini activ: ${MODEL_NAME}${c.reset}`);
-    console.log(`${c.cyan}[AutoSync TEST] Mod: ${AUTO_SYNC_MODE}${AUTO_SYNC_MODE === 'shadow' ? ' (doar analiză, fără modificarea timpilor)' : AUTO_SYNC_MODE === 'apply' ? ' (aplicare numai după validare strictă)' : ' (dezactivat)'}${c.reset}`);
 });
