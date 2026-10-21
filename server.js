@@ -191,7 +191,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.24',
+    version: '13.2.25',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5961,6 +5961,11 @@ function findAdjacentSemanticOverlapIssues(items, translatedById) {
         const candidates = [];
         for (let length = Math.min(4, firstWords.length, secondWords.length); length >= 2; length--) {
             for (let i = firstStart; i <= firstWords.length - length; i++) {
+                // O expresie comună aflată la începutul unui cue scurt nu este o
+                // suprapunere „la limită”. Permitem cel mult un cuvânt nepartajat
+                // după expresia comună în prima traducere.
+                if (firstWords.length - (i + length) > 1) continue;
+
                 const phraseWords = firstWords.slice(i, i + length);
                 const meaningfulWords = phraseWords.filter(word =>
                     word.length >= 4 && !lowInformationWords.has(word)
@@ -5991,6 +5996,38 @@ function findAdjacentSemanticOverlapIssues(items, translatedById) {
         return candidates[0];
     };
 
+    // Nu semnalăm o expresie comună dacă termenul semantic principal al acesteia
+    // este justificat de același verb/concept în ambele originale englezești.
+    // Lista este intenționat conservatoare: preferăm să păstrăm avertismentul când
+    // nu avem o legătură lexicală clară între original și expresia românească.
+    const repeatedSourceConceptSupportsOverlap = (phrase, firstSource, secondSource) => {
+        const normalizeWord = value => String(value || '')
+            .normalize('NFD')
+            .replace(/\p{M}/gu, '')
+            .toLocaleLowerCase('ro-RO');
+        const targetWords = new Set(words(phrase).map(normalizeWord));
+        const firstEnglish = clean(firstSource).toLocaleLowerCase('en-US');
+        const secondEnglish = clean(secondSource).toLocaleLowerCase('en-US');
+        const groundingPairs = [
+            { target: ['adus', 'adusa', 'aduse', 'adusi', 'aduc', 'aduce', 'aduceti', 'aduceau'], source: /\b(?:bring|brings|bringing|brought)\b/iu },
+            { target: ['vreau', 'vrei', 'vrea', 'vrem', 'vreti', 'vor', 'doresc', 'doresti', 'doreste', 'dorit'], source: /\b(?:want|wants|wanted|wish|wishes|wished|desire|desires|desired)\b/iu },
+            { target: ['stiu', 'stie', 'stii', 'stim', 'stiti', 'stiut', 'cunosc', 'cunoaste', 'cunosti'], source: /\b(?:know|knows|knew|known|knowing)\b/iu },
+            { target: ['spun', 'spune', 'spui', 'spus', 'zic', 'zis'], source: /\b(?:say|says|said|tell|tells|told|speak|speaks|spoke|spoken)\b/iu },
+            { target: ['dat', 'dau', 'dai', 'da', 'ofer', 'ofera', 'oferit'], source: /\b(?:give|gives|gave|given|offer|offers|offered)\b/iu },
+            { target: ['fac', 'faci', 'face', 'facem', 'faceti', 'facut'], source: /\b(?:do|does|did|done|make|makes|made|making)\b/iu },
+            { target: ['vad', 'vezi', 'vede', 'vedem', 'vedeti', 'vazut'], source: /\b(?:see|sees|saw|seen|seeing)\b/iu },
+            { target: ['iubesc', 'iubesti', 'iubeste', 'iubim', 'iubit'], source: /\b(?:love|loves|loved|loving)\b/iu },
+            { target: ['ajut', 'ajuti', 'ajuta', 'ajutat'], source: /\b(?:help|helps|helped|helping)\b/iu },
+            { target: ['vin', 'vine', 'venim', 'veniti', 'venit'], source: /\b(?:come|comes|coming|came)\b/iu },
+            { target: ['merg', 'merge', 'mergem', 'mergeti', 'mers'], source: /\b(?:go|goes|going|went|gone)\b/iu }
+        ];
+        return groundingPairs.some(pair =>
+            pair.target.some(word => targetWords.has(word)) &&
+            pair.source.test(firstEnglish) &&
+            pair.source.test(secondEnglish)
+        );
+    };
+
     for (let i = 0; i < items.length - 1; i++) {
         const first = items[i];
         const second = items[i + 1];
@@ -6013,6 +6050,11 @@ function findAdjacentSemanticOverlapIssues(items, translatedById) {
 
         const overlap = findSharedPhraseNearBoundary(firstTarget, secondTarget);
         if (!overlap) continue;
+
+        // Dacă aceeași acțiune este prezentă explicit în ambele originale, repetarea
+        // din română poate fi legitimă (ex. „I brought you flowers” / „I also brought
+        // you beer” -> „V-am adus...” / „...v-am adus...”). Nu o raportăm ca duplicare.
+        if (repeatedSourceConceptSupportsOverlap(overlap.phrase, firstSource, secondSource)) continue;
 
         const pairKey = `${firstId}:${secondId}:${overlap.phrase}`;
         if (seenPairs.has(pairKey)) continue;
