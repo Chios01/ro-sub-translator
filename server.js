@@ -960,11 +960,14 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
                 headers, timeout: 12000, maxContentLength: 4 * 1024 * 1024
             });
             const flattened = flattenSubdlRows(response.data);
-            // Filename matching is accepted only when the returned match identifies
-            // the expected IMDb title or has a plausible title/episode match.
-            if (flattened.rows.length && subdlMatchIsCompatible(flattened.match, identity, expectedTitle, true)) {
+            // The v2 filename endpoint can return usable direct-download rows without
+            // a separate match object. Accept those rows when no match metadata exists;
+            // when metadata exists, keep the title/episode compatibility guard.
+            if (
+                flattened.rows.length &&
+                (!flattened.match || subdlMatchIsCompatible(flattened.match, identity, expectedTitle, true))
+            ) {
                 filenameRows = flattened.rows;
-            } else if (flattened.rows.length) {
             }
         } catch (error) {
             console.log(`[SubDL] Căutarea după filename a eșuat (${error.response?.status || 'rețea'}); încerc căutarea exactă IMDb.`);
@@ -1560,15 +1563,21 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '',
             try {
                 bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
             } catch (directError) {
-                // HTTP 429 pentru un URL direct: caută aceeași media prin API v2 autentificat.
+                // An HTTP 429 on a URL-only result should not stop the subtitle request.
+                // Search for the same title/episode through authenticated SubDL API v2,
+                // and retry only if the API returns a candidate with a real nId.
                 const directStatus = Number(directError?.response?.status || directError?.subdlDownloadMeta?.status || 0);
                 const normalizedMediaId = String(mediaId || '').trim();
-                if (directStatus !== 429 || !/^tt\d+(?::\d+(?::\d+)?)?$/i.test(normalizedMediaId)) throw directError;
+                if (directStatus !== 429 || !/^tt\d+(?::\d+(?::\d+)?)?$/i.test(normalizedMediaId)) {
+                    throw directError;
+                }
                 const mediaType = normalizedMediaId.includes(':') ? 'series' : 'movie';
                 console.log(`[SubDL] URL direct HTTP 429; caut alternativă API v2 pentru ${normalizedMediaId}.`);
                 let fallbackCandidates = [];
                 try {
-                    fallbackCandidates = await fetchSubdlCandidates(addonConfig.subdlKey, mediaType, normalizedMediaId, requestedFilename);
+                    fallbackCandidates = await fetchSubdlCandidates(
+                        addonConfig.subdlKey, mediaType, normalizedMediaId, requestedFilename
+                    );
                 } catch (searchError) {
                     console.log(`[SubDL] Căutarea alternativă după 429 a eșuat (${searchError.response?.status || 'rețea'}).`);
                 }
@@ -8422,8 +8431,25 @@ function normalizeDownloadedSubtitle(bytes, sourceUrl, preferredVideoFilename = 
 }
 
 function parseOpenSubtitlesFallbackUrls(rawValue, failedUrl) {
-    let parsed;
-    try { parsed = JSON.parse(String(rawValue || '[]')); } catch (_) { return []; }
+    let candidateText = String(rawValue || '[]');
+    let parsed = null;
+    // Express normally decodes query values once, but some clients/proxies encode
+    // the nested JSON again. Tolerate a few layers without accepting arbitrary hosts.
+    for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+            parsed = JSON.parse(candidateText);
+            break;
+        } catch (_) {
+            if (attempt === 3) return [];
+            try {
+                const decoded = decodeURIComponent(candidateText);
+                if (decoded === candidateText) return [];
+                candidateText = decoded;
+            } catch (_) {
+                return [];
+            }
+        }
+    }
     if (!Array.isArray(parsed)) return [];
 
     const failed = String(failedUrl || '');
@@ -8431,14 +8457,14 @@ function parseOpenSubtitlesFallbackUrls(rawValue, failedUrl) {
     const seen = new Set([failed]);
     const allowedHosts = new Set([
         'dl.opensubtitles.com', 'opensubtitles.com', 'www.opensubtitles.com',
-        'dl.opensubtitles.org', 'opensubtitles.org', 'www.opensubtitles.org'
+        'dl.opensubtitles.org', 'opensubtitles.org', 'www.opensubtitles.org',
+        // OpenSubtitles v3 can supply proxied subtitle URLs on its Stremio host.
+        'opensubtitles-v3.strem.io', 'opensubtitles.strem.io'
     ]);
     for (const value of parsed) {
-        if (typeof value !== 'string' || value.length > 2048 || !isValidSubtitleSourceUrl(value)) continue;
+        if (typeof value !== 'string' || value.length > 4096 || !isValidSubtitleSourceUrl(value)) continue;
         let url;
         try { url = new URL(value); } catch (_) { continue; }
-        // The endpoint is public; fallback URLs must actually belong to OpenSubtitles,
-        // not be arbitrary public URLs that turn it into a general-purpose fetch proxy.
         if (url.protocol !== 'https:' || !allowedHosts.has(url.hostname.toLowerCase()) ||
             (url.port && url.port !== '443') || seen.has(url.toString())) continue;
         seen.add(url.toString());
@@ -8446,6 +8472,31 @@ function parseOpenSubtitlesFallbackUrls(rawValue, failedUrl) {
         if (result.length >= 3) break;
     }
     return result;
+}
+
+async function discoverOpenSubtitlesFallbackUrls(mediaId) {
+    const normalizedId = String(mediaId || '').trim();
+    if (!/^tt\d+(?::\d+(?::\d+)?)?$/i.test(normalizedId)) return [];
+    const type = normalizedId.includes(':') ? 'series' : 'movie';
+    const sourceUrl = `https://opensubtitles-v3.strem.io/subtitles/${type}/${normalizedId}.json`;
+    try {
+        const response = await axios.get(sourceUrl, {
+            timeout: 6500,
+            maxContentLength: 8 * 1024 * 1024,
+            headers: { 'User-Agent': BROWSER_USER_AGENT_FETCH, Accept: 'application/json' }
+        });
+        const subtitles = Array.isArray(response?.data?.subtitles) ? response.data.subtitles : [];
+        const rawUrls = subtitles
+            .filter(item => ['en', 'eng', 'english'].includes(String(item?.lang || item?.language || '').trim().toLowerCase()))
+            .map(item => String(item?.url || item?.downloadUrl || item?.download_url || '').trim())
+            .filter(url => url && url.length <= 4096 && isValidSubtitleSourceUrl(url));
+        const result = parseOpenSubtitlesFallbackUrls(JSON.stringify(rawUrls), '');
+        console.log(`[OpenSubtitles] Re-căutare fallback pentru ${normalizedId}: ${result.length} URL(uri) eligibile din ${rawUrls.length} rezultat(e) EN.`);
+        return result;
+    } catch (error) {
+        console.log(`[OpenSubtitles] Re-căutarea fallback pentru ${normalizedId} a eșuat (${error.response?.status || 'rețea'}).`);
+        return [];
+    }
 }
 
 // ============================================================
@@ -8850,7 +8901,11 @@ app.get('/:configData/translate', async (req, res) => {
                             // This is a real download-time fallback, not just search fallback:
                             // if SubDL returns 429/403/404 or a network error, fetch one of the
                             // already-ranked OpenSubtitles alternatives for the same media.
-                            const fallbacks = parseOpenSubtitlesFallbackUrls(req.query.fallbackUrls, '');
+                            let fallbacks = parseOpenSubtitlesFallbackUrls(req.query.fallbackUrls, '');
+                            if (!fallbacks.length) {
+                                console.log('[SubDL] Lista fallback atașată lipsește sau nu conține URL-uri eligibile; refac căutarea OpenSubtitles pentru același titlu/episod.');
+                                fallbacks = await discoverOpenSubtitlesFallbackUrls(imdbId);
+                            }
                             let lastFallbackError = null;
                             for (let index = 0; index < fallbacks.length; index++) {
                                 const fallbackUrl = fallbacks[index];
@@ -8870,7 +8925,7 @@ app.get('/:configData/translate', async (req, res) => {
                             if (fallbacks.length) {
                                 console.log(`${c.yellow}[SubDL] Niciun fallback OpenSubtitles nu a putut fi descărcat (${subtitleSourceError(lastFallbackError)}).${c.reset}`);
                             } else {
-                                console.log(`${c.yellow}[SubDL] Nu există URL-uri OpenSubtitles alternative atașate acestei variante.${c.reset}`);
+                                console.log(`${c.yellow}[SubDL] Nu s-au găsit URL-uri OpenSubtitles eligibile nici în lista atașată, nici la re-căutarea pentru același titlu/episod.${c.reset}`);
                             }
                             throw subdlError;
                         }
