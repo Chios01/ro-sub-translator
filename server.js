@@ -191,7 +191,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.26',
+    version: '13.2.27',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -8850,7 +8850,7 @@ app.get('/:configData/translate', async (req, res) => {
 // ============================================================
 function protectMusicalLyricSegments(text, cueSequence) {
     const segments = [];
-    const maskedText = String(text || '').replace(/([♪♫♬♩])([\s\S]*?)\1/gu, (whole, _marker, inner) => {
+    let maskedText = String(text || '').replace(/([♪♫♬♩])([\s\S]*?)\1/gu, (whole, _marker, inner) => {
         const visibleInner = String(inner || '')
             .replace(/<[^>]*>/g, ' ')
             .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
@@ -8862,9 +8862,46 @@ function protectMusicalLyricSegments(text, cueSequence) {
         segments.push({ token, original: whole });
         return token;
     });
+
+    // Unele subtitrări marchează versul doar cu nota de început (de ex. „♪ <i>vers...</i>”)
+    // și omit nota de închidere. Fără această plasă de siguranță, markerul este șters ulterior
+    // de normalizare, iar versul ajunge la Gemini ca dialog și poate rămâne tradus în rezultat.
+    // Păstrăm orice text de dialog aflat înaintea notei și mascăm doar coada neînchisă.
+    const unpairedTailMatch = maskedText.match(/([♪♫♬♩])([\s\S]*)$/u);
+    if (unpairedTailMatch) {
+        const tailStart = unpairedTailMatch.index;
+        const tail = unpairedTailMatch[0];
+        const protectedTokenRe = /ZXQKEEPSONG\d+PART\d+QXZ/giu;
+        const visibleTail = tail
+            .replace(protectedTokenRe, ' ')
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
+            .trim();
+
+        if (/[\p{L}\p{N}]/u.test(visibleTail)) {
+            // Dacă în coadă există deja un token de vers protejat, îl păstrăm separat:
+            // astfel, notele incomplete nu invalidează tokenurile create pentru perechi valide.
+            const tailParts = tail.split(/(ZXQKEEPSONG\d+PART\d+QXZ)/giu);
+            const protectedTail = tailParts.map(part => {
+                if (/^ZXQKEEPSONG\d+PART\d+QXZ$/iu.test(part)) return part;
+
+                const visiblePart = part
+                    .replace(/<[^>]*>/g, ' ')
+                    .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
+                    .trim();
+                if (!/[\p{L}\p{N}]/u.test(visiblePart)) return part;
+
+                const token = `ZXQKEEPSONG${cueSequence}PART${segments.length}QXZ`;
+                segments.push({ token, original: part });
+                return token;
+            }).join('');
+
+            maskedText = maskedText.slice(0, tailStart) + protectedTail;
+        }
+    }
+
     return { text: maskedText, segments };
 }
-
 function isMusicOnlyMaskedCue(text, musicSegments) {
     if (!Array.isArray(musicSegments) || musicSegments.length === 0) return false;
     let visible = String(text || '');
