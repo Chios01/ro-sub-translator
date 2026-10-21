@@ -191,7 +191,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.27',
+    version: '13.2.29',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4561,6 +4561,51 @@ function applySourceGroundedSemanticFixes(original, translation) {
         /(?:depășiți numeric|în inferioritate numerică)/iu.test(text)) {
         text = text.replace(/(?<![\p{L}])([Ee]ram|[Ss]untem|[Ee]rau)\s+outnumbered\s*(?:[.!?…]{1,3})?\s*\1\s+/iu, '$1 ');
         text = text.replace(/\s{2,}/g, ' ').replace(/\s+([,.!?;:])/g, '$1').trim();
+    }
+
+    // Corecții locale suplimentare bazate strict pe concordanța sursă-țintă.
+    // Nu generează apeluri AI; sunt aplicate atât înainte de Quality Retry,
+    // cât și în protecția finală de dinaintea exportului.
+    if (/\ber\s+is\s+chaos\b/i.test(sourceNorm) &&
+        /\burgențele\s+(?:e|este)\s+haos\b/iu.test(text)) {
+        text = text.replace(/\burgențele\s+(?:e|este)\s+haos\b/iu, 'La Urgențe e haos');
+    }
+
+    if (/^\s*yeah,\s*i(?:\.{2,}|…)\s*i(?:\.{2,}|…)\s*$/i.test(sourceText) &&
+        /^\s*da,\s*am(?:\.{3,}|…)\s*$/iu.test(text)) {
+        text = text.replace(/^\s*da,\s*am(?:\.{3,}|…)\s*$/iu, 'Da, eu... eu...');
+    }
+
+    if (/\bask\s+you\s+to\s+pick\s+him\s+up\b/i.test(sourceNorm) &&
+        /\bsă[- ](?:i|îi)\s+ceri\s+să\s+te\s+ia\b/iu.test(text)) {
+        text = text.replace(/\bsă[- ](?:i|îi)\s+ceri\s+să\s+te\s+ia\b/iu, match =>
+            (match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Să-ți ceară să-l iei' : 'să-ți ceară să-l iei'));
+    }
+
+    if (/\bbachelorette\s+party\b/i.test(sourceNorm) && /\bburlacilor\b/iu.test(text)) {
+        text = text.replace(/\bburlacilor\b/giu, match =>
+            match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Burlăcițelor' : 'burlăcițelor');
+    }
+
+    if (/\bnext\s+round(?:['’]s|\s+is)\s+on\s+me\b/i.test(sourceNorm) &&
+        /\b(?:următorul|urmatorul)\s+(?:rând|rand)(?:ul)?\s+(?:e|este)\s+de\s+la\s+mine\b/iu.test(text)) {
+        text = text.replace(/\b(?:următorul|urmatorul)\s+(?:rând|rand)(?:ul)?\s+(?:e|este)\s+de\s+la\s+mine\b/iu,
+            match => match[0] === match[0].toLocaleUpperCase('ro-RO')
+                ? 'Următoarea rundă e din partea mea'
+                : 'Următoarea rundă e din partea mea');
+    }
+
+    if (/\bi\s+used\s+to\s+hate\s+fado\b/i.test(sourceNorm) &&
+        /\burăsc\s+fado\b/iu.test(text) &&
+        !/\b(?:înainte|inainte|odată|odata|cândva|candva|pe\s+vremuri|odinioară|odinioara)\b/iu.test(text)) {
+        text = text.replace(/\burăsc\s+fado\b/iu, match =>
+            match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Înainte uram fado' : 'înainte uram fado');
+    }
+
+    if (/\bcould\s+do\s+the\s+dance\b/i.test(sourceNorm) &&
+        /\bsă[- ](?:l|îl|il)\s+dansul\b/iu.test(text)) {
+        text = text.replace(/\bsă[- ](?:l|îl|il)\s+dansul\b/iu, match =>
+            match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Să fac dansul' : 'să fac dansul');
     }
 
     return text;
