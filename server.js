@@ -191,7 +191,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.25',
+    version: '13.2.26',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -9095,7 +9095,6 @@ app.get('/health', (req, res) => {
 
 const PORT = Number(process.env.PORT) || 7000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log('[QA Archive] Arhivă publică activă; autentificarea este dezactivată.');
     console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
     console.log(`${c.cyan}🧠 Model Gemini activ: ${MODEL_NAME}${c.reset}`);
 });
