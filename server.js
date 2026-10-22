@@ -147,9 +147,14 @@ async function fetchMediaTitle(mediaId) {
     const cacheKey = `${mediaType}:${baseId}`;
     if (mediaTitleCache.has(cacheKey)) {
         const cachedTitle = mediaTitleCache.get(cacheKey);
-        // Mutăm accesul la final pentru a păstra în cache titlurile folosite recent.
+        // Păstrăm ordinea LRU sincronizată pentru titlu și contextul folosit în prompt.
         mediaTitleCache.delete(cacheKey);
         mediaTitleCache.set(cacheKey, cachedTitle);
+        if (mediaContextCache.has(cacheKey)) {
+            const cachedContext = mediaContextCache.get(cacheKey);
+            mediaContextCache.delete(cacheKey);
+            mediaContextCache.set(cacheKey, cachedContext);
+        }
         return cachedTitle;
     }
 
@@ -255,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.35',
+    version: '13.2.36',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2542,7 +2547,6 @@ function formatSubtitleLine(text) {
         [/\bM-am cerut în căsătorie cu\b/gi, 'L-am cerut în căsătorie pe'],
         [/\bCitească-gânduri\b/gi, 'Cititoare de gânduri'],
         [/\bdemocracția\b/gi, 'democrația'],
-        [/\bMă reasigur în patru ani\b/gi, 'Să fiu realeasă în patru ani'],
         [/(?<![A-Za-zĂÂÎȘȚăâîșț])S-a dus totul pe râpă(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m) => (m[0] === m[0].toLowerCase() ? 's-a dus totul de râpă' : 'S-a dus totul de râpă')],
         [/\bo bullet\b/gi, 'un glonț'],
         [/\bmergem orbești\b/gi, 'mergem orbește'],
