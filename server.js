@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.38',
+    version: '13.2.39',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1525,7 +1525,8 @@ async function handleSubtitles(req, res) {
         // already-ranked OpenSubtitles candidate as a safe server-side fallback.
         const fallbackOpenSubtitle = diverseSubs[0] || null;
         const generatedSubdlSubs = subdlCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS).map((s, index) => {
-            const scoreTag = s.matchScore === null ? '' : ` • ${Math.round(s.matchScore * 100)}% match`;
+            const scorePercent = s.matchScore === null ? null : Math.min(100, Math.round(s.matchScore > 1 ? s.matchScore : s.matchScore * 100));
+            const scoreTag = scorePercent === null ? '' : ` • ${scorePercent}% match`;
             const fallbackParams = fallbackOpenSubtitle?.originalUrl
                 ? `&fallbackTargetUrl=${encodeURIComponent(fallbackOpenSubtitle.originalUrl)}&fallbackSubtitleName=${encodeURIComponent(String(fallbackOpenSubtitle.realName || 'OpenSubtitles fallback').slice(0, 300))}`
                 : '';
@@ -8249,7 +8250,11 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         finalReviewWarnings.set(key, [...new Set([...existing, ...normalizedReasons])]);
     };
     for (const flag of finalQualityFlags) {
-        addFinalReviewWarning(flag.item.id, flag.reasons);
+        // Raportul de lungime este doar un semnal statistic pentru verificarea AI punctuală.
+        // Dacă a fost deja verificat și AI nu a schimbat nimic, nu îl mai repetăm în QA FINAL.
+        const reportableReasons = (flag.reasons || []).filter(reason =>
+            !/^traducerea este mult mai (?:scurtă|lungă) decât originalul/.test(String(reason)));
+        if (reportableReasons.length) addFinalReviewWarning(flag.item.id, reportableReasons);
     }
 
     // Traducerile duplicate pe originale diferite rămân un semnal pentru verificarea
@@ -9010,16 +9015,9 @@ app.get('/:configData/translate', async (req, res) => {
         return res.status(400).send('SubDL nu este configurat pentru această instalare.');
     }
 
-    let validatedFallbackTarget = null;
-    if (fallbackTargetUrl) {
-        if (fallbackTargetUrl.length > 4096 || !isValidSubtitleSourceUrl(fallbackTargetUrl)) {
-            return res.status(400).send('URL fallback OpenSubtitles invalid.');
-        }
-        try {
-            validatedFallbackTarget = await validateTargetUrl(fallbackTargetUrl);
-        } catch (_) {
-            return res.status(400).send('URL fallback OpenSubtitles invalid.');
-        }
+    // Verificare sintactică imediat; verificarea DNS/SSRF se face doar dacă fallback-ul este folosit.
+    if (fallbackTargetUrl && (fallbackTargetUrl.length > 4096 || !isValidSubtitleSourceUrl(fallbackTargetUrl))) {
+        return res.status(400).send('URL fallback OpenSubtitles invalid.');
     }
 
     let validatedTarget = null;
@@ -9076,7 +9074,13 @@ app.get('/:configData/translate', async (req, res) => {
                 const [srtRes, mediaTitle] = await Promise.all([
                     isInternalSubdl
                         ? getSubdlSubtitleText(configData, subdlRef, subdlFilename).then(data => ({ data })).catch(async subdlError => {
-                            if (!validatedFallbackTarget) throw subdlError;
+                            if (!fallbackTargetUrl) throw subdlError;
+                            let validatedFallbackTarget;
+                            try {
+                                validatedFallbackTarget = await validateTargetUrl(fallbackTargetUrl);
+                            } catch (_) {
+                                throw subdlError;
+                            }
                             const status = Number(subdlError?.response?.status || subdlError?.subdlDownloadMeta?.status || 0);
                             console.log(`${c.yellow}[SubDL] Descărcarea a eșuat (${status || 'rețea'}); încerc fallback OpenSubtitles.${c.reset}`);
                             const fallbackResponse = await fetchValidatedSubtitleUrl(validatedFallbackTarget.url);
