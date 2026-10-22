@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.36',
+    version: '13.2.37',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1507,12 +1507,18 @@ async function handleSubtitles(req, res) {
         // ============================================================
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
         // ============================================================
+        // If SubDL's direct download link is stale or rejected, attach the best
+        // already-ranked OpenSubtitles candidate as a safe server-side fallback.
+        const fallbackOpenSubtitle = diverseSubs[0] || null;
         const generatedSubdlSubs = subdlCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS).map((s, index) => {
             const scoreTag = s.matchScore === null ? '' : ` • ${Math.round(s.matchScore * 100)}% match`;
+            const fallbackParams = fallbackOpenSubtitle?.originalUrl
+                ? `&fallbackTargetUrl=${encodeURIComponent(fallbackOpenSubtitle.originalUrl)}&fallbackSubtitleName=${encodeURIComponent(String(fallbackOpenSubtitle.realName || 'OpenSubtitles fallback').slice(0, 300))}`
+                : '';
             return {
                 id: `subdl_ai_sub_${index}`,
                 title: `🇷🇴 RO AI · SubDL [${index + 1}]${scoreTag} · ${String(s.realName).replace(/[^\p{L}\p{N} ._\-()[\]]/gu, ' ').slice(0, 100)}`,
-                url: `${baseUrl}/${configData}/translate?id=${encodeURIComponent(id)}&subdlRef=${encodeURIComponent(s.nId)}&filename=${encodeURIComponent(String(userFilename || '').slice(0, 500))}&v=subdl-${index + 1}&source=SubDL&subtitleName=${encodeURIComponent(String(s.realName || 'SubDL subtitle').slice(0, 300))}`,
+                url: `${baseUrl}/${configData}/translate?id=${encodeURIComponent(id)}&subdlRef=${encodeURIComponent(s.nId)}&filename=${encodeURIComponent(String(userFilename || '').slice(0, 500))}${fallbackParams}&v=subdl-${index + 1}&source=SubDL&subtitleName=${encodeURIComponent(String(s.realName || 'SubDL subtitle').slice(0, 300))}`,
                 lang: 'ron'
             };
         });
@@ -8959,9 +8965,14 @@ app.get('/:configData/translate', async (req, res) => {
     const subdlRef = String(req.query.subdlRef || '');
     const isInternalSubdl = subdlRef.length > 0;
     const subdlFilename = String(req.query.filename || '').slice(0, 500);
+    const fallbackTargetUrl = String(req.query.fallbackTargetUrl || '').trim();
+    const fallbackSubtitleName = String(req.query.fallbackSubtitleName || '').slice(0, 300);
 
     if (isInternalSubdl && (targetUrl || req.query.source !== 'SubDL')) {
         return res.status(400).send('Parametri SubDL interni invalizi.');
+    }
+    if (!isInternalSubdl && (fallbackTargetUrl || req.query.fallbackSubtitleName)) {
+        return res.status(400).send('Parametri fallback interni invalizi.');
     }
     if (!targetUrl && !isInternalSubdl) {
         console.log(`${c.red}✖ EROARE: Lipsă URL sursă.${c.reset}`);
@@ -8985,12 +8996,24 @@ app.get('/:configData/translate', async (req, res) => {
         return res.status(400).send('SubDL nu este configurat pentru această instalare.');
     }
 
+    let validatedFallbackTarget = null;
+    if (fallbackTargetUrl) {
+        if (fallbackTargetUrl.length > 4096 || !isValidSubtitleSourceUrl(fallbackTargetUrl)) {
+            return res.status(400).send('URL fallback OpenSubtitles invalid.');
+        }
+        try {
+            validatedFallbackTarget = await validateTargetUrl(fallbackTargetUrl);
+        } catch (_) {
+            return res.status(400).send('URL fallback OpenSubtitles invalid.');
+        }
+    }
+
     let validatedTarget = null;
     let cacheKey;
     if (isInternalSubdl) {
         // Opaque SubDL references never become URLs. Downloads are performed in-process
         // by getSubdlSubtitleText(), while every external download still uses SSRF checks.
-        cacheKey = `subdl-ref:${configData}:${subdlRef}:${subdlFilename}`;
+        cacheKey = `subdl-ref:${configData}:${subdlRef}:${subdlFilename}:${fallbackTargetUrl}`;
     } else {
         try {
             validatedTarget = await validateTargetUrl(targetUrl);
@@ -9031,20 +9054,32 @@ app.get('/:configData/translate', async (req, res) => {
             qaStatus = processPromise.qaStatus || qaStatus;
         } else {
             const startTime = Date.now();
+            let effectiveSubtitleSource = String(req.query.source || '');
+            let effectiveSubtitleName = String(req.query.subtitleName || '').slice(0, 300);
+            let effectiveVersionTag = String(req.query.v || '');
             
             processPromise = (async () => {
                 const [srtRes, mediaTitle] = await Promise.all([
                     isInternalSubdl
-                        ? getSubdlSubtitleText(configData, subdlRef, subdlFilename).then(data => ({ data }))
+                        ? getSubdlSubtitleText(configData, subdlRef, subdlFilename).then(data => ({ data })).catch(async subdlError => {
+                            if (!validatedFallbackTarget) throw subdlError;
+                            const status = Number(subdlError?.response?.status || subdlError?.subdlDownloadMeta?.status || 0);
+                            console.log(`${c.yellow}[SubDL] Descărcarea a eșuat (${status || 'rețea'}); încerc fallback OpenSubtitles.${c.reset}`);
+                            const fallbackResponse = await fetchValidatedSubtitleUrl(validatedFallbackTarget.url);
+                            effectiveSubtitleSource = 'OpenSubtitles (fallback după SubDL)';
+                            effectiveSubtitleName = fallbackSubtitleName || 'OpenSubtitles fallback';
+                            effectiveVersionTag = 'opensubtitles-fallback';
+                            return fallbackResponse;
+                        })
                         : fetchValidatedSubtitleUrl(validatedTarget.url),
                     fetchMediaTitle(imdbId)
                 ]);
                 rememberOriginalSource(cacheKey, String(srtRes.data || ''));
 
                 logTranslationStart(imdbId, mediaTitle, {
-                    subtitleName: req.query.subtitleName,
-                    subtitleSource: req.query.source,
-                    versionTag: req.query.v
+                    subtitleName: effectiveSubtitleName,
+                    subtitleSource: effectiveSubtitleSource,
+                    versionTag: effectiveVersionTag
                 });
 
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys, qaStatus, getMediaContextText(imdbId));
