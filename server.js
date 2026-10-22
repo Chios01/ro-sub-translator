@@ -99,14 +99,40 @@ function buildMediaContextText(meta) {
     return parts.join('\n');
 }
 
+// Glosar opțional pe titlu (cheia = ID IMDb de bază). Termenii de aici sunt trimiși modelului ca forme
+// românești FIXE, ca același nume să nu fie tradus diferit în calupuri sau episoade diferite.
+// Editează liber: adaugă un ID nou cu perechi [original, forma în română].
+const MEDIA_GLOSSARIES = {
+    // Foundation (Apple TV+)
+    tt0804484: [
+        ['The Mule', 'Catârul (declinat natural: Catârul, Catârului, pe Catâr)'],
+        ['Brazen Head', 'Capul de Aramă'],
+        ['Luminists / Luminism', 'luminiști / luminism'],
+        ['Inheritors', 'Moștenitori'],
+        ['Remediation', 'Remediere']
+    ]
+};
+
+function getMediaGlossaryText(imdbBaseId) {
+    const entries = MEDIA_GLOSSARIES[String(imdbBaseId || '').toLowerCase()];
+    if (!Array.isArray(entries) || !entries.length) return '';
+    const lines = entries
+        .filter(pair => Array.isArray(pair) && pair[0] && pair[1])
+        .map(([from, to]) => `${String(from).replace(/[<>`]/g, '')} = ${String(to).replace(/[<>`]/g, '')}`);
+    return lines.length
+        ? `Glossary (fixed Romanian forms; use exactly these, inflecting naturally):\n${lines.join('\n')}`
+        : '';
+}
+
 function getMediaContextText(mediaId) {
     const rawId = String(mediaId || '').trim();
     const match = rawId.match(/^(tt\d+)(?::(\d+)(?::(\d+))?)?$/i);
     if (!match) return '';
     const mediaType = rawId.includes(':') ? 'series' : 'movie';
-    const base = mediaContextCache.get(`${mediaType}:${match[1]}`);
-    if (!base) return '';
-    return match[2] && match[3] ? `${base}\nEpisode: season ${match[2]}, episode ${match[3]}` : base;
+    const base = mediaContextCache.get(`${mediaType}:${match[1]}`) || '';
+    const episode = base && match[2] && match[3] ? `\nEpisode: season ${match[2]}, episode ${match[3]}` : '';
+    const glossary = getMediaGlossaryText(match[1]);
+    return [base + episode, glossary].filter(Boolean).join('\n');
 }
 
 // Rezolvă numele filmului/serialului din Cinemeta pentru antetul de început.
@@ -1946,6 +1972,11 @@ function stripNonDialogueSoundMarkup(value) {
         clean = '';
         removedCount++;
     }
+
+    // Dacă din „- [sighs] / - Replica” a rămas un singur vorbitor, liniuța de dialog nu mai are rost.
+    if (removedCount && clean && !clean.includes('\n')) {
+        clean = clean.replace(/^[ \t]*[-–—][ \t]+(?=\S)/, '');
+    }
     if (removedCount && /^[ \t\r\n\-–—,;:.!?…]+$/.test(clean)) clean = '';
 
     return { text: clean, removedCount };
@@ -2618,6 +2649,10 @@ ROMANIAN ACCURACY RULES
 - Direct object: use „pe” plus the clitic for people as direct objects („Îl iubesc pe Tom”, „Te văd pe tine”), not for things.
 - Numerals: use „de” before the counted noun when the number is 20 or more or ends in 00 („20 de dolari”, „100 de ani”, „35 de minute”); omit it for 1–19 („15 dolari”, „3 ani”, „12 minute”).
 - Calques: translate fixed phrases by their function, not word by word — “I mean”, “you know”, “like” (filler), “literally”, “actually”, “come on”, “hang on”, “my bad”, “I'm good”, “you're welcome”, “what's up”, “no way”, “give me a break”, “count me in”, “it's on me”. Do not mirror English passives, “-ing” chains or possessives („Mi-am spălat mâinile” → „M-am spălat pe mâini” when more natural). Tag questions (“right?”, “isn't it?”) become „nu?”, „da?” or „nu-i așa?”.
+- Interjections: “Hmm?” / “Hm.” → „Hm?” / „Mda.” / „Mm.”; never „Mă?” or „Mă.” (a rude vocative in Romanian). Keep “Huh?” as „Hă?”.
+- Agreement: check noun gender and number after every demonstrative or adjective („aceste microorganisme”, not „acești”); neuter nouns take masculine singular and feminine plural forms. Use „mi-e” / „nu mi-e frică”, not „mi-este”.
+- Names and invented terms must have ONE Romanian form in the whole file. If a glossary is provided in the background block, follow it exactly; otherwise keep a nickname or invented term the same in every line and never produce spelling variants of the same name.
+- Spelling: write every word completely and correctly („în”, „a vorbit”, „vorbea”, „s-a dus”); never merge, drop or swap letters.
 - Before returning, re-read each line aloud in your head: if a native speaker would not say it, rewrite it more simply and naturally while keeping the full meaning.
 
 SUBTITLE FORMATTING
@@ -5654,6 +5689,7 @@ function detectLocalGrammarReviewReasons(text) {
         // Semnale generale (nu doar cazuri izolate). Nu corectează automat:
         // marchează replica pentru singura verificare AI punctuală deja existentă.
         { pattern: /(?<![\p{L}])(?:stiu|stii|stiti|inteleg|intelegi|multumesc|multumim|sunteti|aveti|puteti|vreti|inca|dupa|asa|pana|cand|tara|romana)(?![\p{L}])/iu, message: 'cuvânt românesc probabil scris fără diacritice' },
+        { pattern: /(?:(?<![\p{L}'’-])in|(?:^|[.!?…]\s+)In)\s+\p{Ll}/u, message: 'cuvântul „in” este probabil „în” scris fără diacritică (sau engleză rămasă)' },
         { pattern: /(?<![\p{L}])(?:face|fac|făcea|facă)\s+sens(?![\p{L}])/iu, message: 'calc „face sens” (în română: „are sens”)' },
         { pattern: /(?<![\p{L}])realiz\p{L}*\s+că(?![\p{L}])/iu, message: 'calc „a realiza că” (în română: „a-și da seama că”)' },
         { pattern: /(?<![\p{L}])în\s+ordine\s+să(?![\p{L}])/iu, message: 'calc „în ordine să” (în română: „ca să” / „pentru a”)' },
@@ -7242,8 +7278,24 @@ const CONTINUATION_FUNCTION_WORDS = new Set([
     'dacă', 'ca', 'de', 'pe', 'la', 'în', 'din', 'cu', 'pentru', 'prin', 'fără', 'despre',
     'după', 'înainte', 'către', 'între', 'mai', 'apoi', 'atunci', 'doar', 'chiar', 'tot',
     'totul', 'toți', 'toate', 'ceva', 'așa', 'nu', 'un', 'cea', 'cel', 'cei', 'cele', 'mă', 'te',
-    'se', 'ne', 'vă', 'îmi', 'îți', 'își'
+    'se', 'ne', 'vă', 'îmi', 'îți', 'își',
+    // Cuvinte frecvente care apăreau cu majusculă după o frază neîncheiată
+    // („... de când am murit / Acum mai bine de trei secole”).
+    'acum', 'este', 'sunt', 'era', 'erau', 'a', 'au', 'ar', 'va', 'vor', 'o', 'nici', 'încă',
+    'într-o', 'într-un', 'dintr-o', 'dintr-un', 'oricum', 'acolo', 'aici', 'atât', 'atâta',
+    'mult', 'foarte', 'prea', 'deja', 'încât', 'fiindcă', 'deși', 'însă', 'ori', 'fie'
 ]);
+
+// Vocabular de cuvinte scrise cu literă mică în traducerea curentă: dacă un cuvânt apare
+// și cu literă mică în același fișier, nu este nume propriu și poate trece la literă mică.
+function buildLowercaseVocabulary(translatedById) {
+    const vocab = new Set();
+    for (const value of Object.values(translatedById || {})) {
+        const matches = String(value || '').match(/(?<![\p{L}\p{N}])\p{Ll}[\p{L}-]*/gu) || [];
+        for (const token of matches) vocab.add(token);
+    }
+    return vocab;
+}
 
 function isContinuationBlock(prevEnglish, currentEnglish) {
     const cur = String(currentEnglish || '').replace(/<[^>]+>/g, '').trim();
@@ -7258,6 +7310,7 @@ function isContinuationBlock(prevEnglish, currentEnglish) {
 
 function applyContinuationCase(items, translatedById) {
     let changed = 0;
+    const lowercaseVocabulary = buildLowercaseVocabulary(translatedById);
     for (let i = 1; i < items.length; i++) {
         if (items[i - 1].musicOnly || items[i].musicOnly) continue;
         if (!isContinuationBlock(items[i - 1].text, items[i].text)) continue;
@@ -7275,7 +7328,12 @@ function applyContinuationCase(items, translatedById) {
         const previousEnglish = String(items[i - 1].text || '').replace(/<[^>]+>/g, ' ').trim();
         const currentEnglish = String(items[i].text || '').replace(/<[^>]+>/g, ' ').trim();
         const progressiveContinuation = /\b(?:was|were|is|are)\s*$/i.test(previousEnglish) && /^[a-z]+ing\b/i.test(currentEnglish);
-        if (!CONTINUATION_FUNCTION_WORDS.has(word.toLowerCase()) && !progressiveContinuation) continue;
+        const lowerWord = word.toLowerCase();
+        // Gerunziu românesc („Așteptând”, „Știind”) după o frază neîncheiată, când și sursa începe cu „-ing”.
+        const gerundContinuation = /^[a-z]+ing\b/i.test(currentEnglish) && /(?:ând|ind)$/u.test(lowerWord);
+        // Cuvânt comun: apare și cu literă mică în restul traducerii (deci nu este nume propriu).
+        const commonWord = word.length >= 2 && lowercaseVocabulary.has(lowerWord);
+        if (!CONTINUATION_FUNCTION_WORDS.has(lowerWord) && !progressiveContinuation && !gerundContinuation && !commonWord) continue;
 
         translatedById[id] = match[1] + match[2].toLowerCase() + match[3] + current.slice(match[0].length);
         changed++;
