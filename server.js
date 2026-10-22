@@ -255,7 +255,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.34',
+    version: '13.2.35',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2210,7 +2210,9 @@ function formatSubtitleLayout(value) {
         // Split inline two-speaker dialogue even when the first speaker already
         // has a leading dash. A separator after completed sentence punctuation
         // is required so ordinary hyphenated prose is not split accidentally.
-        const prefixedDoubleDialogue = raw.match(/^\s*[-–—]\s*(.+?[.!?…])\s+[-–—]\s*(.+)$/);
+        // Separatorul poate lipsi (iese uneori „în...- Înțeleg.”): îl acceptăm doar dacă după
+        // liniuță urmează o literă mare sau ghilimele.
+        const prefixedDoubleDialogue = raw.match(/^\s*[-–—]\s*(.+?[.!?…])\s*[-–—]\s*(?=[A-ZĂÂÎȘȚ„“"])(.+)$/);
         if (prefixedDoubleDialogue) {
             entries.push({ text: prefixedDoubleDialogue[1].trim(), dialogue: true });
             entries.push({ text: prefixedDoubleDialogue[2].trim(), dialogue: true });
@@ -5847,147 +5849,9 @@ function detectSourceAwareQualityReviewReasons(item, translation, contextItems, 
     return reasons;
 }
 
-// ============================================================
-// VERIFICARE ORTOGRAFICĂ OPȚIONALĂ (dicționar românesc offline)
-// Necesită pachetele npm „nspell” și „dictionary-ro”. Dacă lipsesc, funcția rămâne oprită
-// și nimic altceva nu se schimbă. Cuvintele necunoscute NU sunt corectate automat: replica este
-// trimisă la verificarea AI punctuală deja existentă, împreună cu cuvântul suspect.
-// OPRITĂ IMPLICIT (consumă RAM). Pornire explicită: variabila de mediu RO_SPELLCHECK=on.
-// ============================================================
-let romanianSpell = null;
-const spellVerdictCache = new Map();
-let spellUnknownDistinct = 0;
-const spellEnglishContextCache = new WeakMap();
-
-function setRomanianSpellchecker(spell) {
-    romanianSpell = spell && typeof spell.correct === 'function' ? spell : null;
-    spellVerdictCache.clear();
-    spellUnknownDistinct = 0;
-}
-
-async function initRomanianSpellcheck() {
-    if (String(process.env.RO_SPELLCHECK || '').toLowerCase() !== 'on') {
-        console.log('[Ortografie] Verificarea ortografică este oprită implicit (se pornește doar cu RO_SPELLCHECK=on).');
-        return;
-    }
-    const rssMb = () => Math.round(process.memoryUsage().rss / 1048576);
-    const rssBefore = rssMb();
-    if (rssBefore > 300) {
-        console.log(`[Ortografie] Memorie deja ridicată (${rssBefore} MB); nu încarc dicționarul.`);
-        return;
-    }
-    try {
-        const started = Date.now();
-        const nspellModule = await import('nspell');
-        const nspell = nspellModule.default || nspellModule;
-        const dictionaryModule = await import('dictionary-ro');
-        let dictionary = dictionaryModule.default || dictionaryModule;
-        if (typeof dictionary === 'function') {
-            const loader = dictionary;
-            dictionary = await new Promise((resolve, reject) => loader((error, value) => error ? reject(error) : resolve(value)));
-        }
-        setRomanianSpellchecker(nspell(dictionary));
-        const rssAfter = rssMb();
-        console.log(`[Ortografie] Dicționarul românesc a fost încărcat în ${Date.now() - started} ms. RAM: ${rssBefore} MB -> ${rssAfter} MB.`);
-        if (rssAfter > 400) {
-            setRomanianSpellchecker(null);
-            console.log(`[Ortografie] Consum RAM prea mare (${rssAfter} MB); verificarea ortografică este oprită.`);
-        }
-    } catch (error) {
-        console.log(`[Ortografie] Pachetele nspell/dictionary-ro nu au putut fi încărcate (${error.code || error.message}); verificarea ortografică rămâne oprită.`);
-    }
-}
-
-function isKnownRomanianWord(word) {
-    if (spellVerdictCache.has(word)) return spellVerdictCache.get(word);
-    // Unele dicționare folosesc ş/ţ (cu sedilă), altele ș/ț (cu virgulă): le încercăm pe amândouă.
-    const variants = [
-        word,
-        word.replace(/ș/g, 'ş').replace(/ț/g, 'ţ'),
-        word.replace(/ş/g, 'ș').replace(/ţ/g, 'ț')
-    ];
-    let known = false;
-    try {
-        known = variants.some(variant => romanianSpell.correct(variant));
-    } catch (error) {
-        known = true;
-    }
-    spellVerdictCache.set(word, known);
-    if (!known) spellUnknownDistinct++;
-
-    // Protecție: dacă prea multe cuvinte distincte par necunoscute, dicționarul nu se potrivește
-    // (altă ortografie/codare). Oprim funcția ca să nu inundăm verificarea AI cu alarme false.
-    if (spellVerdictCache.size >= 300 && spellUnknownDistinct / spellVerdictCache.size > 0.15) {
-        console.log(`[Ortografie] ${spellUnknownDistinct} din ${spellVerdictCache.size} cuvinte distincte par necunoscute; dicționarul nu se potrivește, verificarea ortografică este oprită.`);
-        romanianSpell = null;
-    }
-    return known;
-}
-
-function getSpellEnglishContext(contextItems) {
-    const cacheable = contextItems && typeof contextItems === 'object';
-    if (cacheable && spellEnglishContextCache.has(contextItems)) return spellEnglishContextCache.get(contextItems);
-    const tokens = new Set();
-    const namePrefixes = new Set();
-    const seenLowercase = new Set();
-    const seenCapitalized = new Set();
-    for (const item of Array.isArray(contextItems) ? contextItems : []) {
-        const text = String((item && item.text) || '').replace(/<[^>]*>/g, ' ');
-        for (const match of text.matchAll(/\p{L}[\p{L}'’-]*/gu)) {
-            const word = match[0];
-            const lower = word.toLocaleLowerCase('en-US');
-            tokens.add(lower);
-            if (/^\p{Ll}/u.test(word)) seenLowercase.add(lower);
-            else if (word.length >= 3) seenCapitalized.add(lower);
-        }
-        // Nume cu majusculă în mijlocul frazei.
-        for (const match of text.matchAll(/(?<=[\p{Ll},;]\s)(\p{Lu}[\p{L}'’-]{2,})/gu)) seenCapitalized.add(match[1].toLocaleLowerCase('en-US'));
-    }
-    // Nume = cuvinte care apar cu majusculă și niciodată cu literă mică (ex. „Trantor”, „Dawn”).
-    for (const name of seenCapitalized) {
-        if (seenLowercase.has(name)) continue;
-        namePrefixes.add(name.length >= 5 ? name.slice(0, 5) : name);
-    }
-    const context = {
-        tokens,
-        matchesName: lower => namePrefixes.has(lower.length >= 5 ? lower.slice(0, 5) : lower)
-    };
-    if (cacheable) spellEnglishContextCache.set(contextItems, context);
-    return context;
-}
-
-function getSpellcheckReasons(translation, contextItems) {
-    if (!romanianSpell) return [];
-    const text = String(translation || '').replace(/<[^>]*>/g, ' ');
-    if (!text.trim()) return [];
-    const english = getSpellEnglishContext(contextItems);
-    const unknown = [];
-    for (const match of text.matchAll(/\p{L}+(?:[-’']\p{L}+)*/gu)) {
-        if (!romanianSpell) break;
-        const token = match[0];
-        const prefix = text.slice(0, match.index);
-        const sentenceStart = /^\s*(?:[-–—]\s*)?$/u.test(prefix) ||
-            /[.!?…:]["”»)]*\s*(?:[-–—]\s*)?$/u.test(prefix) ||
-            /\n\s*(?:[-–—]\s*)?$/u.test(prefix);
-        const capitalized = /^\p{Lu}/u.test(token);
-        if (token.length > 1 && token === token.toLocaleUpperCase('ro-RO')) continue; // acronime, interjecții
-        if (capitalized && !sentenceStart) continue; // nume proprii în mijlocul frazei
-        const lower = token.toLocaleLowerCase('ro-RO');
-        if (capitalized && english.matchesName(lower)) continue; // nume la început de frază
-        if (english.tokens.has(lower)) continue; // cuvânt păstrat intenționat din sursă
-        for (const part of lower.split(/[-’']/)) {
-            if (part.length < 4 || /(\p{L})\1{2,}/u.test(part)) continue;
-            if (!isKnownRomanianWord(part) && !unknown.includes(part)) unknown.push(part);
-        }
-    }
-    if (!unknown.length) return [];
-    return [`cuvânt/cuvinte necunoscute în dicționarul românesc: ${unknown.slice(0, 3).map(w => `„${w}”`).join(', ')}`];
-}
-
 function collectQualityReviewReasons(item, translation, contextItems, translatedById) {
     return [
         ...detectLocalGrammarReviewReasons(translation),
-        ...getSpellcheckReasons(translation, contextItems),
         ...detectSourceAwareQualityReviewReasons(item, translation, contextItems, translatedById)
     ];
 }
@@ -7429,20 +7293,37 @@ const CONTINUATION_FUNCTION_WORDS = new Set([
     'mult', 'foarte', 'prea', 'deja', 'încât', 'fiindcă', 'deși', 'însă', 'ori', 'fie'
 ]);
 
-// Vocabular de NUME: cuvinte scrise cu majusculă în mijlocul frazei (după un cuvânt cu literă
-// mică sau după virgulă), în sursa engleză sau în traducere („Dawn”, „Trantor”, „Imperiul”).
-// O replică continuată care începe cu un astfel de cuvânt își păstrează majuscula; orice alt
-// cuvânt (verb, substantiv comun, adjectiv) trece la literă mică.
-function buildMidSentenceNameVocabulary(items, translatedById) {
-    const names = new Set();
-    const collect = text => {
-        const clean = String(text || '').replace(/<[^>]*>/g, ' ');
-        for (const match of clean.matchAll(/(?<=[\p{Ll},;]\s)(\p{Lu}[\p{L}'’-]{2,})/gu)) {
-            names.add(match[1].toLocaleLowerCase('ro-RO'));
+// Vocabular de NUME din sursa engleză: cuvinte care apar cu majusculă și niciodată cu literă mică
+// („Dawn”, „Trantor”) sau cu majusculă în mijlocul frazei. Sursa este mai sigură decât traducerea,
+// unde majusculele pot fi greșite. Se compară după primele 5 litere, ca să acopere și formele
+// românești declinate („Trantorului”).
+function nameKey(word) {
+    const lower = String(word || '').toLocaleLowerCase('ro-RO');
+    return lower.length >= 5 ? lower.slice(0, 5) : lower;
+}
+
+function buildEnglishNameVocabulary(items) {
+    const seenLowercase = new Set();
+    const seenCapitalized = new Set();
+    for (const item of items || []) {
+        const text = String((item && item.text) || '').replace(/<[^>]*>/g, ' ');
+        for (const match of text.matchAll(/\p{L}[\p{L}'’-]*/gu)) {
+            const word = match[0];
+            const lower = word.toLocaleLowerCase('en-US');
+            if (/^\p{Ll}/u.test(word)) seenLowercase.add(lower);
+            else if (word.length >= 3) seenCapitalized.add(lower);
         }
-    };
-    for (const item of items || []) collect(item && item.text);
-    for (const value of Object.values(translatedById || {})) collect(value);
+    }
+    const names = new Set();
+    for (const word of seenCapitalized) {
+        if (!seenLowercase.has(word)) names.add(nameKey(word));
+    }
+    // Majusculă în mijlocul frazei (după un cuvânt cu literă mică sau virgulă), chiar dacă același
+    // cuvânt apare și cu literă mică în altă parte, de exemplu „serve the Empire”.
+    for (const item of items || []) {
+        const text = String((item && item.text) || '').replace(/<[^>]*>/g, ' ');
+        for (const match of text.matchAll(/(?<=[\p{Ll},;]\s)(\p{Lu}[\p{L}'’-]{2,})/gu)) names.add(nameKey(match[1]));
+    }
     return names;
 }
 
@@ -7459,7 +7340,7 @@ function isContinuationBlock(prevEnglish, currentEnglish) {
 
 function applyContinuationCase(items, translatedById) {
     let changed = 0;
-    const midSentenceNames = buildMidSentenceNameVocabulary(items, translatedById);
+    const englishNames = buildEnglishNameVocabulary(items);
     for (let i = 1; i < items.length; i++) {
         if (items[i - 1].musicOnly || items[i].musicOnly) continue;
         if (!isContinuationBlock(items[i - 1].text, items[i].text)) continue;
@@ -7480,7 +7361,7 @@ function applyContinuationCase(items, translatedById) {
         const lowerWord = word.toLowerCase();
         // Sursa începe cu literă mică (continuare), deci primul cuvânt românesc este aproape sigur
         // un cuvânt obișnuit. Îl păstrăm cu majusculă doar dacă este un nume cunoscut din fișier.
-        if (midSentenceNames.has(lowerWord) && !CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
+        if (englishNames.has(nameKey(lowerWord)) && !CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
 
         translatedById[id] = match[1] + match[2].toLowerCase() + match[3] + current.slice(match[0].length);
         changed++;
@@ -7558,9 +7439,40 @@ const COMMON_ROMANIAN_MID_SENTENCE_WORDS = new Set((`
     ți-am mi-am i-am i-a le-a l-a l-au într-o într-un dintr-o dintr-un
 `).trim().split(/\s+/));
 
+// „O” (articolul) scris greșit cu majusculă între două cuvinte cu literă mică. Excludem etichete
+// reale („grupa O”, „vitamina A”, „planul O”) după cuvântul precedent.
+const STRAY_O_PRECEDING_LABEL_WORDS = new Set([
+    'de', 'grupa', 'grupă', 'grup', 'tipul', 'tip', 'litera', 'planul', 'plan', 'vitamina', 'clasa',
+    'opțiunea', 'varianta', 'punctul', 'categoria', 'zona', 'sectorul', 'unitatea', 'echipa',
+    'scena', 'actul', 'pagina', 'etapa', 'faza', 'nivelul', 'sala', 'camera', 'blocul', 'corpul'
+]);
+
+function applyStrayCapitalO(items, translatedById) {
+    let changed = 0;
+    let changedLines = 0;
+    for (const item of items) {
+        if (item.musicOnly) continue;
+        const id = String(item.id);
+        const original = String(translatedById[id] || '');
+        if (!original.includes('O')) continue;
+        const fixed = original.replace(/(?<=\p{Ll}\s)O(?=\s\p{Ll})/gu, (match, offset, whole) => {
+            const previous = (whole.slice(0, offset).trimEnd().match(/(\p{L}+)$/u) || [])[1];
+            if (!previous || STRAY_O_PRECEDING_LABEL_WORDS.has(previous.toLocaleLowerCase('ro-RO'))) return match;
+            changed++;
+            return 'o';
+        });
+        if (fixed !== original) {
+            translatedById[id] = fixed;
+            changedLines++;
+        }
+    }
+    return { words: changed, lines: changedLines };
+}
+
 function applyMidSentenceCapitalizationFixes(items, translatedById) {
-    let changedWords = 0;
-    let changedSubtitles = 0;
+    const strayO = applyStrayCapitalO(items, translatedById);
+    let changedWords = strayO.words;
+    let changedSubtitles = strayO.lines;
     const terminalPunctuation = /[.!?…:]+["'’”»)}\]]*$/u;
     const openingQuoteOrBracket = /["'„“«‘(\[]\s*$/u;
     const speakerDashAtLineStart = /(?:^|\n)\s*[-–—]\s*$/u;
@@ -9549,6 +9461,11 @@ function parseSrt(srt, stats = null) {
 
         const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(rawText);
         let text = cleanTextForJson(rawText);
+        // Replică originală cu doi vorbitori din care a rămas unul singur (celălalt era „Uh...”,
+        // „Oh.” etc.): liniuța de dialog nu mai are rost.
+        if (lines.length > 3 && text && !text.includes('\n') && /^[-–—]\s+\S/.test(text)) {
+            text = text.replace(/^[-–—]\s+/, '');
+        }
 
         if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) {
             if (stats) {
@@ -9641,8 +9558,6 @@ app.get('/health', (req, res) => {
 });
 
 const PORT = Number(process.env.PORT) || 7000;
-initRomanianSpellcheck();
-
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
     console.log(`${c.cyan}🧠 Model Gemini activ: ${MODEL_NAME}${c.reset}`);
