@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.37',
+    version: '13.2.38',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -925,12 +925,26 @@ function subdlCandidateRows(rows, identity, expectedTitle = '', options = {}) {
         // Do not wrap path-derived IDs as api_ references: that caused needless 404s.
         let nId = '';
         if (options.forceDirectOnly) {
-            // A legacy v1 result should stay on its documented direct-download route,
-            // even if it happens to include n_id/file_n_id fields.
-            if (!directUrl && explicitNId && rowFileNId) {
-                directUrl = subdlDirectDownloadUrl(`https://dl.subdl.com/subtitle/${encodeURIComponent(explicitNId)}/${encodeURIComponent(rowFileNId)}`);
+            // If the legacy search response supplied a real subtitle ID, prefer the
+            // authenticated v2 download endpoint. A raw dl.subdl.com link can return
+            // 403/404 even while the API key is valid.
+            if (explicitNId && /^[A-Za-z0-9_-]{1,128}$/.test(explicitNId)) {
+                if (directUrl) {
+                    // Keep an exact per-file URL as the first attempt when its
+                    // file ID is explicitly supplied or matches the URL's ID pair.
+                    const exactFileNId = explicitRowFileNId ||
+                        (idsFromUrl?.pattern === 'path-pair' && idsFromUrl.nId === explicitNId ? rowFileNId : '');
+                    nId = exactFileNId
+                        ? (makeSubdlApiReference(explicitNId, exactFileNId, directUrl) || explicitNId)
+                        : explicitNId;
+                } else {
+                    nId = explicitNId;
+                }
+            } else if (directUrl) {
+                // URL-only provider results have no verified API nId, so retain
+                // the validated direct-download fallback for those entries.
+                nId = `url_${Buffer.from(directUrl, 'utf8').toString('base64url')}`;
             }
-            if (directUrl) nId = `url_${Buffer.from(directUrl, 'utf8').toString('base64url')}`;
         } else if (directUrl && explicitNId) {
             // Only an explicit file_n_id or a canonical /subtitle/{nId}/{fileNId}
             // URL proves the row is a single file. A {nId}-{fileNId}.zip path may be a pack.
