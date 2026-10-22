@@ -255,7 +255,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.30',
+    version: '13.2.32',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5690,6 +5690,8 @@ function detectLocalGrammarReviewReasons(text) {
         // marchează replica pentru singura verificare AI punctuală deja existentă.
         { pattern: /(?<![\p{L}])(?:stiu|stii|stiti|inteleg|intelegi|multumesc|multumim|sunteti|aveti|puteti|vreti|inca|dupa|asa|pana|cand|tara|romana)(?![\p{L}])/iu, message: 'cuvânt românesc probabil scris fără diacritice' },
         { pattern: /(?:(?<![\p{L}'’-])in|(?:^|[.!?…]\s+)In)\s+\p{Ll}/u, message: 'cuvântul „in” este probabil „în” scris fără diacritică (sau engleză rămasă)' },
+        { pattern: /(?<![\p{L}])\p{L}{3,}esti(?![\p{L}])/iu, message: 'formă verbală probabil scrisă fără diacritică („-ești”)' },
+        { pattern: /(?<![\p{L}])(?:mi|ți|ne|vă|îi|i|le)-va(?![\p{L}])/iu, message: 'viitor greșit „mi-va / ți-va” (corect: „îmi va”, „îți va”)' },
         { pattern: /(?<![\p{L}])(?:face|fac|făcea|facă)\s+sens(?![\p{L}])/iu, message: 'calc „face sens” (în română: „are sens”)' },
         { pattern: /(?<![\p{L}])realiz\p{L}*\s+că(?![\p{L}])/iu, message: 'calc „a realiza că” (în română: „a-și da seama că”)' },
         { pattern: /(?<![\p{L}])în\s+ordine\s+să(?![\p{L}])/iu, message: 'calc „în ordine să” (în română: „ca să” / „pentru a”)' },
@@ -7286,15 +7288,21 @@ const CONTINUATION_FUNCTION_WORDS = new Set([
     'mult', 'foarte', 'prea', 'deja', 'încât', 'fiindcă', 'deși', 'însă', 'ori', 'fie'
 ]);
 
-// Vocabular de cuvinte scrise cu literă mică în traducerea curentă: dacă un cuvânt apare
-// și cu literă mică în același fișier, nu este nume propriu și poate trece la literă mică.
-function buildLowercaseVocabulary(translatedById) {
-    const vocab = new Set();
-    for (const value of Object.values(translatedById || {})) {
-        const matches = String(value || '').match(/(?<![\p{L}\p{N}])\p{Ll}[\p{L}-]*/gu) || [];
-        for (const token of matches) vocab.add(token);
-    }
-    return vocab;
+// Vocabular de NUME: cuvinte scrise cu majusculă în mijlocul frazei (după un cuvânt cu literă
+// mică sau după virgulă), în sursa engleză sau în traducere („Dawn”, „Trantor”, „Imperiul”).
+// O replică continuată care începe cu un astfel de cuvânt își păstrează majuscula; orice alt
+// cuvânt (verb, substantiv comun, adjectiv) trece la literă mică.
+function buildMidSentenceNameVocabulary(items, translatedById) {
+    const names = new Set();
+    const collect = text => {
+        const clean = String(text || '').replace(/<[^>]*>/g, ' ');
+        for (const match of clean.matchAll(/(?<=[\p{Ll},;]\s)(\p{Lu}[\p{L}'’-]{2,})/gu)) {
+            names.add(match[1].toLocaleLowerCase('ro-RO'));
+        }
+    };
+    for (const item of items || []) collect(item && item.text);
+    for (const value of Object.values(translatedById || {})) collect(value);
+    return names;
 }
 
 function isContinuationBlock(prevEnglish, currentEnglish) {
@@ -7310,7 +7318,7 @@ function isContinuationBlock(prevEnglish, currentEnglish) {
 
 function applyContinuationCase(items, translatedById) {
     let changed = 0;
-    const lowercaseVocabulary = buildLowercaseVocabulary(translatedById);
+    const midSentenceNames = buildMidSentenceNameVocabulary(items, translatedById);
     for (let i = 1; i < items.length; i++) {
         if (items[i - 1].musicOnly || items[i].musicOnly) continue;
         if (!isContinuationBlock(items[i - 1].text, items[i].text)) continue;
@@ -7322,18 +7330,16 @@ function applyContinuationCase(items, translatedById) {
         if (/(?<!\.)[.!?]["”]?$/.test(previousRo)) continue;
         if (/^\s*[-–—]/.test(current)) continue;
 
-        const match = current.match(/^(\s*[.…"„“]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*)/);
+        const match = current.match(/^(\s*[.…"„“]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*(?:-[a-zăâîșț]+)*)/);
         if (!match) continue;
         const word = match[2] + match[3];
         const previousEnglish = String(items[i - 1].text || '').replace(/<[^>]+>/g, ' ').trim();
         const currentEnglish = String(items[i].text || '').replace(/<[^>]+>/g, ' ').trim();
         const progressiveContinuation = /\b(?:was|were|is|are)\s*$/i.test(previousEnglish) && /^[a-z]+ing\b/i.test(currentEnglish);
         const lowerWord = word.toLowerCase();
-        // Gerunziu românesc („Așteptând”, „Știind”) după o frază neîncheiată, când și sursa începe cu „-ing”.
-        const gerundContinuation = /^[a-z]+ing\b/i.test(currentEnglish) && /(?:ând|ind)$/u.test(lowerWord);
-        // Cuvânt comun: apare și cu literă mică în restul traducerii (deci nu este nume propriu).
-        const commonWord = word.length >= 2 && lowercaseVocabulary.has(lowerWord);
-        if (!CONTINUATION_FUNCTION_WORDS.has(lowerWord) && !progressiveContinuation && !gerundContinuation && !commonWord) continue;
+        // Sursa începe cu literă mică (continuare), deci primul cuvânt românesc este aproape sigur
+        // un cuvânt obișnuit. Îl păstrăm cu majusculă doar dacă este un nume cunoscut din fișier.
+        if (midSentenceNames.has(lowerWord) && !CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
 
         translatedById[id] = match[1] + match[2].toLowerCase() + match[3] + current.slice(match[0].length);
         changed++;
@@ -7434,6 +7440,10 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                 const word = wholeWord.toLocaleLowerCase('ro-RO');
                 if (!COMMON_ROMANIAN_MID_SENTENCE_WORDS.has(word)) return wholeWord;
 
+                // Face parte dintr-un nume compus („Casa Albă”, „Planul Seldon”, „Marele Consiliu”,
+                // „Lumea Nouă”): dacă următorul cuvânt are tot majusculă, nu schimbăm nimic.
+                if (/^\s+[A-ZĂÂÎȘȚ][a-zăâîșț]/u.test(original.slice(offset + wholeWord.length))) return wholeWord;
+
                 const before = beforeRaw.replace(/<[^>]*>/g, '').trimEnd();
                 // Cuvântul este la începutul replicii/fragmentului, nu în mijlocul frazei.
                 if (!/[\p{L}\p{N}]/u.test(before)) return wholeWord;
@@ -7441,6 +7451,9 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                 if (terminalPunctuation.test(before) || openingQuoteOrBracket.test(before) || speakerDashAtLineStart.test(before)) {
                     return wholeWord;
                 }
+
+                // Cuvântul precedent are majusculă: este parte dintr-un nume compus („Lumea Nouă”).
+                if (/(?<![\p{L}])[A-ZĂÂÎȘȚ][\p{L}'’-]*$/u.test(before)) return wholeWord;
 
                 localChanges++;
                 return word;
@@ -9217,6 +9230,48 @@ function removeProtectedMusicTokens(text, item) {
 // SRT PARSER NATIV 
 // ============================================================
 
+// Reclame și credite adăugate de furnizorii de subtitrări („Support us and become VIP member...”,
+// „Subtitles by ...”, „www.OpenSubtitles.org”). Nu sunt dialog și nu trebuie traduse sau afișate.
+// Expresiile clare se filtrează oriunde; cele mai ambigue (site-uri, „translated by”) doar la
+// începutul sau la sfârșitul fișierului, ca să nu atingem dialogul real („Intră pe google.com”).
+const SUBTITLE_AD_STRONG_PATTERNS = [
+    /opensubtitles/i,
+    /\bsubdl\b/i,
+    /\bpodnapisi\b/i,
+    /\baddic7ed\b/i,
+    /\bsubscene\b/i,
+    /\byify\b/i,
+    /\byts[\s._-]?(?:subs|mx|am)\b/i,
+    /support\s+us\s+and\s+become/i,
+    /become\s+an?\s+vip\s+member/i,
+    /remove\s+all\s+ads/i,
+    /advertise\s+your\s+(?:product|brand)/i,
+    /\bsubtitles?\s+by\b/i,
+    /\bsubtitled\s+by\b/i,
+    /\bcaptioned\s+by\b/i,
+    /\bsynced?\s+(?:and|&)\s+corrected\b/i
+];
+const SUBTITLE_AD_EDGE_PATTERNS = [
+    /\b(?:translated|corrected|resynced|ripped|encoded|timed|adapted)\s+by\b/i,
+    /\bsync(?:ed|hronized)?\s+by\b/i,
+    /\bsubs?\s+by\b/i,
+    /\btraducere(?:a)?\s*(?::|și|de)\b/i,
+    /\badaptare\s*:/i,
+    /\bwww\.[\p{L}\d-]+\.[a-z]{2,}/iu,
+    /(?<![\p{L}\d@.-])[a-z0-9-]{3,}\.(?:com|org|net|tv|info)\b/i
+];
+
+function isSubtitleAdOrCreditCue(text, nearFileEdge) {
+    const clean = String(text || '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&(?:nbsp|amp);/giu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!clean || clean.length > 220) return false;
+    if (SUBTITLE_AD_STRONG_PATTERNS.some(pattern => pattern.test(clean))) return true;
+    return Boolean(nearFileEdge) && SUBTITLE_AD_EDGE_PATTERNS.some(pattern => pattern.test(clean));
+}
+
 // Detectează versurile din interiorul unui cântec care se întinde pe mai multe replici:
 // prima replică are nota de deschidere, ultima are nota de închidere, iar cele din mijloc
 // nu au nicio notă. Condiții de siguranță: cel mult 14 replici, pauză de cel mult 3 secunde
@@ -9313,6 +9368,12 @@ function parseSrt(srt, stats = null) {
         // Verificăm textul ORIGINAL înainte de curățare. Unele surse folosesc
         // entități HTML pentru spații/caractere invizibile, iar acestea pot părea nenule.
         if (isEffectivelyEmptySubtitleText(rawText)) {
+            if (stats) stats.otherBlocksFiltered++;
+            continue;
+        }
+
+        // Reclamele/creditele furnizorilor de subtitrări nu sunt dialog: le eliminăm înainte de Gemini.
+        if (isSubtitleAdOrCreditCue(rawText, blockIndex < 8 || blockIndex >= blocks.length - 8)) {
             if (stats) stats.otherBlocksFiltered++;
             continue;
         }
