@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.42',
+    version: '13.2.43',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4523,9 +4523,9 @@ function buildRomanianWordEvidence(items, translatedById) {
         if (!source.trim() || !translated.trim()) continue;
 
         const sourceWords = new Set(
-            (source.match(/[\\p{L}]+/gu) || []).map(word => word.toLowerCase())
+            (source.match(/[\p{L}]+/gu) || []).map(word => word.toLowerCase())
         );
-        for (const match of translated.matchAll(/(?<![\\p{L}-])([\\p{L}]{3,})(?![\\p{L}-])/gu)) {
+        for (const match of translated.matchAll(/(?<![\p{L}-])([\p{L}]{3,})(?![\p{L}-])/gu)) {
             const word = match[1].toLowerCase();
             if (!sourceWords.has(word)) evidence.add(word);
         }
@@ -4552,7 +4552,7 @@ function hasUntranslatedEnglish(original, translated, nameTokens, romanianWordEv
     // fără cratimă în altă replică; astfel, engleza rămasă obișnuită este în continuare verificată.
     if (romanianWordEvidence instanceof Set) {
         const splitWord = transClean.trim().match(
-            /^([\\p{L}]{1,4}(?:[-‐‑‒–—][\\p{L}]{1,4}){1,5})[.!?…,:;]*$/u
+            /^([\p{L}]{1,4}(?:[-‐‑‒–—][\p{L}]{1,4}){1,5})[.!?…,:;]*$/u
         );
         if (splitWord) {
             const joinedWord = splitWord[1].replace(/[-‐‑‒–—]/g, '').toLowerCase();
