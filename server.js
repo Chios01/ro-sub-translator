@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.41',
+    version: '13.2.42',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4509,10 +4509,31 @@ function stripEnglishNamesFromText(text, names) {
 
 // Variantă pentru o replică: folosește numele deduse din tot fișierul (item.nameTokens).
 function itemHasUntranslatedEnglish(item, translated) {
-    return hasUntranslatedEnglish(item.text, translated, item.nameTokens);
+    return hasUntranslatedEnglish(item.text, translated, item.nameTokens, item.romanianWordEvidence);
 }
 
-function hasUntranslatedEnglish(original, translated, nameTokens) {
+// Adună dovezi din cuvintele românești deja traduse în subtitrare. Acestea ajută
+// QA să recunoască un cuvânt despărțit intenționat în fragmente cu cratimă,
+// de exemplu „As-as-in” atunci când „Asasin” apare separat în aceeași subtitrare.
+function buildRomanianWordEvidence(items, translatedById) {
+    const evidence = new Set();
+    for (const item of items || []) {
+        const source = String(item?.text || '').replace(/<[^>]*>/g, ' ');
+        const translated = String(translatedById?.[String(item?.id)] || '').replace(/<[^>]*>/g, ' ');
+        if (!source.trim() || !translated.trim()) continue;
+
+        const sourceWords = new Set(
+            (source.match(/[\\p{L}]+/gu) || []).map(word => word.toLowerCase())
+        );
+        for (const match of translated.matchAll(/(?<![\\p{L}-])([\\p{L}]{3,})(?![\\p{L}-])/gu)) {
+            const word = match[1].toLowerCase();
+            if (!sourceWords.has(word)) evidence.add(word);
+        }
+    }
+    return evidence;
+}
+
+function hasUntranslatedEnglish(original, translated, nameTokens, romanianWordEvidence) {
     if (!original || !translated) return false;
 
     const nameEvidence = new Set(nameTokens || []);
@@ -4525,6 +4546,19 @@ function hasUntranslatedEnglish(original, translated, nameTokens) {
         .toLowerCase().replace(/[“”„"’']/g, "'").replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
     const originalNorm = normalize(origClean);
     const translatedNorm = normalize(transClean);
+
+    // Dacă o replică este alcătuită dintr-un singur cuvânt despărțit prin cratime,
+    // verificăm forma unită. O acceptăm doar dacă forma apare ca un cuvânt tradus
+    // fără cratimă în altă replică; astfel, engleza rămasă obișnuită este în continuare verificată.
+    if (romanianWordEvidence instanceof Set) {
+        const splitWord = transClean.trim().match(
+            /^([\\p{L}]{1,4}(?:[-‐‑‒–—][\\p{L}]{1,4}){1,5})[.!?…,:;]*$/u
+        );
+        if (splitWord) {
+            const joinedWord = splitWord[1].replace(/[-‐‑‒–—]/g, '').toLowerCase();
+            if (joinedWord.length >= 5 && romanianWordEvidence.has(joinedWord)) return false;
+        }
+    }
 
     const strongEnglish = new Set([
         'the','and','but','if','then','than','they','them','their','we','us','our','you','your','he','him','his','she','her','it','its',
@@ -7608,10 +7642,6 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     const musicOnlyCueCount = parseStats.musicOnlyBlocksRemovedBeforeTranslation || 0;
     const accountingDelta = sourceBlockCount - items.length - parseStats.fillerBlocksFiltered - parseStats.otherBlocksFiltered - parseStats.invalidBlocksSkipped - parseStats.nonDialogueBlocksFiltered - musicOnlyCueCount;
     console.log(`${c.cyan}[SRT] Sursă: ${sourceBlockCount} blocuri | către Gemini: ${sentToGeminiCount} | coduri numerice copiate exact: ${verbatimNumericCueCount} | interjecții eliminate înainte: ${parseStats.fillerBlocksFiltered}${musicSegmentCount ? ` | versuri muzicale eliminate înainte de Gemini: ${musicSegmentCount} segmente` : ''}${musicOnlyCueCount ? ` | blocuri exclusiv muzicale eliminate înainte de Gemini: ${musicOnlyCueCount}` : ''}${parseStats.nonDialogueBlocksFiltered ? ` | blocuri eliminate prin filtrarea parantezelor/cue-urilor: ${parseStats.nonDialogueBlocksFiltered}` : ''}${parseStats.nonDialogueSegmentsRemoved ? ` | segmente între paranteze/cue-uri eliminate: ${parseStats.nonDialogueSegmentsRemoved}` : ''}${parseStats.otherBlocksFiltered ? ` | alte blocuri goale/curățate: ${parseStats.otherBlocksFiltered}` : ''}${parseStats.invalidBlocksSkipped ? ` | blocuri SRT invalide ignorate: ${parseStats.invalidBlocksSkipped}` : ''}${parseStats.duplicateIdsRenumbered ? ` | ID-uri duplicate normalizate: ${parseStats.duplicateIdsRenumbered}` : ''}${accountingDelta ? ` | diferență de numărătoare: ${accountingDelta}` : ''}.${c.reset}`);
-    if (musicSegmentCount || musicOnlyCueCount) {
-        console.log(`${c.cyan}[Versuri muzicale] Excluse înainte de Gemini: ${musicSegmentCount} segmente marcate și ${musicOnlyCueCount} blocuri compuse exclusiv din versuri; aceste texte nu au fost incluse în calupuri.${c.reset}`);
-    }
-
     // Este posibil ca o sursă să conțină numai versuri muzicale. În acest caz
     // filtrarea timpurie produce un SRT gol valid, fără a consuma Gemini.
     if (!items.length && musicSegmentCount > 0) {
@@ -7879,6 +7909,11 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
             console.log(`${c.yellow}[Empty Recovery] Recuperate: ${recoveredCount}/${recoveryEligibleCount}; omise intenționat: ${intentionallySuppressedCount}; încă fără traducere: ${stillEmpty.length}.${c.reset}`);
         }
     }
+
+    // Dovezile lexicale se construiesc după traducerile principale și recuperarea liniilor goale,
+    // înainte ca verificările QA să evalueze fragmentele despărțite prin cratimă.
+    const romanianWordEvidence = buildRomanianWordEvidence(items, translatedById);
+    for (const item of items) item.romanianWordEvidence = romanianWordEvidence;
 
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}[RETRY FINAL] ${targetedRetry.fixed} replici reparate.${c.reset}`);
