@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.39',
+    version: '13.2.41',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4476,11 +4476,49 @@ function isJunkOrInterjection(text) {
     return false;
 }
 
-function hasUntranslatedEnglish(original, translated) {
+// NUME PROPRII care coincid cu cuvinte englezești frecvente (ex. „Will”, „Can”): nu trebuie socotite
+// text englezesc rămas. Numele se DEDUC din subtitrarea sursă, fără listă fixă: un cuvânt scris cu
+// majusculă în mijlocul frazei (după un cuvânt cu literă mică sau virgulă) și urmat de punctuație sau
+// de sfârșit de rând este folosit ca nume/adresare („Hey, no, Will.”). Ca nume sunt ignorate doar
+// aparițiile în poziție de nume: în mijlocul frazei sau la început de frază urmate de punctuație
+// („Will!”, „Will, te rog”). „Will you help me?” rămâne verificat normal.
+function collectEnglishNameEvidence(text, into) {
+    const clean = String(text || '').replace(/<[^>]*>/g, ' ');
+    for (const match of clean.matchAll(/(?<=[\p{Ll},;]\s)(\p{Lu}[\p{L}'’-]+)(?=[ \t]*(?:[,.!?…]|$))/gmu)) {
+        into.add(match[1]);
+    }
+    return into;
+}
+
+function buildEnglishNameEvidence(items) {
+    const names = new Set();
+    for (const item of items || []) collectEnglishNameEvidence(item && item.text, names);
+    return names;
+}
+
+function stripEnglishNamesFromText(text, names) {
+    const value = String(text || '');
+    const list = [...names].filter(name => /^\p{Lu}[\p{L}'’-]*$/u.test(name)).slice(0, 300);
+    if (!list.length) return value;
+    const alternation = list.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    return value
+        .replace(new RegExp(`(?<=[\\p{Ll},;:]\\s)(?:${alternation})(?![\\p{L}'’-])`, 'gu'), ' ')
+        .replace(new RegExp(`(^[ \\t]*[-–—]?[ \\t]*|[.!?…]\\s+)(?:${alternation})(?=[ \\t]*(?:[,.!?…]|$))`, 'gmu'), '$1 ')
+        .replace(/[ \t]{2,}/g, ' ');
+}
+
+// Variantă pentru o replică: folosește numele deduse din tot fișierul (item.nameTokens).
+function itemHasUntranslatedEnglish(item, translated) {
+    return hasUntranslatedEnglish(item.text, translated, item.nameTokens);
+}
+
+function hasUntranslatedEnglish(original, translated, nameTokens) {
     if (!original || !translated) return false;
 
-    const origClean = String(original).replace(/<[^>]+>/g, '').trim();
-    const transClean = String(translated).replace(/<[^>]+>/g, '').trim();
+    const nameEvidence = new Set(nameTokens || []);
+    collectEnglishNameEvidence(String(original).replace(/<[^>]+>/g, ''), nameEvidence);
+    const origClean = stripEnglishNamesFromText(String(original).replace(/<[^>]+>/g, ''), nameEvidence).trim();
+    const transClean = stripEnglishNamesFromText(String(translated).replace(/<[^>]+>/g, ''), nameEvidence).trim();
     if (isJunkOrInterjection(origClean) || !transClean || transClean.length <= 2) return false;
 
     const normalize = value => String(value)
@@ -5067,7 +5105,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
         if (!transClean) return true;
 
-        return hasUntranslatedEnglish(item.text, translated) ||
+        return itemHasUntranslatedEnglish(item, translated) ||
             hasCorruptedSubtitleText(translated, item.text) ||
             hasLostExplicitSourceTerm(item.text, translated);
     });
@@ -5100,7 +5138,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
             const current = translatedById[id] || '';
             const reasons = [];
             if (!String(current).trim()) reasons.push('traducere goală');
-            if (hasUntranslatedEnglish(item.text, current)) reasons.push('posibil fragment englezesc netradus');
+            if (itemHasUntranslatedEnglish(item, current)) reasons.push('posibil fragment englezesc netradus');
             if (hasCorruptedSubtitleText(current, item.text)) reasons.push('posibil text corupt');
             reasons.push(...getSourceFidelityIssues(item.text, current));
             reasonById[id] = [...new Set(reasons)].join('; ');
@@ -5323,7 +5361,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
 
                 // Filtrul suplimentar poate aplica doar o corecție care rămâne
                 // compatibilă cu verificările deja existente.
-                if (hasUntranslatedEnglish(item.text, candidate) ||
+                if (itemHasUntranslatedEnglish(item, candidate) ||
                     hasCorruptedSubtitleText(candidate, item.text) ||
                     hasLostExplicitSourceTerm(item.text, candidate)) {
                     // Corectura suspectă este respinsă fără a încărca logul cu detalii per replică.
@@ -5479,7 +5517,7 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
                             if (!hasAllProtectedMusicTokens(item, candidate)) {
                                 throw new Error('corectura plain-text a modificat un token de versuri muzicale protejat');
                             }
-                            if (hasUntranslatedEnglish(item.text, candidate) ||
+                            if (itemHasUntranslatedEnglish(item, candidate) ||
                                 hasCorruptedSubtitleText(candidate, item.text) ||
                                 hasLostExplicitSourceTerm(item.text, candidate)) {
                                 throw new Error('corectura plain-text nu a trecut verificările existente de fidelitate');
@@ -6582,7 +6620,7 @@ function assessEmptyRecoveryCandidate(item, candidateRaw) {
     if (!candidate || !candidate.replace(/<[^>]+>/g, '').trim()) {
         return { ok: false, reason: 'Gemini a returnat text gol' };
     }
-    if (hasUntranslatedEnglish(item.text, candidate)) {
+    if (itemHasUntranslatedEnglish(item, candidate)) {
         return { ok: false, reason: 'textul conține engleză netradusă' };
     }
     if (hasCorruptedSubtitleText(candidate, item.text)) {
@@ -7561,6 +7599,8 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     const items = parseSrt(srtText, parseStats);
     // Citit de buildTranslationPrompt; același array `items` este transmis tuturor calupurilor.
     items.mediaContext = String(mediaContext || '');
+    const englishNameEvidence = buildEnglishNameEvidence(items);
+    for (const entry of items) entry.nameTokens = englishNameEvidence;
 
     const verbatimNumericCueCount = items.filter(item => isNumericVerbatimCue(item.text)).length;
     const sentToGeminiCount = items.filter(item => !isNumericVerbatimCue(item.text) && !item.musicOnly).length;
@@ -7979,7 +8019,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         const current = String(translatedById[id] || '');
         const reasons = [];
         if (!current.trim()) reasons.push('traducere goală; trebuie completată în română');
-        if (hasUntranslatedEnglish(item.text, current)) reasons.push('posibil fragment englezesc netradus; repară fragmentul în română');
+        if (itemHasUntranslatedEnglish(item, current)) reasons.push('posibil fragment englezesc netradus; repară fragmentul în română');
         if (hasCorruptedSubtitleText(current, item.text)) reasons.push('posibil text corupt; reconstruiește formularea din original și context');
         reasons.push(...getSourceFidelityIssues(item.text, current));
         reasons.push(...collectQualityReviewReasons(item, current, items, translatedById));
@@ -8222,7 +8262,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         if (!transClean) return true;
         if (isJunkOrInterjection(item.text)) return false;
 
-        return hasUntranslatedEnglish(item.text, translated) ||
+        return itemHasUntranslatedEnglish(item, translated) ||
             hasCorruptedSubtitleText(translated, item.text) ||
             hasLostExplicitSourceTerm(item.text, translated);
     });
@@ -8274,7 +8314,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         const id = String(item.id);
         const translated = String(translatedById[id] || '');
         const reasons = [];
-        if (hasUntranslatedEnglish(item.text, translated)) reasons.push('posibil text englezesc rămas');
+        if (itemHasUntranslatedEnglish(item, translated)) reasons.push('posibil text englezesc rămas');
         if (hasCorruptedSubtitleText(translated, item.text)) reasons.push('text posibil corupt');
         // Raportăm cauza reală din verificarea fidelității sursei, în loc să o
         // etichetăm automat ca „termen explicit pierdut”. Funcția-wrapper
