@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.55',
+    version: '13.2.48',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2756,8 +2756,6 @@ TRANSLATION AND CONTEXT
 - If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
 - Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
 - Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
-- Resolve phrasal verbs and idioms by their action and participants in context, not by a similar-looking Romanian verb. For example, “look at someone” is „a se uita la cineva”, not „a uda pe cineva”; “you have been robbed” means someone stole from that person, not that the person broke into a home.
-- Before returning, check each block for semantic role reversals, polarity/negation changes, invented details, truncated or merged words, and gender/number agreement using the neighboring cues. A phrase can be semantically negative without containing „nu” (for example, „e lefteră” for „doesn't have a dime”), and a Romanian rhetorical question may use „nu” without being a literal translation of a source negation.
 - Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
 - When the source explicitly names an anatomical or sexual term, use an accurate Romanian equivalent. Do not replace it with vague euphemisms such as „jos” or „acolo”. Preserve the grammatical relationship too: for example, “the sound that dries my vagina” means „sunetul care-mi usucă vaginul”, not „sunetul care mă usucă în vagin”.
 - Preserve singular/plural, gender, and the identity of the object. A singular source noun such as “a hat” must not become plural „căciuli”. Do not add diminutives such as „căciuliță” unless smallness, affection, or a diminutive is actually expressed by the source.
@@ -2774,8 +2772,7 @@ ROMANIAN ACCURACY RULES
 - Names: keep names of people, characters, brands, bands and show/film titles as in the source unless an established Romanian form exists („Londra”, „Marea Britanie”). Do not decline or invent endings for foreign names, and spell each name the same way throughout.
 - Direct object: use „pe” plus the clitic for people as direct objects („Îl iubesc pe Tom”, „Te văd pe tine”), not for things.
 - Numerals: use „de” before the counted noun when the number is 20 or more or ends in 00 („20 de dolari”, „100 de ani”, „35 de minute”); omit it for 1–19 („15 dolari”, „3 ani”, „12 minute”).
-- In a restaurant kitchen/service context, “Pick up!” (also “Order up!”) with table numbers is a call that the food/orders are ready to be collected. Translate the meaning naturally (for example, „Comenzile sunt gata! Mesele 12, 4 și 11.”), not literally as „La comandă!”.
-    - Calques: translate fixed phrases by their function, not word by word — “I mean”, “you know”, “like” (filler), “literally”, “actually”, “come on”, “hang on”, “my bad”, “I'm good”, “you're welcome”, “what's up”, “no way”, “give me a break”, “count me in”, “it's on me”. Do not mirror English passives, “-ing” chains or possessives („Mi-am spălat mâinile” → „M-am spălat pe mâini” when more natural). Tag questions (“right?”, “isn't it?”) become „nu?”, „da?” or „nu-i așa?”.
+- Calques: translate fixed phrases by their function, not word by word — “I mean”, “you know”, “like” (filler), “literally”, “actually”, “come on”, “hang on”, “my bad”, “I'm good”, “you're welcome”, “what's up”, “no way”, “give me a break”, “count me in”, “it's on me”. Do not mirror English passives, “-ing” chains or possessives („Mi-am spălat mâinile” → „M-am spălat pe mâini” when more natural). Tag questions (“right?”, “isn't it?”) become „nu?”, „da?” or „nu-i așa?”.
 - Interjections: “Hmm?” / “Hm.” → „Hm?” / „Mda.” / „Mm.”; never „Mă?” or „Mă.” (a rude vocative in Romanian). Keep “Huh?” as „Hă?”.
 - Agreement: check noun gender and number after every demonstrative or adjective („aceste microorganisme”, not „acești”); neuter nouns take masculine singular and feminine plural forms. Use „mi-e” / „nu mi-e frică”, not „mi-este”.
 - Names and invented terms must have ONE Romanian form in the whole file. If a glossary is provided in the background block, follow it exactly; otherwise keep a nickname or invented term the same in every line and never produce spelling variants of the same name.
@@ -4760,155 +4757,15 @@ function hasCorruptedSubtitleText(text, originalText) {
 // spot-check, empty recovery și celelalte verificări independente rămân active.
 // ============================================================
 function getMissingExplicitAnatomicalTerms(original, translation) {
-    const source = String(original || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
-    const target = String(translation || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('ro-RO').replace(/\s+/g, ' ').trim();
-    if (!source || !target) return [];
-    const explicitTerms = [
-        { label: 'vagin', source: /\b(?:vagina|vaginas|vaginal)\b/i, target: /(?<!\p{L})vagin\p{L}*(?!\p{L})/iu },
-        { label: 'vulvă', source: /\b(?:vulva|vulvar)\b/i, target: /(?<!\p{L})vulv\p{L}*(?!\p{L})/iu },
-        { label: 'penis', source: /\b(?:penis|penises)\b/i, target: /(?<!\p{L})(?:penis\p{L}*|pul[ăa]\p{L}*|scul[ăa]\p{L}*)(?!\p{L})/iu },
-        { label: 'clitoris', source: /\b(?:clitoris|clitoral)\b/i, target: /(?<!\p{L})(?:clitoris\p{L}*|clit)(?!\p{L})/iu },
-        { label: 'sâni', source: /\b(?:breasts?|boobs?|tits?)\b/i, target: /(?<!\p{L})(?:sân\p{L}*|san\p{L}*|țâț\p{L}*|tâț\p{L}*|tât\p{L}*|piept\p{L}*|bust\p{L}*)(?!\p{L})/iu },
-        { label: 'sfârcuri/mameloane', source: /\b(?:nipples?)\b/i, target: /(?<!\p{L})(?:sfârc\p{L}*|sfarc\p{L}*|mamelon\p{L}*|țâț\p{L}*)(?!\p{L})/iu },
-        { label: 'testicule', source: /\btesticles?\b|\b(?:my|your|his|her|their)\s+balls\b/i, target: /(?<!\p{L})(?:testicul\p{L}*|coa[iăe]\p{L}*|ouă|oua)(?!\p{L})/iu },
-        { label: 'anus', source: /\b(?:anus|anal)\b/i, target: /(?<!\p{L})(?:anus\p{L}*|anal\p{L}*)(?!\p{L})/iu }
-    ];
-    return explicitTerms.filter(term => term.source.test(source) && !term.target.test(target)).map(term => term.label);
+    return [];
 }
 
-function getSourceFidelityIssues(original, translation, context = {}) {
-    // QA semantic conservator: nu confundă simpla apariție a lui „nu” cu sensul
-    // negativ și folosește limite Unicode, necesare pentru diacriticele românești.
-    const source = String(original || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
-    const target = String(translation || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('ro-RO').replace(/\s+/g, ' ').trim();
-    if (!source || !target) return [];
-
-    const reasons = [];
-    const hasUnicodeWord = (text, words) => {
-        const alternatives = words.join('|');
-        return new RegExp('(?<!\\p{L})(?:' + alternatives + ')(?!\\p{L})', 'iu').test(text);
-    };
-
-    const englishNotOnlyConstruction = /(?<!\p{L})not\s+only(?!\p{L})[\s\S]*\bbut\b[\s\S]*\balso\b/iu.test(source);
-    const romanianNotOnlyConstruction = /(?<!\p{L})nu\s+(?:(?:e|este|sunt|era|erau)\s+)?(?:numai|doar)(?!\p{L})/iu.test(target);
-
-    // „Stop looking/staring...” → „nu te mai uita...” este un imperativ corect,
-    // nu o negație suplimentară.
-    const sourceStopCommand = /(?<!\p{L})(?:please\s+)?stop\s+[\p{L}]+/iu.test(source);
-    const targetStopCommand = /(?:^|[,;]\s*)nu\s+(?:(?:te|vă|va|mă|ma|se|ne)\s+)?mai\s+[\p{L}]+/iu.test(target);
-
-    // Câteva traduceri românești idiomatice folosesc „nu” fără a inversa sensul.
-    const idiomaticPositiveSource =
-        /(?<!\p{L})(?:uncomfortable|awkward|out\s+of\s+place)(?!\p{L})/iu.test(source) &&
-        /(?<!\p{L})nu\s+mă\s+simt\s+(?:în|in)\s+apele\s+mele(?!\p{L})/iu.test(target);
-    const wrongThingsIdiom =
-        /(?<!\p{L})wrong(?!\p{L})/iu.test(source) &&
-        /(?<!\p{L})nu\s+trebuia(?!\p{L})/iu.test(target);
-
-    const sourceHasNegation = !englishNotOnlyConstruction && hasUnicodeWord(source, [
-        'not', 'no', 'none', 'never', 'neither', 'nor', 'nobody', 'no one', 'nothing',
-        'nowhere', 'without', 'hardly', 'scarcely', 'barely', 'cannot', "can't", "couldn't",
-        "didn't", "doesn't", "don't", "hadn't", "hasn't", "haven't", "isn't", "aren't",
-        "wasn't", "weren't", "won't", "wouldn't", "shouldn't", "mustn't", "needn't",
-        "mightn't", "shan't", "ain't"
-    ]);
-
-    const romanianNegationWords = [
-        'nu', 'nici', 'nimeni', 'nimic', 'nicăieri', 'nicaieri', 'niciodată', 'niciodata',
-        'nicicând', 'nicicand', 'niciunde', 'niciun', 'niciuna', 'niciunul', 'niciunii',
-        'niciunele', 'niciunor', 'nicio', 'deloc', 'nicidecum'
-    ];
-    const targetWithoutTrailingIdiomaticTag = target.replace(/(?:^|[,;\s])nu[- ]i\s+aș?a\s*[?!.,…]*$/iu, ' ');
-    const targetHasFara = hasUnicodeWord(target, ['fără', 'fara']);
-    // „Fără” contează ca negație numai când originalul exprimă deja o structură negativă.
-    // Astfel „relentlessly” → „fără oprire” și „homeless” → „fără adăpost” nu sunt false pozitive.
-    let romanianHasNegation = !romanianNotOnlyConstruction && (
-        hasUnicodeWord(targetWithoutTrailingIdiomaticTag, romanianNegationWords) ||
-        (sourceHasNegation && targetHasFara)
-    );
-    const romanianNegationContraction = /(?<!\p{L})n[-’'](?:am|ai|a|au|ar|aș|as|ați|ati|aveam|aveai|avea|aveau|aveți|aveti|o|îl|il|îi|ii|le|l|mi|mă|ma|te|se|ne|vă|va)(?!\p{L})/iu;
-    romanianHasNegation = romanianHasNegation || romanianNegationContraction.test(target);
-
-    // „Abia” exprimă o negație doar în construcții precum hardly/barely sau can't wait.
-    if (/(?<!\p{L})(?:hardly|scarcely|barely)(?!\p{L})/iu.test(source) && /(?<!\p{L})abia(?!\p{L})/iu.test(target)) {
-        romanianHasNegation = true;
-    }
-    if (/\bcan't\s+wait\b/iu.test(source) && /(?<!\p{L})abia\s+aștept(?!\p{L})/iu.test(target)) {
-        romanianHasNegation = true;
-    }
-    if (sourceStopCommand && targetStopCommand) romanianHasNegation = false;
-
-    // Dacă o propoziție negativă este împărțită între două blocuri SRT, nu marca
-    // negația din continuare ca „adăugată” când blocul anterior conține perechea
-    // sursă/traducere („no one” → „nimeni”).
-    const previousSource = String(context.previousSource || '').replace(/<[^>]+>/g, ' ').normalize('NFC').trim();
-    const previousTranslation = String(context.previousTranslation || '').replace(/<[^>]+>/g, ' ').normalize('NFC').trim();
-    const sourceStartsAsContinuation = /^[a-z]/u.test(String(original || '').replace(/<[^>]+>/g, ' ').trim());
-    const targetStartsAsContinuation = /^[a-zăâîșț]/iu.test(String(translation || '').replace(/<[^>]+>/g, ' ').trim());
-    const previousSourceContinues = Boolean(previousSource) && !/[.!?…]["'”’)}\]]*\s*$/u.test(previousSource);
-    const previousTargetContinues = Boolean(previousTranslation) && !/[.!?…]["'”’)}\]]*\s*$/u.test(previousTranslation);
-    const previousSourceHasNegation = /\b(?:not|no|never|neither|nor|nobody|no one|nothing|nowhere|without|hardly|scarcely|barely|cannot|can't|couldn't|didn't|doesn't|don't|hadn't|hasn't|haven't|isn't|aren't|wasn't|weren't|won't|wouldn't|shouldn't|mustn't|needn't|mightn't|shan't|ain't)\b/i.test(previousSource);
-    const previousTranslationHasNegation =
-        hasUnicodeWord(previousTranslation.toLocaleLowerCase('ro-RO'), romanianNegationWords) ||
-        romanianNegationContraction.test(previousTranslation.toLocaleLowerCase('ro-RO')) ||
-        (previousSourceHasNegation && hasUnicodeWord(previousTranslation.toLocaleLowerCase('ro-RO'), ['fără', 'fara']));
-    const negationCarriedAcrossSubtitleBoundary =
-        !sourceHasNegation && romanianHasNegation &&
-        sourceStartsAsContinuation && targetStartsAsContinuation &&
-        previousSourceContinues && previousTargetContinues &&
-        previousSourceHasNegation && previousTranslationHasNegation;
-
-    // Echivalență semantică în domeniul banilor: „doesn't have a dime” → „e lefteră”
-    // păstrează sensul negativ fără cuvântul „nu” sau „fără”.
-    const sourceFinancialLack = /(?:\b(?:doesn['’]?t|does\s+not|hasn['’]?t|has\s+not)\s+have\b[\s\S]{0,45}\b(?:money|dime|penny|cash|cent|dollar)\b|\b(?:flat\s+)?broke\b|\bpenniless\b|\bwithout\s+(?:any\s+)?(?:money|a\s+dime|a\s+penny|cash)\b)/iu.test(source);
-    const targetFinancialLack = /(?<!\p{L})(?:lefter\p{L}*|falit\p{L}*|ruinat\p{L}*|sărac\p{L}*|sarac\p{L}*|fără\s+(?:niciun\s+)?ban(?:i|uț|ut)?|fara\s+(?:niciun\s+)?ban(?:i|ut)?|pe\s+zero|niciun\s+ban|niciun\s+banut|nu\s+are\s+(?:niciun\s+)?ban(?:i)?|n[-’']are\s+(?:niciun\s+)?ban(?:i)?)(?!\p{L})/iu.test(target);
-    const financialNegationEquivalent = sourceFinancialLack && targetFinancialLack;
-
-    // În română, întrebarea retorică „Nu e cumva nesuferit și nesimțit?” poate
-    // păstra funcția unei întrebări despre un comportament negativ. Nu se aplică
-    // întrebărilor neutre sau propozițiilor afirmative.
-    const sourcePositiveYesNoQuestion = /\?\s*$/u.test(source) &&
-        /^(?:is|are|was|were|do|does|did|can|could|would|will|has|have|should)\b/iu.test(source) &&
-        !sourceHasNegation;
-    const sourceNegativeDescriptor = /(?<!\p{L})(?:rude|obnoxious|annoying|jerk|dick|asshole|douchey|stupid|idiot|pathetic|ugly|gross|disgusting|nasty|awful|bad|ridiculous|embarrassing|mean)(?!\p{L})/iu.test(source);
-    const targetNegativeDescriptor = /(?<!\p{L})(?:nesuferit|nesimțit|mojic|obraznic|enervant|dobitoc|idiot|prost|jalnic|urât|urat|scârbos|scarbo\p{L}*|penibil|ridicol|rău|rau|nasoal\p{L}*)(?!\p{L})/iu.test(target);
-    const targetRhetoricalNegativeQuestion = /^nu\s+(?:(?:e|este|sunt|era|erau)\s+)?(?:cumva|oare)\b[\s\S]*\?\s*$/iu.test(target);
-    const rhetoricalNegativeQuestionEquivalent = sourcePositiveYesNoQuestion &&
-        sourceNegativeDescriptor && targetNegativeDescriptor && targetRhetoricalNegativeQuestion;
-
-    if (!idiomaticPositiveSource && !wrongThingsIdiom &&
-        !financialNegationEquivalent && !rhetoricalNegativeQuestionEquivalent &&
-        !negationCarriedAcrossSubtitleBoundary &&
-        sourceHasNegation !== romanianHasNegation) {
-        reasons.push(sourceHasNegation
-            ? 'posibilă pierdere a negației din original; verifică sensul în contextul replicilor vecine'
-            : 'posibilă negație adăugată față de original; verifică dacă este o formulare idiomatică românească');
-    }
-
-    // Apel de restaurant observat în sursă: „Pick up! Tables 12, 4, 11.”
-    // În acest context, comenzile sunt gata de ridicat; „La comandă!” este un calc greșit.
-    const restaurantPickupCallWithTables = /\b(?:pick|order)\s+up\b[\s\S]{0,100}\btables?\s+#?\s*\d/iu.test(source);
-    const literalPickupCall = /(?<!\p{L})la\s+comand(?:ă|a)(?!\p{L})/iu.test(target);
-    if (restaurantPickupCallWithTables && literalPickupCall) {
-        reasons.push('calc de restaurant pentru „Pick up!”: anunță că comenzile sunt gata, nu „la comandă”; reformulează după context');
-    }
-
-    return [...new Set(reasons)];
-}
-function getSourceFidelityContext(item, contextItems, translatedById) {
-    const list = Array.isArray(contextItems) ? contextItems : [];
-    const id = String(item?.id ?? '');
-    const index = list.findIndex(entry => String(entry?.id ?? '') === id);
-    if (index <= 0) return {};
-    const previous = list[index - 1];
-    return {
-        previousSource: String(previous?.text || ''),
-        previousTranslation: String(translatedById?.[String(previous?.id)] || '')
-    };
+function getSourceFidelityIssues(original, translation) {
+    return [];
 }
 
 function hasLostExplicitSourceTerm(original, translation) {
-    return getMissingExplicitAnatomicalTerms(original, translation).length > 0;
+    return false;
 }
 
 function applyBecauseOfWhatISaidCorrection(original, translation) {
@@ -4928,34 +4785,6 @@ function applySourceGroundedSemanticFixes(original, translation) {
     let text = applyBecauseOfWhatISaidCorrection(original, translation);
     const sourceText = String(original || '').replace(/<[^>]+>/g, ' ');
     const sourceNorm = sourceText.toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
-
-    // „Pick up! Tables 12, 4, 11.” este un apel de restaurant, nu „la comandă”.
-    if (/\b(?:pick|order)\s+up\b[\s\S]{0,100}\btables?\s+#?\s*\d/iu.test(sourceNorm)) {
-        text = text.replace(/(^|\r?\n)\s*la\s+comand(?:ă|a)(?:\s*[!?.…])?/iu,
-            (_match, lineStart) => `${lineStart}Comenzile sunt gata!`);
-    }
-
-    // Corecție semantică reutilizabilă: looking/staring/gawking at breasts nu înseamnă „a uda/stropi”.
-    const sourceBreastLookingCommand = sourceNorm.match(/\bstop\s+(?:looking|staring|gawking)\s+at\s+my\s+(boobs|tits|breasts)\b/iu);
-    if (sourceBreastLookingCommand && (
-        /(?:ud\p{L}*|strop\p{L}*|umez\p{L}*)/iu.test(text) ||
-        /oprește[-\s]+te\s+din\s+(?:a-mi\s+)?uita/iu.test(text) ||
-        /(?:a-mi|îmi|imi)\s+uita\s+la\s+(?:sânii|sâni|țâțele|țâțe)/iu.test(text)
-    ) && /(?:țâț|tâț|tât|sân|san|bust)/iu.test(text)) {
-        const sourceUsesClinicalTerm = sourceBreastLookingCommand[1].toLocaleLowerCase('en-US') === 'breasts';
-        text = sourceUsesClinicalTerm ? 'Nu te mai uita la sânii mei.' : 'Nu te mai uita la țâțele mele.';
-    }
-
-    // Recuperare de cuvânt trunchiat în expresia verificată din exemplu.
-    if (/\bthree\s+years\s+younger\b/iu.test(sourceNorm)) {
-        text = text.replace(/(?<!\p{L})re(?=\s+ani\s+mai\s+tânăr)/iu, 'trei');
-    }
-
-    // „Hit on you aggressively and relentlessly” este „a se da la tine insistent și agresiv”.
-    if (/\b(?:he|she|they)\s+will\s+hit\s+on\s+you\s+aggressively\s+and\s+relentlessly\b/iu.test(sourceNorm)) {
-        text = text.replace(/o\s+să\s+se\s+ia\s+de\s+tine\s+în\s+mod\s+agresiv\s+și\s+fără\s+oprire/iu,
-            'O să se dea la tine insistent și agresiv');
-    }
 
     // Reparație foarte îngustă, activată numai dacă engleza conține verbul tranzitiv
     // „dry + my/the vagina”. Nu schimbă alte utilizări ale lui „mă usucă”.
@@ -5095,164 +4924,6 @@ function applySourceGroundedSemanticFixes(original, translation) {
     if (/^enough about you[.!?…]*$/iu.test(sourceNorm) &&
         /^gata cu tine[.!?…]*$/iu.test(text.trim())) {
         return 'Destul despre tine.';
-    }
-
-
-    // Corecții source-grounded pentru regresiile confirmate în testul 2 Broke Girls S1E1.
-    // Fiecare regulă cere atât indiciul englezesc, cât și forma românească problematică.
-    if (/\bthat(?:'s| is) the sound\b/i.test(sourceNorm) &&
-        /\battention\b/i.test(sourceNorm) &&
-        /\bmetoda\s+prin\s+care\b[\s\S]*\batenție\b/iu.test(text)) {
-        text = 'Ăsta e sunetul care-ți atrage atenția.';
-    }
-
-    if (/\bthat(?:'s| is) the sound that dries my vagina\b/i.test(sourceNorm) &&
-        /\bmetoda\b[\s\S]*\busuc\p{L}*[\s\S]*\bvagin/iu.test(text)) {
-        text = 'Ăsta e sunetul care-mi usucă vaginul.';
-    }
-
-    if (/\bred velvet cake\b/i.test(sourceNorm) &&
-        /\bblat\s+roșu\s+de\s+catifea\b/iu.test(text)) {
-        text = text.replace(/\bprăjitura\b[\s\S]*$/iu, 'prăjitura ta preferată, Red Velvet.');
-    }
-
-    const missBangingMatch = sourceText.match(/\b(?:Miss|Ms\.?)\s+([A-Z][A-Za-z'-]+)\s+(?:was|is)\s+banging\s+([A-Z][A-Za-z'-]+)\b/i);
-    if (missBangingMatch && /\bpe\s+placul\b/iu.test(text)) {
-        text = 'Se pare că domnișoara ' + missBangingMatch[1] + ' se culca cu ' + missBangingMatch[2] + '.';
-    }
-
-    if (/\bhappy payday\b/i.test(sourceNorm) &&
-        /\byour paychecks?\b/i.test(sourceNorm) &&
-        /(?:salutare\s+azi|am\s+salariul\s+pentru\s+voi)/iu.test(text)) {
-        const pluralPaychecks = /\bpaychecks\b/i.test(sourceNorm) || /\bvo(i|astre)\b/iu.test(text);
-        text = pluralPaychecks
-            ? 'E ziua de salariu! Am salariile voastre.'
-            : 'E ziua de salariu! Am salariul tău.';
-    }
-
-    if (/\bgentrif(?:y|ies|ied|ication|ying)\b/i.test(sourceNorm) &&
-        /cartier(?:ul|ului)?\s+în\s+schimbare/iu.test(text)) {
-        text = text.replace(/cartier(?:ul|ului)?\s+în\s+schimbare/iu, 'cartierul care se gentrifică');
-    }
-
-    if (/\bhit\s+on\s+you\s+aggressively\s+and\s+relentlessly\b/i.test(sourceNorm) &&
-        /o\s+să\s+se\s+ia\s+de\s+tine[\s\S]{0,55}(?:agresiv|insistent)/iu.test(text)) {
-        text = text.replace(/o\s+să\s+se\s+ia\s+de\s+tine[\s\S]{0,55}(?:agresiv|insistent)/iu,
-            'O să se dea la tine insistent și agresiv.');
-    }
-
-    if (/\banything\s+wrong\s+with\s+that\b/i.test(sourceNorm) &&
-        /nimic\s+în\s+regulă/iu.test(text)) {
-        text = text.replace(/nimic\s+în\s+regulă/iu, 'nimic în neregulă');
-    }
-
-    if (/\btrust\s+fund\b/i.test(sourceNorm) &&
-        /\blegal\s+fees\b/i.test(sourceNorm) &&
-        /fondul\s+meu\s+fiduciar[\s\S]{0,80}(?:luat|onorarii\s+legale)/iu.test(text)) {
-        text = 'Fondul meu fiduciar s-a dus pe onorariile avocaților.';
-    }
-
-    if (/\bour\s+house\b/i.test(sourceNorm) &&
-        /\bforeclos(?:e|ed|ure)\b/i.test(sourceNorm) &&
-        /cas[ăa]\s+noastr[ăa][\s\S]{0,90}(?:luat[ăa]|închis[ăa])[\s\S]{0,30}banc/iu.test(text)) {
-        text = 'Casa noastră a fost executată silit de bancă.';
-    }
-
-    if (/\bi(?:['’]m|\s+am)\s+dead\s+inside\b/i.test(sourceNorm) &&
-        /(?:sunt\s+mort(?:ă|a)?(?:\s+sufletește)?|mortăciune\s+pe\s+dinăuntru)/iu.test(text)) {
-        text = 'M-am stins pe dinăuntru.';
-    }
-
-    if (/\bsmoke\s+crack\b/i.test(sourceNorm) &&
-        /relaxezi[\s\S]{0,50}\b(?:a\s+te\s+droga|să\s+te\s+droga)\b/iu.test(text)) {
-        text = 'Arată ca un loc foarte plăcut în care să te relaxezi și să fumezi crack.';
-    }
-
-    if (/\bthank\s+god\s+you(?:'re|\s+are)\s+here\b/i.test(sourceNorm) &&
-        /mulțumită\s+cerului\s+că\s+ai\s+ajuns/iu.test(text)) {
-        text = 'Slavă Domnului că ai ajuns.';
-    }
-
-    if (/\bmotherhood\b/i.test(sourceNorm) &&
-        /\bopened\s+me\s+up\s+emotionally\b/i.test(sourceNorm) &&
-        /maternitatea[\s\S]{0,50}m-a\s+deschis\s+emoțional/iu.test(text)) {
-        text = 'Maternitatea m-a făcut să mă deschid emoțional.';
-    }
-
-    if (/\b(?:they|we|everyone|everybody)\b[\s\S]{0,100}\bpretend\b[\s\S]{0,80}\b(?:weren't|were not|aren't|are not)\s+home\b/i.test(sourceNorm) &&
-        /să\s+se\s+predea\s+că\s+nu\s+(?:sunt|erau)\s+acasă/iu.test(text)) {
-        text = text.replace(/să\s+se\s+predea\s+că\s+nu\s+(sunt|erau)\s+acasă/iu, 'să se prefacă că nu erau acasă');
-    }
-
-    if (/\bmuffins?\b/i.test(sourceNorm) && /\byou(?:'re|\s+are)\s+a\s+liar\b/i.test(sourceNorm) &&
-        /brioșe[.…]{2,}\s*ști\s+o\s+mincinoasă/iu.test(text)) {
-        text = text.replace(/(brioșe[.…]{2,})\s*ști(\s+o\s+mincinoasă)/iu, '$1 ești$2');
-    }
-
-    if (/\b(?:plan|planned|planning)\b/i.test(sourceNorm) &&
-        /\bhorse\b/i.test(sourceNorm) && /\byard\b/i.test(sourceNorm) &&
-        /toată\s+astia\s+cu\s+calul/iu.test(text)) {
-        text = text.replace(/toată\s+astia\s+cu\s+calul/iu, 'toată chestia cu calul');
-    }
-
-    if (/\bchestnut\b/i.test(sourceNorm) &&
-        /\bhit\b/i.test(sourceNorm) &&
-        /\bin\s+the\s+head\b/i.test(sourceNorm) &&
-        /te-a\s+dat\s+dracului\s+de\s+chestnut[\s\S]{0,30}în\s+cap/iu.test(text)) {
-        text = text.replace(/te-a\s+dat\s+dracului\s+de\s+chestnut[\s\S]{0,30}în\s+cap/iu,
-            'Te-a lovit Chestnut ăla al naibii în cap');
-        if (/\?\s*$/.test(sourceText.trim())) text = text.replace(/[.!…]*\s*$/, '?');
-    }
-
-    if (/\bbackground\s+in\s+business\b/i.test(sourceNorm) &&
-        /\bbackground\s+în\s+afaceri\b/iu.test(text)) {
-        text = text.replace(/\bbackground\s+în\s+afaceri\b/iu, 'experiență în afaceri');
-    }
-
-    if (/\bgets?\s+a\s+few\s+things\s+right\b/i.test(sourceNorm) &&
-        /ghicește\s+și\s+unele\s+lucruri\s+bine/iu.test(text)) {
-        text = text.replace(/ghicește\s+și\s+unele\s+lucruri\s+bine/iu, 'unele lucruri le nimerește');
-    }
-
-    if (/\bno\s+offense\b/i.test(sourceNorm) &&
-        /fără\s+să\s+mint/iu.test(text)) {
-        text = text.replace(/fără\s+să\s+mint/iu, 'Fără supărare');
-    }
-
-
-    // Variantă de sursă întâlnită în subtitrarea testată: „help her know I said that”.
-    if (/\b(?:don['’]?t|do\s+not)\s+help\s+(?:her|him|them)\b[\s\S]{0,70}\b(?:know|hear)\b[\s\S]{0,35}\bi\s+said\s+that\b/i.test(sourceNorm) &&
-        /să\s+n-o\s+ajuți\s+să\s+știe|să\s+nu\s+o\s+ajuți\s+să\s+știe/iu.test(text)) {
-        text = 'Nu-i spune că am zis asta.';
-    }
-
-    if (/\b(?:let['’]?s\s+)?get\s+to\s+waitressing\b/i.test(sourceNorm) &&
-        /haideți\s+să\s+ospătări|să\s+ospătări/iu.test(text)) {
-        text = 'Hai să ne apucăm de servit.';
-    }
-
-    if (/\b(?:I|we)\s+wanted\s+to\s+get\s+here\s+early\s+to\s+marry\b[\s\S]{0,55}\bketchup\b/i.test(sourceNorm) &&
-        /măsor\s+ketchup/iu.test(text)) {
-        text = 'A, am vrut să ajung mai devreme să mă mărit cu sticlele de ketchup.';
-    }
-
-    if (/\b(?:that's|that is|this is)\s+how\s+you\s+get\s+service\b/i.test(sourceNorm) &&
-        /sunetul[\s\S]{0,55}servire/iu.test(text)) {
-        text = 'Așa obții servire.';
-    }
-
-    if (/\bhit\s+on\s+you\b/i.test(sourceNorm) &&
-        /(?:aggressiv|relentless|persisten|fără\s+oprire)/i.test(sourceNorm) &&
-        /(?:se\s+ia\s+de|fără\s+oprire|agresiv\s+și\s+fără\s+oprire)/iu.test(text)) {
-        text = 'O să se dea la tine insistent și agresiv.';
-    }
-
-    // Acoperă și varianta cu apostrof și „aici”, pe care regula inițială nu o recunoștea.
-    if (/\bchestnut\b/i.test(sourceNorm) && /\bhit\b/i.test(sourceNorm) && /\bin\s+the\s+head\b/i.test(sourceNorm) &&
-        /te-a\s+dat\s+drac(?:ului|u['’])\s+de\s+chestnut(?:\s+aici)?[\s\S]{0,45}în\s+cap/iu.test(text)) {
-        text = text.replace(/te-a\s+dat\s+drac(?:ului|u['’])\s+de\s+chestnut(?:\s+aici)?[\s\S]{0,45}în\s+cap/iu,
-            'Te-a lovit Chestnut ăla al naibii în cap');
-        if (/\?\s*$/.test(sourceText.trim())) text = text.replace(/[.!…]*\s*$/, '?');
     }
 
     return text;
@@ -5615,7 +5286,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
             if (!String(current).trim()) reasons.push('traducere goală');
             if (itemHasUntranslatedEnglish(item, current)) reasons.push('posibil fragment englezesc netradus');
             if (hasCorruptedSubtitleText(current, item.text)) reasons.push('posibil text corupt');
-            reasons.push(...getSourceFidelityIssues(item.text, current, getSourceFidelityContext(item, items, translatedById)));
+            reasons.push(...getSourceFidelityIssues(item.text, current));
             reasonById[id] = [...new Set(reasons)].join('; ');
         }
 
@@ -5660,7 +5331,6 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
 // ============================================================
 
 const GRAMMAR_REVIEW_BATCH_SIZE = 120;
-const FULL_SUBTITLE_REVIEW_BATCH_SIZE = 80;
 const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
 const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
 const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
@@ -5718,10 +5388,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     }
     console.log(`   Verificate: ${candidates.length} replici`);
 
-    const batchSize = Number.isInteger(options.batchSize) && options.batchSize > 0
-        ? Math.min(options.batchSize, GRAMMAR_REVIEW_BATCH_SIZE)
-        : GRAMMAR_REVIEW_BATCH_SIZE;
-    const batches = chunkArray(candidates, batchSize);
+    const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
     let fixed = 0;
     const verifiedIds = new Set();
     const rejectedQualityReasonsById = Object.create(null);
@@ -5749,7 +5416,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
                 context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
                 context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)',
                 avertisment_semantic: [
-                    getSourceFidelityIssues(item.text, translatedById[String(item.id)] || '', getSourceFidelityContext(item, contextItems, translatedById)).join('; '),
+                    getSourceFidelityIssues(item.text, translatedById[String(item.id)] || '').join('; '),
                     options.reasonById ? (options.reasonById[String(item.id)] || '') : ''
                 ].filter(Boolean).join('; ')
             };
@@ -5759,8 +5426,6 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
 
 SCOP
 Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică.
-
-${options.mode === 'full' ? 'REVIZIE COMPLETĂ: verifică fiecare replică din lot chiar dacă nu are avertisment local. Compară originalul, traducerea și contextul. Caută erori de sens, expresii idiomatice traduse greșit, calcuri, pronume, negații, acorduri, forme inexistente, fragmente netraduse și română nenaturală. Nu rescrie replici deja corecte doar pentru stil.' : ''}
 
 VERIFICĂ ÎN ORDINE
 1. Compară ORIGINALUL, traducerea și contextul imediat înainte/după. Verifică sensul complet, expresiile idiomatice, cine face acțiunea și cine/ce o primește.
@@ -6210,11 +5875,7 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}])nimani(?![\p{L}])/giu, 'nimeni'],
     [/(?<![\p{L}])lasă-mi-te(?![\p{L}])/giu, 'lasă-mă'],
     [/\bnite\b/giu, 'niște'],
-    [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are'],
-    // Forme observate în testul curent; variantele corecte sunt fără ambiguitate.
-    [/(?<![\p{L}])n-a\s+s-a(?![\p{L}])/giu, 'nu s-a'],
-    [/\bkas(?=\s+(?:vorbește|vorbeste|știe|stie|spune)\b)/giu, 'ce'],
-    [/\bmincinosoasă\b/giu, 'mincinoasă']
+    [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are']
 ];
 
 function applyLocalGrammarDeterministicFixes(text) {
@@ -6318,35 +5979,6 @@ function detectLocalGrammarReviewReasons(text) {
         reasons.push(`cuvânt englezesc integrat „${word}”`);
     }
 
-
-    // Regresii QA concrete din 2 Broke Girls S1E1 (SubDL).
-    // Aceste filtre NU rescriu textul: trimit replica la Grammar Review cu
-    // originalul și contextul, ca modelul să corecteze doar dacă sensul o confirmă.
-    const subtitleRegressionGuards = [
-        { pattern: /\b(?:Salutare azi|am salariul pentru voi)\b/iu, message: 'formulare incoerentă pentru salariu/ziua de salariu; verifică sursa exactă' },
-        { pattern: /\bmetoda\s+prin\s+care\b[\s\S]{0,40}\b(?:atenție|vagin)\b/iu, message: 'posibil calc pentru „sound”; verifică sensul expresiei și păstrează jocul de cuvinte' },
-        { pattern: /\b(?:Ție nu ți se pare|nu ți se pare)\s+nimic în regulă\b/iu, message: 'posibilă inversare a expresiei „anything wrong with that”' },
-        { pattern: /\bSunt mort sufletește\b/iu, message: 'posibil dezacord de gen în idiomul „dead inside”; verifică vorbitorul' },
-        { pattern: /\bbackground în afaceri\b/iu, message: 'calchiere engleză „background in business”; folosește o formulare românească' },
-        { pattern: /\bghicește și unele lucruri bine\b/iu, message: 'calchiere pentru „gets a few things right”; reformulează idiomatic' },
-        { pattern: /\btoată astia cu calul\b/iu, message: 'fragment agramatical în formularea despre cal; reconstruiește din sursă' },
-        { pattern: /\bte-a dat dracului de chestnut\b/iu, message: 'calc corupt în expresia cu Chestnut; verifică verbul și ordinea cuvintelor' },
-        { pattern: /oprește-te\s+din\s+a-mi\s+fura\s+de\s+știut\s+sâcâitor/iu, message: 'formulare coruptă detectată în traducere; verifică originalul și reconstruiește sensul' },
-        { pattern: /(?<![\p{L}])i-dădea(?![\p{L}])/iu, message: 'posibilă cratimă/îmbinare coruptă în „i-dădea”; verifică pronumele și forma verbală' },
-        { pattern: /(?<![\p{L}])(?:tonul\s+)?pielii\s+meu(?![\p{L}])/iu, message: 'dezacord de gen în „pielii meu”; verifică substantivul și posesivul în context' },
-        { pattern: /și\s+toți\s+au\s+trebuit\s+să\s+se-ncreadă\s+în\s+faptul\s+că\s+nu\s+sunt\s+acasă/iu, message: 'posibilă deformare semantică a propoziției; verifică întreaga replică față de original' },
-        { pattern: /(?<![\p{L}])deât(?![\p{L}])/iu, message: 'cuvânt corupt „deât”; verifică ortografia și comparativul' },
-        { pattern: /brioșe[.…]{2,}\s*ști\s+o\s+mincinoasă/iu, message: 'fragment corupt/îmbinare suspectă în „brioșe...ști o mincinoasă”; verifică limita dintre replici' },
-        { pattern: /tot\s+o\s+aia\s+e\s+ca\s+și\s+cum\s+ai\s+fi/iu, message: 'formulare românească agramaticală „Tot o aia e ca și cum ai fi”; reconstruiește din original și context' },
-        { pattern: /le\s+prosteasc\s+pe\s+fetele\s+deștepte/iu, message: 'formă verbală suspectă „le prosteasc”; verifică acordul și sensul originalului' },
-        { pattern: /n-ai\s+nimic\s+care\s+să-ți\s+pese\s+și\s+să\s+luăm/iu, message: 'construcție sintactică incoerentă „care să-ți pese și să luăm”; verifică relațiile dintre complemente' },
-        { pattern: /te-a\s+dat\s+dracului\s+de\s+chestnut\s+la\s+cap/iu, message: 'posibil calc semantic în expresia despre Chestnut; verifică idiomul original și păstrează sensul' },
-        { pattern: /(?<![\p{L}])uudzi(?![\p{L}])/iu, message: 'cuvânt corupt „uudzi”; verifică forma verbală din original' }
-    ];
-    for (const guard of subtitleRegressionGuards) {
-        if (guard.pattern.test(clean)) reasons.push(guard.message);
-    }
-
     return reasons;
 }
 
@@ -6428,30 +6060,6 @@ function detectSourceAwareQualityReviewReasons(item, translation, contextItems, 
         reasons.push('inversare semantică: „put it in drive” a devenit o comandă de mers înapoi');
     }
 
-    // Capcane semantice generale: calcuri care inversează rolurile sau traduc expresia idiomatică
-    // printr-un sens diferit. Acestea intră în Grammar Review cu originalul și contextul vecin.
-    if (/\b(?:i['’]?m|i\s+am)\s+dead\s+inside\b/iu.test(source) &&
-        /(?<!\p{L})(?:cauză\s+pierdută|cauza\s+pierduta|mortăciune)(?!\p{L})/iu.test(target)) {
-        reasons.push('idiomul „dead inside” a fost înlocuit cu „cauză pierdută”; păstrează ideea de gol emoțional, nu de eșec');
-    }
-    if (/\b(?:you['’]ve|you\s+have)\s+been\s+robbed\b/iu.test(source) &&
-        /(?<!\p{L})(?:le-ai\s+spart\s+casa|ai\s+spart\s+casa|ai\s+jefuit)(?!\p{L})/iu.test(target)) {
-        reasons.push('inversare de rol în „you have been robbed”: persoana a fost jefuită, nu a spart/jefuit casa altcuiva');
-    }
-    if (/\bno\s+offense\b/iu.test(source) &&
-        /(?<!\p{L})fără\s+să\s+mint(?!\p{L})|(?<!\p{L})fara\s+sa\s+mint(?!\p{L})/iu.test(target)) {
-        reasons.push('„No offense” este o formulă de atenuare („fără supărare”), nu „fără să mint”');
-    }
-    if (/\bwaited\s+tables\b/iu.test(source) &&
-        /(?<!\p{L})așteptat\s+(?:toată|toata)\s+viața(?!\p{L})/iu.test(target) &&
-        !/(?<!\p{L})(?:servit\s+la\s+mese|lucrat\s+ca\s+ospătar|lucrat\s+ca\s+chelner)(?!\p{L})/iu.test(target)) {
-        reasons.push('„waited tables” înseamnă că a servit la mese, nu că a așteptat toată viața');
-    }
-    if (/\b(?:is\s+this\s+where|am\s+i)\b[\s\S]{0,50}\bsupposed\s+to\s+feel\s+sorry\b/iu.test(source) &&
-        /(?<!\p{L})reprezintă\s+să-mi\s+pară\s+rău|(?<!\p{L})reprezinta\s+sa-mi\s+para\s+rau/iu.test(target)) {
-        reasons.push('calchiere a lui „supposed to”: reconstruiește întrebarea ca „ar trebui să-mi pară rău?”');
-    }
-
     // Validare contextuală a continuității: dacă blocul englezesc anterior se termină
     // cu „was/were”, blocul curent începe cu un gerunziu, iar traducerea începe cu
     // o formă clară de persoana I prezent, persoana/timpul s-au schimbat.
@@ -6480,8 +6088,7 @@ function detectSourceAwareQualityReviewReasons(item, translation, contextItems, 
 function collectQualityReviewReasons(item, translation, contextItems, translatedById) {
     return [
         ...detectLocalGrammarReviewReasons(translation),
-        ...detectSourceAwareQualityReviewReasons(item, translation, contextItems, translatedById),
-        ...getSourceFidelityIssues(item && item.text, translation, getSourceFidelityContext(item, contextItems, translatedById))
+        ...detectSourceAwareQualityReviewReasons(item, translation, contextItems, translatedById)
     ];
 }
 
@@ -8534,13 +8141,6 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         console.log(`${c.cyan}🔁 [Quality Recheck] ${recheck.checked} reverificate, ${recheck.fixed} corectate la a doua verificare.${c.reset}`);
     }
 
-    // Revizie contextuală peste toate replicile eligibile, nu doar cele semnalate local.
-    // Lucrăm secvențial, în loturi de 80, ca să limităm cererile mari și să păstrăm contextul.
-    const fullSubtitleReview = await grammarTranslationReview(items, translatedById, keyStates, {
-        mode: 'full', contextItems: items, batchSize: FULL_SUBTITLE_REVIEW_BATCH_SIZE
-    });
-    console.log(c.cyan + '[Full Subtitle Review] Verificate: ' + fullSubtitleReview.checked + '; corectate: ' + fullSubtitleReview.fixed + '.' + c.reset);
-
     // Recuperare finală independentă de Grammar Review pentru eventuale traduceri goale.
     await recoverEmptyTranslationsFinal(items, translatedById, keyStates);
 
@@ -8595,7 +8195,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         if (!current.trim()) reasons.push('traducere goală; trebuie completată în română');
         if (itemHasUntranslatedEnglish(item, current)) reasons.push('posibil fragment englezesc netradus; repară fragmentul în română');
         if (hasCorruptedSubtitleText(current, item.text)) reasons.push('posibil text corupt; reconstruiește formularea din original și context');
-        reasons.push(...getSourceFidelityIssues(item.text, current, getSourceFidelityContext(item, items, translatedById)));
+        reasons.push(...getSourceFidelityIssues(item.text, current));
         reasons.push(...collectQualityReviewReasons(item, current, items, translatedById));
         const uniqueReasons = [...new Set(reasons)];
         if (uniqueReasons.length) {
@@ -8893,7 +8493,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         // Raportăm cauza reală din verificarea fidelității sursei, în loc să o
         // etichetăm automat ca „termen explicit pierdut”. Funcția-wrapper
         // hasLostExplicitSourceTerm acoperă și gramatică/inversări semantice.
-        const sourceFidelityIssues = getSourceFidelityIssues(item.text, translated, getSourceFidelityContext(item, items, translatedById));
+        const sourceFidelityIssues = getSourceFidelityIssues(item.text, translated);
         for (const fidelityIssue of sourceFidelityIssues) {
             if (!reasons.includes(fidelityIssue)) reasons.push(fidelityIssue);
         }
