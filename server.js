@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.48',
+    version: '13.2.49',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4757,15 +4757,41 @@ function hasCorruptedSubtitleText(text, originalText) {
 // spot-check, empty recovery și celelalte verificări independente rămân active.
 // ============================================================
 function getMissingExplicitAnatomicalTerms(original, translation) {
-    return [];
+    const source = String(original || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
+    const target = String(translation || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('ro-RO').replace(/\s+/g, ' ').trim();
+    if (!source || !target) return [];
+    const explicitTerms = [
+        { label: 'vagin', source: /\b(?:vagina|vaginas|vaginal)\b/i, target: /\bvagin\p{L}*/iu },
+        { label: 'vulvă', source: /\b(?:vulva|vulvar)\b/i, target: /\bvulv\p{L}*/iu },
+        { label: 'penis', source: /\b(?:penis|penises)\b/i, target: /\b(?:penis\p{L}*|pul[ăa]\p{L}*|scul[ăa]\p{L}*)/iu },
+        { label: 'clitoris', source: /\b(?:clitoris|clitoral)\b/i, target: /\b(?:clitoris\p{L}*|clit)\b/iu },
+        { label: 'sâni', source: /\b(?:breasts?|boobs?|tits?)\b/i, target: /\b(?:sân\p{L}*|san\p{L}*|țâț\p{L}*|tâț\p{L}*|tât\p{L}*|piept\p{L}*|bust\p{L}*)/iu },
+        { label: 'sfârcuri/mameloane', source: /\b(?:nipples?)\b/i, target: /\b(?:sfârc\p{L}*|sfarc\p{L}*|mamelon\p{L}*|țâț\p{L}*)/iu },
+        { label: 'testicule', source: /\btesticles?\b|\b(?:my|your|his|her|their)\s+balls\b/i, target: /\b(?:testicul\p{L}*|coa[iăe]\p{L}*|ouă|oua)\b/iu },
+        { label: 'anus', source: /\b(?:anus|anal)\b/i, target: /\b(?:anus\p{L}*|anal\p{L}*)/iu }
+    ];
+    return explicitTerms.filter(term => term.source.test(source) && !term.target.test(target)).map(term => term.label);
 }
 
 function getSourceFidelityIssues(original, translation) {
-    return [];
+    const source = String(original || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
+    const target = String(translation || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('ro-RO').replace(/\s+/g, ' ').trim();
+    if (!source || !target) return [];
+    const reasons = [];
+    const englishNotOnlyConstruction = /\bnot only\b[\s\S]*\bbut\b[\s\S]*\balso\b/i.test(source);
+    const romanianNotOnlyConstruction = /\bnu\s+(?:numai|doar)\b/iu.test(target);
+    const sourceHasNegation = !englishNotOnlyConstruction && /\b(?:not|no|never|neither|nor|nobody|no one|nothing|nowhere|without|hardly|scarcely|barely|cannot|can't|couldn't|didn't|doesn't|don't|hadn't|hasn't|haven't|isn't|aren't|wasn't|weren't|won't|wouldn't|shouldn't|mustn't|needn't|mightn't|shan't|ain't)\b/i.test(source);
+    const romanianHasNegation = !romanianNotOnlyConstruction && /\b(?:nu|nici|nimeni|nimic|niciodată|niciodata|nicicând|nicicand|niciunde|niciun(?:a|ul|ii|ele|ei|or|ora)?|nicio|fără|fara|deloc|nicidecum|abia)\b|(?:^|[\s("'„])n-(?:am|ai|are|avem|aveți|aveti|au|a|ați|ati|ar|aș|as)\b/iu.test(target);
+    if (sourceHasNegation !== romanianHasNegation) {
+        reasons.push(sourceHasNegation
+            ? 'posibilă pierdere a negației din original; verifică dacă traducerea păstrează sensul exact'
+            : 'posibilă negație adăugată față de original; verifică dacă traducerea schimbă sensul');
+    }
+    return reasons;
 }
 
 function hasLostExplicitSourceTerm(original, translation) {
-    return false;
+    return getMissingExplicitAnatomicalTerms(original, translation).length > 0;
 }
 
 function applyBecauseOfWhatISaidCorrection(original, translation) {
@@ -6088,7 +6114,8 @@ function detectSourceAwareQualityReviewReasons(item, translation, contextItems, 
 function collectQualityReviewReasons(item, translation, contextItems, translatedById) {
     return [
         ...detectLocalGrammarReviewReasons(translation),
-        ...detectSourceAwareQualityReviewReasons(item, translation, contextItems, translatedById)
+        ...detectSourceAwareQualityReviewReasons(item, translation, contextItems, translatedById),
+        ...getSourceFidelityIssues(item && item.text, translation)
     ];
 }
 
