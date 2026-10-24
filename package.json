@@ -1,12 +1,12 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.51",
+  "version": "13.2.52",
   "private": true,
-  "description": "Context-aware Romanian subtitle translation with source-fidelity quality checks",
+  "description": "Context-aware Romanian subtitle translation with source-grounded corrections and split-sentence QA",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test:quality": "node --test tests/subtitle-quality-regressions.test.js tests/translation-quality-v51.test.js"
+    "test:quality": "node --test tests/*.test.js"
   },
   "engines": {
     "node": ">=18"
