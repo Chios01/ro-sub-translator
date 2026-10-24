@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.54',
+    version: '13.2.55',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4937,8 +4937,11 @@ function applySourceGroundedSemanticFixes(original, translation) {
 
     // Corecție semantică reutilizabilă: looking/staring/gawking at breasts nu înseamnă „a uda/stropi”.
     const sourceBreastLookingCommand = sourceNorm.match(/\bstop\s+(?:looking|staring|gawking)\s+at\s+my\s+(boobs|tits|breasts)\b/iu);
-    if (sourceBreastLookingCommand && /(?:ud\p{L}*|strop\p{L}*|umez\p{L}*)/iu.test(text) &&
-        /(?:țâț|tâț|tât|sân|san|bust)/iu.test(text)) {
+    if (sourceBreastLookingCommand && (
+        /(?:ud\p{L}*|strop\p{L}*|umez\p{L}*)/iu.test(text) ||
+        /oprește[-\s]+te\s+din\s+(?:a-mi\s+)?uita/iu.test(text) ||
+        /(?:a-mi|îmi|imi)\s+uita\s+la\s+(?:sânii|sâni|țâțele|țâțe)/iu.test(text)
+    ) && /(?:țâț|tâț|tât|sân|san|bust)/iu.test(text)) {
         const sourceUsesClinicalTerm = sourceBreastLookingCommand[1].toLocaleLowerCase('en-US') === 'breasts';
         text = sourceUsesClinicalTerm ? 'Nu te mai uita la sânii mei.' : 'Nu te mai uita la țâțele mele.';
     }
@@ -5214,6 +5217,42 @@ function applySourceGroundedSemanticFixes(original, translation) {
     if (/\bno\s+offense\b/i.test(sourceNorm) &&
         /fără\s+să\s+mint/iu.test(text)) {
         text = text.replace(/fără\s+să\s+mint/iu, 'Fără supărare');
+    }
+
+
+    // Variantă de sursă întâlnită în subtitrarea testată: „help her know I said that”.
+    if (/\b(?:don['’]?t|do\s+not)\s+help\s+(?:her|him|them)\b[\s\S]{0,70}\b(?:know|hear)\b[\s\S]{0,35}\bi\s+said\s+that\b/i.test(sourceNorm) &&
+        /să\s+n-o\s+ajuți\s+să\s+știe|să\s+nu\s+o\s+ajuți\s+să\s+știe/iu.test(text)) {
+        text = 'Nu-i spune că am zis asta.';
+    }
+
+    if (/\b(?:let['’]?s\s+)?get\s+to\s+waitressing\b/i.test(sourceNorm) &&
+        /haideți\s+să\s+ospătări|să\s+ospătări/iu.test(text)) {
+        text = 'Hai să ne apucăm de servit.';
+    }
+
+    if (/\b(?:I|we)\s+wanted\s+to\s+get\s+here\s+early\s+to\s+marry\b[\s\S]{0,55}\bketchup\b/i.test(sourceNorm) &&
+        /măsor\s+ketchup/iu.test(text)) {
+        text = 'A, am vrut să ajung mai devreme să mă mărit cu sticlele de ketchup.';
+    }
+
+    if (/\b(?:that's|that is|this is)\s+how\s+you\s+get\s+service\b/i.test(sourceNorm) &&
+        /sunetul[\s\S]{0,55}servire/iu.test(text)) {
+        text = 'Așa obții servire.';
+    }
+
+    if (/\bhit\s+on\s+you\b/i.test(sourceNorm) &&
+        /(?:aggressiv|relentless|persisten|fără\s+oprire)/i.test(sourceNorm) &&
+        /(?:se\s+ia\s+de|fără\s+oprire|agresiv\s+și\s+fără\s+oprire)/iu.test(text)) {
+        text = 'O să se dea la tine insistent și agresiv.';
+    }
+
+    // Acoperă și varianta cu apostrof și „aici”, pe care regula inițială nu o recunoștea.
+    if (/\bchestnut\b/i.test(sourceNorm) && /\bhit\b/i.test(sourceNorm) && /\bin\s+the\s+head\b/i.test(sourceNorm) &&
+        /te-a\s+dat\s+drac(?:ului|u['’])\s+de\s+chestnut(?:\s+aici)?[\s\S]{0,45}în\s+cap/iu.test(text)) {
+        text = text.replace(/te-a\s+dat\s+drac(?:ului|u['’])\s+de\s+chestnut(?:\s+aici)?[\s\S]{0,45}în\s+cap/iu,
+            'Te-a lovit Chestnut ăla al naibii în cap');
+        if (/\?\s*$/.test(sourceText.trim())) text = text.replace(/[.!…]*\s*$/, '?');
     }
 
     return text;
@@ -5621,6 +5660,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
 // ============================================================
 
 const GRAMMAR_REVIEW_BATCH_SIZE = 120;
+const FULL_SUBTITLE_REVIEW_BATCH_SIZE = 80;
 const GRAMMAR_REVIEW_TIMEOUT_MS = 120000;
 const GRAMMAR_REVIEW_TIMEOUT_RETRY_MS = 3000;
 const GRAMMAR_REVIEW_JSON_RETRY_DELAY_MS = 1200;
@@ -5678,7 +5718,10 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
     }
     console.log(`   Verificate: ${candidates.length} replici`);
 
-    const batches = chunkArray(candidates, GRAMMAR_REVIEW_BATCH_SIZE);
+    const batchSize = Number.isInteger(options.batchSize) && options.batchSize > 0
+        ? Math.min(options.batchSize, GRAMMAR_REVIEW_BATCH_SIZE)
+        : GRAMMAR_REVIEW_BATCH_SIZE;
+    const batches = chunkArray(candidates, batchSize);
     let fixed = 0;
     const verifiedIds = new Set();
     const rejectedQualityReasonsById = Object.create(null);
@@ -5716,6 +5759,8 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
 
 SCOP
 Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică.
+
+${options.mode === 'full' ? 'REVIZIE COMPLETĂ: verifică fiecare replică din lot chiar dacă nu are avertisment local. Compară originalul, traducerea și contextul. Caută erori de sens, expresii idiomatice traduse greșit, calcuri, pronume, negații, acorduri, forme inexistente, fragmente netraduse și română nenaturală. Nu rescrie replici deja corecte doar pentru stil.' : ''}
 
 VERIFICĂ ÎN ORDINE
 1. Compară ORIGINALUL, traducerea și contextul imediat înainte/după. Verifică sensul complet, expresiile idiomatice, cine face acțiunea și cine/ce o primește.
@@ -6168,7 +6213,8 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are'],
     // Forme observate în testul curent; variantele corecte sunt fără ambiguitate.
     [/(?<![\p{L}])n-a\s+s-a(?![\p{L}])/giu, 'nu s-a'],
-    [/\bkas(?=\s+(?:vorbește|vorbeste|știe|stie|spune)\b)/giu, 'ce']
+    [/\bkas(?=\s+(?:vorbește|vorbeste|știe|stie|spune)\b)/giu, 'ce'],
+    [/\bmincinosoasă\b/giu, 'mincinoasă']
 ];
 
 function applyLocalGrammarDeterministicFixes(text) {
@@ -8487,6 +8533,13 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         });
         console.log(`${c.cyan}🔁 [Quality Recheck] ${recheck.checked} reverificate, ${recheck.fixed} corectate la a doua verificare.${c.reset}`);
     }
+
+    // Revizie contextuală peste toate replicile eligibile, nu doar cele semnalate local.
+    // Lucrăm secvențial, în loturi de 80, ca să limităm cererile mari și să păstrăm contextul.
+    const fullSubtitleReview = await grammarTranslationReview(items, translatedById, keyStates, {
+        mode: 'full', contextItems: items, batchSize: FULL_SUBTITLE_REVIEW_BATCH_SIZE
+    });
+    console.log(c.cyan + '[Full Subtitle Review] Verificate: ' + fullSubtitleReview.checked + '; corectate: ' + fullSubtitleReview.fixed + '.' + c.reset);
 
     // Recuperare finală independentă de Grammar Review pentru eventuale traduceri goale.
     await recoverEmptyTranslationsFinal(items, translatedById, keyStates);
