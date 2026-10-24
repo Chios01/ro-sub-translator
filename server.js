@@ -2070,12 +2070,12 @@ const KNOWN_TRANSLATED_INTERJECTIONS = new Set([
 ]);
 
 // Reacțiile cu sens rămân pentru Gemini. Eliminăm doar vocalizările fără dialog.
-const STANDALONE_SOURCE_FILLERS = new Set(
+const CONTEXTUAL_STANDALONE_FILLERS = new Set(
     [...KNOWN_TRANSLATED_INTERJECTIONS]
         .filter(token => !MEANINGFUL_STANDALONE_REACTIONS.has(token))
 );
 
-const CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN = [...STANDALONE_SOURCE_FILLERS]
+const CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN = [...CONTEXTUAL_STANDALONE_FILLERS]
     .sort((a, b) => b.length - a.length)
     .join('|');
 
