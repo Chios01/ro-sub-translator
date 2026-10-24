@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.50',
+    version: '13.2.51',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2772,7 +2772,8 @@ ROMANIAN ACCURACY RULES
 - Names: keep names of people, characters, brands, bands and show/film titles as in the source unless an established Romanian form exists („Londra”, „Marea Britanie”). Do not decline or invent endings for foreign names, and spell each name the same way throughout.
 - Direct object: use „pe” plus the clitic for people as direct objects („Îl iubesc pe Tom”, „Te văd pe tine”), not for things.
 - Numerals: use „de” before the counted noun when the number is 20 or more or ends in 00 („20 de dolari”, „100 de ani”, „35 de minute”); omit it for 1–19 („15 dolari”, „3 ani”, „12 minute”).
-- Calques: translate fixed phrases by their function, not word by word — “I mean”, “you know”, “like” (filler), “literally”, “actually”, “come on”, “hang on”, “my bad”, “I'm good”, “you're welcome”, “what's up”, “no way”, “give me a break”, “count me in”, “it's on me”. Do not mirror English passives, “-ing” chains or possessives („Mi-am spălat mâinile” → „M-am spălat pe mâini” when more natural). Tag questions (“right?”, “isn't it?”) become „nu?”, „da?” or „nu-i așa?”.
+- In a restaurant kitchen/service context, “Order up!” is a call that the food/orders are ready. With table numbers, translate the intended meaning naturally (for example, „Comenzile sunt gata! Mesele 12, 4 și 11.”), not literally as „La comandă!”.
+    - Calques: translate fixed phrases by their function, not word by word — “I mean”, “you know”, “like” (filler), “literally”, “actually”, “come on”, “hang on”, “my bad”, “I'm good”, “you're welcome”, “what's up”, “no way”, “give me a break”, “count me in”, “it's on me”. Do not mirror English passives, “-ing” chains or possessives („Mi-am spălat mâinile” → „M-am spălat pe mâini” when more natural). Tag questions (“right?”, “isn't it?”) become „nu?”, „da?” or „nu-i așa?”.
 - Interjections: “Hmm?” / “Hm.” → „Hm?” / „Mda.” / „Mm.”; never „Mă?” or „Mă.” (a rude vocative in Romanian). Keep “Huh?” as „Hă?”.
 - Agreement: check noun gender and number after every demonstrative or adjective („aceste microorganisme”, not „acești”); neuter nouns take masculine singular and feminine plural forms. Use „mi-e” / „nu mi-e frică”, not „mi-este”.
 - Names and invented terms must have ONE Romanian form in the whole file. If a glossary is provided in the background block, follow it exactly; otherwise keep a nickname or invented term the same in every line and never produce spelling variants of the same name.
@@ -4774,22 +4775,80 @@ function getMissingExplicitAnatomicalTerms(original, translation) {
 }
 
 function getSourceFidelityIssues(original, translation) {
+    // QA semantic conservator: nu confundă simpla apariție a lui „nu” cu sensul
+    // negativ și folosește limite Unicode, necesare pentru diacriticele românești.
     const source = String(original || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
     const target = String(translation || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('ro-RO').replace(/\s+/g, ' ').trim();
     if (!source || !target) return [];
-    const reasons = [];
-    const englishNotOnlyConstruction = /\bnot only\b[\s\S]*\bbut\b[\s\S]*\balso\b/i.test(source);
-    const romanianNotOnlyConstruction = /\bnu\s+(?:numai|doar)\b/iu.test(target);
-    const sourceHasNegation = !englishNotOnlyConstruction && /\b(?:not|no|never|neither|nor|nobody|no one|nothing|nowhere|without|hardly|scarcely|barely|cannot|can't|couldn't|didn't|doesn't|don't|hadn't|hasn't|haven't|isn't|aren't|wasn't|weren't|won't|wouldn't|shouldn't|mustn't|needn't|mightn't|shan't|ain't)\b/i.test(source);
-    const romanianHasNegation = !romanianNotOnlyConstruction && /\b(?:nu|nici|nimeni|nimic|niciodată|niciodata|nicicând|nicicand|niciunde|niciun(?:a|ul|ii|ele|ei|or|ora)?|nicio|fără|fara|deloc|nicidecum|abia)\b|(?:^|[\s("'„])n-(?:am|ai|are|avem|aveți|aveti|au|a|ați|ati|ar|aș|as)\b/iu.test(target);
-    if (sourceHasNegation !== romanianHasNegation) {
-        reasons.push(sourceHasNegation
-            ? 'posibilă pierdere a negației din original; verifică dacă traducerea păstrează sensul exact'
-            : 'posibilă negație adăugată față de original; verifică dacă traducerea schimbă sensul');
-    }
-    return reasons;
-}
 
+    const reasons = [];
+    const hasUnicodeWord = (text, words) => {
+        const alternatives = words.join('|');
+        return new RegExp('(?<!\\p{L})(?:' + alternatives + ')(?!\\p{L})', 'iu').test(text);
+    };
+
+    const englishNotOnlyConstruction = /(?<!\p{L})not\s+only(?!\p{L})[\s\S]*\bbut\b[\s\S]*\balso\b/iu.test(source);
+    const romanianNotOnlyConstruction = /(?<!\p{L})nu\s+(?:(?:e|este|sunt|era|erau)\s+)?(?:numai|doar)(?!\p{L})/iu.test(target);
+
+    // „Stop looking/staring...” → „nu te mai uita...” este un imperativ corect,
+    // nu o negație suplimentară.
+    const sourceStopCommand = /(?:^|[,;]\s*)(?:please\s+)?stop\s+[\p{L}]+/iu.test(source);
+    const targetStopCommand = /(?:^|[,;]\s*)nu\s+(?:(?:te|vă|va|mă|ma|se|ne)\s+)?mai\s+[\p{L}]+/iu.test(target);
+
+    // Câteva traduceri românești idiomatice folosesc „nu” fără a inversa sensul.
+    const idiomaticPositiveSource =
+        /(?<!\p{L})(?:uncomfortable|awkward|out\s+of\s+place)(?!\p{L})/iu.test(source) &&
+        /(?<!\p{L})nu\s+mă\s+simt\s+(?:în|in)\s+apele\s+mele(?!\p{L})/iu.test(target);
+    const wrongThingsIdiom =
+        /(?<!\p{L})wrong(?!\p{L})/iu.test(source) &&
+        /(?<!\p{L})nu\s+trebuia(?!\p{L})/iu.test(target);
+
+    const sourceHasNegation = !englishNotOnlyConstruction && hasUnicodeWord(source, [
+        'not', 'no', 'none', 'never', 'neither', 'nor', 'nobody', 'no one', 'nothing',
+        'nowhere', 'without', 'hardly', 'scarcely', 'barely', 'cannot', "can't", "couldn't",
+        "didn't", "doesn't", "don't", "hadn't", "hasn't", "haven't", "isn't", "aren't",
+        "wasn't", "weren't", "won't", "wouldn't", "shouldn't", "mustn't", "needn't",
+        "mightn't", "shan't", "ain't"
+    ]);
+
+    const romanianNegationWords = [
+        'nu', 'nici', 'nimeni', 'nimic', 'nicăieri', 'nicaieri', 'niciodată', 'niciodata',
+        'nicicând', 'nicicand', 'niciunde', 'niciun', 'niciuna', 'niciunul', 'niciunii',
+        'niciunele', 'niciunor', 'nicio', 'fără', 'fara', 'deloc', 'nicidecum'
+    ];
+    let romanianHasNegation = !romanianNotOnlyConstruction && hasUnicodeWord(
+        target.replace(/(?:^|[,;\s])nu[- ]i\s+aș?a\s*[?!.,…]*$/iu, ' '),
+        romanianNegationWords
+    );
+    const romanianNegationContraction = /(?<!\p{L})n[-’'](?:am|ai|a|au|ar|aș|as|ați|ati|aveam|aveai|avea|aveau|aveți|aveti|o|îl|il|îi|ii|le|l|mi|mă|ma|te|se|ne|vă|va)(?!\p{L})/iu;
+    romanianHasNegation = romanianHasNegation || romanianNegationContraction.test(target);
+
+    // „Abia” exprimă o negație doar în construcții precum hardly/barely sau can't wait.
+    if (/(?<!\p{L})(?:hardly|scarcely|barely)(?!\p{L})/iu.test(source) && /(?<!\p{L})abia(?!\p{L})/iu.test(target)) {
+        romanianHasNegation = true;
+    }
+    if (/\bcan't\s+wait\b/iu.test(source) && /(?<!\p{L})abia\s+aștept(?!\p{L})/iu.test(target)) {
+        romanianHasNegation = true;
+    }
+    if (sourceStopCommand && targetStopCommand) romanianHasNegation = false;
+
+    if (!idiomaticPositiveSource && !wrongThingsIdiom && sourceHasNegation !== romanianHasNegation) {
+        reasons.push(sourceHasNegation
+            ? 'posibilă pierdere a negației din original; verifică sensul în contextul replicilor vecine'
+            : 'posibilă negație adăugată față de original; verifică dacă este o formulare idiomatică românească');
+    }
+
+    // Regressie observată în subtitrări de restaurant: cu numere de mese,
+    // „Order up!” anunță că comenzile/mâncarea sunt gata, nu „la comandă”.
+    // Regula e limitată la aceeași replică și nu se aplică altor sensuri ale lui "order".
+    const restaurantOrderUpWithTables = /\border\s+up\b[\s\S]{0,100}\btables?\s+#?\s*\d/iu.test(source);
+    const literalOrderUp = /(?<!\p{L})la\s+comand(?:ă|a)(?!\p{L})/iu.test(target);
+    if (restaurantOrderUpWithTables && literalOrderUp) {
+        reasons.push('posibil calc pentru „Order up!” în context de restaurant: aici înseamnă că mâncarea/comenzile sunt gata, nu „la comandă”; reformulează natural după context');
+    }
+
+    return [...new Set(reasons)];
+}
 function hasLostExplicitSourceTerm(original, translation) {
     return getMissingExplicitAnatomicalTerms(original, translation).length > 0;
 }
