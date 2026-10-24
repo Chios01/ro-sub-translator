@@ -2756,6 +2756,8 @@ TRANSLATION AND CONTEXT
 - If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
 - Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
 - Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
+- Resolve phrasal verbs and idioms by their action and participants in context, not by a similar-looking Romanian verb. For example, “look at someone” is „a se uita la cineva”, not „a uda pe cineva”; “you have been robbed” means someone stole from that person, not that the person broke into a home.
+- Before returning, check each block for semantic role reversals, polarity/negation changes, invented details, truncated or merged words, and gender/number agreement using the neighboring cues. A phrase can be semantically negative without containing „nu” (for example, „e lefteră” for „doesn't have a dime”), and a Romanian rhetorical question may use „nu” without being a literal translation of a source negation.
 - Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
 - When the source explicitly names an anatomical or sexual term, use an accurate Romanian equivalent. Do not replace it with vague euphemisms such as „jos” or „acolo”. Preserve the grammatical relationship too: for example, “the sound that dries my vagina” means „sunetul care-mi usucă vaginul”, not „sunetul care mă usucă în vagin”.
 - Preserve singular/plural, gender, and the identity of the object. A singular source noun such as “a hat” must not become plural „căciuli”. Do not add diminutives such as „căciuliță” unless smallness, affection, or a diminutive is actually expressed by the source.
@@ -4762,14 +4764,14 @@ function getMissingExplicitAnatomicalTerms(original, translation) {
     const target = String(translation || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('ro-RO').replace(/\s+/g, ' ').trim();
     if (!source || !target) return [];
     const explicitTerms = [
-        { label: 'vagin', source: /\b(?:vagina|vaginas|vaginal)\b/i, target: /\bvagin\p{L}*/iu },
-        { label: 'vulvă', source: /\b(?:vulva|vulvar)\b/i, target: /\bvulv\p{L}*/iu },
-        { label: 'penis', source: /\b(?:penis|penises)\b/i, target: /\b(?:penis\p{L}*|pul[ăa]\p{L}*|scul[ăa]\p{L}*)/iu },
-        { label: 'clitoris', source: /\b(?:clitoris|clitoral)\b/i, target: /\b(?:clitoris\p{L}*|clit)\b/iu },
-        { label: 'sâni', source: /\b(?:breasts?|boobs?|tits?)\b/i, target: /\b(?:sân\p{L}*|san\p{L}*|țâț\p{L}*|tâț\p{L}*|tât\p{L}*|piept\p{L}*|bust\p{L}*)/iu },
-        { label: 'sfârcuri/mameloane', source: /\b(?:nipples?)\b/i, target: /\b(?:sfârc\p{L}*|sfarc\p{L}*|mamelon\p{L}*|țâț\p{L}*)/iu },
-        { label: 'testicule', source: /\btesticles?\b|\b(?:my|your|his|her|their)\s+balls\b/i, target: /\b(?:testicul\p{L}*|coa[iăe]\p{L}*|ouă|oua)\b/iu },
-        { label: 'anus', source: /\b(?:anus|anal)\b/i, target: /\b(?:anus\p{L}*|anal\p{L}*)/iu }
+        { label: 'vagin', source: /\b(?:vagina|vaginas|vaginal)\b/i, target: /(?<!\p{L})vagin\p{L}*(?!\p{L})/iu },
+        { label: 'vulvă', source: /\b(?:vulva|vulvar)\b/i, target: /(?<!\p{L})vulv\p{L}*(?!\p{L})/iu },
+        { label: 'penis', source: /\b(?:penis|penises)\b/i, target: /(?<!\p{L})(?:penis\p{L}*|pul[ăa]\p{L}*|scul[ăa]\p{L}*)(?!\p{L})/iu },
+        { label: 'clitoris', source: /\b(?:clitoris|clitoral)\b/i, target: /(?<!\p{L})(?:clitoris\p{L}*|clit)(?!\p{L})/iu },
+        { label: 'sâni', source: /\b(?:breasts?|boobs?|tits?)\b/i, target: /(?<!\p{L})(?:sân\p{L}*|san\p{L}*|țâț\p{L}*|tâț\p{L}*|tât\p{L}*|piept\p{L}*|bust\p{L}*)(?!\p{L})/iu },
+        { label: 'sfârcuri/mameloane', source: /\b(?:nipples?)\b/i, target: /(?<!\p{L})(?:sfârc\p{L}*|sfarc\p{L}*|mamelon\p{L}*|țâț\p{L}*)(?!\p{L})/iu },
+        { label: 'testicule', source: /\btesticles?\b|\b(?:my|your|his|her|their)\s+balls\b/i, target: /(?<!\p{L})(?:testicul\p{L}*|coa[iăe]\p{L}*|ouă|oua)(?!\p{L})/iu },
+        { label: 'anus', source: /\b(?:anus|anal)\b/i, target: /(?<!\p{L})(?:anus\p{L}*|anal\p{L}*)(?!\p{L})/iu }
     ];
     return explicitTerms.filter(term => term.source.test(source) && !term.target.test(target)).map(term => term.label);
 }
@@ -4856,7 +4858,26 @@ function getSourceFidelityIssues(original, translation, context = {}) {
         previousSourceContinues && previousTargetContinues &&
         previousSourceHasNegation && previousTranslationHasNegation;
 
+    // Echivalență semantică în domeniul banilor: „doesn't have a dime” → „e lefteră”
+    // păstrează sensul negativ fără cuvântul „nu” sau „fără”.
+    const sourceFinancialLack = /(?:\b(?:doesn['’]?t|does\s+not|hasn['’]?t|has\s+not)\s+have\b[\s\S]{0,45}\b(?:money|dime|penny|cash|cent|dollar)\b|\b(?:flat\s+)?broke\b|\bpenniless\b|\bwithout\s+(?:any\s+)?(?:money|a\s+dime|a\s+penny|cash)\b)/iu.test(source);
+    const targetFinancialLack = /(?<!\p{L})(?:lefter\p{L}*|falit\p{L}*|ruinat\p{L}*|sărac\p{L}*|sarac\p{L}*|fără\s+(?:niciun\s+)?ban(?:i|uț|ut)?|fara\s+(?:niciun\s+)?ban(?:i|ut)?|pe\s+zero|niciun\s+ban|niciun\s+banut|nu\s+are\s+(?:niciun\s+)?ban(?:i)?|n[-’']are\s+(?:niciun\s+)?ban(?:i)?)(?!\p{L})/iu.test(target);
+    const financialNegationEquivalent = sourceFinancialLack && targetFinancialLack;
+
+    // În română, întrebarea retorică „Nu e cumva nesuferit și nesimțit?” poate
+    // păstra funcția unei întrebări despre un comportament negativ. Nu se aplică
+    // întrebărilor neutre sau propozițiilor afirmative.
+    const sourcePositiveYesNoQuestion = /\?\s*$/u.test(source) &&
+        /^(?:is|are|was|were|do|does|did|can|could|would|will|has|have|should)\b/iu.test(source) &&
+        !sourceHasNegation;
+    const sourceNegativeDescriptor = /(?<!\p{L})(?:rude|obnoxious|annoying|jerk|dick|asshole|douchey|stupid|idiot|pathetic|ugly|gross|disgusting|nasty|awful|bad|ridiculous|embarrassing|mean)(?!\p{L})/iu.test(source);
+    const targetNegativeDescriptor = /(?<!\p{L})(?:nesuferit|nesimțit|mojic|obraznic|enervant|dobitoc|idiot|prost|jalnic|urât|urat|scârbos|scarbo\p{L}*|penibil|ridicol|rău|rau|nasoal\p{L}*)(?!\p{L})/iu.test(target);
+    const targetRhetoricalNegativeQuestion = /^nu\s+(?:(?:e|este|sunt|era|erau)\s+)?(?:cumva|oare)\b[\s\S]*\?\s*$/iu.test(target);
+    const rhetoricalNegativeQuestionEquivalent = sourcePositiveYesNoQuestion &&
+        sourceNegativeDescriptor && targetNegativeDescriptor && targetRhetoricalNegativeQuestion;
+
     if (!idiomaticPositiveSource && !wrongThingsIdiom &&
+        !financialNegationEquivalent && !rhetoricalNegativeQuestionEquivalent &&
         !negationCarriedAcrossSubtitleBoundary &&
         sourceHasNegation !== romanianHasNegation) {
         reasons.push(sourceHasNegation
@@ -4914,10 +4935,12 @@ function applySourceGroundedSemanticFixes(original, translation) {
             (_match, lineStart) => `${lineStart}Comenzile sunt gata!`);
     }
 
-    // „Stop looking at my boobs” nu înseamnă că cineva udă/stropește persoana.
-    if (/\bstop\s+looking\s+at\s+my\s+(?:boobs|tits|breasts)\b/iu.test(sourceNorm)) {
-        text = text.replace(/oprește-te\s+din\s+udat\s+la\s+țâțele\s+mele/iu,
-            'Nu te mai uita la țâțele mele');
+    // Corecție semantică reutilizabilă: looking/staring/gawking at breasts nu înseamnă „a uda/stropi”.
+    const sourceBreastLookingCommand = sourceNorm.match(/\bstop\s+(?:looking|staring|gawking)\s+at\s+my\s+(boobs|tits|breasts)\b/iu);
+    if (sourceBreastLookingCommand && /(?:ud\p{L}*|strop\p{L}*|umez\p{L}*)/iu.test(text) &&
+        /(?:țâț|tâț|tât|sân|san|bust)/iu.test(text)) {
+        const sourceUsesClinicalTerm = sourceBreastLookingCommand[1].toLocaleLowerCase('en-US') === 'breasts';
+        text = sourceUsesClinicalTerm ? 'Nu te mai uita la sânii mei.' : 'Nu te mai uita la țâțele mele.';
     }
 
     // Recuperare de cuvânt trunchiat în expresia verificată din exemplu.
@@ -6224,6 +6247,30 @@ function detectSourceAwareQualityReviewReasons(item, translation, contextItems, 
     if (/\bput\s+it\s+in\s+drive\b/i.test(source) &&
         /\b(?:marșarier|marsarier|mers\s+înapoi|mers\s+inapoi|în\s+revers|in\s+revers|înapoi)\b/iu.test(target)) {
         reasons.push('inversare semantică: „put it in drive” a devenit o comandă de mers înapoi');
+    }
+
+    // Capcane semantice generale: calcuri care inversează rolurile sau traduc expresia idiomatică
+    // printr-un sens diferit. Acestea intră în Grammar Review cu originalul și contextul vecin.
+    if (/\b(?:i['’]?m|i\s+am)\s+dead\s+inside\b/iu.test(source) &&
+        /(?<!\p{L})(?:cauză\s+pierdută|cauza\s+pierduta|mortăciune)(?!\p{L})/iu.test(target)) {
+        reasons.push('idiomul „dead inside” a fost înlocuit cu „cauză pierdută”; păstrează ideea de gol emoțional, nu de eșec');
+    }
+    if (/\b(?:you['’]ve|you\s+have)\s+been\s+robbed\b/iu.test(source) &&
+        /(?<!\p{L})(?:le-ai\s+spart\s+casa|ai\s+spart\s+casa|ai\s+jefuit)(?!\p{L})/iu.test(target)) {
+        reasons.push('inversare de rol în „you have been robbed”: persoana a fost jefuită, nu a spart/jefuit casa altcuiva');
+    }
+    if (/\bno\s+offense\b/iu.test(source) &&
+        /(?<!\p{L})fără\s+să\s+mint(?!\p{L})|(?<!\p{L})fara\s+sa\s+mint(?!\p{L})/iu.test(target)) {
+        reasons.push('„No offense” este o formulă de atenuare („fără supărare”), nu „fără să mint”');
+    }
+    if (/\bwaited\s+tables\b/iu.test(source) &&
+        /(?<!\p{L})așteptat\s+(?:toată|toata)\s+viața(?!\p{L})/iu.test(target) &&
+        !/(?<!\p{L})(?:servit\s+la\s+mese|lucrat\s+ca\s+ospătar|lucrat\s+ca\s+chelner)(?!\p{L})/iu.test(target)) {
+        reasons.push('„waited tables” înseamnă că a servit la mese, nu că a așteptat toată viața');
+    }
+    if (/\b(?:is\s+this\s+where|am\s+i)\b[\s\S]{0,50}\bsupposed\s+to\s+feel\s+sorry\b/iu.test(source) &&
+        /(?<!\p{L})reprezintă\s+să-mi\s+pară\s+rău|(?<!\p{L})reprezinta\s+sa-mi\s+para\s+rau/iu.test(target)) {
+        reasons.push('calchiere a lui „supposed to”: reconstruiește întrebarea ca „ar trebui să-mi pară rău?”');
     }
 
     // Validare contextuală a continuității: dacă blocul englezesc anterior se termină
