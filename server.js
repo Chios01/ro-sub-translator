@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.43',
+    version: '13.2.44',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1800,16 +1800,80 @@ function isEffectivelyEmptySubtitleText(text) {
 // STANDALONE INTERJECTIONS / FILLERS
 // ============================================================
 
-const STANDALONE_SOURCE_FILLERS = new Set((
-    // Aceste vocalizări nu sunt păstrate ca traduceri autonome.
-    // Nu ștergem „Oh/Ah” din expresii dialogate valide; filtrăm doar liniile formate
-    // exclusiv din interjecții. „Hmm”, „Mhm” și „Mm-hmm” rămân evaluate contextual.
-    'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu'
+// Inventarul extins include variante uzuale de interjecții, inclusiv forme rare.
+// Îl folosim pentru recunoaștere; nu toate formele trebuie șterse automat.
+const KNOWN_SOURCE_INTERJECTIONS = new Set((
+    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh ahhhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww owww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whooo whoooo whoooooo whoop whoops whup wooh woo-hoo-hoo wow yikes yoo yoo-hoo haha hehe'
 ).split(/\s+/));
+
+const MEANINGFUL_STANDALONE_REACTIONS = new Set((
+    'a-ha aha aw aww awww hm hmm hmmm hmph huh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm oh ohh ohhh ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh-oh uh-huh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr'
+).split(/\s+/));
+
+const KNOWN_TRANSLATED_INTERJECTIONS = new Set([
+    ...KNOWN_SOURCE_INTERJECTIONS,
+    ...'ăă ăăă ăăăă ăăăăă îhî ptiu brr'.split(/\s+/)
+]);
+
+// Reacțiile cu sens rămân pentru Gemini. Eliminăm doar vocalizările fără dialog.
+const STANDALONE_SOURCE_FILLERS = new Set(
+    [...KNOWN_TRANSLATED_INTERJECTIONS]
+        .filter(token => !MEANINGFUL_STANDALONE_REACTIONS.has(token))
+);
+
+const CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN = [...STANDALONE_SOURCE_FILLERS]
+    .sort((a, b) => b.length - a.length)
+    .join('|');
+
+// Curățare contextuală: elimină vocalizările fără sens
+// de la început/final sau dintre virgule, dar lasă reacțiile semantice intacte.
+function stripContextualDisposableInterjections(value) {
+    const pattern = CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN;
+    if (!pattern) return String(value || '');
+
+    return String(value || '').split('\n').map(line => {
+        const cleanedLine = line.trim();
+        if (!cleanedLine) return '';
+
+        const marker = cleanedLine.match(/^[-–—]\s*/);
+        const prefix = marker ? marker[0] : '';
+        let body = marker ? cleanedLine.slice(prefix.length).trim() : cleanedLine;
+        if (!body) return '';
+
+        if (isOnlyStandaloneFillerSequence(body)) return '';
+
+        // Începutul: „Um, nu știu.” -> „Nu știu.”
+        for (let i = 0; i < 5; i++) {
+            const match = body.match(new RegExp('^(' + pattern + ')(?:\\s*[,;:!?.…]+\\s*|\\s+)(?=\\S)', 'iu'));
+            if (!match) break;
+            const filler = match[1];
+            body = body.slice(match[0].length).trimStart();
+            if (/^[A-ZĂÂÎȘȚ]/u.test(filler)) {
+                body = body.replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
+            }
+        }
+
+        // Finalul: „Nu știu, um...” -> „Nu știu...”
+        for (let i = 0; i < 4; i++) {
+            const match = body.match(new RegExp('([,;:\\s]+)(' + pattern + ')([.!?…]*)$', 'iu'));
+            if (!match) break;
+            const beforeFiller = body.slice(0, match.index).trimEnd();
+            if (!beforeFiller) break;
+            body = beforeFiller + match[3];
+        }
+
+        // Mijlocul: „Eu, eh, cred.” -> „Eu cred.”; păstrăm pauza de punctuație.
+        body = body.replace(new RegExp(',\\s*(?:' + pattern + ')\\s*([.!?…]+)', 'giu'), '$1');
+        body = body.replace(new RegExp(',\\s*(?:' + pattern + ')\\s*,', 'giu'), ', ');
+        body = body.replace(/([,;:])\s*([,;:])+/g, '$1');
+        body = body.replace(/\s+([.!?])/g, '$1').replace(/\s{2,}/g, ' ').trim();
+
+        return body ? prefix + body : '';
+    }).filter(Boolean).join('\n');
+}
 
 // Elimină „oh/ah” numai când linia conține exclusiv interjecții și punctuație.
 // Expresii dialogate precum „Oh, no!”, „Ah, yes!” și „Oh my God” rămân intacte.
-// Marcajele HTML sunt ignorate doar pentru clasificarea unei linii de interjecție izolată.
 function stripLeadingOhAhInterjections(value) {
     return String(value || '').split('\n').map(line => {
         const visibleLine = line.replace(/<[^>]*>/g, '').trim();
@@ -1830,6 +1894,7 @@ function isOnlyStandaloneFillerSequence(text) {
         .trim();
     if (!normalized) return false;
     const tokens = normalized.split(' ').filter(Boolean);
+    if (tokens.some(token => MEANINGFUL_STANDALONE_REACTIONS.has(token))) return false;
     return tokens.length > 0 && tokens.every(token => STANDALONE_SOURCE_FILLERS.has(token));
 }
 
@@ -2030,13 +2095,14 @@ function cleanTextForJson(text) {
     // Segmentele dintre (...) și [...] sunt eliminate înainte de formarea calupurilor
     // prin stripNonDialogueSoundMarkup(), iar rezultatul final trece din nou prin același filtru.
 
-    // SubStudio curăță etichetele de vorbitor cu majuscule înainte de traducere.
+    // Eliminăm etichetele de vorbitor scrise cu majuscule înainte de traducere.
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
     // Eliminăm înainte de Gemini doar liniile formate exclusiv din interjecții Oh/Ah.
     // Cuvintele și nuanța expresiilor dialogate sunt păstrate.
     clean = stripLeadingOhAhInterjections(clean);
+    clean = stripContextualDisposableInterjections(clean);
 
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
@@ -2061,6 +2127,7 @@ function deepCleanSubtitleText(text) {
 
     // Plasă de siguranță doar pentru replici formate exclusiv din interjecții Oh/Ah.
     text = stripLeadingOhAhInterjections(text);
+    text = stripContextualDisposableInterjections(text);
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
@@ -2177,7 +2244,7 @@ function applyDeterministicSemanticFix(original, translation) {
     return text;
 }
 
-function splitSubtitleIntoTwoLines(value, maxChars = 43) {
+function splitSubtitleIntoTwoLines(value, maxChars = 42) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     if (!text) return [];
     if (text.length <= maxChars) return [text];
@@ -2203,8 +2270,8 @@ function splitSubtitleIntoTwoLines(value, maxChars = 43) {
         return [candidates[0].left, candidates[0].right];
     }
 
-    // If the complete text is longer than two 43-character lines, a strict
-    // 43/43 layout is mathematically impossible without rewriting or dropping
+    // If the complete text is longer than two 42-character lines, a strict
+    // 42/42 layout is mathematically impossible without rewriting or dropping
     // words. Keep exactly two balanced lines and preserve the full translation.
     const allBreaks = [];
     for (let i = 1; i < text.length - 1; i++) {
@@ -2252,7 +2319,7 @@ function formatSubtitleLayout(value) {
         }
 
         // Preserve a speaker marker if present. Normalize it to "- " and use
-        // a capital letter after the dash, as required by SubStudio formatting.
+        // a capital letter after the dash, as required by subtitle formatting rules.
         const marked = raw.match(/^[-–—]+\s*(.*?)\s*$/);
         if (marked && marked[1]) {
             entries.push({ text: marked[1].trim(), dialogue: true });
@@ -2279,7 +2346,7 @@ function formatSubtitleLayout(value) {
             if (parts.length === 2) return `- ${capFirst(parts[0])}\n${parts[1]}`;
             return `- ${capFirst(parts[0])}`;
         }
-        return splitSubtitleIntoTwoLines(entry.text, 43).join('\n') || ' ';
+        return splitSubtitleIntoTwoLines(entry.text, 42).join('\n') || ' ';
     }
 
     // Two explicit speaker lines must stay two speaker lines; never remove the
@@ -2293,10 +2360,31 @@ function formatSubtitleLayout(value) {
         return entries.map(emit).join('\n');
     }
 
-    if (entries.every(entry => entry.text.length <= 43)) {
+    if (entries.length === 2 && entries.every(entry => !entry.dialogue)) {
+        const first = entries[0].text.trim();
+        const second = entries[1].text.trim();
+        const joined = (first + ' ' + second).trim();
+        const firstEndsSentence = /[.!?…]$/.test(first);
+        const bothFit = first.length <= 42 && second.length <= 42;
+        const imbalance = Math.abs(first.length - second.length);
+
+        // Păstrăm o despărțire de propoziții clară dacă ambele rânduri se încadrează.
+        if (bothFit && firstEndsSentence) return first + '\n' + second;
+
+        // Două rânduri scurte se unesc când încap într-un singur rând.
+        if (joined.length <= 42) return joined;
+
+        // Reechilibrăm numai când este nevoie; funcția păstrează textul integral.
+        if (!bothFit || imbalance > 18) {
+            return splitSubtitleIntoTwoLines(joined, 42).join('\n') || joined;
+        }
+        return first + '\n' + second;
+    }
+
+    if (entries.every(entry => entry.text.length <= 42)) {
         return entries.map(entry => entry.text).join('\n');
     }
-    return splitSubtitleIntoTwoLines(entries.map(entry => entry.text).join(' '), 43).join('\n') || ' ';
+    return splitSubtitleIntoTwoLines(entries.map(entry => entry.text).join(' '), 42).join('\n') || ' ';
 }
 
 function formatSubtitleLine(text) {
@@ -2686,23 +2774,27 @@ ROMANIAN ACCURACY RULES
 - Before returning, re-read each line aloud in your head: if a native speaker would not say it, rewrite it more simply and naturally while keeping the full meaning.
 
 SUBTITLE FORMATTING
-- Keep each visible line at or below 43 characters whenever the wording allows. Use no more than TWO text lines per subtitle block.
-- Split at natural phrase boundaries, not arbitrary points; if necessary, rephrase concisely without losing meaning.
+- Keep each visible line at or below 42 characters whenever the wording allows. Use no more than TWO text lines per subtitle block.
+- Prefer a balanced two-line layout. Avoid leaving only one or two short words on the second line when a natural alternative exists.
+- If two ordinary visual lines fit together within 42 characters, merge them into one line unless a meaningful sentence/dialogue boundary should remain.
+- Split at natural phrase boundaries, not arbitrary points. Avoid separating a Romanian preposition, article, or short function word from the phrase it belongs to; if necessary, rephrase concisely without losing meaning.
 - If the thought continues on the second visual line, start that line lowercase unless a proper noun or new sentence requires otherwise.
-- If two speakers share one source block, keep both under the SAME ID on separate lines, each with “- ” and a capitalized first word. Never move a speaker to another ID.
+- If two speakers share one source block, keep both under the SAME ID on separate lines, each with “- ” and a capitalized first word. Never move a speaker to another ID, and do not merge the two speakers.
 - Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
 INTERJECTIONS AND FILLERS
-- Remove standalone filler sounds and meaningless hesitation tokens rather than returning them as translations. Typical disposable examples include “Um”, “Erm”, “Mwah”, “ă”, and “ăă” when they function only as hesitation/noise.
+- Recognize the extended interjection inventory, including variants such as “a-ha”, “ahem”, “ehhh”, “hmph”, “ooh-la-la”, “pfft”, “uh-huh”, “whoo-hoo”, and Romanian forms such as “ăă”, “îhî”, “ptiu”, and “brr”. Use this list to identify interjections, not as a command to delete every matching word.
+- Remove standalone filler sounds and meaningless hesitation tokens, including “Um”, “Erm”, “Mwah”, “ă”, and “ăă”, when they function only as hesitation/noise. Remove disposable fillers around a real sentence only when they add no meaning; repair punctuation and capitalization.
 - NEVER preserve the English interjections “Oh” or “Ah” literally in Romanian output, whether they appear alone or at the start of a longer expression. Remove the leading “Oh/Ah” and translate the remaining message naturally: for example, “Oh, no!” → „Nu!” / „Vai, nu!” according to context; “Ah, yes!” → „Da!”; “Oh my God!” → „Doamne!”. The rest of the message must not be discarded.
 - Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Mhm/Mm-hmm” when they express agreement, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief, and “Aha” when expressing realization.
-- Use neighboring subtitles and the scene context to preserve the meaning of the remaining dialogue while removing standalone filler tokens. Repair punctuation and capitalization after removal.
+- Use neighboring subtitles and the scene context to decide whether an interjection is noise or meaningful speech. Never automatically delete meaningful reactions, acknowledgments, questions, pain, warnings, relief, or commands just because they occur in the interjection inventory. Translate those naturally into Romanian.
+- Before returning, compare the beginning and end of each translation with its source so that cleaning a filler does not accidentally remove adjacent dialogue.
 - REGULĂ STRICTĂ PENTRU PARANTEZE: elimină integral orice text dintre paranteze rotunde (...) sau drepte [...], indiferent dacă este descriere sonoră, indicație de acțiune sau alt text. Acest conținut nu trebuie să apară în subtitrarea română. Dacă într-un bloc există dialog și în afara parantezelor, păstrează tot dialogul exterior.
 - PENTRU DIALOG NORMAL, returnează traducerea ca text simplu: nu pune replica tradusă între paranteze rotunde sau drepte și nu adăuga paranteze decorative în jurul întregii traduceri. Parantezele/parantezele drepte nu se folosesc ca ambalaj pentru o replică normală.
 - NEVER include non-dialogue sound effects, music cues, stage directions, or vocal-action captions in the Romanian subtitle output. Remove cues such as “(sighs)”, “[whistling]”, „(bufnește)”, „(șuierături)”, „(bufnire)” and „(plângând)” completely. Do not remove dialogue that mentions a sound, laughter, singing, or music when that dialogue is outside parentheses/brackets.
 
 FINAL CHECK
-Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, dialogue format, filler cleanup, and one-to-one ID alignment. Correct clear errors without adding or deleting meaning.
+Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, balance between visual lines, dialogue format, filler cleanup, and one-to-one ID alignment. Check that ordinary English was translated, that meaningful reactions were not discarded, and that no dialogue was lost during reformatting. Correct clear errors without adding or deleting meaning.
 `;
 
 
