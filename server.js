@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.49',
+    version: '13.2.50',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4774,20 +4774,58 @@ function getMissingExplicitAnatomicalTerms(original, translation) {
 }
 
 function getSourceFidelityIssues(original, translation) {
-    const source = String(original || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
+    const source = String(original || '').replace(/<[^>]+>/g, ' ').normalize('NFC').replace(/[’‘]/g, "'").toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
     const target = String(translation || '').replace(/<[^>]+>/g, ' ').normalize('NFC').toLocaleLowerCase('ro-RO').replace(/\s+/g, ' ').trim();
     if (!source || !target) return [];
-    const reasons = [];
+
     const englishNotOnlyConstruction = /\bnot only\b[\s\S]*\bbut\b[\s\S]*\balso\b/i.test(source);
     const romanianNotOnlyConstruction = /\bnu\s+(?:numai|doar)\b/iu.test(target);
-    const sourceHasNegation = !englishNotOnlyConstruction && /\b(?:not|no|never|neither|nor|nobody|no one|nothing|nowhere|without|hardly|scarcely|barely|cannot|can't|couldn't|didn't|doesn't|don't|hadn't|hasn't|haven't|isn't|aren't|wasn't|weren't|won't|wouldn't|shouldn't|mustn't|needn't|mightn't|shan't|ain't)\b/i.test(source);
-    const romanianHasNegation = !romanianNotOnlyConstruction && /\b(?:nu|nici|nimeni|nimic|niciodată|niciodata|nicicând|nicicand|niciunde|niciun(?:a|ul|ii|ele|ei|or|ora)?|nicio|fără|fara|deloc|nicidecum|abia)\b|(?:^|[\s("'„])n-(?:am|ai|are|avem|aveți|aveti|au|a|ați|ati|ar|aș|as)\b/iu.test(target);
-    if (sourceHasNegation !== romanianHasNegation) {
-        reasons.push(sourceHasNegation
-            ? 'posibilă pierdere a negației din original; verifică dacă traducerea păstrează sensul exact'
-            : 'posibilă negație adăugată față de original; verifică dacă traducerea schimbă sensul');
+    const englishNegationPattern = /\b(?:not|no|never|neither|nor|nobody|no one|nothing|nowhere|without|hardly|scarcely|barely|cannot|can't|couldn't|didn't|doesn't|don't|hadn't|hasn't|haven't|isn't|aren't|wasn't|weren't|won't|wouldn't|shouldn't|mustn't|needn't|mightn't|shan't|ain't|do not|does not|did not|will not|would not|should not|could not|have not|has not|had not|is not|are not|was not|were not|must not|need not|might not|shall not)\b/i;
+    const romanianNegationPattern = /\b(?:nu|nici|nimeni|nimic|niciodată|niciodata|nicicând|nicicand|niciunde|niciun(?:a|ul|ii|ele|ei|or|ora|ui)?|nicio|fără|fara|deloc|nicidecum|nicăieri|nicaieri|nimănui|nimanui)\b|(?:^|[\s("'„])n-(?:am|ai|are|avem|aveți|aveti|au|a|ați|ati|ar|aș|as|o|oi|om|or)\b/iu;
+
+    const idiomPatterns = [
+        /\b(?:can't|cannot|can not|couldn't|could not)\s+wait\b/gi,
+        /\b(?:don't|do not|doesn't|does not)\s+worry\b/gi,
+        /\b(?:don't|do not|doesn't|does not)\s+care\b/gi,
+        /\b(?:wouldn't|would not)\s+mind\b/gi,
+        /\b(?:can't|cannot|can not|couldn't|could not)\s+help\b/gi,
+        /\bnever\s+mind\b/gi,
+        /\bnot\s+(?:half\s+)?bad(?:\s+at\s+all)?\b/gi,
+        /\bno\s+problem\b/gi,
+        /\bno\s+kidding\b/gi,
+        /\bno\s+worries\b/gi,
+        /\b(?:don't|do not)\s+mention\s+it\b/gi,
+        /\bnot\s+a\s+big\s+deal\b/gi,
+        /\b(?:don't|do not)\s+be\s+(?:silly|ridiculous)\b/gi
+    ];
+    let sourceForNegation = source.replace(/\bnot only\b/gi, ' ');
+    for (const idiom of idiomPatterns) sourceForNegation = sourceForNegation.replace(idiom, ' ');
+    let targetForNegation = romanianNotOnlyConstruction ? target.replace(/\bnu\s+(?:numai|doar)\b/giu, ' ') : target;
+
+    const sourceHasNegation = !englishNotOnlyConstruction && englishNegationPattern.test(sourceForNegation);
+    const romanianHasNegation = !romanianNotOnlyConstruction && romanianNegationPattern.test(targetForNegation);
+    const weakNegationTranslatedIdiomatic = /\b(?:hardly|scarcely|barely)\b/i.test(source) && /\b(?:abia|cu greu|aproape deloc|mai deloc)\b/iu.test(target);
+
+    // „No problem”/„not bad” și expresii similare pot păstra o formă negativă în română,
+    // fără să schimbe polaritatea pragmatică a replicii.
+    const sourceHasOnlyIdiomaticNegation = idiomPatterns.some(idiom => {
+        idiom.lastIndex = 0;
+        const found = idiom.test(source);
+        idiom.lastIndex = 0;
+        return found;
+    }) && !englishNegationPattern.test(sourceForNegation);
+
+    let effectiveSourceNegation = sourceHasNegation;
+    let effectiveRomanianNegation = romanianHasNegation;
+    if (sourceHasOnlyIdiomaticNegation && romanianHasNegation) effectiveSourceNegation = true;
+    if (weakNegationTranslatedIdiomatic) {
+        effectiveSourceNegation = false;
+        effectiveRomanianNegation = false;
     }
-    return reasons;
+    if (effectiveSourceNegation === effectiveRomanianNegation) return [];
+    return [effectiveSourceNegation
+        ? 'posibilă pierdere a negației din original; verifică dacă traducerea păstrează sensul exact'
+        : 'posibilă negație adăugată față de original; verifică dacă traducerea schimbă sensul'];
 }
 
 function hasLostExplicitSourceTerm(original, translation) {
