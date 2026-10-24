@@ -1,6 +1,6 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.46",
+  "version": "13.2.47",
   "private": true,
   "description": "QA archive accessible without password; existing translation providers and addon configuration preserved",
   "main": "server.js",

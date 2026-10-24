@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.46',
+    version: '13.2.47',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2663,7 +2663,7 @@ function formatSubtitleLine(text) {
         [/\bCitească-gânduri\b/gi, 'Cititoare de gânduri'],
         [/\bdemocracția\b/gi, 'democrația'],
         [/(?<![A-Za-zĂÂÎȘȚăâîșț])S-a dus totul pe râpă(?![A-Za-zĂÂÎȘȚăâîșț])/gi, (m) => (m[0] === m[0].toLowerCase() ? 's-a dus totul de râpă' : 'S-a dus totul de râpă')],
-        [/\bo bullet\b/gi, 'un glonț'],
+    [/(?<![\p{L}\p{N}_])o\s+glo(?:n[țt]|an[țt]e?)(?![\p{L}\p{N}_])/giu, 'un glonț'],
         [/\bmergem orbești\b/gi, 'mergem orbește'],
         [/(?<![A-Za-zĂÂÎȘȚăâîșț])o favoră(?![A-Za-zĂÂÎȘȚăâîșț])/gi, 'o favoare'],
         [/\bMă închizi într-o cușcă\s*\/\s*dacă nu accept să fii arma ta\b/gi, 'Mă închizi într-o cușcă / dacă nu accept să fiu arma ta'],
@@ -5814,7 +5814,11 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])sesimte(?![\p{L}\p{N}_])/giu, 'se simte'],
     [/(?<![\p{L}\p{N}_])carnă și oase(?![\p{L}\p{N}_])/giu, 'carne și oase'],
     [/(?<![\p{L}\p{N}_])alegeți-ți(?![\p{L}\p{N}_])/giu, 'alegeți-vă'],
-    [/(?<![\p{L}\p{N}_])o nod Windsor(?![\p{L}\p{N}_])/giu, 'un nod Windsor'],
+    [/(?<![\p{L}\p{N}_])o\s+nod(?![\p{L}\p{N}_])/giu, 'un nod'],
+    [/(?<![\p{L}\p{N}_])mancă\s+pas(?![\p{L}\p{N}_])/giu, 'îmi pasă'],
+    [/(?<![\p{L}\p{N}_])poateic(?![\p{L}\p{N}_])/giu, 'poate ști'],
+    [/(?<![\p{L}\p{N}_])releul vechii sale vieți(?![\p{L}\p{N}_])/giu, 'faptele vechii sale vieți'],
+    [/(?<![\p{L}\p{N}_])studind(?![\p{L}\p{N}_])/giu, 'studiind'],
     // Greșeli reale observate în verificări manuale ale subtitrărilor.
     [/\brenumererațiile\b/gi, 'remunerațiile'],
     [/\brenumererație\b/gi, 'remunerație'],
