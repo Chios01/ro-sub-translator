@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.49',
+    version: '13.2.50',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6003,6 +6003,27 @@ function detectLocalGrammarReviewReasons(text) {
     const englishHits = englishIntegrated.filter(word => highConfidenceEnglish.has(word.toLowerCase()));
     for (const word of [...new Set(englishHits.map(w => w.toLowerCase()))]) {
         reasons.push(`cuvânt englezesc integrat „${word}”`);
+    }
+
+
+    // Regresii QA concrete din 2 Broke Girls S1E1 (SubDL).
+    // Aceste filtre NU rescriu textul: trimit replica la Grammar Review cu
+    // originalul și contextul, ca modelul să corecteze doar dacă sensul o confirmă.
+    const subtitleRegressionGuards = [
+        { pattern: /oprește-te\s+din\s+a-mi\s+fura\s+de\s+știut\s+sâcâitor/iu, message: 'formulare coruptă detectată în traducere; verifică originalul și reconstruiește sensul' },
+        { pattern: /(?<![\p{L}])i-dădea(?![\p{L}])/iu, message: 'posibilă cratimă/îmbinare coruptă în „i-dădea”; verifică pronumele și forma verbală' },
+        { pattern: /(?<![\p{L}])(?:tonul\s+)?pielii\s+meu(?![\p{L}])/iu, message: 'dezacord de gen în „pielii meu”; verifică substantivul și posesivul în context' },
+        { pattern: /și\s+toți\s+au\s+trebuit\s+să\s+se-ncreadă\s+în\s+faptul\s+că\s+nu\s+sunt\s+acasă/iu, message: 'posibilă deformare semantică a propoziției; verifică întreaga replică față de original' },
+        { pattern: /(?<![\p{L}])deât(?![\p{L}])/iu, message: 'cuvânt corupt „deât”; verifică ortografia și comparativul' },
+        { pattern: /brioșe[.…]{2,}\s*ști\s+o\s+mincinoasă/iu, message: 'fragment corupt/îmbinare suspectă în „brioșe...ști o mincinoasă”; verifică limita dintre replici' },
+        { pattern: /tot\s+o\s+aia\s+e\s+ca\s+și\s+cum\s+ai\s+fi/iu, message: 'formulare românească agramaticală „Tot o aia e ca și cum ai fi”; reconstruiește din original și context' },
+        { pattern: /le\s+prosteasc\s+pe\s+fetele\s+deștepte/iu, message: 'formă verbală suspectă „le prosteasc”; verifică acordul și sensul originalului' },
+        { pattern: /n-ai\s+nimic\s+care\s+să-ți\s+pese\s+și\s+să\s+luăm/iu, message: 'construcție sintactică incoerentă „care să-ți pese și să luăm”; verifică relațiile dintre complemente' },
+        { pattern: /te-a\s+dat\s+dracului\s+de\s+chestnut\s+la\s+cap/iu, message: 'posibil calc semantic în expresia despre Chestnut; verifică idiomul original și păstrează sensul' },
+        { pattern: /(?<![\p{L}])uudzi(?![\p{L}])/iu, message: 'cuvânt corupt „uudzi”; verifică forma verbală din original' }
+    ];
+    for (const guard of subtitleRegressionGuards) {
+        if (guard.pattern.test(clean)) reasons.push(guard.message);
     }
 
     return reasons;

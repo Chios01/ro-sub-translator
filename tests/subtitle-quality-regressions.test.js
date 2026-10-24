@@ -1,0 +1,16 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+const start = source.indexOf('function detectLocalGrammarReviewReasons(');
+const end = source.indexOf('\nconst itemsIndexCache', start);
+assert.ok(start >= 0 && end > start, 'quality filter must exist');
+const sandbox = {};
+vm.runInNewContext(source.slice(start, end) + '\nthis.check = detectLocalGrammarReviewReasons;', sandbox);
+const bad = ["oprește-te din a-mi fura de știut sâcâitor","i-dădea","tonul pielii meu","și toți au trebuit să se-ncreadă în faptul că nu sunt acasă","dar meriți ceva mai bun deât tipul ăla","și a mințit despre brioșe...ști o mincinoasă","Tot o aia e ca și cum ai fi","dar le prosteasc pe fetele deștepte","Ce, n-ai nimic care să-ți pese și să luăm?","Te-a dat dracului de Chestnut la cap","Mă uudzi"];
+for (const text of bad) test('flags subtitle regression: ' + text, () => assert.ok(sandbox.check(text).length > 0));
+const good = ["Nu te mai uita la mine.","Meriți ceva mai bun decât tipul ăla.","Nu pot să vin acum.","Chestnut e un cal."];
+for (const text of good) test('does not flag valid control: ' + text, () => assert.equal(sandbox.check(text).length, 0));

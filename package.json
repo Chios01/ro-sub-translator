@@ -1,6 +1,6 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.49",
+  "version": "13.2.50",
   "private": true,
   "description": "Clean RO subtitle translation addon with stronger source-fidelity quality checks",
   "main": "server.js",
