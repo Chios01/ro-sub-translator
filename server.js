@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.44',
+    version: '13.2.45',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1800,80 +1800,16 @@ function isEffectivelyEmptySubtitleText(text) {
 // STANDALONE INTERJECTIONS / FILLERS
 // ============================================================
 
-// Inventarul extins include variante uzuale de interjecții, inclusiv forme rare.
-// Îl folosim pentru recunoaștere; nu toate formele trebuie șterse automat.
-const KNOWN_SOURCE_INTERJECTIONS = new Set((
-    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh ahhhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww owww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whooo whoooo whoooooo whoop whoops whup wooh woo-hoo-hoo wow yikes yoo yoo-hoo haha hehe'
+const STANDALONE_SOURCE_FILLERS = new Set((
+    // Aceste vocalizări nu sunt păstrate ca traduceri autonome.
+    // Nu ștergem „Oh/Ah” din expresii dialogate valide; filtrăm doar liniile formate
+    // exclusiv din interjecții. „Hmm”, „Mhm” și „Mm-hmm” rămân evaluate contextual.
+    'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu'
 ).split(/\s+/));
-
-const MEANINGFUL_STANDALONE_REACTIONS = new Set((
-    'a-ha aha aw aww awww hm hmm hmmm hmph huh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm oh ohh ohhh ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh-oh uh-huh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr'
-).split(/\s+/));
-
-const KNOWN_TRANSLATED_INTERJECTIONS = new Set([
-    ...KNOWN_SOURCE_INTERJECTIONS,
-    ...'ăă ăăă ăăăă ăăăăă îhî ptiu brr'.split(/\s+/)
-]);
-
-// Reacțiile cu sens rămân pentru Gemini. Eliminăm doar vocalizările fără dialog.
-const STANDALONE_SOURCE_FILLERS = new Set(
-    [...KNOWN_TRANSLATED_INTERJECTIONS]
-        .filter(token => !MEANINGFUL_STANDALONE_REACTIONS.has(token))
-);
-
-const CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN = [...STANDALONE_SOURCE_FILLERS]
-    .sort((a, b) => b.length - a.length)
-    .join('|');
-
-// Curățare contextuală: elimină vocalizările fără sens
-// de la început/final sau dintre virgule, dar lasă reacțiile semantice intacte.
-function stripContextualDisposableInterjections(value) {
-    const pattern = CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN;
-    if (!pattern) return String(value || '');
-
-    return String(value || '').split('\n').map(line => {
-        const cleanedLine = line.trim();
-        if (!cleanedLine) return '';
-
-        const marker = cleanedLine.match(/^[-–—]\s*/);
-        const prefix = marker ? marker[0] : '';
-        let body = marker ? cleanedLine.slice(prefix.length).trim() : cleanedLine;
-        if (!body) return '';
-
-        if (isOnlyStandaloneFillerSequence(body)) return '';
-
-        // Începutul: „Um, nu știu.” -> „Nu știu.”
-        for (let i = 0; i < 5; i++) {
-            const match = body.match(new RegExp('^(' + pattern + ')(?:\\s*[,;:!?.…]+\\s*|\\s+)(?=\\S)', 'iu'));
-            if (!match) break;
-            const filler = match[1];
-            body = body.slice(match[0].length).trimStart();
-            if (/^[A-ZĂÂÎȘȚ]/u.test(filler)) {
-                body = body.replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
-            }
-        }
-
-        // Finalul: „Nu știu, um...” -> „Nu știu...”
-        for (let i = 0; i < 4; i++) {
-            const match = body.match(new RegExp('([,;:\\s]+)(' + pattern + ')([.!?…]*)$', 'iu'));
-            if (!match) break;
-            const beforeFiller = body.slice(0, match.index).trimEnd();
-            if (!beforeFiller) break;
-            body = beforeFiller + match[3];
-        }
-
-        // Mijlocul: „Eu, eh, cred.” -> „Eu cred.”; păstrăm pauza de punctuație.
-        body = body.replace(new RegExp(',\\s*(?:' + pattern + ')\\s*([.!?…]+)', 'giu'), '$1');
-        body = body.replace(new RegExp(',\\s*(?:' + pattern + ')\\s*,', 'giu'), ', ');
-        body = body.replace(/([,;:])\s*([,;:])+/g, '$1');
-        body = body.replace(/\s+([.!?])/g, '$1').replace(/\s{2,}/g, ' ').trim();
-
-        return body ? prefix + body : '';
-    }).filter(Boolean).join('\n');
-}
 
 // Elimină „oh/ah” numai când linia conține exclusiv interjecții și punctuație.
 // Expresii dialogate precum „Oh, no!”, „Ah, yes!” și „Oh my God” rămân intacte.
+// Marcajele HTML sunt ignorate doar pentru clasificarea unei linii de interjecție izolată.
 function stripLeadingOhAhInterjections(value) {
     return String(value || '').split('\n').map(line => {
         const visibleLine = line.replace(/<[^>]*>/g, '').trim();
@@ -1894,7 +1830,6 @@ function isOnlyStandaloneFillerSequence(text) {
         .trim();
     if (!normalized) return false;
     const tokens = normalized.split(' ').filter(Boolean);
-    if (tokens.some(token => MEANINGFUL_STANDALONE_REACTIONS.has(token))) return false;
     return tokens.length > 0 && tokens.every(token => STANDALONE_SOURCE_FILLERS.has(token));
 }
 
@@ -2095,14 +2030,13 @@ function cleanTextForJson(text) {
     // Segmentele dintre (...) și [...] sunt eliminate înainte de formarea calupurilor
     // prin stripNonDialogueSoundMarkup(), iar rezultatul final trece din nou prin același filtru.
 
-    // Eliminăm etichetele de vorbitor scrise cu majuscule înainte de traducere.
+    // subtitle formatting curăță etichetele de vorbitor cu majuscule înainte de traducere.
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
     clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-ZÀ-Ü0-9. \t]{1,27}:\s*/g, '$1$2');
 
     // Eliminăm înainte de Gemini doar liniile formate exclusiv din interjecții Oh/Ah.
     // Cuvintele și nuanța expresiilor dialogate sunt păstrate.
     clean = stripLeadingOhAhInterjections(clean);
-    clean = stripContextualDisposableInterjections(clean);
 
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
@@ -2121,6 +2055,76 @@ function cleanTextForJson(text) {
 // ============================================================
 // FORMAT LINE & DICTIONARY
 // ============================================================
+
+const KNOWN_SOURCE_INTERJECTIONS = new Set((
+    'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh ahhhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww owww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whooo whoooo whoooooo whoop whoops whup wooh woo-hoo-hoo wow yikes yoo yoo-hoo haha hehe'
+).split(/\s+/));
+
+const MEANINGFUL_STANDALONE_REACTIONS = new Set((
+    'a-ha aha aw aww awww hm hmm hmmm hmph huh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm oh ohh ohhh ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh-oh uh-huh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr'
+).split(/\s+/));
+
+const KNOWN_TRANSLATED_INTERJECTIONS = new Set([
+    ...KNOWN_SOURCE_INTERJECTIONS,
+    ...'ăă ăăă ăăăă ăăăăă îhî ptiu brr'.split(/\s+/)
+]);
+
+// Reacțiile cu sens rămân pentru Gemini. Eliminăm doar vocalizările fără dialog.
+const STANDALONE_SOURCE_FILLERS = new Set(
+    [...KNOWN_TRANSLATED_INTERJECTIONS]
+        .filter(token => !MEANINGFUL_STANDALONE_REACTIONS.has(token))
+);
+
+const CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN = [...STANDALONE_SOURCE_FILLERS]
+    .sort((a, b) => b.length - a.length)
+    .join('|');
+
+// Curățare contextuală: elimină vocalizările fără sens
+// de la început/final sau dintre virgule, dar lasă reacțiile semantice intacte.
+function stripContextualDisposableInterjections(value) {
+    const pattern = CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN;
+    if (!pattern) return String(value || '');
+
+    return String(value || '').split('\n').map(line => {
+        const cleanedLine = line.trim();
+        if (!cleanedLine) return '';
+
+        const marker = cleanedLine.match(/^[-–—]\s*/);
+        const prefix = marker ? marker[0] : '';
+        let body = marker ? cleanedLine.slice(prefix.length).trim() : cleanedLine;
+        if (!body) return '';
+
+        if (isOnlyStandaloneFillerSequence(body)) return '';
+
+        // Începutul: „Um, nu știu.” -> „Nu știu.”
+        for (let i = 0; i < 5; i++) {
+            const match = body.match(new RegExp('^(' + pattern + ')(?:\\s*[,;:!?.…]+\\s*|\\s+)(?=\\S)', 'iu'));
+            if (!match) break;
+            const filler = match[1];
+            body = body.slice(match[0].length).trimStart();
+            if (/^[A-ZĂÂÎȘȚ]/u.test(filler)) {
+                body = body.replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
+            }
+        }
+
+        // Finalul: „Nu știu, um...” -> „Nu știu...”
+        for (let i = 0; i < 4; i++) {
+            const match = body.match(new RegExp('([,;:\\s]+)(' + pattern + ')([.!?…]*)$', 'iu'));
+            if (!match) break;
+            const beforeFiller = body.slice(0, match.index).trimEnd();
+            if (!beforeFiller) break;
+            body = beforeFiller + match[3];
+        }
+
+        // Mijlocul: „Eu, eh, cred.” -> „Eu cred.”; păstrăm pauza de punctuație.
+        body = body.replace(new RegExp(',\\s*(?:' + pattern + ')\\s*([.!?…]+)', 'giu'), '$1');
+        body = body.replace(new RegExp(',\\s*(?:' + pattern + ')\\s*,', 'giu'), ', ');
+        body = body.replace(/([,;:])\s*([,;:])+/g, '$1');
+        body = body.replace(/\s+([.!?])/g, '$1').replace(/\s{2,}/g, ' ').trim();
+
+        return body ? prefix + body : '';
+    }).filter(Boolean).join('\n');
+}
 
 function deepCleanSubtitleText(text) {
     if (!text) return text;
@@ -4910,6 +4914,16 @@ function applySourceGroundedSemanticFixes(original, translation) {
             match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Să fac dansul' : 'să fac dansul');
     }
 
+    // Cazuri confirmate de comparația SRT cu originalul englezesc.
+    if (/^we are dying[.!?…]*$/iu.test(sourceNorm) &&
+        /^(?:muriți|mugim)[.!?…]*$/iu.test(text.trim())) {
+        return 'Murim.';
+    }
+    if (/^enough about you[.!?…]*$/iu.test(sourceNorm) &&
+        /^gata cu tine[.!?…]*$/iu.test(text.trim())) {
+        return 'Destul despre tine.';
+    }
+
     return text;
 }
 
@@ -5815,6 +5829,18 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\brenumerate\b/gi, 'remunerate'],
     [/\bsugist\b/gi, 'sugi'],
 
+    // Corectări conservatoare pentru deformări confirmate în verificarea SRT.
+    [/(?<![\\p{L}])studiend(?![\\p{L}])/giu, 'studiind'],
+    [/(?<![\\p{L}])receuționist(?![\\p{L}])/giu, 'recepționist'],
+    [/(?<![\\p{L}])locuk(?![\\p{L}])/giu, 'locul'],
+    [/(?<![\\p{L}])locului(?=\\s+ăsta\\b)/giu, 'locul'],
+    [/(?<![\\p{L}])ună(?=\\s+mamă\\b)/giu, 'o'],
+    [/(?<![\\p{L}])o\\s+glonț(?![\\p{L}])/giu, 'un glonț'],
+    [/(?<![\\p{L}])cedază(?![\\p{L}])/giu, 'cedează'],
+    [/(?<![\\p{L}])am\\s+să-ți\\s+lași(?=\\s+fiul\\b)/giu, 'am să-ți las'],
+    [/(?<![\\p{L}])n-a\\s+s-a(?![\\p{L}])/giu, 'nu s-a'],
+    [/(?<![\\p{L}])câne(?=\\s+și\\s+o\\s+pușcă\\b)/giu, 'câine'],
+
     // Corecții locale suplimentare cu încredere foarte mare, validate în QA.
     [/\bdeciizi\b/gi, 'decizi'],
     [/\bco\s+cerul\b/gi, 'că cerul'],
@@ -5879,6 +5905,10 @@ function detectLocalGrammarReviewReasons(text) {
         { pattern: /(?<![\p{L}])pot\s+să\s+(?:vorbim|mergem|facem|avem|plecăm|plecam|vedem|spunem|știm|stim|fim)(?![\p{L}])/iu, message: 'nepotrivire de persoană după „pot să”' },
         { pattern: /(?<![\p{L}])ar\s+trebui(?:\s+măcar)?\s+(?:le|îi|mi|ne|vă|te|mă)\s+\p{L}+/iu, message: 'posibil „să” lipsă în construcția „ar trebui ...”' },
         { pattern: /(?<![\p{L}])nu\s+ești\s+(?:nici\s+)?părere\s+de\s+rău(?![\p{L}])/iu, message: 'expresie idiomatică agramaticală „nu ești părere de rău”' },
+
+        { pattern: /(?<![\\p{L}])(?:releveeul|releveul|Mugim|câne)(?![\\p{L}])/iu, message: 'posibilă deformare lexicală sau alegere de cuvânt ce trebuie comparată cu originalul' },
+        { pattern: /(?<![\\p{L}])(?:un|o)\\s+(?:în|pe|la|din|cu|sub|peste|spre|către)(?![\\p{L}])/iu, message: 'posibil substantiv lipsă după articol; verifică replica originală' },
+        { pattern: /(?<![\\p{L}])decât\\s+cine\\s+prefaci\\s+că\\s+ești(?![\\p{L}])/iu, message: 'posibil pronume reflexiv lipsă în construcția „cine te prefaci că ești”' },
 
         // Semnale generale (nu doar cazuri izolate). Nu corectează automat:
         // marchează replica pentru singura verificare AI punctuală deja existentă.
