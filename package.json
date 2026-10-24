@@ -1,8 +1,8 @@
 {
   "name": "ro-sub-translator-addon",
-  "version": "13.2.53",
+  "version": "13.2.54",
   "private": true,
-  "description": "Context-aware Romanian subtitle translation with Unicode-safe semantic QA",
+  "description": "Context-aware Romanian subtitle translation with source-grounded semantic QA",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
