@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.47',
+    version: '13.2.48',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4975,7 +4975,11 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     // Pentru tura rapidă, permitem doar două proiecte încercate înainte de a pune calupul în coada coordonată.
     const maxRateLimitAttempts = Math.max(8, Array.isArray(keyStates) ? keyStates.length * 3 : 8);
     const maxFast429Attempts = 2;
-    const maxAttemptsThisPass = deferred429Retry ? maxRateLimitAttempts : maxKeyAttempts;
+    // 5xx: permitem 8 apeluri reale chiar dacă pool-ul are mai puține chei; după fiecare 5xx se resetează rotația.
+// 429 rămâne limitat la tura rapidă sau la bugetul separat de recuperare.
+    const maxAttemptsThisPass = deferred429Retry
+        ? maxRateLimitAttempts
+        : Math.max(maxKeyAttempts, maxTransientAttempts);
     const attemptedKeyStates = new Set();
     let sawRateLimit429 = false;
     let rateLimitAttempts = 0;
