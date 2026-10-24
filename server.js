@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.45',
+    version: '13.2.46',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2136,6 +2136,8 @@ function deepCleanSubtitleText(text) {
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
     let cleaned = text.replace(/^<[^>]+>\s*(?:uh|uhh|uhhh|uhm|uhmm|um|umm|ehm|erm|err|mwah|ă|ăă|ăăă|uu)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
+    // Repară artefactul tehnic _n înaintea unei noi replici cu liniuță.
+    cleaned = cleaned.replace(/_n(?=\s*[-–—])/g, '\n');
     // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație.
     // IMPORTANT: includem și punctul în delimitatori; altfel „ăă...” / „mhm...”
     // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
@@ -5806,6 +5808,13 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
 // ============================================================
 
 const LOCAL_GRAMMAR_FIXES = [
+    [/(?<![\p{L}\p{N}_])cel mai mare bideu(?![\p{L}\p{N}_])/giu, 'cel care oferă mai mult'],
+    [/(?<![\p{L}\p{N}_])vânător de (?:onoruri|arierate)(?![\p{L}\p{N}_])/giu, 'vânător de recompense'],
+    [/(?<![\p{L}\p{N}_])mățineau(?![\p{L}\p{N}_])/giu, 'mă țineau'],
+    [/(?<![\p{L}\p{N}_])sesimte(?![\p{L}\p{N}_])/giu, 'se simte'],
+    [/(?<![\p{L}\p{N}_])carnă și oase(?![\p{L}\p{N}_])/giu, 'carne și oase'],
+    [/(?<![\p{L}\p{N}_])alegeți-ți(?![\p{L}\p{N}_])/giu, 'alegeți-vă'],
+    [/(?<![\p{L}\p{N}_])o nod Windsor(?![\p{L}\p{N}_])/giu, 'un nod Windsor'],
     // Greșeli reale observate în verificări manuale ale subtitrărilor.
     [/\brenumererațiile\b/gi, 'remunerațiile'],
     [/\brenumererație\b/gi, 'remunerație'],
