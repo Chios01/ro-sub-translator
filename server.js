@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.49',
+    version: '13.2.50',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1803,8 +1803,9 @@ function isEffectivelyEmptySubtitleText(text) {
 const STANDALONE_SOURCE_FILLERS = new Set((
     // Aceste vocalizări nu sunt păstrate ca traduceri autonome.
     // Nu ștergem „Oh/Ah” din expresii dialogate valide; filtrăm doar liniile formate
-    // exclusiv din interjecții. „Hmm”, „Mhm” și „Mm-hmm” rămân evaluate contextual.
-    'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu'
+    // exclusiv din interjecții. Vocalizările „Hm / Hmm / Mm / Mhm / Mm-hmm” sunt zgomote: nu se traduc
+    // și nu apar în subtitrare.
+    'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu hm hmm hmmm hmph mh mhm mm mmm mmmm mmhmm mm-hmm mmm-hmm'
 ).split(/\s+/));
 
 // Elimină „oh/ah” numai când linia conține exclusiv interjecții și punctuație.
@@ -2061,7 +2062,7 @@ const KNOWN_SOURCE_INTERJECTIONS = new Set((
 ).split(/\s+/));
 
 const MEANINGFUL_STANDALONE_REACTIONS = new Set((
-    'a-ha aha aw aww awww hm hmm hmmm hmph huh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm oh ohh ohhh ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh-oh uh-huh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr'
+    'a-ha aha aw aww awww huh oh ohh ohhh ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh-oh uh-huh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr'
 ).split(/\s+/));
 
 const KNOWN_TRANSLATED_INTERJECTIONS = new Set([
@@ -2113,7 +2114,10 @@ function stripContextualDisposableInterjections(value) {
             if (!match) break;
             const beforeFiller = body.slice(0, match.index).trimEnd();
             if (!beforeFiller) break;
-            body = beforeFiller + match[3];
+            // „5 mm”, „50 ha”: după o cifră este o unitate de măsură, nu o interjecție.
+            if (/\d$/.test(beforeFiller)) break;
+            // „Yeah, yeah. Um...” -> „Yeah, yeah.” (fără „....”)
+            body = /[.!?…]$/.test(beforeFiller) ? beforeFiller : beforeFiller + match[3];
         }
 
         // Mijlocul: „Eu, eh, cred.” -> „Eu cred.”; păstrăm pauza de punctuație.
@@ -2798,7 +2802,7 @@ ROMANIAN ACCURACY RULES
 - Direct object: use „pe” plus the clitic for people as direct objects („Îl iubesc pe Tom”, „Te văd pe tine”), not for things.
 - Numerals: use „de” before the counted noun when the number is 20 or more or ends in 00 („20 de dolari”, „100 de ani”, „35 de minute”); omit it for 1–19 („15 dolari”, „3 ani”, „12 minute”).
 - Calques: translate fixed phrases by their function, not word by word — “I mean”, “you know”, “like” (filler), “literally”, “actually”, “come on”, “hang on”, “my bad”, “I'm good”, “you're welcome”, “what's up”, “no way”, “give me a break”, “count me in”, “it's on me”. Do not mirror English passives, “-ing” chains or possessives („Mi-am spălat mâinile” → „M-am spălat pe mâini” when more natural). Tag questions (“right?”, “isn't it?”) become „nu?”, „da?” or „nu-i așa?”.
-- Interjections: “Hmm?” / “Hm.” → „Hm?” / „Mda.” / „Mm.”; never „Mă?” or „Mă.” (a rude vocative in Romanian). Keep “Huh?” as „Hă?”.
+- Vocal sounds: never write “Hm”, “Hmm”, “Mm”, “Mmm”, “Mhm”, “Ehm” or “Ăă” as Romanian text; if such a sound appears inside a sentence, leave it out. Never write „Mă?” or „Mă.” (a rude vocative in Romanian). Keep “Huh?” as „Hă?”.
 - Agreement: check noun gender and number after every demonstrative or adjective („aceste microorganisme”, not „acești”); neuter nouns take masculine singular and feminine plural forms. Use „mi-e” / „nu mi-e frică”, not „mi-este”.
 - Names and invented terms must have ONE Romanian form in the whole file. If a glossary is provided in the background block, follow it exactly; otherwise keep a nickname or invented term the same in every line and never produce spelling variants of the same name.
 - Spelling: write every word completely and correctly („în”, „a vorbit”, „vorbea”, „s-a dus”); never merge, drop or swap letters.
@@ -2817,7 +2821,7 @@ INTERJECTIONS AND FILLERS
 - Recognize the extended interjection inventory, including variants such as “a-ha”, “ahem”, “ehhh”, “hmph”, “ooh-la-la”, “pfft”, “uh-huh”, “whoo-hoo”, and Romanian forms such as “ăă”, “îhî”, “ptiu”, and “brr”. Use this list to identify interjections, not as a command to delete every matching word.
 - Remove standalone filler sounds and meaningless hesitation tokens, including “Um”, “Erm”, “Mwah”, “ă”, and “ăă”, when they function only as hesitation/noise. Remove disposable fillers around a real sentence only when they add no meaning; repair punctuation and capitalization.
 - NEVER preserve the English interjections “Oh” or “Ah” literally in Romanian output, whether they appear alone or at the start of a longer expression. Remove the leading “Oh/Ah” and translate the remaining message naturally: for example, “Oh, no!” → „Nu!” / „Vai, nu!” according to context; “Ah, yes!” → „Da!”; “Oh my God!” → „Doamne!”. The rest of the message must not be discarded.
-- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Mhm/Mm-hmm” when they express agreement, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief, and “Aha” when expressing realization.
+- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief, and “Aha” when expressing realization.
 - Use neighboring subtitles and the scene context to decide whether an interjection is noise or meaningful speech. Never automatically delete meaningful reactions, acknowledgments, questions, pain, warnings, relief, or commands just because they occur in the interjection inventory. Translate those naturally into Romanian.
 - Before returning, compare the beginning and end of each translation with its source so that cleaning a filler does not accidentally remove adjacent dialogue.
 - REGULĂ STRICTĂ PENTRU PARANTEZE: elimină integral orice text dintre paranteze rotunde (...) sau drepte [...], indiferent dacă este descriere sonoră, indicație de acțiune sau alt text. Acest conținut nu trebuie să apară în subtitrarea română. Dacă într-un bloc există dialog și în afara parantezelor, păstrează tot dialogul exterior.
