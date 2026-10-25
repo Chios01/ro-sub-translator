@@ -2753,7 +2753,7 @@ Use adjacent cues to understand a sentence that continues across IDs, but transl
 Text enclosed in parentheses or square brackets that is a sound effect, stage direction or non-dialogue caption must not appear in the Romanian output; preserve dialogue outside it. Do not wrap normal dialogue in decorative brackets.
 
 PROTECTED MUSIC
-Tokens beginning with ZXQKEEPSONG and ending with QXZ are protected placeholders for excluded song lyrics. Copy each token exactly once and do not translate, edit, split, duplicate or remove it. If a cue also contains dialogue, translate only the dialogue outside the token. These tokens will be removed later by the code.
+The preprocessing code removes text enclosed by paired music-note markers before this prompt is built; translate only remaining real dialogue and never invent replacement text for removed song lyrics. Tokens beginning with ZXQKEEPSONG and ending with QXZ are protected placeholders for excluded song lyrics. Copy each token exactly once and do not translate, edit, split, duplicate or remove it. If a cue also contains dialogue, translate only the dialogue outside the token. These tokens will be removed later by the code.
 
 OUTPUT CONTRACT
 Return only a valid JSON array. Include exactly one object for every supplied cue, in the same order, with exactly these fields: {"id": integer, "text": "Romanian translation"}. Copy every input ID exactly, including gaps; do not infer, renumber, merge, move or duplicate IDs. Do not translate or include context-only material. Copy cues consisting only of numbers and punctuation exactly. Preserve protected music tokens exactly. No markdown, code fences, comments or explanation.
@@ -5393,7 +5393,6 @@ Pentru fiecare replică din lista de verificat:
 
 Un câmp translation gol dintr-o verificare punctuală trebuie tradus din original și context; nu omite ID-ul gol.
 
-DATE DE VERIFICAT
 Fiecare element conține id, original, translation, context anterior/următor în engleză și română și, uneori, avertisment_semantic. Avertismentele indică ce trebuie verificat, nu reprezintă automat concluzii; compară sensul cu originalul.
 
 DATE DE VERIFICAT
