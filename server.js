@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.48',
+    version: '13.2.49',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2737,71 +2737,30 @@ function formatSubtitleLine(text) {
 // MASTER CINEMATIC TRANSLATION PROMPT
 // ============================================================
 
-const MASTER_TRANSLATION_PROMPT = `MISSION
-Translate every supplied English subtitle block into natural, modern spoken Romanian for films and TV. Localize the intended meaning and tone; do not copy English word order when it sounds unnatural in Romanian.
+const MASTER_TRANSLATION_PROMPT = `ROLE
+You are a professional English-to-Romanian subtitle translator and a native Romanian dialogue editor. Translate every supplied cue into concise, natural, contemporary spoken Romanian.
 
-OUTPUT — CRITICAL
-- Return ONLY a valid JSON array, with exactly one object for every supplied ID, in the original order.
-- Every object must have exactly these fields: {"id": integer, "text": "Romanian translation"}.
-- Preserve IDs exactly. Never omit, duplicate, invent, merge, or move content to a neighboring ID.
-- Input IDs may contain gaps when subtitle blocks were filtered before translation. Never renumber by position or infer an ID from its neighbors: copy each supplied ID exactly, even when the numbers are not consecutive.
-- Before returning, verify that every text belongs to the English block with the same ID; do not shift translations forward or backward when a block is unusual, numeric, empty-looking, or difficult to translate.
-- Do not return markdown, code fences, comments, or explanations.
+MEANING BEFORE WORDING
+Translate the intended meaning, joke, idiom, slang and speaker intent—not English word order or surface resemblance. Use the surrounding English cues, Romanian context and media information to resolve references and ambiguity. Check who performs the action, who receives it, object versus location, negation/polarity, tense, person, possession, gender and number. Never reverse roles, invent details or silently drop meaning.
+Examples of context dependence: “hit on someone” usually means flirting („a se da la cineva”), not attacking; “look at someone” means „a se uita la cineva”, not „a uda pe cineva”; “you've been robbed” means someone stole from you. In a restaurant kitchen, “Order up!” or “Pick up!” followed by table numbers means the orders are ready to collect („Comenzile sunt gata! Mesele 12, 4 și 11.”), not „La comandă!”.
 
-TRANSLATION AND CONTEXT
-- Translate every meaningful sentence, phrase, joke, idiom, slang expression, and fragment into Romanian. Preserve names and established foreign expressions only when they genuinely belong in the source.
-- MUSIC LYRICS EXCLUSION — The preprocessing code removes text enclosed by paired music-note markers (♪...♪, ♫...♫, ♬...♬, ♩...♩) BEFORE this prompt is built. Such lyrics must not appear in this request. Translate only the remaining real dialogue, including dialogue sharing a source block with lyrics; never invent replacement text for removed song lyrics. This applies to regular and SDH subtitles and must not remove non-song dialogue.
-- Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
-- If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
-- If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
-- Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
-- Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
-- Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
-- When the source explicitly names an anatomical or sexual term, use an accurate Romanian equivalent. Do not replace it with vague euphemisms such as „jos” or „acolo”. Preserve the grammatical relationship too: for example, “the sound that dries my vagina” means „sunetul care-mi usucă vaginul”, not „sunetul care mă usucă în vagin”.
-- Preserve singular/plural, gender, and the identity of the object. A singular source noun such as “a hat” must not become plural „căciuli”. Do not add diminutives such as „căciuliță” unless smallness, affection, or a diminutive is actually expressed by the source.
-- Translate idioms and profanity by their function in context, not by mechanically matching each English word. For example, “fucking” may be an intensifier, an insult, or a literal verb; choose the Romanian equivalent for that function.
-- Romanian profanity: after an interrogative word use „dracu'” or „naiba” directly („Ce dracu' faci?”, „Despre ce naiba vorbești?”, „Cine dracu' ești?”); NEVER write „ce a dracului” or „cine a dracului”. As an intensifier use „al naibii de”, „la naiba”, „pe naiba”, or put „al naibii/al dracului” after a masculine noun group. Do not append „dracului” to every sentence and do not keep the English word order of “fucking”; often it is better dropped or rendered by a natural interjection. Examples: “What the fuck is in Switzerland?” → „Ce dracu' e în Elveția?”; “No fucking way.” → „Nici gând, la naiba.”; “It's a fucking disaster.” → „E un dezastru al naibii.”; “Shut the fuck up.” → „Taci dracului din gură.”
-- Choose terms of endearment according to the relationship and context; do not translate “babe”, “honey”, or “baby” mechanically every time.
-- Translate “But” as „Dar” when it begins a clause. Do not leave ordinary English dialogue untranslated.
-- Use correct Romanian grammar, spelling, punctuation, and diacritics (ă, â, î, ș, ț). Use complete real Romanian words; never truncate, merge, invent, or corrupt a word. Check pronouns, clitics, prepositions, conjugation, and agreement.
-- Convert ordinary imperial measurements to metric where natural and safe: feet to metres, miles to kilometres, pounds to kilograms, Fahrenheit to Celsius. Do not convert plot-critical or idiomatic measurements. Translate “lakh” as 100,000 and “crore” as 10 million when relevant.
+ROMANIAN DIALOGUE
+Use idiomatic, fluent Romanian that a native speaker would naturally say aloud. Avoid calques, awkward English syntax and literal translations of phrasal verbs. Preserve humor, sarcasm, emotion, intimacy, informality and profanity at the same intensity as the source—neither censor nor intensify it. Keep explicit terms explicit. Prefer a concise natural line, but never sacrifice meaning to shorten it.
+Use informal „tu/voi” unless the scene clearly requires formality. Infer gender, number and speaker relationships from context; never output alternatives separated by a slash. Keep names, nicknames and invented terms consistent and do not invent Romanian versions of names. Use correct diacritics, spelling, agreement, pronouns, clitics and punctuation. Translate units naturally when appropriate, but preserve idiomatic or plot-critical values.
 
-ROMANIAN ACCURACY RULES
-- Register: use informal „tu/voi” by default (friends, family, peers, partners, children, casual speech). Use „dumneavoastră” only when the source clearly signals formality: “sir/ma'am”, “Mr./Mrs./Dr./Officer/Professor/Your Honor” addressed respectfully, subordinate to superior, official, medical, military or courtroom settings. Once two speakers have a register, keep it for the whole scene (use the context lines to stay consistent). Render “sir/ma'am” as „domnule/doamnă”, “Mr./Mrs./Miss” as „domnul/doamna/domnișoara”, and keep ranks and titles natural („căpitane”, „domnule doctor”, „agent Smith”).
-- Gender and number: English “you”, “I am tired”, “we were” do not show gender or number. Infer the gender and number of the speaker and of the person addressed from the neighboring lines (names, he/she, sir/ma'am, “guys”, “ladies”) and make adjectives, participles, pronouns and verbs agree („sunt obosită” / „sunt obosit”, „ați venit” for several people). If it is truly unknown, use the most common form; never write both forms with a slash.
-- Names: keep names of people, characters, brands, bands and show/film titles as in the source unless an established Romanian form exists („Londra”, „Marea Britanie”). Do not decline or invent endings for foreign names, and spell each name the same way throughout.
-- Direct object: use „pe” plus the clitic for people as direct objects („Îl iubesc pe Tom”, „Te văd pe tine”), not for things.
-- Numerals: use „de” before the counted noun when the number is 20 or more or ends in 00 („20 de dolari”, „100 de ani”, „35 de minute”); omit it for 1–19 („15 dolari”, „3 ani”, „12 minute”).
-- Calques: translate fixed phrases by their function, not word by word — “I mean”, “you know”, “like” (filler), “literally”, “actually”, “come on”, “hang on”, “my bad”, “I'm good”, “you're welcome”, “what's up”, “no way”, “give me a break”, “count me in”, “it's on me”. Do not mirror English passives, “-ing” chains or possessives („Mi-am spălat mâinile” → „M-am spălat pe mâini” when more natural). Tag questions (“right?”, “isn't it?”) become „nu?”, „da?” or „nu-i așa?”.
-- Interjections: “Hmm?” / “Hm.” → „Hm?” / „Mda.” / „Mm.”; never „Mă?” or „Mă.” (a rude vocative in Romanian). Keep “Huh?” as „Hă?”.
-- Agreement: check noun gender and number after every demonstrative or adjective („aceste microorganisme”, not „acești”); neuter nouns take masculine singular and feminine plural forms. Use „mi-e” / „nu mi-e frică”, not „mi-este”.
-- Names and invented terms must have ONE Romanian form in the whole file. If a glossary is provided in the background block, follow it exactly; otherwise keep a nickname or invented term the same in every line and never produce spelling variants of the same name.
-- Spelling: write every word completely and correctly („în”, „a vorbit”, „vorbea”, „s-a dus”); never merge, drop or swap letters.
-- Before returning, re-read each line aloud in your head: if a native speaker would not say it, rewrite it more simply and naturally while keeping the full meaning.
+CUE CONTINUITY AND BOUNDARIES
+Use adjacent cues to understand a sentence that continues across IDs, but translate only the content belonging to each supplied ID. Never move, merge, omit, duplicate or anticipate a neighboring cue's meaning. If a sentence continues, use lowercase at the start when Romanian grammar calls for it, except for proper names or a new sentence. Keep meaningful reactions and acknowledgements; render “Oh/Ah”, “Huh?”, “Wow”, “Oops” and similar expressions according to their function in the scene rather than deleting them mechanically.
+Text enclosed in parentheses or square brackets that is a sound effect, stage direction or non-dialogue caption must not appear in the Romanian output; preserve dialogue outside it. Do not wrap normal dialogue in decorative brackets.
 
-SUBTITLE FORMATTING
-- Keep each visible line at or below 42 characters whenever the wording allows. Use no more than TWO text lines per subtitle block.
-- Prefer a balanced two-line layout. Avoid leaving only one or two short words on the second line when a natural alternative exists.
-- If two ordinary visual lines fit together within 42 characters, merge them into one line unless a meaningful sentence/dialogue boundary should remain.
-- Split at natural phrase boundaries, not arbitrary points. Avoid separating a Romanian preposition, article, or short function word from the phrase it belongs to; if necessary, rephrase concisely without losing meaning.
-- If the thought continues on the second visual line, start that line lowercase unless a proper noun or new sentence requires otherwise.
-- If two speakers share one source block, keep both under the SAME ID on separate lines, each with “- ” and a capitalized first word. Never move a speaker to another ID, and do not merge the two speakers.
-- Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
+PROTECTED MUSIC
+Tokens beginning with ZXQKEEPSONG and ending with QXZ are protected placeholders for excluded song lyrics. Copy each token exactly once and do not translate, edit, split, duplicate or remove it. If a cue also contains dialogue, translate only the dialogue outside the token. These tokens will be removed later by the code.
 
-INTERJECTIONS AND FILLERS
-- Recognize the extended interjection inventory, including variants such as “a-ha”, “ahem”, “ehhh”, “hmph”, “ooh-la-la”, “pfft”, “uh-huh”, “whoo-hoo”, and Romanian forms such as “ăă”, “îhî”, “ptiu”, and “brr”. Use this list to identify interjections, not as a command to delete every matching word.
-- Remove standalone filler sounds and meaningless hesitation tokens, including “Um”, “Erm”, “Mwah”, “ă”, and “ăă”, when they function only as hesitation/noise. Remove disposable fillers around a real sentence only when they add no meaning; repair punctuation and capitalization.
-- NEVER preserve the English interjections “Oh” or “Ah” literally in Romanian output, whether they appear alone or at the start of a longer expression. Remove the leading “Oh/Ah” and translate the remaining message naturally: for example, “Oh, no!” → „Nu!” / „Vai, nu!” according to context; “Ah, yes!” → „Da!”; “Oh my God!” → „Doamne!”. The rest of the message must not be discarded.
-- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Mhm/Mm-hmm” when they express agreement, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief, and “Aha” when expressing realization.
-- Use neighboring subtitles and the scene context to decide whether an interjection is noise or meaningful speech. Never automatically delete meaningful reactions, acknowledgments, questions, pain, warnings, relief, or commands just because they occur in the interjection inventory. Translate those naturally into Romanian.
-- Before returning, compare the beginning and end of each translation with its source so that cleaning a filler does not accidentally remove adjacent dialogue.
-- REGULĂ STRICTĂ PENTRU PARANTEZE: elimină integral orice text dintre paranteze rotunde (...) sau drepte [...], indiferent dacă este descriere sonoră, indicație de acțiune sau alt text. Acest conținut nu trebuie să apară în subtitrarea română. Dacă într-un bloc există dialog și în afara parantezelor, păstrează tot dialogul exterior.
-- PENTRU DIALOG NORMAL, returnează traducerea ca text simplu: nu pune replica tradusă între paranteze rotunde sau drepte și nu adăuga paranteze decorative în jurul întregii traduceri. Parantezele/parantezele drepte nu se folosesc ca ambalaj pentru o replică normală.
-- NEVER include non-dialogue sound effects, music cues, stage directions, or vocal-action captions in the Romanian subtitle output. Remove cues such as “(sighs)”, “[whistling]”, „(bufnește)”, „(șuierături)”, „(bufnire)” and „(plângând)” completely. Do not remove dialogue that mentions a sound, laughter, singing, or music when that dialogue is outside parentheses/brackets.
+OUTPUT CONTRACT
+Return only a valid JSON array. Include exactly one object for every supplied cue, in the same order, with exactly these fields: {"id": integer, "text": "Romanian translation"}. Copy every input ID exactly, including gaps; do not infer, renumber, merge, move or duplicate IDs. Do not translate or include context-only material. Copy cues consisting only of numbers and punctuation exactly. Preserve protected music tokens exactly. No markdown, code fences, comments or explanation.
+Keep each subtitle concise and suitable for no more than two visual lines, ideally no longer than 42 characters per line where natural. Do not omit content merely to fit a line.
 
-FINAL CHECK
-Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, balance between visual lines, dialogue format, filler cleanup, and one-to-one ID alignment. Check that ordinary English was translated, that meaningful reactions were not discarded, and that no dialogue was lost during reformatting. Correct clear errors without adding or deleting meaning.
-`;
+FINAL SILENT REVIEW
+Before returning, compare every translation with its source and context. Check the meaning and speaker intent, idioms and phrasal verbs, negation, roles, omitted or invented information, gender/number, Romanian fluency, diacritics, truncated/merged words, untranslated English and cue-to-ID alignment. Rewrite any line that sounds unnatural or changes the source meaning.`;
 
 
 // ============================================================
@@ -5422,37 +5381,27 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
             };
         });
 
-        const prompt = `Ești un editor profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Revizuiești traducerea existentă, nu o retraducești automat.
+                const prompt = `Ești un editor profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Revizuiește traducerea existentă folosind originalul și contextul; nu retraduce automat și nu rescrie din preferință stilistică.
 
-SCOP
-Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică.
+Pentru fiecare replică din lista de verificat:
+1. Stabilește sensul original, idiomurile și intenția în context. Verifică cine face acțiunea, obiectul versus locul, negația/polaritatea, timpul, persoana, posesia, genul și numărul.
+2. Corectează calcurile, formulările nenaturale, greșelile gramaticale/ortografice, diacriticele, cuvintele corupte sau trunchiate și fragmentele englezești rămase, dar numai când originalul susține corectura.
+3. Nu omite și nu inventa informații; păstrează tonul, umorul, vulgaritatea și termenii expliciți ai sursei. Nu modifica numele și nu introduce detalii neconfirmate.
+4. Fiecare ID trebuie să exprime doar conținutul propriului original. Folosește replicile vecine pentru context, dar nu muta, anticipa sau elimina sens între ID-uri. Repetiția este acceptabilă dacă este justificată de original.
+5. Tokenurile ZXQKEEPSONG...QXZ sunt protejate: copiază-le exact, o singură dată; nu le traduce, modifica sau elimina.
+6. Păstrează orice traducere deja corectă și naturală. Dacă nu există o greșeală demonstrabilă, nu returna o corectură pentru acel ID.
 
-VERIFICĂ ÎN ORDINE
-1. Compară ORIGINALUL, traducerea și contextul imediat înainte/după. Verifică sensul complet, expresiile idiomatice, cine face acțiunea și cine/ce o primește.
-2. Verifică relațiile gramaticale, nu doar prezența cuvintelor: obiect direct versus loc, prepoziții, pronume/clitice, posesie, negație, timp, persoană, gen și număr. De exemplu, pentru EN “the sound that dries my vagina”, „îmi usucă vaginul” păstrează relația de obiect direct; „mă usucă în vagin” schimbă sensul.
-3. Păstrează termenii expliciți și sensul direct când sursa îi folosește. Nu îi înlocui cu eufemisme și nu transforma intensificatorii/înjurăturile în obiecte, acțiuni sau insulte diferite.
-4. Păstrează singularul/pluralul și referentul. De exemplu, “a hat” nu trebuie tradus „căciuli”. Nu adăuga diminutive precum „căciuliță” dacă sursa nu exprimă micime, afecțiune sau diminutiv.
-5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase.
-6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
-7. VERSURI MUZICALE EXCLUSE: textul dintre marcatorii muzicali este înlocuit înaintea verificării cu tokenuri tehnice de forma ZXQKEEPSONG...QXZ și va fi eliminat complet din SRT-ul final. Copiază fiecare token identic, o singură dată, în poziția lui; NU îl traduce, nu îl șterge, nu îl modifica și nu reconstrui versurile ascunse. Dacă replica are și dialog în afara tokenului, corectează numai dialogul și păstrează tokenurile identice. Textul protejat nu trebuie să apară în rezultat.
-8. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
-9. Dacă avertismentul menționează un conector repetat între două subtitrări consecutive, compară ambele originale și ambele traduceri din context. Păstrează conectorul în fragmentul al cărui original îl conține. Dacă originalul fragmentului curent NU începe/nu se termină cu acel conector, dar traducerea îl adaugă la limită, elimină doar conectorul adăugat inutil din replica curentă; nu șterge conectorul justificat de următorul/precedentul original. Dacă dovezile nu sunt clare, nu rescrie.
-10. Dacă avertismentul indică un fragment englezesc netradus, o secvență englezească deteriorată sau un text corupt și originalul/contextul permit stabilirea sensului, corectează efectiv fragmentul în română. Nu lăsa secvența deteriorată în text și nu omite corectura doar pentru că restul replicii este românește. Dacă semnalul este un fals pozitiv și formularea românească transmite deja sensul originalului, păstreaz-o.
-11. Dacă avertismentul indică aceeași traducere românească pentru două originale englezești diferite, compară separat sensul fiecărui original cu traducerea lui și folosește contextul ambelor replici. Nu păstra automat traducerea duplicată, dar nici nu schimba o replică doar pentru a evita repetiția. Corectează doar ID-ul/ID-urile pentru care există o nepotrivire demonstrabilă; nu muta textul între ID-uri.
-12. Dacă avertismentul indică o posibilă suprapunere de sens între două subtitrări consecutive, verifică dacă originalul englezesc al primei replici continuă în următorul ID și dacă traducerea română a primei replici a anticipat deja o expresie care aparține semantic următoarei. Dacă prima traducere adaugă sensul următoarei replici, rescrie numai ID-ul pentru care surplusul este demonstrabil, astfel încât fiecare ID să exprime doar conținutul justificat de propriul original și context. Nu elimina o repetiție firească, nu muta text între ID-uri și nu forța diferențe stilistice când ambele traduceri sunt valide.
+Un câmp translation gol dintr-o verificare punctuală trebuie tradus din original și context; nu omite ID-ul gol.
 
-REGULĂ DE PRUDENȚĂ
-Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
-${isTargetedReview && batch.some(entry => !String(translatedById[String(entry.id)] || '').trim()) ? '\nIMPORTANT: dacă un obiect are câmpul „translation” gol, nu există text de păstrat pentru acel ID. Tradu acel original în română pe baza contextului și returnează textul pentru acel ID; nu-l omite.\n' : ''}
-DATE DE VERIFICAT:
-Fiecare obiect include id, original, translation, context_anterior_en, context_urmator_en, context_anterior_ro, context_urmator_ro și, uneori, avertisment_semantic. Contextul este doar pentru înțelegere; corectează numai replica curentă.
+DATE DE VERIFICAT
+Fiecare element conține id, original, translation, context anterior/următor în engleză și română și, uneori, avertisment_semantic. Avertismentele indică ce trebuie verificat, nu reprezintă automat concluzii; compară sensul cu originalul.
+
+DATE DE VERIFICAT
 ${JSON.stringify(payload, null, 2)}
 
-Returnează DOAR JSON valid:
-[
-  {"id": 123, "text": "traducerea corectată"}
-]
-Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
+Returnează DOAR JSON valid, numai cu ID-urile corectate:
+[{"id":123,"text":"traducerea corectată"}]
+Dacă niciun candidat nu necesită corectare, returnează exact []. Nu modifica ID-urile, nu adăuga explicații și nu folosi markdown.`;
 
         let lastJsonError = null;
 
