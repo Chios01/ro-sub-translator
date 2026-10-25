@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.48',
+    version: '13.2.49',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2336,6 +2336,26 @@ function formatSubtitleLayout(value) {
 
     // If the model produces more than two lines, keep the complete content and
     // compact the overflow into the second line instead of silently truncating it.
+    // Un rând fără liniuță care urmează imediat după un rând cu liniuță este continuarea
+    // aceluiași vorbitor („- Respirație clară / bilateral. / - Bine...”). La fel, un rând cu liniuță
+    // început cu literă mică după o frază neîncheiată. Le lipim de vorbitorul lor ÎNAINTE de comprimare,
+    // altfel al doilea vorbitor ajunge cu liniuță în mijlocul rândului.
+    if (entries.length > 2) {
+        const merged = [];
+        for (const entry of entries) {
+            const previous = merged[merged.length - 1];
+            const continuation = previous && previous.dialogue && !entry.dialogue;
+            const lowercaseContinuation = previous && previous.dialogue && entry.dialogue &&
+                /^[a-zăâîșț]/u.test(entry.text) && !/[.!?…:]["”»)]*$/u.test(previous.text);
+            if (continuation || lowercaseContinuation) {
+                previous.text = (previous.text + ' ' + entry.text).trim();
+                continue;
+            }
+            merged.push({ text: entry.text, dialogue: entry.dialogue });
+        }
+        entries = merged;
+    }
+
     if (entries.length > 2) {
         const first = entries[0];
         const remainder = entries.slice(1).map(entry => entry.dialogue ? `- ${entry.text}` : entry.text).join(' ');
@@ -2352,6 +2372,9 @@ function formatSubtitleLayout(value) {
             if (parts.length === 2) return `- ${capFirst(parts[0])}\n${parts[1]}`;
             return `- ${capFirst(parts[0])}`;
         }
+        // Un rând de până la 43 de caractere încape și nu trebuie despărțit.
+        const compactText = entry.text.replace(/\s+/g, ' ').trim();
+        if (compactText && compactText.length <= 43) return compactText;
         return splitSubtitleIntoTwoLines(entry.text, 42).join('\n') || ' ';
     }
 
@@ -2371,7 +2394,8 @@ function formatSubtitleLayout(value) {
         const second = entries[1].text.trim();
         const joined = (first + ' ' + second).trim();
         const firstEndsSentence = /[.!?…]$/.test(first);
-        const bothFit = first.length <= 42 && second.length <= 42;
+        // Toleranță de 43: rândurile deja bune nu se re-despart pentru un singur caracter.
+        const bothFit = first.length <= 43 && second.length <= 43;
         const imbalance = Math.abs(first.length - second.length);
 
         // Păstrăm o despărțire de propoziții clară dacă ambele rânduri se încadrează.
@@ -2380,14 +2404,15 @@ function formatSubtitleLayout(value) {
         // Două rânduri scurte se unesc când încap într-un singur rând.
         if (joined.length <= 42) return joined;
 
-        // Reechilibrăm numai când este nevoie; funcția păstrează textul integral.
-        if (!bothFit || imbalance > 18) {
+        // Reechilibrăm numai când un rând depășește limita. Dezechilibrul singur nu justifică o
+        // re-despărțire: ruptura făcută de model la virgulă/propoziție este de obicei mai bună.
+        if (!bothFit) {
             return splitSubtitleIntoTwoLines(joined, 42).join('\n') || joined;
         }
         return first + '\n' + second;
     }
 
-    if (entries.every(entry => entry.text.length <= 42)) {
+    if (entries.every(entry => entry.text.length <= 43)) {
         return entries.map(entry => entry.text).join('\n');
     }
     return splitSubtitleIntoTwoLines(entries.map(entry => entry.text).join(' '), 42).join('\n') || ' ';
@@ -5847,16 +5872,15 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\bsugist\b/gi, 'sugi'],
 
     // Corectări conservatoare pentru deformări confirmate în verificarea SRT.
-    [/(?<![\\p{L}])studiend(?![\\p{L}])/giu, 'studiind'],
-    [/(?<![\\p{L}])receuționist(?![\\p{L}])/giu, 'recepționist'],
-    [/(?<![\\p{L}])locuk(?![\\p{L}])/giu, 'locul'],
-    [/(?<![\\p{L}])locului(?=\\s+ăsta\\b)/giu, 'locul'],
-    [/(?<![\\p{L}])ună(?=\\s+mamă\\b)/giu, 'o'],
-    [/(?<![\\p{L}])o\\s+glonț(?![\\p{L}])/giu, 'un glonț'],
-    [/(?<![\\p{L}])cedază(?![\\p{L}])/giu, 'cedează'],
-    [/(?<![\\p{L}])am\\s+să-ți\\s+lași(?=\\s+fiul\\b)/giu, 'am să-ți las'],
-    [/(?<![\\p{L}])n-a\\s+s-a(?![\\p{L}])/giu, 'nu s-a'],
-    [/(?<![\\p{L}])câne(?=\\s+și\\s+o\\s+pușcă\\b)/giu, 'câine'],
+    [/(?<![\p{L}])studiend(?![\p{L}])/giu, 'studiind'],
+    [/(?<![\p{L}])receuționist(?![\p{L}])/giu, 'recepționist'],
+    [/(?<![\p{L}])locuk(?![\p{L}])/giu, 'locul'],
+    [/(?<![\p{L}])ună(?=\s+mamă(?![\p{L}]))/giu, 'o'],
+    [/(?<![\p{L}])o\s+glonț(?![\p{L}])/giu, 'un glonț'],
+    [/(?<![\p{L}])cedază(?![\p{L}])/giu, 'cedează'],
+    [/(?<![\p{L}])am\s+să-ți\s+lași(?=\s+fiul\b)/giu, 'am să-ți las'],
+    [/(?<![\p{L}])n-a\s+s-a(?![\p{L}])/giu, 'nu s-a'],
+    [/(?<![\p{L}])câne(?=\s+și\s+o\s+pușcă(?![\p{L}]))/giu, 'câine'],
 
     // Corecții locale suplimentare cu încredere foarte mare, validate în QA.
     [/\bdeciizi\b/gi, 'decizi'],
@@ -5923,9 +5947,9 @@ function detectLocalGrammarReviewReasons(text) {
         { pattern: /(?<![\p{L}])ar\s+trebui(?:\s+măcar)?\s+(?:le|îi|mi|ne|vă|te|mă)\s+\p{L}+/iu, message: 'posibil „să” lipsă în construcția „ar trebui ...”' },
         { pattern: /(?<![\p{L}])nu\s+ești\s+(?:nici\s+)?părere\s+de\s+rău(?![\p{L}])/iu, message: 'expresie idiomatică agramaticală „nu ești părere de rău”' },
 
-        { pattern: /(?<![\\p{L}])(?:releveeul|releveul|Mugim|câne)(?![\\p{L}])/iu, message: 'posibilă deformare lexicală sau alegere de cuvânt ce trebuie comparată cu originalul' },
-        { pattern: /(?<![\\p{L}])(?:un|o)\\s+(?:în|pe|la|din|cu|sub|peste|spre|către)(?![\\p{L}])/iu, message: 'posibil substantiv lipsă după articol; verifică replica originală' },
-        { pattern: /(?<![\\p{L}])decât\\s+cine\\s+prefaci\\s+că\\s+ești(?![\\p{L}])/iu, message: 'posibil pronume reflexiv lipsă în construcția „cine te prefaci că ești”' },
+        { pattern: /(?<![\p{L}])(?:releveeul|releveul|Mugim|câne)(?![\p{L}])/iu, message: 'posibilă deformare lexicală sau alegere de cuvânt ce trebuie comparată cu originalul' },
+        { pattern: /(?<![\p{L}-])(?:un|o)\s+(?:în|la|cu|sub|peste|spre|către)(?![\p{L}])/iu, message: 'posibil substantiv lipsă după articol; verifică replica originală' },
+        { pattern: /(?<![\p{L}])decât\s+cine\s+prefaci\s+că\s+ești(?![\p{L}])/iu, message: 'posibil pronume reflexiv lipsă în construcția „cine te prefaci că ești”' },
 
         // Semnale generale (nu doar cazuri izolate). Nu corectează automat:
         // marchează replica pentru singura verificare AI punctuală deja existentă.
@@ -7712,6 +7736,7 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
     const terminalPunctuation = /[.!?…:]+["'’”»)}\]]*$/u;
     const openingQuoteOrBracket = /["'„“«‘(\[]\s*$/u;
     const speakerDashAtLineStart = /(?:^|\n)\s*[-–—]\s*$/u;
+    const speakerDashInline = /[.!?…"”»)]\s+[-–—]\s*$/u;
 
     for (const item of items) {
         if (item.musicOnly) continue;
@@ -7737,7 +7762,7 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                 // Cuvântul este la începutul replicii/fragmentului, nu în mijlocul frazei.
                 if (!/[\p{L}\p{N}]/u.test(before)) return wholeWord;
                 // Nu schimbăm începuturile de propoziție sau începutul unui citat/paranteze.
-                if (terminalPunctuation.test(before) || openingQuoteOrBracket.test(before) || speakerDashAtLineStart.test(before)) {
+                if (terminalPunctuation.test(before) || openingQuoteOrBracket.test(before) || speakerDashAtLineStart.test(before) || speakerDashInline.test(before)) {
                     return wholeWord;
                 }
 
