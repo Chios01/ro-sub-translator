@@ -2033,7 +2033,7 @@ function cleanTextForJson(text) {
 
     // subtitle formatting curăță etichetele de vorbitor cu majuscule înainte de traducere.
     // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
-    clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?[A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}){0,2}:\s*/g, '$1$2');
+    clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt|Counselor|Consilier)\.\s*|\b(?:Counselor\s+\d+|Consilier\s+\d+|Counselor|Consilier|Lee|Claudette|Grace|Harmony|Willow|Dorf|Ralph|Nate|Briana|Walfisch|Landau|Maggie|Harry|Gus|Plato|Shutterbug|Ghost Space|Space Ghost|Weegee|Bug|Tony|Sam|Jack|Louise|Effie|George|Paul|Emmett|Joe|And|Barby|Barbie|Oleg|Earl|Bryce|Han|Max|Caroline|Robbie|Brad|Angelina)\b\s*[:.-]?\s*)+/g, '$1$2');
 
     // Eliminăm înainte de Gemini doar liniile formate exclusiv din interjecții Oh/Ah.
     // Cuvintele și nuanța expresiilor dialogate sunt păstrate.
