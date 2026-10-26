@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.54',
+    version: '13.2.55',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2007,10 +2007,9 @@ function stripNonDialogueSoundMarkup(value) {
         removedCount++;
     }
 
-    // Dacă din „- [sighs] / - Replica” a rămas un singur vorbitor, liniuța de dialog nu mai are rost.
-    if (removedCount && clean && !clean.includes('\n')) {
-        clean = clean.replace(/^[ \t]*[-–—][ \t]+(?=\S)/, '');
-    }
+    // Nu ștergem aici liniuța textului rămas: pot exista încă două replici reale
+    // pe același rând, iar eliminarea prematură poate pierde marcajul celui de-al doilea vorbitor.
+    // Numărul final de vorbitori este cunoscut abia după toate filtrele, în formatSubtitleLayout().
     if (removedCount && /^[ \t\r\n\-–—,;:.!?…]+$/.test(clean)) clean = '';
 
     return { text: clean, removedCount };
@@ -2033,7 +2032,9 @@ function cleanTextForJson(text) {
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
 
     // Elimină etichetele de vorbitor de la începutul rândului, inclusiv roluri și legături cu litere mici.
-    clean = clean.replace(/(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?[A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,3}:\s*/g, '$1$2');
+    // Excepțiile sunt expresii conversaționale urmate de două puncte, nu nume de personaje:
+    // „Listen: I don't know.”, „Look:”, „Wait:”, „Here:” etc. trebuie păstrate.
+    clean = clean.replace(/(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?!(?:Listen|Look|Remember|Note|Warning|Wait|Okay|OK|Well|Now|Here|Please|Stop|Sorry|Sure|Right|Actually|Honestly|Anyway|Fine|Great|Careful|Quiet|Hey|Yes|No|Maybe|So|But|Then|Again|Easy|Enough|What|Why|Who|Where|When|How|Hello|Thanks)\s*:)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?[A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,3}:\s*/g, '$1$2');
 
     // Elimină bâlbâielile englezești: „the-- the”, „I-- I”, „it's-- it's”.
     clean = clean.replace(/\b([A-Za-z']+)[ \t]*--[ \t]*\1\b/gi, '$1');
@@ -2385,9 +2386,11 @@ function formatSubtitleLayout(value) {
     if (entries.length === 1) {
         const entry = entries[0];
         if (entry.dialogue) {
+            // Liniuța marchează alternanța a doi vorbitori în același bloc.
+            // După eliminarea etichetelor/cue-urilor, un singur vorbitor rămas nu păstrează liniuța.
             const parts = splitSubtitleIntoTwoLines(entry.text, 41);
-            if (parts.length === 2) return `- ${capFirst(parts[0])}\n${parts[1]}`;
-            return `- ${capFirst(parts[0])}`;
+            if (parts.length === 2) return `${capFirst(parts[0])}\n${parts[1]}`;
+            return capFirst(parts[0]);
         }
         // Un rând de până la 43 de caractere încape și nu trebuie despărțit.
         const compactText = entry.text.replace(/\s+/g, ' ').trim();
@@ -8503,6 +8506,15 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         console.log(`${c.yellow}[Versuri muzicale] ${musicTokenFallbackCount} cue-uri mixte au revenit la sursa mascată deoarece un token protejat nu a supraviețuit; versurile vor fi eliminate din rezultat, iar QA poate semnala dialogul netradus.${c.reset}`);
     }
 
+    // Curățarea finală a liniuțelor rulează DUPĂ toate eliminările de paranteze/cue-uri.
+    // Un singur vorbitor nu primește liniuță; când rămân două replici dialogate, ambele marcaje se păstrează.
+    for (const item of items) {
+        const id = String(item.id);
+        const current = String(translatedById[id] || '');
+        if (!current.trim()) continue;
+        translatedById[id] = formatSubtitleLayout(current).trim();
+    }
+
     const suppressedFillerIdSet = new Set(suppressedFillerIds);
     const suppressedFinalOutputIdSet = new Set([
         ...suppressedFillerIdSet,
@@ -9869,11 +9881,8 @@ function parseSrt(srt, stats = null) {
 
         const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(rawText);
         let text = cleanTextForJson(rawText);
-        // Replică originală cu doi vorbitori din care a rămas unul singur (celălalt era „Uh...”,
-        // „Oh.” etc.): liniuța de dialog nu mai are rost.
-        if (lines.length > 3 && text && !text.includes('\n') && /^[-–—]\s+\S/.test(text)) {
-            text = text.replace(/^[-–—]\s+/, '');
-        }
+        // Liniuțele nu se șterg anticipat în preprocesare: formatSubtitleLayout le decide
+        // după ce știe dacă a rămas un singur vorbitor sau un schimb real de replici.
 
         if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) {
             if (stats) {
