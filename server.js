@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.56',
+    version: '13.2.57',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2467,6 +2467,7 @@ const CLITIC_O_FOLLOWING_VERBS = new Set((
     'prinde prind prinzi prindem prindeti prins ' +
     'repara repar repari reparam reparati reparat ' +
     'scoate scot scoti scoatem scoateti scos scoata ' +
+    'suna sun suni suna sunam sunati sunat sunand ' +
     'scrie scriu scrii scriem scrieti scris ' +
     'simte simt simti simtim simtiti simtit ' +
     'spala spal speli spalam spalati spalat ' +
@@ -2515,6 +2516,18 @@ function formatSubtitleLine(text) {
             if (!CLITIC_O_FOLLOWING_VERBS.has(normalizedVerb)) return match;
             const allCaps = clitic.length > 1 && clitic === clitic.toLocaleUpperCase('ro');
             return `${clitic}-${allCaps ? 'O' : 'o'}`;
+        }
+    );
+
+    // Forma elidată „s-o” (= „să o”) înaintea unui verb: „s o sunăm” → „s-o sunăm”.
+    // Cerem o formă verbală recunoscută ca să nu unim „s o” în expresii nominale.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])([Ss])[ \t]+[oO](?=[ \t]+([\p{L}]+)(?![\p{L}\p{N}_]))/giu,
+        (match, clitic, followingWord) => {
+            const normalizedVerb = followingWord.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+            if (!CLITIC_O_FOLLOWING_VERBS.has(normalizedVerb)) return match;
+            const allCaps = followingWord === followingWord.toLocaleUpperCase('ro') && /[A-ZĂÂÎȘȚ]/.test(followingWord);
+            return `${clitic}-${allCaps && clitic === 'S' ? 'O' : 'o'}`;
         }
     );
 
