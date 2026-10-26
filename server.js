@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.53',
+    version: '13.2.54',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1801,11 +1801,10 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const STANDALONE_SOURCE_FILLERS = new Set((
-    // Aceste vocalizări nu sunt păstrate ca traduceri autonome.
-    // Nu ștergem „Oh/Ah” din expresii dialogate valide; filtrăm doar liniile formate
-    // exclusiv din interjecții. Vocalizările „Hm / Hmm / Mm / Mhm / Mm-hmm” sunt zgomote: nu se traduc
-    // și nu apar în subtitrare.
-    'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu hm hmm hmmm hmph mh mhm mm mmm mmmm mmhmm mm-hmm mmm-hmm'
+    // Eliminăm vocalizările fără conținut când un rând este alcătuit exclusiv din ele.
+    // Nu eliminăm interjecții din replici complete; clasificarea contextuală rulează separat.
+    // Include și variante de șuierat/șș și bâzâit-uri de tip „mm-mm” sau „hmm-mm”.
+    'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu hm hmm hmmm hmph mh mhm mm mmm mmmm mmhmm mm-hmm mmm-hmm mm-mm hmm-mm sh shh shhh ssh ssshh șș șșș șșșș'
 ).split(/\s+/));
 
 // Elimină „oh/ah” numai când linia conține exclusiv interjecții și punctuație.
