@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.60',
+    version: '13.2.61',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2514,6 +2514,76 @@ function formatSubtitleLine(text) {
     text = deepCleanSubtitleText(text);
     if (!text.trim()) return ' ';
 
+    // Corectează cratima plasată după clitic: „nu ți-știu” / „nu ți-pasă”
+    // devin „nu-ți știu” / „nu-ți pasă”. Delimitările Unicode evită \b pe diacritice.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])(nu|că|să|ce)[ \t]+(ți|mi)-((?:ști[\p{L}]*|pasă|place|plac|vine|vin|pare|par|amint[\p{L}]*|spu[\p{L}]*|zi[\p{L}]*|da[\p{L}]*|ia[\p{L}]*|fac[\p{L}]*))(?![\p{L}\p{N}_])/giu,
+        '$1-$2 $3'
+    );
+
+    // „S-o nu ucizi” -> „Să n-o ucizi”; tratăm similar formele „S-l nu” / „S-i nu”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])([Ss])-[oO][ \t]+nu(?=[ \t]+[\p{L}])/giu,
+        (_, initial) => `${initial}ă n-o`
+    );
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])([Ss])-([lLiI])[ \t]+nu(?=[ \t]+[\p{L}])/giu,
+        (_, initial, clitic) => `${initial}ă nu-${clitic.toLocaleLowerCase('ro-RO')}`
+    );
+
+    // Elimină spațiul accidental imediat după cratimă la clitice/eliziuni: „n- o” -> „n-o”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])(n|s|l|m|ți|mi|i|v|ne|le|c|d|p|într|dintr|printr)-[ \t]+(o|a|ai|am|au|ar|aș|ați|un|una|ale|al|însă|însuși)(?![\p{L}\p{N}_])/giu,
+        '$1-$2'
+    );
+
+    // „Îi-ai” -> „Îi ai”; „Dă-jos” -> „Dă jos”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])([Dd]ă)-jos(?![\p{L}\p{N}_])/giu,
+        '$1 jos'
+    );
+
+    // Spațiu după punct când două cuvinte lipite au literă mică înainte și majusculă după.
+    // Nu afectează inițialele consecutive scrise cu majuscule.
+    text = text.replace(/(?<=\p{Ll})\.(?=\p{Lu})/gu, '. ');
+
+    // Corecturi punctuale din verificarea manuală a Sursei 14.
+    const preserveInitialCase = (match, replacement) => {
+        if (match === match.toLocaleUpperCase('ro-RO')) return replacement.toLocaleUpperCase('ro-RO');
+        if (match[0] === match[0].toLocaleUpperCase('ro-RO')) {
+            return replacement.charAt(0).toLocaleUpperCase('ro-RO') + replacement.slice(1);
+        }
+        return replacement;
+    };
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])supranaturalicunoscut(?![\p{L}\p{N}_])/giu,
+        match => preserveInitialCase(match, 'supranatural cunoscut')
+    );
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])nığım[ \t]+pe[ \t]+nimeni(?![\p{L}\p{N}_])/giu,
+        match => preserveInitialCase(match, 'n-am pe nimeni')
+    );
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])bet[ \t]+tu[ \t]+tot[ \t]+îmi[ \t]+stai[ \t]+în[ \t]+cale(?![\p{L}\p{N}_])/giu,
+        match => preserveInitialCase(match, 'dar tu tot îmi stai în cale')
+    );
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])mi-o[ \t]+ești[ \t]+dator(?![\p{L}\p{N}_])/giu,
+        match => preserveInitialCase(match, 'îmi ești dator')
+    );
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])atțite(?![\p{L}\p{N}_])/giu,
+        match => preserveInitialCase(match, 'ațintite')
+    );
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])pot[ \t]+să[ \t]+vi[ \t]+se[ \t]+alătur[ \t]+jos(?![\p{L}\p{N}_])/giu,
+        match => preserveInitialCase(match, 'pot să mă alătur vouă jos')
+    );
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])(mă[ \t]+)Păzească(?![\p{L}\p{N}_])/giu,
+        '$1păzească'
+    );
+
     // Corecții conservatoare pentru cinci tipare confirmate în subtitrări reale.
     // „Unde-mi-e” / „Unde-ți-e” -> „Unde mi-e” / „Unde ți-e”.
     text = text.replace(
@@ -2604,6 +2674,13 @@ function formatSubtitleLine(text) {
     // Pronume clitice + forme ale verbului „a avea” fără cratimă: „ți am promis” → „ți-am promis”.
     text = text.replace(/(?<![\p{L}\p{N}_])(mi|ți|îi|ne|v|le|te|m)\s+(am|ai|a|au|ați)(?=\s+[\p{L}])/giu, '$1-$2');
     text = text.replace(/(?<![\p{L}\p{N}_])(l)\s+(am|ai|a|au|ați)(?=\s+[\p{L}])/giu, '$1-$2');
+
+    // Regula generală de mai sus ar uni „Îi ai pe cap” în „Îi-ai”; aici „îi”
+    // este pronume obiect, nu cliticul din „îi-ai”. Reaplicăm corecția după ea.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])([Îî]i)-(ai|am|ați|au)(?![\p{L}\p{N}_])/giu,
+        (_, pronoun, auxiliary) => `${pronoun} ${auxiliary.toLocaleLowerCase('ro-RO')}`
+    );
 
     // „l aș fi sunat” -> „l-aș fi sunat”: condiționalul cu pronume clitic necesita o regulă separată.
     text = text.replace(
@@ -5055,6 +5132,15 @@ function applySourceGroundedSemanticFixes(original, translation) {
     const sourceText = String(original || '').replace(/<[^>]+>/g, ' ');
     const sourceNorm = sourceText.toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
 
+    // ID 1654 din verificarea SRT: „n-o uzi niciodată” era de fapt „n-o uiți niciodată”.
+    // Corectăm numai când sursa engleză conține „forget”, ca să nu stricăm sensul literal „water it”.
+    if (/\bforget\b/i.test(sourceNorm)) {
+        text = text.replace(
+            /(?<![\p{L}\p{N}_])(să[ \t]+n-[ \t]*o[ \t]+)uzi([ \t]+niciodată)(?![\p{L}\p{N}_])/giu,
+            (match, prefix, ending) => `${prefix}uiți${ending}`
+        );
+    }
+
     // Reparație foarte îngustă, activată numai dacă engleza conține verbul tranzitiv
     // „dry + my/the vagina”. Nu schimbă alte utilizări ale lui „mă usucă”.
     if (/\b(?:dry|dries|dried|drying)\s+(?:my|the)\s+vagina\b/i.test(sourceNorm)) {
@@ -6220,7 +6306,7 @@ function detectLocalGrammarReviewReasons(text) {
     // Nu rescriem automat: sunt trimise la verificare AI numai replicile marcate.
     const highConfidenceRomanianQualityGuards = [
         { pattern: /(?<![\p{L}])introm(?![\p{L}])/iu, message: 'posibil cuvânt trunchiat/inexistent „introm”' },
-        { pattern: /(?<![\p{L}])arnm(?![\p{L}])/iu, message: 'posibil cuvânt corupt „arnm”; compară replica cu originalul înainte de corectare' },
+        // ARNm este abrevierea validă pentru ARN mesager; nu îl tratăm ca typo.
         { pattern: /(?<![\p{L}])eau\s+(?:de\s+)?\d+(?:\s*,\s*\d+)?(?![\p{L}])/iu, message: 'posibil cuvânt trunchiat înaintea unui număr („eau de 12, 15”)' },
         { pattern: /(?<![\p{L}])necesiți(?![\p{L}])/iu, message: 'formă verbală românească suspectă „necesiți”' },
         { pattern: /(?<![\p{L}])flori[-\s]+soarelui(?![\p{L}])/iu, message: 'posibil calc/declinare greșită „flori-soarelui”' },
@@ -6487,6 +6573,73 @@ function findRepeatedTranslationIssues(items, translatedById) {
     // verificarea contextuală. Raportarea se face la QA final numai dacă duplicatul
     // persistă după toate corectările; altfel logul ar prezenta drept problemă rămasă
     // o situație pe care verificarea tocmai a reparat-o.
+    return issues;
+}
+
+// Detectează cazul mai puternic în care o propoziție românească întreagă, adăugată
+// la finalul unui cue, se repetă la începutul cue-ului următor. Nu rescrie automat:
+// trimite numai cue-ul care pare să fi preluat textul spre verificare contextuală.
+function findRepeatedTrailingSentenceIssues(items, translatedById) {
+    const issues = [];
+    const clean = value => String(value || '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const words = value => normalizeRepeatedTranslationCheckText(value).split(' ').filter(Boolean);
+    const sourceWords = value => clean(value)
+        .toLocaleLowerCase('en-US')
+        .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
+
+    for (let i = 0; i < items.length - 1; i++) {
+        const first = items[i];
+        const second = items[i + 1];
+        if (first.musicOnly || second.musicOnly || isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
+
+        const firstId = String(first.id);
+        const secondId = String(second.id);
+        const firstNumericId = Number(first.sourceId ?? first.id);
+        const secondNumericId = Number(second.sourceId ?? second.id);
+        if (!Number.isFinite(firstNumericId) || !Number.isFinite(secondNumericId) || secondNumericId !== firstNumericId + 1) continue;
+
+        const firstTarget = clean(translatedById[firstId]).replace(/^[-–—]\s*/, '');
+        const secondTarget = clean(translatedById[secondId]).replace(/^[-–—]\s*/, '');
+        if (!firstTarget || !secondTarget) continue;
+
+        // Cerem o propoziție finală care vine DUPĂ alt conținut în primul cue;
+        // liniile identice integral sunt deja gestionate de findRepeatedTranslationIssues.
+        const lastSentenceMatch = firstTarget.match(/([^.!?…]+[.!?…]["”’»)]*)\s*$/u);
+        if (!lastSentenceMatch) continue;
+        const sentence = lastSentenceMatch[1].trim();
+        const sentenceStart = firstTarget.lastIndexOf(sentence);
+        if (sentenceStart <= 0) continue;
+
+        const sentenceWords = words(sentence);
+        const secondWords = words(secondTarget);
+        if (sentenceWords.length < 4 || secondWords.length < sentenceWords.length) continue;
+        if (!sentenceWords.every((word, index) => word === secondWords[index])) continue;
+
+        // Dacă originalele repetă efectiv aceleași cuvinte la limită, repetarea poate
+        // fi legitimă. În caz contrar, semnalăm pentru comparație AI cu ambele surse.
+        const firstSourceWords = sourceWords(first.text);
+        const secondSourceWords = sourceWords(second.text);
+        let sourceRepeatsAtBoundary = false;
+        const maxOverlap = Math.min(8, firstSourceWords.length, secondSourceWords.length);
+        for (let length = maxOverlap; length >= 3; length--) {
+            const sourceTail = firstSourceWords.slice(-length);
+            if (sourceTail.every((word, index) => word === secondSourceWords[index])) {
+                sourceRepeatsAtBoundary = true;
+                break;
+            }
+        }
+        if (sourceRepeatsAtBoundary) continue;
+
+        issues.push({
+            item: first,
+            pairedItem: second,
+            reason: `propoziție completă posibil duplicată la limită: ID ${firstId} se termină cu „${sentence}”, care se repetă la începutul ID ${secondId}; compară originalele și elimină textul preluat numai din ID-ul greșit, fără a muta conținut între ID-uri`
+        });
+    }
+
     return issues;
 }
 
@@ -6986,6 +7139,18 @@ async function runLocalGrammarQualityPass(items, translatedById) {
             if (!existing.reasons.includes(duplicateIssue.reason)) existing.reasons.push(duplicateIssue.reason);
         } else {
             flagged.push({ item: duplicateIssue.item, reasons: [duplicateIssue.reason] });
+        }
+    }
+
+    // Propozițiile complete duplicate la limita cue-urilor sunt un semnal mai puternic
+    // decât simpla suprapunere lexicală; trimitem cue-ul precedent la review contextual.
+    for (const duplicateSentenceIssue of findRepeatedTrailingSentenceIssues(items, translatedById)) {
+        const id = String(duplicateSentenceIssue.item.id);
+        const existing = flagged.find(entry => String(entry.item.id) === id);
+        if (existing) {
+            if (!existing.reasons.includes(duplicateSentenceIssue.reason)) existing.reasons.push(duplicateSentenceIssue.reason);
+        } else {
+            flagged.push({ item: duplicateSentenceIssue.item, reasons: [duplicateSentenceIssue.reason] });
         }
     }
 
@@ -8532,6 +8697,13 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
     }
     for (const issue of findAdjacentSemanticOverlapIssues(items, translatedById)) {
+        const id = String(issue.item.id);
+        if (!finalRepairCandidates.some(item => String(item.id) === id)) {
+            finalRepairCandidates.push(issue.item);
+        }
+        finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
+    }
+    for (const issue of findRepeatedTrailingSentenceIssues(items, translatedById)) {
         const id = String(issue.item.id);
         if (!finalRepairCandidates.some(item => String(item.id) === id)) {
             finalRepairCandidates.push(issue.item);
