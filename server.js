@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.62',
+    version: '13.2.63',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -428,7 +428,17 @@ const BROWSER_USER_AGENT_FETCH = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Appl
 const SUBDL_MAX_SUBTITLE_RESULTS = 8;
 const OPENSUBTITLES_MAX_WITH_SUBDL = 4;
 const OPENSUBTITLES_LEGACY_MAX_RESULTS = 15;
+// Inspectăm mai mulți candidați decât afișăm, ca variantele greșit etichetate
+// să poată fi eliminate fără să rămânem imediat fără alternative valide.
+const SUBDL_LANGUAGE_PREFLIGHT_POOL = 24;
+const OPENSUBTITLES_LANGUAGE_PREFLIGHT_POOL = 24;
+const SOURCE_LANGUAGE_PREFLIGHT_CONCURRENCY = 6;
+const SOURCE_LANGUAGE_PREFLIGHT_TIMEOUT_MS = 7000;
+const SOURCE_LANGUAGE_PREFLIGHT_CACHE_TTL_MS = 20 * 60 * 1000;
+const SOURCE_LANGUAGE_PREFLIGHT_FAILURE_TTL_MS = 60 * 1000;
+const SOURCE_LANGUAGE_PREFLIGHT_CACHE_MAX = 500;
 const TOTAL_MAX_SUBTITLE_RESULTS = SUBDL_MAX_SUBTITLE_RESULTS + OPENSUBTITLES_MAX_WITH_SUBDL;
+const sourceLanguagePreflightCache = new Map();
 
 function decodeSubtitleHtmlEntities(value) {
     return String(value || '')
@@ -985,7 +995,7 @@ function subdlCandidateRows(rows, identity, expectedTitle = '', options = {}) {
     if (candidates.some(item => item.matchScore !== null)) {
         candidates.sort((a, b) => ((b.matchScore ?? -1) - (a.matchScore ?? -1)) || (a.sourceOrder - b.sourceOrder));
     }
-    return candidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
+    return candidates.slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
 }
 
 async function fetchSubdlLegacyV1Candidates(apiKey, identity, expectedTitle) {
@@ -1065,7 +1075,7 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
         // This endpoint already ranked candidates by release match. Keep that native
         // order across explicit v2 nIds and direct-URL fallback rows; transport method
         // must not outrank the provider's match score.
-        return filenameCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
+        return filenameCandidates.slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
     }
     if (filenameDirectCandidates.length) {
     }
@@ -1086,7 +1096,7 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
         // match object is acceptable; any provided contradictory identity is not.
         if (flattened.match && !subdlMatchIsCompatible(flattened.match, identity, expectedTitle, false)) {
             console.log(`[SubDL] API a returnat metadate incompatibile pentru ${mediaId}; rezultatele sunt ignorate.`);
-            return filenameDirectCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
+            return filenameDirectCandidates.slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
         }
         const imdbCandidates = subdlCandidateRows(flattened.rows, identity, expectedTitle);
         const imdbIdCandidates = imdbCandidates.filter(item => !item.nId.startsWith('url_'));
@@ -1100,7 +1110,7 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
                 if (seen.has(item.nId)) return false;
                 seen.add(item.nId);
                 return true;
-            }).slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
+            }).slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
         }
         // If v2 only supplies opaque direct links with no recoverable IDs, use the documented
         // legacy v1 response once: unpack=1 exposes file_n_id and direct per-file URLs, from
@@ -1114,7 +1124,7 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
                 if (seen.has(item.nId)) return false;
                 seen.add(item.nId);
                 return true;
-            }).slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
+            }).slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
         }
         const combined = [...directOnly, ...legacyCandidates];
         const seen = new Set();
@@ -1122,10 +1132,10 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
             if (seen.has(item.nId)) return false;
             seen.add(item.nId);
             return true;
-        }).slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
+        }).slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
     } catch (error) {
         console.log(`[SubDL] Căutarea exactă IMDb a eșuat pentru ${mediaId} (${error.response?.status || 'rețea'}). Păstrez URL-urile directe de filename ca ultimă rezervă.`);
-        return filenameDirectCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
+        return filenameDirectCandidates.slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
     }
 }
 
@@ -1200,10 +1210,16 @@ async function handleSubtitles(req, res) {
         } catch (error) {
             console.log(`${c.yellow}[SubDL] Furnizor indisponibil (${error.response?.status || 'rețea'}); continui cu OpenSubtitles.${c.reset}`);
         }
+        if (subdlCandidates.length) {
+            subdlCandidates = await filterSubtitleCandidatesBySourceLanguage(
+                subdlCandidates.slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL),
+                'SubDL', configData, userFilename, SUBDL_MAX_SUBTITLE_RESULTS
+            );
+            // Afișăm numai candidați ale căror fișiere reale au trecut verificarea limbii.
+            subdlCandidates = subdlCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
+        }
         if (!subdlCandidates.length) {
-            console.log(`${c.yellow}[SubDL] Nicio subtitrare EN sigură potrivită pentru ${id}; folosesc OpenSubtitles.${c.reset}`);
-        } else {
-            // Nu jurnalizăm fiecare răspuns SubDL reușit; rezultatul este vizibil în lista Stremio.
+            console.log(`${c.yellow}[SubDL] Nicio subtitrare EN verificată pentru ${id}; folosesc OpenSubtitles.${c.reset}`);
         }
     }
     if (subdlCandidates.length) openSubtitlesLimit = OPENSUBTITLES_MAX_WITH_SUBDL;
@@ -1242,7 +1258,7 @@ async function handleSubtitles(req, res) {
 
         // Păstrăm validarea URL-urilor și filtrul anti-release-uri nedorite.
         let engSubs = allSubs.filter(sub =>
-            (sub.lang === 'eng' || sub.lang === 'en' || sub.lang === 'English') &&
+            getSubtitleLanguageDeclaration(sub) === 'english' &&
             isValidSubtitleSourceUrl(sub.url)
         );
         const uniqueUrls = new Set();
@@ -1497,7 +1513,7 @@ async function handleSubtitles(req, res) {
             const rankedSource = diverseSubs
                 .filter(s => s.sourceIndex === sourceIndex)
                 .sort(compareOpenSubtitlesCandidates);
-            sourceBalancedCandidates.push(...rankedSource.slice(0, openSubtitlesLimit));
+            sourceBalancedCandidates.push(...rankedSource.slice(0, OPENSUBTITLES_LANGUAGE_PREFLIGHT_POOL));
         }
 
         // Deduplicare globală după selecția per-sursă. Dacă același URL apare
@@ -1515,8 +1531,14 @@ async function handleSubtitles(req, res) {
 
         diverseSubs = [...bestCandidateByUrl.values()]
             .sort(compareOpenSubtitlesCandidates)
-            .slice(0, openSubtitlesLimit);
-        
+            .slice(0, OPENSUBTITLES_LANGUAGE_PREFLIGHT_POOL);
+
+        // Verificăm conținutul real înainte ca orice variantă să fie trimisă în lista add-on-ului.
+        // Astfel, o sursă etichetată greșit `eng` este eliminată, iar următoarea variantă validă urcă.
+        diverseSubs = await filterSubtitleCandidatesBySourceLanguage(
+            diverseSubs, 'OpenSubtitles', configData, userFilename, openSubtitlesLimit
+        );
+        diverseSubs = diverseSubs.slice(0, openSubtitlesLimit);
 
         // ============================================================
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
@@ -1582,7 +1604,9 @@ async function handleSubtitles(req, res) {
     }
 }
 
-async function getSubdlSubtitleText(configId, reference, requestedFilename = '') {
+async function getSubdlSubtitleText(configId, reference, requestedFilename = '', requestOptions = {}) {
+    const requestedTimeout = Number(requestOptions?.timeoutMs);
+    const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0 ? Math.min(30000, requestedTimeout) : 25000;
     const isApiReference = reference.startsWith('api_');
     const isDirectUrlRef = reference.startsWith('url_');
     let apiReference = null;
@@ -1655,7 +1679,7 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
     let exactFileError = null;
     try {
         if (isDirectUrlRef) {
-            bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
+            bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey, requestOptions);
         } else {
             // When file_n_id is known, first fetch that exact file from SubDL's documented
             // /subtitle/{n_id}/{file_n_id} route; the parent nId endpoint can otherwise select
@@ -1663,8 +1687,9 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
             if (isApiReference && apiReference?.fileNId && directDownloadUrl) {
                 exactFileAttempted = true;
                 try {
-                    bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
+                    bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey, requestOptions);
                 } catch (error) {
+                    if (requestOptions?.signal?.aborted) throw error;
                     exactFileError = error;
                     console.log(`[SubDL] Descărcarea fișierului exact a eșuat (${error.response?.status || error.subdlDownloadMeta?.status || 'rețea'}); încerc API v2 ca rezervă.`);
                 }
@@ -1678,7 +1703,8 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
             };
             const requestApi = () => axios.get(makeApiUrl(), {
                 headers: { Authorization: `Bearer ${addonConfig.subdlKey}`, 'User-Agent': BROWSER_USER_AGENT_FETCH },
-                timeout: 25000,
+                timeout: timeoutMs,
+                ...(requestOptions?.signal ? { signal: requestOptions.signal } : {}),
                 maxContentLength: 25 * 1024 * 1024,
                 maxBodyLength: 25 * 1024 * 1024,
                 responseType: 'arraybuffer',
@@ -1690,10 +1716,11 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
                 try {
                     response = await requestApi();
                 } catch (apiError) {
+                    if (requestOptions?.signal?.aborted) throw apiError;
                     const apiStatus = Number(apiError?.response?.status || 0);
                     if (!exactFileAttempted && directDownloadUrl && [400, 401, 403, 404, 409, 422].includes(apiStatus)) {
                         console.log(`[SubDL] Descărcarea oficială API v2 a eșuat (${apiStatus}); încerc URL-ul direct original, păstrat ca fallback.`);
-                        bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
+                        bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey, requestOptions);
                     } else if (exactFileError) {
                         throw exactFileError;
                     } else {
@@ -1707,7 +1734,7 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
                 if (redirectLocation) {
                     // Do not forward the API bearer token across hosts.
                     const redirectUrl = new URL(redirectLocation, makeApiUrl()).toString();
-                    bytes = await fetchSubdlDirectWithFallback(redirectUrl, addonConfig.subdlKey);
+                    bytes = await fetchSubdlDirectWithFallback(redirectUrl, addonConfig.subdlKey, requestOptions);
                     response = { headers: { 'content-type': 'application/x-subrip' }, status: 200 };
                 } else {
                     bytes = Buffer.from(response.data || []);
@@ -1727,10 +1754,10 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
             const resolvedDirectUrl = rawDirectUrl ? new URL(rawDirectUrl, 'https://dl.subdl.com').toString() : '';
             const safeResolvedUrl = subdlDirectDownloadUrl(resolvedDirectUrl);
             if (safeResolvedUrl) {
-                bytes = await fetchSubdlDirectWithFallback(safeResolvedUrl, addonConfig.subdlKey);
+                bytes = await fetchSubdlDirectWithFallback(safeResolvedUrl, addonConfig.subdlKey, requestOptions);
             } else if (directDownloadUrl && !(isApiReference && apiReference?.fileNId && exactFileError)) {
                 console.log('[SubDL] API v2 a răspuns JSON fără URL descărcabil; încerc URL-ul original al rezultatului.');
-                bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
+                bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey, requestOptions);
             } else if (exactFileError) {
                 throw exactFileError;
             } else {
@@ -3212,6 +3239,217 @@ function detectExpectedEnglishSubtitle(value) {
         scriptProfile,
         lexicalProfile: lexical
     };
+}
+
+// ============================================================
+// FILTRARE ÎNAINTE DE AFIȘAREA CANDIDAȚILOR ÎN ADD-ON
+// Eticheta `eng` sau parametrul languages=en nu sunt suficiente: verificăm
+// conținutul real înainte ca o subtitrare să fie afișată în lista Stremio.
+// Candidații neverificabili sunt omiși în loc să fie prezentați drept surse EN.
+// ============================================================
+function getSubtitleLanguageDeclaration(row) {
+    const value = String(row?.lang ?? row?.language ?? row?.language_name ?? row?.lang_name ?? '').trim().toLowerCase();
+    if (!value) return 'unknown';
+    if (value === 'en' || value === 'eng' || value === 'english' || /\benglish\b/.test(value)) return 'english';
+    return 'other';
+}
+
+function inspectCandidateSubtitleLanguage(subtitleText, declaredEnglish = false) {
+    const body = subtitleBodyForLanguageCheck(subtitleText);
+    const letters = body.match(/\p{L}/gu) || [];
+    if (letters.length < 5) {
+        return { allowed: false, reason: 'prea puțin text pentru verificarea limbii', language: 'unknown', confidence: 0 };
+    }
+
+    const scripts = [
+        { key: 'Arabic', pattern: /\p{Script=Arabic}/gu },
+        { key: 'Cyrillic', pattern: /\p{Script=Cyrillic}/gu },
+        { key: 'CJK', pattern: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu },
+        { key: 'Hebrew', pattern: /\p{Script=Hebrew}/gu },
+        { key: 'Greek', pattern: /\p{Script=Greek}/gu },
+        { key: 'Devanagari', pattern: /\p{Script=Devanagari}/gu },
+        { key: 'Thai', pattern: /\p{Script=Thai}/gu },
+        { key: 'Armenian', pattern: /\p{Script=Armenian}/gu },
+        { key: 'Georgian', pattern: /\p{Script=Georgian}/gu },
+        { key: 'Bengali', pattern: /\p{Script=Bengali}/gu },
+        { key: 'Gujarati', pattern: /\p{Script=Gujarati}/gu },
+        { key: 'Gurmukhi', pattern: /\p{Script=Gurmukhi}/gu },
+        { key: 'Kannada', pattern: /\p{Script=Kannada}/gu },
+        { key: 'Malayalam', pattern: /\p{Script=Malayalam}/gu },
+        { key: 'Tamil', pattern: /\p{Script=Tamil}/gu },
+        { key: 'Telugu', pattern: /\p{Script=Telugu}/gu },
+        { key: 'Sinhala', pattern: /\p{Script=Sinhala}/gu },
+        { key: 'Lao', pattern: /\p{Script=Lao}/gu },
+        { key: 'Khmer', pattern: /\p{Script=Khmer}/gu },
+        { key: 'Myanmar', pattern: /\p{Script=Myanmar}/gu },
+        { key: 'Ethiopic', pattern: /\p{Script=Ethiopic}/gu }
+    ];
+    const scriptCounts = scripts.map(entry => ({
+        key: entry.key,
+        count: (body.match(entry.pattern) || []).length
+    })).sort((a, b) => b.count - a.count);
+    const topForeignScript = scriptCounts[0] || { key: 'unknown', count: 0 };
+    const foreignScriptRatio = topForeignScript.count / letters.length;
+    // Detectăm și subtitrările scurte; nu așteptăm pragul mai mare folosit
+    // de diagnosticul general al întregului fișier.
+    if (topForeignScript.count >= 5 && foreignScriptRatio >= 0.45) {
+        return {
+            allowed: false,
+            reason: `scriere predominant ${topForeignScript.key.toLowerCase()} (${Math.round(foreignScriptRatio * 100)}%)`,
+            language: topForeignScript.key,
+            confidence: foreignScriptRatio
+        };
+    }
+
+    const lexical = classifyLatinSubtitleLanguage(body);
+    if (lexical.isStrongForeignLanguage) {
+        return {
+            allowed: false,
+            reason: `indicatori lexicali pentru ${lexical.language}`,
+            language: lexical.language,
+            confidence: lexical.foreignScore || lexical.confidence || 0
+        };
+    }
+
+    // Pentru subtitrări lungi cerem dovezi pozitive de engleză chiar dacă furnizorul
+    // le-a etichetat `eng`. Dacă scorul este insuficient, nu le afișăm ca surse EN.
+    if (lexical.tokenCount >= 100) {
+        if (lexical.englishScore >= 0.075) {
+            return { allowed: true, reason: 'engleză probabilă', language: 'English', confidence: lexical.englishScore };
+        }
+        return {
+            allowed: false,
+            reason: `engleza nu a putut fi confirmată (scor ${Math.round((lexical.englishScore || 0) * 100)}%)`,
+            language: lexical.language || 'unknown',
+            confidence: lexical.englishScore || 0
+        };
+    }
+
+    // Pentru surse scurte, metadatele EN pot fi folosite numai după ce conținutul
+    // a trecut deja filtrele de script și de indicatori puternici pentru alte limbi.
+    if (declaredEnglish) {
+        return { allowed: true, reason: 'metadate EN și conținut compatibil', language: 'English', confidence: 0.5 };
+    }
+
+    return { allowed: false, reason: 'limba sursei nu poate fi confirmată din conținut', language: 'unknown', confidence: 0 };
+}
+
+function sourceLanguagePreflightCacheKey(provider, identifier) {
+    return crypto.createHash('sha256')
+        .update(`candidate-language-v1|${String(provider || '')}|${String(identifier || '')}`)
+        .digest('hex');
+}
+
+function readSourceLanguagePreflightCache(key) {
+    const entry = sourceLanguagePreflightCache.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+        sourceLanguagePreflightCache.delete(key);
+        return null;
+    }
+    // Reinsert to keep recent reads at the end (small LRU cache).
+    sourceLanguagePreflightCache.delete(key);
+    sourceLanguagePreflightCache.set(key, entry);
+    return entry.result;
+}
+
+function writeSourceLanguagePreflightCache(key, result) {
+    const ttl = result?.verified ? SOURCE_LANGUAGE_PREFLIGHT_CACHE_TTL_MS : SOURCE_LANGUAGE_PREFLIGHT_FAILURE_TTL_MS;
+    sourceLanguagePreflightCache.delete(key);
+    sourceLanguagePreflightCache.set(key, { result, expiresAt: Date.now() + ttl });
+    while (sourceLanguagePreflightCache.size > SOURCE_LANGUAGE_PREFLIGHT_CACHE_MAX) {
+        const oldestKey = sourceLanguagePreflightCache.keys().next().value;
+        sourceLanguagePreflightCache.delete(oldestKey);
+    }
+}
+
+async function verifySubtitleCandidateLanguage(candidate, provider, configData, filename = '') {
+    const identifier = provider === 'SubDL'
+        ? String(candidate?.nId || '')
+        : String(candidate?.originalUrl || '');
+    // Include configuration and requested filename in the hash: SubDL downloads
+    // are credential-dependent, and a ZIP may contain different subtitle files.
+    // The key is hashed immediately, so credentials are never stored in plaintext.
+    const cacheContext = provider === 'SubDL' ? String(configData || '') : '';
+    const cacheKey = sourceLanguagePreflightCacheKey(provider, `${cacheContext}|${identifier}|${String(filename || '')}`);
+    const cached = readSourceLanguagePreflightCache(cacheKey);
+    if (cached) return { ...cached, cached: true };
+
+    const declaredEnglish = provider === 'SubDL'
+        ? getSubtitleLanguageDeclaration(candidate?.sourceData) === 'english'
+        : getSubtitleLanguageDeclaration(candidate?.sourceData) === 'english';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SOURCE_LANGUAGE_PREFLIGHT_TIMEOUT_MS);
+    let result;
+    try {
+        let text;
+        if (provider === 'SubDL') {
+            text = await getSubdlSubtitleText(configData, identifier, filename, {
+                timeoutMs: SOURCE_LANGUAGE_PREFLIGHT_TIMEOUT_MS - 500,
+                signal: controller.signal
+            });
+        } else {
+            const bytes = await fetchValidatedSubtitleBytes(candidate.originalUrl, '', 'none', {
+                timeoutMs: SOURCE_LANGUAGE_PREFLIGHT_TIMEOUT_MS - 500,
+                signal: controller.signal
+            });
+            text = normalizeDownloadedSubtitle(bytes, candidate.originalUrl, filename);
+        }
+        result = inspectCandidateSubtitleLanguage(text, declaredEnglish);
+        result.verified = true;
+    } catch (_) {
+        result = {
+            allowed: false,
+            verified: false,
+            reason: controller.signal.aborted ? 'verificare întreruptă la expirarea timpului' : 'conținutul nu a putut fi verificat',
+            language: 'unknown',
+            confidence: 0
+        };
+    } finally {
+        clearTimeout(timer);
+    }
+
+    writeSourceLanguagePreflightCache(cacheKey, result);
+    return result;
+}
+
+async function filterSubtitleCandidatesBySourceLanguage(candidates, provider, configData, filename = '', desiredCount = Infinity) {
+    const input = Array.isArray(candidates) ? candidates : [];
+    if (!input.length) return [];
+    const accepted = [];
+    let rejectedForeign = 0;
+    let rejectedUnverified = 0;
+    let checked = 0;
+
+    // Lucrăm în loturi mici și ne oprim imediat ce avem suficiente variante valide.
+    // Astfel, o listă obișnuită nu declanșează descărcarea tuturor celor 24 de fișiere.
+    for (let base = 0; base < input.length && accepted.length < desiredCount; base += SOURCE_LANGUAGE_PREFLIGHT_CONCURRENCY) {
+        const batch = input.slice(base, base + SOURCE_LANGUAGE_PREFLIGHT_CONCURRENCY);
+        const batchResults = await Promise.all(batch.map(async candidate => {
+            try {
+                return await verifySubtitleCandidateLanguage(candidate, provider, configData, filename);
+            } catch (_) {
+                return { allowed: false, verified: false, reason: 'verificare eșuată', language: 'unknown', confidence: 0 };
+            }
+        }));
+        checked += batch.length;
+        // Păstrăm ordinea de clasare în interiorul fiecărui lot.
+        for (let index = 0; index < batch.length; index++) {
+            // Este posibil ca mai mulți candidați din același lot să treacă;
+            // păstrăm numai câți vor fi afișați efectiv în add-on.
+            if (accepted.length >= desiredCount) continue;
+            const verdict = batchResults[index];
+            if (verdict?.allowed) {
+                accepted.push(batch[index]);
+            } else if (verdict?.verified) {
+                rejectedForeign++;
+            } else {
+                rejectedUnverified++;
+            }
+        }
+    }
+    console.log(`[SOURCE LANGUAGE FILTER] ${provider}: ${checked} candidate verificate; ${accepted.length} păstrate; ${rejectedForeign} eliminate ca non-EN/limbă neconfirmată; ${rejectedUnverified} eliminate deoarece sursa nu a putut fi verificată.`);
+    return accepted;
 }
 
 function isAllowedOpenSubtitlesFallbackUrl(value) {
@@ -9530,7 +9768,10 @@ async function fetchValidatedSubtitleUrl(initialUrl) {
 
 // Descarcă un candidat de subtitrare ca bytes, urmărind manual redirecționările
 // și validând fiecare destinație pentru a păstra protecția SSRF.
-async function fetchValidatedSubtitleBytes(initialUrl, subdlApiKey = '', authMode = 'header') {
+async function fetchValidatedSubtitleBytes(initialUrl, subdlApiKey = '', authMode = 'header', requestOptions = {}) {
+    const requestedTimeout = Number(requestOptions?.timeoutMs);
+    const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0 ? Math.min(30000, requestedTimeout) : 12000;
+    const signal = requestOptions?.signal;
     let currentUrl = initialUrl;
     const maxRedirects = 5;
 
@@ -9558,7 +9799,8 @@ async function fetchValidatedSubtitleBytes(initialUrl, subdlApiKey = '', authMod
         try {
             response = await axios.get(requestUrl, {
                 headers: downloadHeaders,
-                timeout: 12000,
+                timeout: timeoutMs,
+                ...(signal ? { signal } : {}),
                 maxContentLength: 25 * 1024 * 1024,
                 maxBodyLength: 25 * 1024 * 1024,
                 responseType: 'arraybuffer',
@@ -9590,23 +9832,25 @@ async function fetchValidatedSubtitleBytes(initialUrl, subdlApiKey = '', authMod
     throw new Error('prea multe redirecționări pentru subtitrarea alternativă');
 }
 
-async function fetchSubdlDirectWithFallback(url, apiKey) {
+async function fetchSubdlDirectWithFallback(url, apiKey, requestOptions = {}) {
     let headerError;
     try {
-        return await fetchValidatedSubtitleBytes(url, apiKey, 'header');
+        return await fetchValidatedSubtitleBytes(url, apiKey, 'header', requestOptions);
     } catch (error) {
         headerError = error;
+        if (requestOptions?.signal?.aborted) throw error;
         const status = Number(error?.response?.status || 0);
         if (![400, 401, 403, 404, 405].includes(status)) throw error;
     }
     try {
-        return await fetchValidatedSubtitleBytes(url, apiKey, 'query');
+        return await fetchValidatedSubtitleBytes(url, apiKey, 'query', requestOptions);
     } catch (queryError) {
+        if (requestOptions?.signal?.aborted) throw queryError;
         const queryStatus = Number(queryError?.response?.status || 0);
         if (![400, 401, 403, 404, 405].includes(queryStatus)) throw queryError;
         console.log(`[SubDL] Descărcarea directă cu autentificare a fost refuzată (${queryStatus}); încerc URL-ul original fără credentiale.`);
         try {
-            return await fetchValidatedSubtitleBytes(url, '', 'none');
+            return await fetchValidatedSubtitleBytes(url, '', 'none', requestOptions);
         } catch (anonymousError) {
             // Retain the last real response status for diagnostics, never the URL or key.
             if (!anonymousError.response && headerError?.response) anonymousError.response = headerError.response;
