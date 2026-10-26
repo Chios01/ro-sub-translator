@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.51',
+    version: '13.2.52',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2033,16 +2033,19 @@ function cleanTextForJson(text) {
     clean = clean.replace(/<[iIbBuU]>\s*(?:uh|uhh|uhhh|uhm|uhmm|um|umm|ehm|erm|err|mwah|ă|ăă|ăăă|uu)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
 
-    // Segmentele dintre (...) și [...] sunt eliminate înainte de formarea calupurilor
-    // prin stripNonDialogueSoundMarkup(), iar rezultatul final trece din nou prin același filtru.
+    // Elimină etichetele de vorbitor de la începutul rândului, inclusiv roluri și legături cu litere mici.
+    clean = clean.replace(/(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?[A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,3}:\s*/g, '$1$2');
 
-    // subtitle formatting curăță etichetele de vorbitor cu majuscule înainte de traducere.
-    // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
-    clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}){0,2}:\s*/g, '$1$2');
+    // Elimină bâlbâielile englezești: „the-- the”, „I-- I”, „it's-- it's”.
+    clean = clean.replace(/\b([A-Za-z']+)[ \t]*--[ \t]*\1\b/gi, '$1');
 
-    // Eliminăm înainte de Gemini doar liniile formate exclusiv din interjecții Oh/Ah.
-    // Cuvintele și nuanța expresiilor dialogate sunt păstrate.
+    // Transformă întreruperile duble în elipse, fără a atinge liniuța simplă de dialog de la începutul rândului.
+    clean = clean.replace(/(\S)[ \t]*--([ \t]*)/g, '$1...$2');
+    clean = clean.replace(/\.\.\.[ \t]*-+/g, '...');
+
+    // Eliminăm interjecțiile de umplutură înainte de Gemini, dar păstrăm reacțiile cu sens.
     clean = stripLeadingOhAhInterjections(clean);
+    clean = stripContextualDisposableInterjections(clean);
 
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
@@ -2181,6 +2184,9 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț]+(?:\s+[A-Za-zĂÂÎȘȚăâîșț]+)?)\s*\.{2,}\s*\1\b/gi, '$1...');
     // Dacă după colaps rămâne punctul final al replicii, evităm „....”.
     cleaned = cleaned.replace(/\.{4,}/g, '...');
+    // Transformă orice „--” sau „...-” rămas în elipsă, inclusiv în interiorul replicilor.
+    cleaned = cleaned.replace(/(\S)[ \t]*--+/g, '$1...');
+    cleaned = cleaned.replace(/\.\.\.[ \t]*-+|-+[ \t]*\.\.\./g, '...');
 
     cleaned = cleaned.replace(/[^\S\r\n]+/g, ' ');
 
@@ -5963,6 +5969,22 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])nu\s+v-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu v-a păsat'],
     [/(?<![\p{L}\p{N}_])nu\s+vă-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu v-a păsat'],
     [/(?<![\p{L}\p{N}_])nu\s+le-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu le-a păsat'],
+    // Corecturi generale cu încredere ridicată, adăugate după verificare.
+    [/(?<![\p{L}\p{N}_])lucurile(?![\p{L}\p{N}_])/giu, 'lucrurile'],
+    [/(?<![\p{L}\p{N}_])lucuri(?![\p{L}\p{N}_])/giu, 'lucruri'],
+    [/(?<![\p{L}\p{N}_])imedat(?![\p{L}\p{N}_])/giu, 'imediat'],
+    [/(?<![\p{L}\p{N}_])obstreticieni(?![\p{L}\p{N}_])/giu, 'obstetricieni'],
+    [/(?<![\p{L}\p{N}_])molicula(?![\p{L}\p{N}_])/giu, 'molecula'],
+    [/(?<![\p{L}\p{N}_])molicule(?![\p{L}\p{N}_])/giu, 'molecule'],
+    [/(?<![\p{L}\p{N}_])socializze(?![\p{L}\p{N}_])/giu, 'socializeze'],
+    [/(?<![\p{L}\p{N}_])remodernează(?![\p{L}\p{N}_])/giu, 'remodelează'],
+    [/(?<![\p{L}\p{N}_])ca un tobă(?![\p{L}\p{N}_])/giu, 'ca o tobă'],
+    [/(?<![\p{L}\p{N}_])1m-au(?![\p{L}\p{N}_])/giu, 'm-au'],
+    [/(?<![\p{L}\p{N}_])ur-\s*te(?![\p{L}\p{N}_])/giu, 'urcă-te'],
+    [/(?<![\p{L}\p{N}_])poate nazi o să(?![\p{L}\p{N}_])/giu, 'poate n-o să'],
+    [/(?<![\p{L}\p{N}_])era pe ce a era(?![\p{L}\p{N}_])/giu, 'era cât pe ce'],
+    [/(?<![\p{L}\p{N}_])ce adică(?![\p{L}\p{N}_])/giu, 'cum adică'],
+
     [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are']
 ];
 
