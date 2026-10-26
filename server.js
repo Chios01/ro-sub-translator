@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.58',
+    version: '13.2.60',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2534,12 +2534,48 @@ function formatSubtitleLine(text) {
         '$1-$2 $3'
     );
 
-    // „Ți pasă” este o deformare frecventă pentru „Îți pasă”; păstrăm registrul majusculelor.
+    // Normalizează formele greșite „nu-îți” / „ce-îmi” la cliticele corecte „nu-ți” / „ce-mi”.
+    // Păstrăm majusculele doar când întregul fragment este scris cu majuscule.
     text = text.replace(
-        /(?<![\p{L}\p{N}_])([țȚ])i[ \t]+(pasă)(?![\p{L}\p{N}_])/giu,
+        /(?<![\p{L}\p{N}_])((?:nu|ce|că|să|de))-([îÎ]ți|[îÎ]mi)(?![\p{L}\p{N}_])/giu,
+        (match, prefix, clitic) => {
+            const allCaps = match === match.toLocaleUpperCase('ro-RO');
+            const shortClitic = /ți$/iu.test(clitic) ? 'ți' : 'mi';
+            return `${prefix}-${allCaps ? shortClitic.toLocaleUpperCase('ro-RO') : shortClitic}`;
+        }
+    );
+
+    // „Ți pasă” este o deformare frecventă pentru „Îți pasă”; nu intervenim după cratimă
+    // (de exemplu, „nu-ți pasă” trebuie să rămână exact așa).
+    text = text.replace(
+        /(?<![-\p{L}\p{N}_])([țȚ])i[ \t]+(pasă)(?![\p{L}\p{N}_])/giu,
         (match, firstLetter) => {
             if (match === match.toLocaleUpperCase('ro-RO')) return 'ÎȚI PASĂ';
             return firstLetter === 'Ț' ? 'Îți pasă' : 'îți pasă';
+        }
+    );
+
+    // Repară „doar-o” ca separare greșită; conservă majuscula de început și forma integrală cu majuscule.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])doar-o(?![\p{L}\p{N}_])/giu,
+        match => match === match.toLocaleUpperCase('ro-RO') ? 'DOAR O' : (match[0] === 'D' ? 'Doar o' : 'doar o')
+    );
+
+    // Repară formularea incompletă „Despre vorbești?” -> „Despre ce vorbești?”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])([Dd]espre)[ \t]+(vorbești|vorbește|vorbim|vorbiți|vorbesc)(?![\p{L}\p{N}_])/giu,
+        (match, preposition, verb) => {
+            if (match === match.toLocaleUpperCase('ro-RO')) return `DESPRE CE ${verb.toLocaleUpperCase('ro-RO')}`;
+            return `${preposition} ce ${verb.toLocaleLowerCase('ro-RO')}`;
+        }
+    );
+
+    // „ți place” este o omisiune a lui „Î” („îți place”), nu forma corectă a pronumelui.
+    text = text.replace(
+        /(?<![-\p{L}\p{N}_])([Țț])i([ \t]+)place(?![\p{L}\p{N}_])/giu,
+        (match, firstLetter, spacing) => {
+            if (match === match.toLocaleUpperCase('ro-RO')) return `ÎȚI${spacing}PLACE`;
+            return `${firstLetter === 'Ț' ? 'Îți' : 'îți'}${spacing}place`;
         }
     );
 
@@ -2568,6 +2604,15 @@ function formatSubtitleLine(text) {
     // Pronume clitice + forme ale verbului „a avea” fără cratimă: „ți am promis” → „ți-am promis”.
     text = text.replace(/(?<![\p{L}\p{N}_])(mi|ți|îi|ne|v|le|te|m)\s+(am|ai|a|au|ați)(?=\s+[\p{L}])/giu, '$1-$2');
     text = text.replace(/(?<![\p{L}\p{N}_])(l)\s+(am|ai|a|au|ați)(?=\s+[\p{L}])/giu, '$1-$2');
+
+    // „l aș fi sunat” -> „l-aș fi sunat”: condiționalul cu pronume clitic necesita o regulă separată.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])([lL])[ \t]+(aș|aş)(?=[ \t]+[\p{L}])/giu,
+        (match, clitic, auxiliary) => {
+            const allCaps = match === match.toLocaleUpperCase('ro-RO');
+            return `${clitic}-${allCaps ? 'AȘ' : 'aș'}`;
+        }
+    );
 
     // Forme cu „e” și pronume: „mi e dor” → „mi-e dor”.
     text = text.replace(/(?<![\p{L}\p{N}_])(mi|ți|i)\s+e(?=\s+[\p{L}])/giu, '$1-e');
@@ -6175,6 +6220,7 @@ function detectLocalGrammarReviewReasons(text) {
     // Nu rescriem automat: sunt trimise la verificare AI numai replicile marcate.
     const highConfidenceRomanianQualityGuards = [
         { pattern: /(?<![\p{L}])introm(?![\p{L}])/iu, message: 'posibil cuvânt trunchiat/inexistent „introm”' },
+        { pattern: /(?<![\p{L}])arnm(?![\p{L}])/iu, message: 'posibil cuvânt corupt „arnm”; compară replica cu originalul înainte de corectare' },
         { pattern: /(?<![\p{L}])eau\s+(?:de\s+)?\d+(?:\s*,\s*\d+)?(?![\p{L}])/iu, message: 'posibil cuvânt trunchiat înaintea unui număr („eau de 12, 15”)' },
         { pattern: /(?<![\p{L}])necesiți(?![\p{L}])/iu, message: 'formă verbală românească suspectă „necesiți”' },
         { pattern: /(?<![\p{L}])flori[-\s]+soarelui(?![\p{L}])/iu, message: 'posibil calc/declinare greșită „flori-soarelui”' },
