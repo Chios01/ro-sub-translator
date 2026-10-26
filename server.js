@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.52',
+    version: '13.2.53',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2443,6 +2443,28 @@ function formatSubtitleLine(text) {
     if (!text.trim()) return ' ';
 
     let lowerText = text.toLowerCase();
+
+    // Repară cratimele omise accidental de model ÎNAINTE de regula care extinde „s” în „să”.
+    // Limitele Unicode evită potrivirile în interiorul altor cuvinte; forma „n a doua zi” rămâne neatinsă.
+    text = text.replace(/(?<![\p{L}\p{N}_])([sS])\s+a(?=\s+[\p{L}])/gu, '$1-a');
+
+    // Negația „n-”: pentru „n a” cerem un verb cunoscut, ca să nu stricăm expresii corecte („n a doua zi”).
+    text = text.replace(/(?<![\p{L}\p{N}_])([nN])\s+(am|ai|au|ați|ar|avea|aveam|o\s+să)(?=\s+[\p{L}])/giu, '$1-$2');
+    text = text.replace(/(?<![\p{L}\p{N}_])([nN])\s+a(?=\s+(?:fost|dus|făcut|facut|înecat|inecat|întâmplat|intamplat|avut|putut|vrut|venit|mers|spus|zis|văzut|vazut|crezut|rămas|ramas|ajuns|început|inceput|înțeles|inteles|dat|luat|găsit|gasit|primit|plecat|pierdut|reușit|reusit|terminat|oprit|sunat|schimbat|ieșit|iesit|intrat|scris|cerut|plătit|platit)(?![\p{L}\p{N}_]))/giu, '$1-a');
+
+    // Pronume clitice + forme ale verbului „a avea” fără cratimă: „ți am promis” → „ți-am promis”.
+    text = text.replace(/(?<![\p{L}\p{N}_])(mi|ți|îi|ne|v|le|te|m)\s+(am|ai|a|au|ați)(?=\s+[\p{L}])/giu, '$1-$2');
+    text = text.replace(/(?<![\p{L}\p{N}_])(l)\s+(am|ai|a|au|ați)(?=\s+[\p{L}])/giu, '$1-$2');
+
+    // Forme cu „e” și pronume: „mi e dor” → „mi-e dor”.
+    text = text.replace(/(?<![\p{L}\p{N}_])(mi|ți|i)\s+e(?=\s+[\p{L}])/giu, '$1-e');
+
+    // Conjuncție/prepoziție + pronume clitic: „să i spun” → „să-i spun”.
+    text = text.replace(/(?<![\p{L}\p{N}_])(să|că|de|pe)\s+(i|l)(?=\s+[\p{L}])/giu, '$1-$2');
+
+    // Imperativ + pronume: evităm caracterele chirilice accidentale din variantele copiate.
+    text = text.replace(/(?<![\p{L}\p{N}_])(iartă|lasă|uită|ascultă)\s+(mă)(?=\s+[\p{L}]|[.!?,;:]|$)/giu, '$1-$2');
+    text = text.replace(/(?<![\p{L}\p{N}_])(dați|luați|duceți|feriți|uitați)\s+(vă)(?=\s+[\p{L}]|[.!?,;:]|$)/giu, '$1-$2');
 
     // Doar litere mici izolate (trunchieri „c”/„s” → „că”/„să”); majusculele („Vitamina C”, „Harry S. Truman”) rămân neatinse.
     text = text.replace(/(?<!\d)(^|[\s])([cs])(?=[\s.,!?:;]|$)/gm, function(match, spatiu, litera) {
