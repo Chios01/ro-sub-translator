@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.50',
+    version: '13.2.51',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1639,6 +1639,8 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
 
     let response = null;
     let bytes;
+    let exactFileAttempted = false;
+    let exactFileError = null;
     try {
         if (isDirectUrlRef) {
             bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
@@ -1646,8 +1648,6 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
             // When file_n_id is known, first fetch that exact file from SubDL's documented
             // /subtitle/{n_id}/{file_n_id} route; the parent nId endpoint can otherwise select
             // a different member of a multi-file pack.
-            let exactFileAttempted = false;
-            let exactFileError = null;
             if (isApiReference && apiReference?.fileNId && directDownloadUrl) {
                 exactFileAttempted = true;
                 try {
@@ -1941,6 +1941,11 @@ function isStandaloneNonDialogueSoundCue(value) {
     // „Cheers.” este frecvent o replică de dialog (de ex. salut/încheiere),
     // nu o descriere de public care aplaudă. O păstrăm ca text dialogat.
     if (/^cheers[.!…]*$/iu.test(text)) return false;
+
+    // „Slow, deep breaths.” este aici o indicație rostită interlocutorului,
+    // nu o etichetă SDH. Excepția trebuie verificată înaintea regulii generale
+    // care clasifică adjectivele de respirație drept sunete.
+    if (/^slow\s*,\s*deep\s+breaths?[.!…]*$/iu.test(text)) return false;
 
     // Etichetele explicite deja recunoscute rămân tratamentul cu cea mai mare încredere.
     if (SOUND_CUE_LABEL_RE.test(text) || isExtendedSoundCueLabel(text)) return true;
@@ -2305,7 +2310,10 @@ function formatSubtitleLayout(value) {
         .replace(/\r/g, '')
         .split('\n')
         .map(line => line.trim())
-        .filter(Boolean);
+        // Un marcator singur de vorbitor (inclusiv „- -”) nu este dialog.
+        .filter(line => Boolean(line) && !/^(?:[-–—]\s*)+$/u.test(line))
+        // Normalizează prefixe duplicate precum „--Text”, „- - Text” și „—-Text”.
+        .map(line => line.replace(/^\s*(?:[-–—]\s*){2,}(?=\S)/u, '- '));
     if (!rawLines.length) return ' ';
 
     let entries = [];
@@ -4139,6 +4147,26 @@ function isNumericVerbatimCue(text) {
     return /^[\d\s.,:;…\-–—/\\()#]+$/u.test(clean);
 }
 
+const SPOKEN_ENGLISH_NUMBER_WORDS = new Set((
+    'zero oh one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred thousand million billion trillion point decimal and minus plus double triple quadruple'
+).split(/\s+/));
+
+// Detectează numai o redare numerică evident echivalentă: sursa este alcătuită
+// exclusiv din cuvinte englezești pentru numere, iar traducerea numai din cifre
+// și punctuația lor. Nu ignoră diferențe de lungime pentru dialog obișnuit.
+function isSpelledNumberToDigitsRendering(sourceText, targetText) {
+    const source = String(sourceText || '').replace(/<[^>]+>/g, ' ').trim();
+    const target = String(targetText || '').replace(/<[^>]+>/g, ' ').trim();
+    if (!source || !target) return false;
+
+    const words = source.match(/[A-Za-z]+/g) || [];
+    if (!words.length || words.some(word => !SPOKEN_ENGLISH_NUMBER_WORDS.has(word.toLowerCase()))) return false;
+    const sourceRemainder = source.replace(/[A-Za-z]+/g, '');
+    if (/[^\s.,;:!?…'’"“”\-–—()]/u.test(sourceRemainder)) return false;
+
+    return /\d/u.test(target) && /^[\d\s.,;:!?…\-–—/\\()#+'’"“”]+$/u.test(target);
+}
+
 function chunkArray(array, size) {
     const chunks = [];
     for (let i = 0; i < array.length; i += size) {
@@ -4401,6 +4429,8 @@ function detectLocalTranslationAlignmentAnomalies(sourceItems, translatedItems) 
         normalizedTargets[index] = localAlignmentNormalize(translated);
 
         if (!original || !translated || isJunkOrInterjection(original) || isJunkOrInterjection(translated)) continue;
+        // „six-six-six” → „666” schimbă forma de scriere, nu cantitatea de conținut.
+        if (isSpelledNumberToDigitsRendering(original, translated)) continue;
 
         const sourceWords = localAlignmentWords(original);
         const targetWords = localAlignmentWords(translated);
@@ -5897,12 +5927,42 @@ const LOCAL_GRAMMAR_FIXES = [
     [/\binnascuta\b/gi, 'înnăscută'],
     [/\binnascut\b/gi, 'înnăscut'],
     [/\binnascuti\b/gi, 'înnăscuți'],
-    [/(?<![\p{L}])ți-a\s+pasat\b/iu, 'ți-a păsat'],
+    [/(?<![\p{L}])ți-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/iu, 'ți-a păsat'],
     // Corectări ortografice de încredere ridicată observate în verificarea v121.
     [/(?<![\p{L}])resuscitatăm(?![\p{L}])/giu, 'resuscităm'],
     [/(?<![\p{L}])nimani(?![\p{L}])/giu, 'nimeni'],
     [/(?<![\p{L}])lasă-mi-te(?![\p{L}])/giu, 'lasă-mă'],
     [/\bnite\b/giu, 'niște'],
+
+    // Topica firească a pronumelui neaccentuat în construcțiile cu „mai”.
+    [/(?<![\p{L}\p{N}_])mai\s+te(?![\p{L}\p{N}_])/giu, 'te mai'],
+    [/(?<![\p{L}\p{N}_])mai\s+mă(?![\p{L}\p{N}_])/giu, 'mă mai'],
+    [/(?<![\p{L}\p{N}_])mai\s+se(?![\p{L}\p{N}_])/giu, 'se mai'],
+    [/(?<![\p{L}\p{N}_])mai\s+ne(?![\p{L}\p{N}_])/giu, 'ne mai'],
+    [/(?<![\p{L}\p{N}_])mai\s+vă(?![\p{L}\p{N}_])/giu, 'vă mai'],
+
+    // Corecturi ortografice/gramaticale clare, verificate înainte de adăugare.
+    [/(?<![\p{L}\p{N}_])niciște(?![\p{L}\p{N}_])/giu, 'niște'],
+    [/(?<![\p{L}\p{N}_])pe\s+râmă(?![\p{L}\p{N}_])/giu, 'de râpă'],
+    [/(?<![\p{L}\p{N}_])ete\s+arestat(?![\p{L}\p{N}_])/giu, 'ești arestat'],
+    [/(?<![\p{L}\p{N}_])eu\s+doar\s+livreze(?![\p{L}\p{N}_])/giu, 'eu doar livrez'],
+    [/(?<![\p{L}\p{N}_])am\s+s-o\s+încerc\s+să(?![\p{L}\p{N}_])/giu, 'am să încerc să'],
+    [/(?<![\p{L}\p{N}_])n-vii(?![\p{L}\p{N}_])/giu, 'nu vii'],
+    [/(?<![\p{L}\p{N}_])n-știu(?![\p{L}\p{N}_])/giu, 'nu știu'],
+    [/(?<![\p{L}\p{N}_])plangi(?![\p{L}\p{N}_])/giu, 'plângi'],
+    [/(?<![\p{L}\p{N}_])atat\s+de(?![\p{L}\p{N}_])/giu, 'atât de'],
+    [/(?<![\p{L}\p{N}_])să\s+mă\s+asez(?![\p{L}\p{N}_])/giu, 'să mă așez'],
+    [/(?<![\p{L}\p{N}_])modelul\s+ubei(?![\p{L}\p{N}_])/giu, 'modelul dubei'],
+    [/(?<![\p{L}\p{N}_])profet\s+al\s+doom-ului(?![\p{L}\p{N}_])/giu, 'profet al apocalipsei'],
+    // Corectăm „pasat” la „păsat” numai în construcția de indiferență clară,
+    // păstrând pronumele; dacă urmează un obiect („pasat mingea”), nu intervenim.
+    [/(?<![\p{L}\p{N}_])nu\s+mi-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu mi-a păsat'],
+    [/(?<![\p{L}\p{N}_])nu\s+ți-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu ți-a păsat'],
+    [/(?<![\p{L}\p{N}_])nu\s+i-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu i-a păsat'],
+    [/(?<![\p{L}\p{N}_])nu\s+ne-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu ne-a păsat'],
+    [/(?<![\p{L}\p{N}_])nu\s+v-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu v-a păsat'],
+    [/(?<![\p{L}\p{N}_])nu\s+vă-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu v-a păsat'],
+    [/(?<![\p{L}\p{N}_])nu\s+le-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu le-a păsat'],
     [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are']
 ];
 
@@ -6033,15 +6093,20 @@ function detectSourceAwareQualityReviewReasons(item, translation, contextItems, 
     if (!source || !target || isJunkOrInterjection(item?.text)) return [];
 
     const reasons = [];
-    // Raport de lungime: româna este de obicei cu 10–30% mai lungă decât engleza.
-    // Praguri largi, doar pentru abateri evidente (omisiune sau adăugare de sens).
-    const sourceLetterCount = source.replace(/[^\p{L}]/gu, '').length;
-    const targetLetterCount = target.replace(/[^\p{L}]/gu, '').length;
-    if (sourceLetterCount >= 30 && targetLetterCount < sourceLetterCount * 0.45) {
-        reasons.push('traducerea este mult mai scurtă decât originalul (posibilă omisiune de sens)');
-    }
-    if (targetLetterCount >= 40 && targetLetterCount > sourceLetterCount * 2.1) {
-        reasons.push('traducerea este mult mai lungă decât originalul (posibilă adăugare de sens)');
+    // Raportul de lungime nu este relevant când o secvență de numere scrise în
+    // engleză este redată legitim cu cifre (de ex. „Six-six-six…” → „666…”).
+    // Celelalte verificări semantice rămân active.
+    if (!isSpelledNumberToDigitsRendering(source, target)) {
+        // Româna este de obicei cu 10–30% mai lungă decât engleza; pragurile
+        // largi semnalează doar abateri evidente, nu decid singure corectitudinea.
+        const sourceLetterCount = source.replace(/[^\p{L}]/gu, '').length;
+        const targetLetterCount = target.replace(/[^\p{L}]/gu, '').length;
+        if (sourceLetterCount >= 30 && targetLetterCount < sourceLetterCount * 0.45) {
+            reasons.push('traducerea este mult mai scurtă decât originalul (posibilă omisiune de sens)');
+        }
+        if (targetLetterCount >= 40 && targetLetterCount > sourceLetterCount * 2.1) {
+            reasons.push('traducerea este mult mai lungă decât originalul (posibilă adăugare de sens)');
+        }
     }
     // Sursă „response” + traducere lexical greșită; corecția deterministă ar trebui
     // s-o repare înainte de review, iar acest semnal protejează cazul dacă reapare.
