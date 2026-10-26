@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.57',
+    version: '13.2.58',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2202,6 +2202,30 @@ function deepCleanSubtitleText(text) {
     // Normalizează apostroful curb și semnul „…”, apoi păstrează ghilimelele românești „ ” și “ ”.
     cleaned = cleaned.replace(/[\u2018\u2019]/g, "'").replace(/\u2026/g, '...');
     cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/\u201C\u201D\u201E]/g, '');
+    // Corectează simbolul ƒ folosit accidental în locul literei f.
+    cleaned = cleaned.replace(/[ƒƑ]/g, character => character === 'Ƒ' ? 'F' : 'f');
+
+    // Corecturi înguste pentru cifre parazite confirmate în subtitrări.
+    // În cazul observat „de1lă”, cifra a înlocuit separatorul din „de la”; simpla
+    // ștergere a cifrei ar produce „delă”, deci restaurăm spațiul și forma fără diacritică.
+    cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])de1lă(?![\p{L}\p{N}_])/giu, match =>
+        match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'De la' : 'de la'
+    );
+
+    // Elimină cifrele introduse în interiorul cuvintelor scrise cu litere mici:
+    // de ex. „f1ost” -> „fost”. Nu afectăm identificatori precum „R2D2”, „B2B” sau „iPhone12”.
+    cleaned = cleaned.replace(
+        /(?<![\p{L}\p{N}_])(\p{Lu}\p{Ll}*|\p{Ll}{1,})\d+(\p{Ll}+)(?![\p{L}\p{N}_])/gu,
+        '$1$2'
+    );
+
+    // Elimină o cifră parazită la finalul unui cuvânt românesc când urmează un conector
+    // obișnuit: „Am rănit1 pe cineva?” -> „Am rănit pe cineva?”. Nu ștergem sufixele
+    // numerice legitime din nume, titluri sau identificatori.
+    cleaned = cleaned.replace(
+        /(?<![\p{L}\p{N}_])(\p{Lu}\p{Ll}{2,}|\p{Ll}{3,})\d+(?=\s+(?:pe|în|la|cu|de|că|să|și|sau|dar|pentru|din|spre|sub|peste|către|cineva|el|ea|ei|ele|noi|voi)\b)/giu,
+        '$1'
+    );
     // Orice text între (...) sau [...] trebuie eliminat; filtrul dedicat rulează înainte
     // de traducere și din nou asupra textului final, după regulile proiectului.
 
@@ -2489,6 +2513,47 @@ function formatSubtitleLine(text) {
 
     text = deepCleanSubtitleText(text);
     if (!text.trim()) return ' ';
+
+    // Corecții conservatoare pentru cinci tipare confirmate în subtitrări reale.
+    // „Unde-mi-e” / „Unde-ți-e” -> „Unde mi-e” / „Unde ți-e”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])(unde)-(mi|ți|i)-(e)(?![\p{L}\p{N}_])/giu,
+        (_, where, clitic, copula) => `${where} ${clitic}-${copula}`
+    );
+
+    // În română, după „să” pronumele „o” stă înaintea verbului, nu după el.
+    // Ex.: „să sunăm-o” -> „să o sunăm”; păstrăm forma și majusculele sursei.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])(să)\s+([\p{L}]{3,})-([oO])(?![\p{L}\p{N}_])/giu,
+        (_, subjunctive, verb, objectPronoun) => `${subjunctive} ${objectPronoun} ${verb}`
+    );
+
+    // „să mi-amintesc” / „să ți-amintești” -> „să-mi amintesc” / „să-ți amintești”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])(să)\s+(mi|ți)-(amint[\p{L}]+)(?![\p{L}\p{N}_])/giu,
+        '$1-$2 $3'
+    );
+
+    // „Ți pasă” este o deformare frecventă pentru „Îți pasă”; păstrăm registrul majusculelor.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])([țȚ])i[ \t]+(pasă)(?![\p{L}\p{N}_])/giu,
+        (match, firstLetter) => {
+            if (match === match.toLocaleUpperCase('ro-RO')) return 'ÎȚI PASĂ';
+            return firstLetter === 'Ț' ? 'Îți pasă' : 'îți pasă';
+        }
+    );
+
+    // Repară cuvinte lipite accidental: „Nuștiu” -> „Nu știu”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])(nu)știu(?![\p{L}\p{N}_])/giu,
+        (match, prefix) => match === match.toLocaleUpperCase('ro-RO') ? 'NU ȘTIU' : `${prefix} știu`
+    );
+
+    // Separă pronumele lipit de verb: „să leșteargă” -> „să le șteargă”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])(să)\s+(le|ne|vă|o)(șteargă|țină|ducă|facă|vadă|spună)(?![\p{L}\p{N}_])/giu,
+        '$1 $2 $3'
+    );
 
     let lowerText = text.toLowerCase();
 
