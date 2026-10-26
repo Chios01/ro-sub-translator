@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.55',
+    version: '13.2.56',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2438,6 +2438,51 @@ function formatSubtitleLayout(value) {
     return splitSubtitleIntoTwoLines(entries.map(entry => entry.text).join(' '), 42).join('\n') || ' ';
 }
 
+// Forme verbale uzuale care urmează cliticelor „mi/ți/i/ne/v/le-o”.
+// Lista evită să transforme substantivele în construcții greșite, de ex. „Spune-mi o poveste”.
+const CLITIC_O_FOLLOWING_VERBS = new Set((
+    'adu aduc aduce aduci aducem aduceti adus adusa aduse aducand ' +
+    'afla aflu afli aflam aflat ' +
+    'arata arat arati arata aratam aratati aratat ' +
+    'asteapta astept astepti asteptam asteptati asteptat ' +
+    'bea beau bei bem beti baut ' +
+    'cere cer ceri cere ceream cerem cereti cerut ' +
+    'cheama chem chemi chemam chemati chemat ' +
+    'crede cred crezi credeam credem credeti crezut ' +
+    'curata curat cureti curatam curatati curatat ' +
+    'da dau dai dam dati dea dat dadea dadeam dadeau ' +
+    'deschide deschid deschizi deschidem deschideti deschis ' +
+    'face fac faci facem faceti facut faceam faceau faca ' +
+    'gasi gasesc gasesti gasim gasiti gasit ' +
+    'inchide inchid inchizi inchidem inchideti inchis ' +
+    'intreaba intreb intrebi intrebam intrebat ' +
+    'ia iai iau iei luam luati luat lua ' +
+    'lasa las lasi lasa lasam lasati lasat ' +
+    'minte mint minti minte mintim mintiti mintit ' +
+    'muta mut muti mutam mutati mutat ' +
+    'opreste opresc opresti oprim oprit ' +
+    'pastreaza pastrez pastrezi pastram pastrati pastrat ' +
+    'pierde pierd pierzi pierdem pierdeti pierdut ' +
+    'pune pun pui punem puneti pus punea puneam puneau puna ' +
+    'prinde prind prinzi prindem prindeti prins ' +
+    'repara repar repari reparam reparati reparat ' +
+    'scoate scot scoti scoatem scoateti scos scoata ' +
+    'scrie scriu scrii scriem scrieti scris ' +
+    'simte simt simti simtim simtiti simtit ' +
+    'spala spal speli spalam spalati spalat ' +
+    'spune spun spui spunem spuneti spus spunea spuneam spuneau spuna ' +
+    'sterge sterg stergi stergem stergeti sters ' +
+    'tine tin tine tineti tinem tinut tinea tineam tineau tina ' +
+    'trimite trimit trimiti trimitem trimiteti trimis trimiteam trimiteau trimita ' +
+    'trage trag tragi tragem trageti tras ' +
+    'trece trec treci trecem treceti trecut ' +
+    'uita uit uiti uitam uitati uitat ' +
+    'vinde vand vinzi vindem vindeti vandut ' +
+    'vede vad vezi vedem vedeti vazut ' +
+    'vrea vreau vrei vrem vreti vor vrut ' +
+    'zice zic zici zicem ziceti zis'
+).split(/\s+/));
+
 function formatSubtitleLine(text) {
     if (!text) return ' ';
 
@@ -2460,6 +2505,18 @@ function formatSubtitleLine(text) {
 
     // Forme cu „e” și pronume: „mi e dor” → „mi-e dor”.
     text = text.replace(/(?<![\p{L}\p{N}_])(mi|ți|i)\s+e(?=\s+[\p{L}])/giu, '$1-e');
+
+    // Clitic + „o” înaintea unui verb: „mi o țin” → „mi-o țin”.
+    // Limităm corecția la forme verbale cunoscute pentru a nu strica expresii ca „Spune-mi o poveste”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])([Mm]i|[Țț]i|[Ii]|[Nn]e|[Vv]|[Ll]e)[ \t]+[oO](?=[ \t]+([\p{L}]+)(?![\p{L}\p{N}_]))/giu,
+        (match, clitic, followingWord) => {
+            const normalizedVerb = followingWord.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+            if (!CLITIC_O_FOLLOWING_VERBS.has(normalizedVerb)) return match;
+            const allCaps = clitic.length > 1 && clitic === clitic.toLocaleUpperCase('ro');
+            return `${clitic}-${allCaps ? 'O' : 'o'}`;
+        }
+    );
 
     // Conjuncție/prepoziție + pronume clitic: „să i spun” → „să-i spun”.
     text = text.replace(/(?<![\p{L}\p{N}_])(să|că|de|pe)\s+(i|l)(?=\s+[\p{L}])/giu, '$1-$2');
