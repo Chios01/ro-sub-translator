@@ -209,10 +209,10 @@ function logTranslationStart(mediaId, mediaTitle, subtitleInfo = {}) {
         .replace(/\s+/g, ' ')
         .trim();
     const details = cleanTitle ? `${cleanId} — ${cleanTitle}` : cleanId;
-    // Restabilim informațiile de diagnostic care existau înainte: numele subtitrării
-    // și furnizorul. Nu se afișează URL-uri, tokenuri sau chei API.
     const subtitleName = sanitizeSubtitleLogValue(subtitleInfo.subtitleName) || 'Nedisponibilă (link vechi)';
     const subtitleSource = resolveSubtitleSourceLabel(subtitleInfo.subtitleSource, subtitleInfo.versionTag);
+
+    // Păstrăm antetul existent și adăugăm sursa/subtitrarea selectată, fără URL-uri sau secrete.
     const divider = '\x1b[90m────────────────────────────────────\x1b[0m';
     console.log(divider);
     console.log(`\x1b[96m${headline}\x1b[0m`);
@@ -260,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.68',
+    version: '13.2.51',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -425,41 +425,10 @@ app.get('/:configData/manifest.json', (req, res) => {
 const BROWSER_USER_AGENT_FETCH = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 // Limite separate per furnizor, păstrând SubDL opțional și OpenSubtitles fallback.
-const SUBDL_MAX_SUBTITLE_RESULTS = 4;
+const SUBDL_MAX_SUBTITLE_RESULTS = 8;
 const OPENSUBTITLES_MAX_WITH_SUBDL = 4;
 const OPENSUBTITLES_LEGACY_MAX_RESULTS = 15;
-// Verificăm maximum doi candidați SubDL pe cerere de listă. Restul listei
-// este completat din OpenSubtitles, pentru a proteja limita zilnică de download.
-const SUBDL_LANGUAGE_PREFLIGHT_POOL = 2;
-const OPENSUBTITLES_LANGUAGE_PREFLIGHT_POOL = 24;
-const SOURCE_LANGUAGE_PREFLIGHT_CONCURRENCY = 1;
-const SOURCE_LANGUAGE_PREFLIGHT_TIMEOUT_MS = 7000;
-const SOURCE_LANGUAGE_PREFLIGHT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const SOURCE_LANGUAGE_PREFLIGHT_FAILURE_TTL_MS = 10 * 60 * 1000;
-const SOURCE_LANGUAGE_PREFLIGHT_RATE_LIMIT_TTL_MS = 12 * 60 * 60 * 1000;
-const SUBDL_RATE_LIMIT_COOLDOWN_MS = 12 * 60 * 60 * 1000;
-// Buget separat pentru preflight: lăsăm cea mai mare parte a limitei SubDL
-// disponibilă pentru descărcarea efectivă a subtitrărilor selectate de utilizator.
-const SUBDL_PREFLIGHT_BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
-const SUBDL_PREFLIGHT_MAX_DOWNLOADS_PER_24H = 15;
-let subdlPreflightDownloadTimestamps = [];
-let subdlRateLimitedUntil = 0;
-const SOURCE_LANGUAGE_PREFLIGHT_CACHE_MAX = 500;
 const TOTAL_MAX_SUBTITLE_RESULTS = SUBDL_MAX_SUBTITLE_RESULTS + OPENSUBTITLES_MAX_WITH_SUBDL;
-const sourceLanguagePreflightCache = new Map();
-const sourceLanguagePreflightInflight = new Map();
-
-function reserveSubdlLanguagePreflightSlot(now = Date.now()) {
-    const cutoff = now - SUBDL_PREFLIGHT_BUDGET_WINDOW_MS;
-    subdlPreflightDownloadTimestamps = subdlPreflightDownloadTimestamps.filter(ts => ts > cutoff);
-    if (subdlPreflightDownloadTimestamps.length >= SUBDL_PREFLIGHT_MAX_DOWNLOADS_PER_24H) {
-        return { allowed: false, retryAt: subdlPreflightDownloadTimestamps[0] + SUBDL_PREFLIGHT_BUDGET_WINDOW_MS };
-    }
-    // Reserve synchronously before the first await so parallel list requests cannot
-    // oversubscribe the preflight budget in the same Node process.
-    subdlPreflightDownloadTimestamps.push(now);
-    return { allowed: true, remaining: SUBDL_PREFLIGHT_MAX_DOWNLOADS_PER_24H - subdlPreflightDownloadTimestamps.length };
-}
 
 function decodeSubtitleHtmlEntities(value) {
     return String(value || '')
@@ -1016,7 +985,7 @@ function subdlCandidateRows(rows, identity, expectedTitle = '', options = {}) {
     if (candidates.some(item => item.matchScore !== null)) {
         candidates.sort((a, b) => ((b.matchScore ?? -1) - (a.matchScore ?? -1)) || (a.sourceOrder - b.sourceOrder));
     }
-    return candidates.slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
+    return candidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
 }
 
 async function fetchSubdlLegacyV1Candidates(apiKey, identity, expectedTitle) {
@@ -1096,7 +1065,7 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
         // This endpoint already ranked candidates by release match. Keep that native
         // order across explicit v2 nIds and direct-URL fallback rows; transport method
         // must not outrank the provider's match score.
-        return filenameCandidates.slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
+        return filenameCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
     }
     if (filenameDirectCandidates.length) {
     }
@@ -1117,7 +1086,7 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
         // match object is acceptable; any provided contradictory identity is not.
         if (flattened.match && !subdlMatchIsCompatible(flattened.match, identity, expectedTitle, false)) {
             console.log(`[SubDL] API a returnat metadate incompatibile pentru ${mediaId}; rezultatele sunt ignorate.`);
-            return filenameDirectCandidates.slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
+            return filenameDirectCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
         }
         const imdbCandidates = subdlCandidateRows(flattened.rows, identity, expectedTitle);
         const imdbIdCandidates = imdbCandidates.filter(item => !item.nId.startsWith('url_'));
@@ -1131,7 +1100,7 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
                 if (seen.has(item.nId)) return false;
                 seen.add(item.nId);
                 return true;
-            }).slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
+            }).slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
         }
         // If v2 only supplies opaque direct links with no recoverable IDs, use the documented
         // legacy v1 response once: unpack=1 exposes file_n_id and direct per-file URLs, from
@@ -1145,7 +1114,7 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
                 if (seen.has(item.nId)) return false;
                 seen.add(item.nId);
                 return true;
-            }).slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
+            }).slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
         }
         const combined = [...directOnly, ...legacyCandidates];
         const seen = new Set();
@@ -1153,10 +1122,10 @@ async function fetchSubdlCandidates(apiKey, type, mediaId, filename) {
             if (seen.has(item.nId)) return false;
             seen.add(item.nId);
             return true;
-        }).slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
+        }).slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
     } catch (error) {
         console.log(`[SubDL] Căutarea exactă IMDb a eșuat pentru ${mediaId} (${error.response?.status || 'rețea'}). Păstrez URL-urile directe de filename ca ultimă rezervă.`);
-        return filenameDirectCandidates.slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL);
+        return filenameDirectCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
     }
 }
 
@@ -1210,7 +1179,7 @@ async function handleSubtitles(req, res) {
     }
 
     // Cererea OpenSubtitles pornește ACUM, în paralel cu căutarea SubDL, ca lista să apară mai repede.
-    // Limita (4 SubDL verificate + maximum 4 OpenSubtitles) se aplică mai jos.
+    // Limita (8 SubDL + 4 OpenSubtitles) se aplică mai jos, neschimbată.
     const openSubtitlesUrl = `https://opensubtitles-v3.strem.io/subtitles/${type}/${id}${extraString}.json`;
     const openSubtitlesRequest = axios.get(openSubtitlesUrl, {
         timeout: 6500,
@@ -1222,29 +1191,19 @@ async function handleSubtitles(req, res) {
     });
 
     // Fără rezultate SubDL, păstrăm exact bugetul istoric v253 de până la 15 variante OpenSubtitles.
-    // Dacă SubDL aduce rezultate, folosim maximum 4 SubDL verificate + 4 OpenSubtitles.
+    // Dacă SubDL aduce rezultate, folosim 8 SubDL + maximum 4 OpenSubtitles.
     let openSubtitlesLimit = OPENSUBTITLES_LEGACY_MAX_RESULTS;
     let subdlCandidates = [];
-    if (addonConfig.subdlKey && Date.now() < subdlRateLimitedUntil) {
-        console.log(`${c.yellow}[SubDL] Cooldown după 429 activ; sar peste SubDL și folosesc direct OpenSubtitles.${c.reset}`);
-    } else if (addonConfig.subdlKey) {
+    if (addonConfig.subdlKey) {
         try {
             subdlCandidates = await fetchSubdlCandidates(addonConfig.subdlKey, type, id, userFilename);
         } catch (error) {
-            const status = Number(error?.response?.status || error?.statusCode || 0);
-            if (status === 429) subdlRateLimitedUntil = Math.max(subdlRateLimitedUntil, Date.now() + SUBDL_RATE_LIMIT_COOLDOWN_MS);
-            console.log(`${c.yellow}[SubDL] Furnizor indisponibil (${status || 'rețea'}); continui cu OpenSubtitles.${c.reset}`);
-        }
-        if (subdlCandidates.length) {
-            subdlCandidates = await filterSubtitleCandidatesBySourceLanguage(
-                subdlCandidates.slice(0, SUBDL_LANGUAGE_PREFLIGHT_POOL),
-                'SubDL', configData, userFilename, SUBDL_MAX_SUBTITLE_RESULTS
-            );
-            // Afișăm numai candidați ale căror fișiere reale au trecut verificarea limbii.
-            subdlCandidates = subdlCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS);
+            console.log(`${c.yellow}[SubDL] Furnizor indisponibil (${error.response?.status || 'rețea'}); continui cu OpenSubtitles.${c.reset}`);
         }
         if (!subdlCandidates.length) {
-            console.log(`${c.yellow}[SubDL] Nicio subtitrare EN verificată pentru ${id}; folosesc OpenSubtitles.${c.reset}`);
+            console.log(`${c.yellow}[SubDL] Nicio subtitrare EN sigură potrivită pentru ${id}; folosesc OpenSubtitles.${c.reset}`);
+        } else {
+            // Nu jurnalizăm fiecare răspuns SubDL reușit; rezultatul este vizibil în lista Stremio.
         }
     }
     if (subdlCandidates.length) openSubtitlesLimit = OPENSUBTITLES_MAX_WITH_SUBDL;
@@ -1283,7 +1242,7 @@ async function handleSubtitles(req, res) {
 
         // Păstrăm validarea URL-urilor și filtrul anti-release-uri nedorite.
         let engSubs = allSubs.filter(sub =>
-            getSubtitleLanguageDeclaration(sub) === 'english' &&
+            (sub.lang === 'eng' || sub.lang === 'en' || sub.lang === 'English') &&
             isValidSubtitleSourceUrl(sub.url)
         );
         const uniqueUrls = new Set();
@@ -1514,6 +1473,10 @@ async function handleSubtitles(req, res) {
         // numele release-ului nu trebuie să împingă în jos o potrivire video exactă.
         // Între potrivirile confirmate păstrăm ordinea upstream a OpenSubtitles.
         const hasReportedHashMatches = Boolean(userVideoHash && diverseSubs.some(s => s.hashMatch));
+        if (userVideoHash) {
+            const hashMatchCount = diverseSubs.filter(s => s.hashMatch).length;
+            console.log(`${c.cyan}[Subtitrări] videoHash ${hashMatchCount ? `confirmat pentru ${hashMatchCount} variante OpenSubtitles` : 'transmis, dar fără potrivire explicită; fallback la scorul release-ului'}${c.reset}`);
+        }
         const compareOpenSubtitlesCandidates = (a, b) => {
             if (hasReportedHashMatches && Boolean(a.hashMatch) !== Boolean(b.hashMatch)) {
                 return a.hashMatch ? -1 : 1;
@@ -1534,7 +1497,7 @@ async function handleSubtitles(req, res) {
             const rankedSource = diverseSubs
                 .filter(s => s.sourceIndex === sourceIndex)
                 .sort(compareOpenSubtitlesCandidates);
-            sourceBalancedCandidates.push(...rankedSource.slice(0, OPENSUBTITLES_LANGUAGE_PREFLIGHT_POOL));
+            sourceBalancedCandidates.push(...rankedSource.slice(0, openSubtitlesLimit));
         }
 
         // Deduplicare globală după selecția per-sursă. Dacă același URL apare
@@ -1552,14 +1515,8 @@ async function handleSubtitles(req, res) {
 
         diverseSubs = [...bestCandidateByUrl.values()]
             .sort(compareOpenSubtitlesCandidates)
-            .slice(0, OPENSUBTITLES_LANGUAGE_PREFLIGHT_POOL);
-
-        // Verificăm conținutul real înainte ca orice variantă să fie trimisă în lista add-on-ului.
-        // Astfel, o sursă etichetată greșit `eng` este eliminată, iar următoarea variantă validă urcă.
-        diverseSubs = await filterSubtitleCandidatesBySourceLanguage(
-            diverseSubs, 'OpenSubtitles', configData, userFilename, openSubtitlesLimit
-        );
-        diverseSubs = diverseSubs.slice(0, openSubtitlesLimit);
+            .slice(0, openSubtitlesLimit);
+        
 
         // ============================================================
         // VIZUALIZARE UI STREMIO (ETICHETE DETALIATE)
@@ -1567,18 +1524,12 @@ async function handleSubtitles(req, res) {
         // If SubDL's direct download link is stale or rejected, attach the best
         // already-ranked OpenSubtitles candidate as a safe server-side fallback.
         const fallbackOpenSubtitle = diverseSubs[0] || null;
-        const languageFallbackEntries = diverseSubs.slice(0, 2).map(candidate => ({
-            url: candidate.originalUrl,
-            name: candidate.realName || 'OpenSubtitles alternativă'
-        }));
-        const encodedSubdlLanguageFallbacks = encodeSubtitleLanguageFallbackCandidates(languageFallbackEntries);
         const generatedSubdlSubs = subdlCandidates.slice(0, SUBDL_MAX_SUBTITLE_RESULTS).map((s, index) => {
             const scorePercent = s.matchScore === null ? null : Math.min(100, Math.round(s.matchScore > 1 ? s.matchScore : s.matchScore * 100));
             const scoreTag = scorePercent === null ? '' : ` • ${scorePercent}% match`;
-            const legacyFallbackParams = fallbackOpenSubtitle?.originalUrl
+            const fallbackParams = fallbackOpenSubtitle?.originalUrl
                 ? `&fallbackTargetUrl=${encodeURIComponent(fallbackOpenSubtitle.originalUrl)}&fallbackSubtitleName=${encodeURIComponent(String(fallbackOpenSubtitle.realName || 'OpenSubtitles fallback').slice(0, 300))}`
                 : '';
-            const fallbackParams = `${legacyFallbackParams}${encodedSubdlLanguageFallbacks ? `&fallbackCandidates=${encodedSubdlLanguageFallbacks}` : ''}&fallbackType=${encodeURIComponent(type)}`;
             return {
                 id: `subdl_ai_sub_${index}`,
                 title: `🇷🇴 RO AI · SubDL [${index + 1}]${scoreTag} · ${String(s.realName).replace(/[^\p{L}\p{N} ._\-()[\]]/gu, ' ').slice(0, 100)}`,
@@ -1589,12 +1540,6 @@ async function handleSubtitles(req, res) {
 
         const generatedOpenSubtitles = diverseSubs.slice(0, openSubtitlesLimit).map((s, index) => {
             const encodedUrl = encodeURIComponent(s.originalUrl);
-            const alternateCandidates = diverseSubs
-                .filter((candidate, candidateIndex) => candidateIndex !== index && candidate.originalUrl !== s.originalUrl)
-                .slice(0, 2)
-                .map(candidate => ({ url: candidate.originalUrl, name: candidate.realName || 'OpenSubtitles alternativă' }));
-            const encodedFallbackCandidates = encodeSubtitleLanguageFallbackCandidates(alternateCandidates);
-            const fallbackParams = encodedFallbackCandidates ? `&fallbackCandidates=${encodedFallbackCandidates}` : '';
             let visualName = String(s.realName || '').replace(/[^a-zA-Z0-9.-]/g, ' ');
             const foundTags = [];
             const resMatch = visualName.match(/\b(2160p|1080p|720p|4k|sd)\b/i);
@@ -1611,7 +1556,7 @@ async function handleSubtitles(req, res) {
             return {
                 id: `opensubtitles_ai_sub_${index}`,
                 title: labelName,
-                url: `${baseUrl}/${configData}/translate?id=${encodeURIComponent(id)}&targetUrl=${encodedUrl}${fallbackParams}&v=opensubtitles-${index + 1}&source=OpenSubtitles&subtitleName=${encodeURIComponent(String(s.realName || labelName).slice(0, 300))}`,
+                url: `${baseUrl}/${configData}/translate?id=${encodeURIComponent(id)}&targetUrl=${encodedUrl}&v=opensubtitles-${index + 1}&source=OpenSubtitles&subtitleName=${encodeURIComponent(String(s.realName || labelName).slice(0, 300))}`,
                 lang: 'ron'
             };
         });
@@ -1625,9 +1570,7 @@ async function handleSubtitles(req, res) {
     }
 }
 
-async function getSubdlSubtitleText(configId, reference, requestedFilename = '', requestOptions = {}) {
-    const requestedTimeout = Number(requestOptions?.timeoutMs);
-    const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0 ? Math.min(30000, requestedTimeout) : 25000;
+async function getSubdlSubtitleText(configId, reference, requestedFilename = '') {
     const isApiReference = reference.startsWith('api_');
     const isDirectUrlRef = reference.startsWith('url_');
     let apiReference = null;
@@ -1700,7 +1643,7 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '',
     let exactFileError = null;
     try {
         if (isDirectUrlRef) {
-            bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey, requestOptions);
+            bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
         } else {
             // When file_n_id is known, first fetch that exact file from SubDL's documented
             // /subtitle/{n_id}/{file_n_id} route; the parent nId endpoint can otherwise select
@@ -1708,17 +1651,10 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '',
             if (isApiReference && apiReference?.fileNId && directDownloadUrl) {
                 exactFileAttempted = true;
                 try {
-                    bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey, requestOptions);
+                    bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
                 } catch (error) {
-                    if (requestOptions?.signal?.aborted) throw error;
                     exactFileError = error;
-                    const exactStatus = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
-                    if (exactStatus === 429) {
-                        // A 429 indicates provider throttling/quota. Do not issue another
-                        // SubDL request for the same subtitle via a different endpoint.
-                        throw exactFileError;
-                    }
-                    console.log(`[SubDL] Descărcarea fișierului exact a eșuat (${exactStatus || 'rețea'}); încerc API v2 ca rezervă.`);
+                    console.log(`[SubDL] Descărcarea fișierului exact a eșuat (${error.response?.status || error.subdlDownloadMeta?.status || 'rețea'}); încerc API v2 ca rezervă.`);
                 }
             }
 
@@ -1730,8 +1666,7 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '',
             };
             const requestApi = () => axios.get(makeApiUrl(), {
                 headers: { Authorization: `Bearer ${addonConfig.subdlKey}`, 'User-Agent': BROWSER_USER_AGENT_FETCH },
-                timeout: timeoutMs,
-                ...(requestOptions?.signal ? { signal: requestOptions.signal } : {}),
+                timeout: 25000,
                 maxContentLength: 25 * 1024 * 1024,
                 maxBodyLength: 25 * 1024 * 1024,
                 responseType: 'arraybuffer',
@@ -1743,11 +1678,10 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '',
                 try {
                     response = await requestApi();
                 } catch (apiError) {
-                    if (requestOptions?.signal?.aborted) throw apiError;
                     const apiStatus = Number(apiError?.response?.status || 0);
                     if (!exactFileAttempted && directDownloadUrl && [400, 401, 403, 404, 409, 422].includes(apiStatus)) {
                         console.log(`[SubDL] Descărcarea oficială API v2 a eșuat (${apiStatus}); încerc URL-ul direct original, păstrat ca fallback.`);
-                        bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey, requestOptions);
+                        bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
                     } else if (exactFileError) {
                         throw exactFileError;
                     } else {
@@ -1761,7 +1695,7 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '',
                 if (redirectLocation) {
                     // Do not forward the API bearer token across hosts.
                     const redirectUrl = new URL(redirectLocation, makeApiUrl()).toString();
-                    bytes = await fetchSubdlDirectWithFallback(redirectUrl, addonConfig.subdlKey, requestOptions);
+                    bytes = await fetchSubdlDirectWithFallback(redirectUrl, addonConfig.subdlKey);
                     response = { headers: { 'content-type': 'application/x-subrip' }, status: 200 };
                 } else {
                     bytes = Buffer.from(response.data || []);
@@ -1781,10 +1715,10 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '',
             const resolvedDirectUrl = rawDirectUrl ? new URL(rawDirectUrl, 'https://dl.subdl.com').toString() : '';
             const safeResolvedUrl = subdlDirectDownloadUrl(resolvedDirectUrl);
             if (safeResolvedUrl) {
-                bytes = await fetchSubdlDirectWithFallback(safeResolvedUrl, addonConfig.subdlKey, requestOptions);
+                bytes = await fetchSubdlDirectWithFallback(safeResolvedUrl, addonConfig.subdlKey);
             } else if (directDownloadUrl && !(isApiReference && apiReference?.fileNId && exactFileError)) {
                 console.log('[SubDL] API v2 a răspuns JSON fără URL descărcabil; încerc URL-ul original al rezultatului.');
-                bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey, requestOptions);
+                bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
             } else if (exactFileError) {
                 throw exactFileError;
             } else {
@@ -1799,7 +1733,6 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '',
         );
     } catch (error) {
         const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
-        if (status === 429) subdlRateLimitedUntil = Math.max(subdlRateLimitedUntil, Date.now() + SUBDL_RATE_LIMIT_COOLDOWN_MS);
         console.log(`[SubDL] Descărcare nereușită (${isApiReference ? 'ID derivat din URL' : isDirectUrlRef ? 'URL direct' : 'nId'}; ${status || 'eroare de rețea'}); nu se expune cheia.`);
         error.statusCode = error.statusCode || 502;
         throw error;
@@ -1868,10 +1801,11 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const STANDALONE_SOURCE_FILLERS = new Set((
-    // Eliminăm vocalizările fără conținut când un rând este alcătuit exclusiv din ele.
-    // Nu eliminăm interjecții din replici complete; clasificarea contextuală rulează separat.
-    // Include și variante de șuierat/șș și bâzâit-uri de tip „mm-mm” sau „hmm-mm”.
-    'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu hm hmm hmmm hmph mh mhm mm mmm mmmm mmhmm mm-hmm mmm-hmm mm-mm hmm-mm sh shh shhh ssh ssshh șș șșș șșșș'
+    // Aceste vocalizări nu sunt păstrate ca traduceri autonome.
+    // Nu ștergem „Oh/Ah” din expresii dialogate valide; filtrăm doar liniile formate
+    // exclusiv din interjecții. Vocalizările „Hm / Hmm / Mm / Mhm / Mm-hmm” sunt zgomote: nu se traduc
+    // și nu apar în subtitrare.
+    'aaaa aaaaah aaaah aaah ah oh ehm er erm err errr ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ptiu hm hmm hmmm hmph mh mhm mm mmm mmmm mmhmm mm-hmm mmm-hmm'
 ).split(/\s+/));
 
 // Elimină „oh/ah” numai când linia conține exclusiv interjecții și punctuație.
@@ -2074,9 +2008,10 @@ function stripNonDialogueSoundMarkup(value) {
         removedCount++;
     }
 
-    // Nu ștergem aici liniuța textului rămas: pot exista încă două replici reale
-    // pe același rând, iar eliminarea prematură poate pierde marcajul celui de-al doilea vorbitor.
-    // Numărul final de vorbitori este cunoscut abia după toate filtrele, în formatSubtitleLayout().
+    // Dacă din „- [sighs] / - Replica” a rămas un singur vorbitor, liniuța de dialog nu mai are rost.
+    if (removedCount && clean && !clean.includes('\n')) {
+        clean = clean.replace(/^[ \t]*[-–—][ \t]+(?=\S)/, '');
+    }
     if (removedCount && /^[ \t\r\n\-–—,;:.!?…]+$/.test(clean)) clean = '';
 
     return { text: clean, removedCount };
@@ -2098,21 +2033,16 @@ function cleanTextForJson(text) {
     clean = clean.replace(/<[iIbBuU]>\s*(?:uh|uhh|uhhh|uhm|uhmm|um|umm|ehm|erm|err|mwah|ă|ăă|ăăă|uu)[!.,?\s-]*\s*<\/[iIbBuU]>/gi, '');
     clean = clean.replace(/<[iIbBuU]>\s*<\/[iIbBuU]>/gi, '');
 
-    // Elimină etichetele de vorbitor de la începutul rândului, inclusiv roluri și legături cu litere mici.
-    // Excepțiile sunt expresii conversaționale urmate de două puncte, nu nume de personaje:
-    // „Listen: I don't know.”, „Look:”, „Wait:”, „Here:” etc. trebuie păstrate.
-    clean = clean.replace(/(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?!(?:Listen|Look|Remember|Note|Warning|Wait|Okay|OK|Well|Now|Here|Please|Stop|Sorry|Sure|Right|Actually|Honestly|Anyway|Fine|Great|Careful|Quiet|Hey|Yes|No|Maybe|So|But|Then|Again|Easy|Enough|What|Why|Who|Where|When|How|Hello|Thanks)\s*:)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?[A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,3}:\s*/g, '$1$2');
+    // Segmentele dintre (...) și [...] sunt eliminate înainte de formarea calupurilor
+    // prin stripNonDialogueSoundMarkup(), iar rezultatul final trece din nou prin același filtru.
 
-    // Elimină bâlbâielile englezești: „the-- the”, „I-- I”, „it's-- it's”.
-    clean = clean.replace(/\b([A-Za-z']+)[ \t]*--[ \t]*\1\b/gi, '$1');
+    // subtitle formatting curăță etichetele de vorbitor cu majuscule înainte de traducere.
+    // Aplicăm aceeași idee strict la începutul unei linii și numai înainte de două puncte.
+    clean = clean.replace(/(^|\n)(\s*[-–—]?\s*)[A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}){0,2}:\s*/g, '$1$2');
 
-    // Transformă întreruperile duble în elipse, fără a atinge liniuța simplă de dialog de la începutul rândului.
-    clean = clean.replace(/(\S)[ \t]*--([ \t]*)/g, '$1...$2');
-    clean = clean.replace(/\.\.\.[ \t]*-+/g, '...');
-
-    // Eliminăm interjecțiile de umplutură înainte de Gemini, dar păstrăm reacțiile cu sens.
+    // Eliminăm înainte de Gemini doar liniile formate exclusiv din interjecții Oh/Ah.
+    // Cuvintele și nuanța expresiilor dialogate sunt păstrate.
     clean = stripLeadingOhAhInterjections(clean);
-    clean = stripContextualDisposableInterjections(clean);
 
     // Normalize spacing left behind after removed sound labels.
     clean = clean.replace(/[ \t]{2,}/g, ' ');
@@ -2251,9 +2181,6 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț]+(?:\s+[A-Za-zĂÂÎȘȚăâîșț]+)?)\s*\.{2,}\s*\1\b/gi, '$1...');
     // Dacă după colaps rămâne punctul final al replicii, evităm „....”.
     cleaned = cleaned.replace(/\.{4,}/g, '...');
-    // Transformă orice „--” sau „...-” rămas în elipsă, inclusiv în interiorul replicilor.
-    cleaned = cleaned.replace(/(\S)[ \t]*--+/g, '$1...');
-    cleaned = cleaned.replace(/\.\.\.[ \t]*-+|-+[ \t]*\.\.\./g, '...');
 
     cleaned = cleaned.replace(/[^\S\r\n]+/g, ' ');
 
@@ -2269,30 +2196,6 @@ function deepCleanSubtitleText(text) {
     // Normalizează apostroful curb și semnul „…”, apoi păstrează ghilimelele românești „ ” și “ ”.
     cleaned = cleaned.replace(/[\u2018\u2019]/g, "'").replace(/\u2026/g, '...');
     cleaned = cleaned.replace(/[^\u0000-\u024F\u1E00-\u1EFF\s.,!?:;\-–—'"()\[\]<>\/\u201C\u201D\u201E]/g, '');
-    // Corectează simbolul ƒ folosit accidental în locul literei f.
-    cleaned = cleaned.replace(/[ƒƑ]/g, character => character === 'Ƒ' ? 'F' : 'f');
-
-    // Corecturi înguste pentru cifre parazite confirmate în subtitrări.
-    // În cazul observat „de1lă”, cifra a înlocuit separatorul din „de la”; simpla
-    // ștergere a cifrei ar produce „delă”, deci restaurăm spațiul și forma fără diacritică.
-    cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])de1lă(?![\p{L}\p{N}_])/giu, match =>
-        match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'De la' : 'de la'
-    );
-
-    // Elimină cifrele introduse în interiorul cuvintelor scrise cu litere mici:
-    // de ex. „f1ost” -> „fost”. Nu afectăm identificatori precum „R2D2”, „B2B” sau „iPhone12”.
-    cleaned = cleaned.replace(
-        /(?<![\p{L}\p{N}_])(\p{Lu}\p{Ll}*|\p{Ll}{1,})\d+(\p{Ll}+)(?![\p{L}\p{N}_])/gu,
-        '$1$2'
-    );
-
-    // Elimină o cifră parazită la finalul unui cuvânt românesc când urmează un conector
-    // obișnuit: „Am rănit1 pe cineva?” -> „Am rănit pe cineva?”. Nu ștergem sufixele
-    // numerice legitime din nume, titluri sau identificatori.
-    cleaned = cleaned.replace(
-        /(?<![\p{L}\p{N}_])(\p{Lu}\p{Ll}{2,}|\p{Ll}{3,})\d+(?=\s+(?:pe|în|la|cu|de|că|să|și|sau|dar|pentru|din|spre|sub|peste|către|cineva|el|ea|ei|ele|noi|voi)\b)/giu,
-        '$1'
-    );
     // Orice text între (...) sau [...] trebuie eliminat; filtrul dedicat rulează înainte
     // de traducere și din nou asupra textului final, după regulile proiectului.
 
@@ -2477,11 +2380,9 @@ function formatSubtitleLayout(value) {
     if (entries.length === 1) {
         const entry = entries[0];
         if (entry.dialogue) {
-            // Liniuța marchează alternanța a doi vorbitori în același bloc.
-            // După eliminarea etichetelor/cue-urilor, un singur vorbitor rămas nu păstrează liniuța.
             const parts = splitSubtitleIntoTwoLines(entry.text, 41);
-            if (parts.length === 2) return `${capFirst(parts[0])}\n${parts[1]}`;
-            return capFirst(parts[0]);
+            if (parts.length === 2) return `- ${capFirst(parts[0])}\n${parts[1]}`;
+            return `- ${capFirst(parts[0])}`;
         }
         // Un rând de până la 43 de caractere încape și nu trebuie despărțit.
         const compactText = entry.text.replace(/\s+/g, ' ').trim();
@@ -2529,268 +2430,13 @@ function formatSubtitleLayout(value) {
     return splitSubtitleIntoTwoLines(entries.map(entry => entry.text).join(' '), 42).join('\n') || ' ';
 }
 
-// Forme verbale uzuale care urmează cliticelor „mi/ți/i/ne/v/le-o”.
-// Lista evită să transforme substantivele în construcții greșite, de ex. „Spune-mi o poveste”.
-const CLITIC_O_FOLLOWING_VERBS = new Set((
-    'adu aduc aduce aduci aducem aduceti adus adusa aduse aducand ' +
-    'afla aflu afli aflam aflat ' +
-    'arata arat arati arata aratam aratati aratat ' +
-    'asteapta astept astepti asteptam asteptati asteptat ' +
-    'bea beau bei bem beti baut ' +
-    'cere cer ceri cere ceream cerem cereti cerut ' +
-    'cheama chem chemi chemam chemati chemat ' +
-    'crede cred crezi credeam credem credeti crezut ' +
-    'curata curat cureti curatam curatati curatat ' +
-    'da dau dai dam dati dea dat dadea dadeam dadeau ' +
-    'deschide deschid deschizi deschidem deschideti deschis ' +
-    'face fac faci facem faceti facut faceam faceau faca ' +
-    'gasi gasesc gasesti gasim gasiti gasit ' +
-    'inchide inchid inchizi inchidem inchideti inchis ' +
-    'intreaba intreb intrebi intrebam intrebat ' +
-    'ia iai iau iei luam luati luat lua ' +
-    'lasa las lasi lasa lasam lasati lasat ' +
-    'minte mint minti minte mintim mintiti mintit ' +
-    'muta mut muti mutam mutati mutat ' +
-    'opreste opresc opresti oprim oprit ' +
-    'pastreaza pastrez pastrezi pastram pastrati pastrat ' +
-    'pierde pierd pierzi pierdem pierdeti pierdut ' +
-    'pune pun pui punem puneti pus punea puneam puneau puna ' +
-    'prinde prind prinzi prindem prindeti prins ' +
-    'repara repar repari reparam reparati reparat ' +
-    'scoate scot scoti scoatem scoateti scos scoata ' +
-    'suna sun suni suna sunam sunati sunat sunand ' +
-    'scrie scriu scrii scriem scrieti scris ' +
-    'simte simt simti simtim simtiti simtit ' +
-    'spala spal speli spalam spalati spalat ' +
-    'spune spun spui spunem spuneti spus spunea spuneam spuneau spuna ' +
-    'sterge sterg stergi stergem stergeti sters ' +
-    'tine tin tine tineti tinem tinut tinea tineam tineau tina ' +
-    'trimite trimit trimiti trimitem trimiteti trimis trimiteam trimiteau trimita ' +
-    'trage trag tragi tragem trageti tras ' +
-    'trece trec treci trecem treceti trecut ' +
-    'uita uit uiti uitam uitati uitat ' +
-    'vinde vand vinzi vindem vindeti vandut ' +
-    'vede vad vezi vedem vedeti vazut ' +
-    'vrea vreau vrei vrem vreti vor vrut ' +
-    'zice zic zici zicem ziceti zis'
-).split(/\s+/));
-
 function formatSubtitleLine(text) {
     if (!text) return ' ';
 
     text = deepCleanSubtitleText(text);
     if (!text.trim()) return ' ';
 
-    // Corectează cratima plasată după clitic: „nu ți-știu” / „nu ți-pasă”
-    // devin „nu-ți știu” / „nu-ți pasă”. Delimitările Unicode evită \b pe diacritice.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])(nu|că|să|ce)[ \t]+(ți|mi)-((?:ști[\p{L}]*|pasă|place|plac|vine|vin|pare|par|amint[\p{L}]*|spu[\p{L}]*|zi[\p{L}]*|da[\p{L}]*|ia[\p{L}]*|fac[\p{L}]*))(?![\p{L}\p{N}_])/giu,
-        '$1-$2 $3'
-    );
-
-    // „S-o nu ucizi” -> „Să n-o ucizi”; tratăm similar formele „S-l nu” / „S-i nu”.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])([Ss])-[oO][ \t]+nu(?=[ \t]+[\p{L}])/giu,
-        (_, initial) => `${initial}ă n-o`
-    );
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])([Ss])-([lLiI])[ \t]+nu(?=[ \t]+[\p{L}])/giu,
-        (_, initial, clitic) => `${initial}ă nu-${clitic.toLocaleLowerCase('ro-RO')}`
-    );
-
-    // Elimină spațiul accidental imediat după cratimă la clitice/eliziuni: „n- o” -> „n-o”.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])(n|s|l|m|ți|mi|i|v|ne|le|c|d|p|într|dintr|printr)-[ \t]+(o|a|ai|am|au|ar|aș|ați|un|una|ale|al|însă|însuși)(?![\p{L}\p{N}_])/giu,
-        '$1-$2'
-    );
-
-    // „Îi-ai” -> „Îi ai”; „Dă-jos” -> „Dă jos”.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])([Dd]ă)-jos(?![\p{L}\p{N}_])/giu,
-        '$1 jos'
-    );
-
-    // Spațiu după punct când două cuvinte lipite au literă mică înainte și majusculă după.
-    // Nu afectează inițialele consecutive scrise cu majuscule.
-    text = text.replace(/(?<=\p{Ll})\.(?=\p{Lu})/gu, '. ');
-
-    // Corecturi punctuale din verificarea manuală a Sursei 14.
-    const preserveInitialCase = (match, replacement) => {
-        if (match === match.toLocaleUpperCase('ro-RO')) return replacement.toLocaleUpperCase('ro-RO');
-        if (match[0] === match[0].toLocaleUpperCase('ro-RO')) {
-            return replacement.charAt(0).toLocaleUpperCase('ro-RO') + replacement.slice(1);
-        }
-        return replacement;
-    };
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])supranaturalicunoscut(?![\p{L}\p{N}_])/giu,
-        match => preserveInitialCase(match, 'supranatural cunoscut')
-    );
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])nığım[ \t]+pe[ \t]+nimeni(?![\p{L}\p{N}_])/giu,
-        match => preserveInitialCase(match, 'n-am pe nimeni')
-    );
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])bet[ \t]+tu[ \t]+tot[ \t]+îmi[ \t]+stai[ \t]+în[ \t]+cale(?![\p{L}\p{N}_])/giu,
-        match => preserveInitialCase(match, 'dar tu tot îmi stai în cale')
-    );
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])mi-o[ \t]+ești[ \t]+dator(?![\p{L}\p{N}_])/giu,
-        match => preserveInitialCase(match, 'îmi ești dator')
-    );
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])atțite(?![\p{L}\p{N}_])/giu,
-        match => preserveInitialCase(match, 'ațintite')
-    );
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])pot[ \t]+să[ \t]+vi[ \t]+se[ \t]+alătur[ \t]+jos(?![\p{L}\p{N}_])/giu,
-        match => preserveInitialCase(match, 'pot să mă alătur vouă jos')
-    );
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])(mă[ \t]+)Păzească(?![\p{L}\p{N}_])/giu,
-        '$1păzească'
-    );
-
-    // Corecții conservatoare pentru cinci tipare confirmate în subtitrări reale.
-    // „Unde-mi-e” / „Unde-ți-e” -> „Unde mi-e” / „Unde ți-e”.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])(unde)-(mi|ți|i)-(e)(?![\p{L}\p{N}_])/giu,
-        (_, where, clitic, copula) => `${where} ${clitic}-${copula}`
-    );
-
-    // În română, după „să” pronumele „o” stă înaintea verbului, nu după el.
-    // Ex.: „să sunăm-o” -> „să o sunăm”; păstrăm forma și majusculele sursei.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])(să)\s+([\p{L}]{3,})-([oO])(?![\p{L}\p{N}_])/giu,
-        (_, subjunctive, verb, objectPronoun) => `${subjunctive} ${objectPronoun} ${verb}`
-    );
-
-    // „să mi-amintesc” / „să ți-amintești” -> „să-mi amintesc” / „să-ți amintești”.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])(să)\s+(mi|ți)-(amint[\p{L}]+)(?![\p{L}\p{N}_])/giu,
-        '$1-$2 $3'
-    );
-
-    // Normalizează formele greșite „nu-îți” / „ce-îmi” la cliticele corecte „nu-ți” / „ce-mi”.
-    // Păstrăm majusculele doar când întregul fragment este scris cu majuscule.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])((?:nu|ce|că|să|de))-([îÎ]ți|[îÎ]mi)(?![\p{L}\p{N}_])/giu,
-        (match, prefix, clitic) => {
-            const allCaps = match === match.toLocaleUpperCase('ro-RO');
-            const shortClitic = /ți$/iu.test(clitic) ? 'ți' : 'mi';
-            return `${prefix}-${allCaps ? shortClitic.toLocaleUpperCase('ro-RO') : shortClitic}`;
-        }
-    );
-
-    // „Ți pasă” este o deformare frecventă pentru „Îți pasă”; nu intervenim după cratimă
-    // (de exemplu, „nu-ți pasă” trebuie să rămână exact așa).
-    text = text.replace(
-        /(?<![-\p{L}\p{N}_])([țȚ])i[ \t]+(pasă)(?![\p{L}\p{N}_])/giu,
-        (match, firstLetter) => {
-            if (match === match.toLocaleUpperCase('ro-RO')) return 'ÎȚI PASĂ';
-            return firstLetter === 'Ț' ? 'Îți pasă' : 'îți pasă';
-        }
-    );
-
-    // Repară „doar-o” ca separare greșită; conservă majuscula de început și forma integrală cu majuscule.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])doar-o(?![\p{L}\p{N}_])/giu,
-        match => match === match.toLocaleUpperCase('ro-RO') ? 'DOAR O' : (match[0] === 'D' ? 'Doar o' : 'doar o')
-    );
-
-    // Repară formularea incompletă „Despre vorbești?” -> „Despre ce vorbești?”.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])([Dd]espre)[ \t]+(vorbești|vorbește|vorbim|vorbiți|vorbesc)(?![\p{L}\p{N}_])/giu,
-        (match, preposition, verb) => {
-            if (match === match.toLocaleUpperCase('ro-RO')) return `DESPRE CE ${verb.toLocaleUpperCase('ro-RO')}`;
-            return `${preposition} ce ${verb.toLocaleLowerCase('ro-RO')}`;
-        }
-    );
-
-    // „ți place” este o omisiune a lui „Î” („îți place”), nu forma corectă a pronumelui.
-    text = text.replace(
-        /(?<![-\p{L}\p{N}_])([Țț])i([ \t]+)place(?![\p{L}\p{N}_])/giu,
-        (match, firstLetter, spacing) => {
-            if (match === match.toLocaleUpperCase('ro-RO')) return `ÎȚI${spacing}PLACE`;
-            return `${firstLetter === 'Ț' ? 'Îți' : 'îți'}${spacing}place`;
-        }
-    );
-
-    // Repară cuvinte lipite accidental: „Nuștiu” -> „Nu știu”.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])(nu)știu(?![\p{L}\p{N}_])/giu,
-        (match, prefix) => match === match.toLocaleUpperCase('ro-RO') ? 'NU ȘTIU' : `${prefix} știu`
-    );
-
-    // Separă pronumele lipit de verb: „să leșteargă” -> „să le șteargă”.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])(să)\s+(le|ne|vă|o)(șteargă|țină|ducă|facă|vadă|spună)(?![\p{L}\p{N}_])/giu,
-        '$1 $2 $3'
-    );
-
     let lowerText = text.toLowerCase();
-
-    // Repară cratimele omise accidental de model ÎNAINTE de regula care extinde „s” în „să”.
-    // Limitele Unicode evită potrivirile în interiorul altor cuvinte; forma „n a doua zi” rămâne neatinsă.
-    text = text.replace(/(?<![\p{L}\p{N}_])([sS])\s+a(?=\s+[\p{L}])/gu, '$1-a');
-
-    // Negația „n-”: pentru „n a” cerem un verb cunoscut, ca să nu stricăm expresii corecte („n a doua zi”).
-    text = text.replace(/(?<![\p{L}\p{N}_])([nN])\s+(am|ai|au|ați|ar|avea|aveam|o\s+să)(?=\s+[\p{L}])/giu, '$1-$2');
-    text = text.replace(/(?<![\p{L}\p{N}_])([nN])\s+a(?=\s+(?:fost|dus|făcut|facut|înecat|inecat|întâmplat|intamplat|avut|putut|vrut|venit|mers|spus|zis|văzut|vazut|crezut|rămas|ramas|ajuns|început|inceput|înțeles|inteles|dat|luat|găsit|gasit|primit|plecat|pierdut|reușit|reusit|terminat|oprit|sunat|schimbat|ieșit|iesit|intrat|scris|cerut|plătit|platit)(?![\p{L}\p{N}_]))/giu, '$1-a');
-
-    // Pronume clitice + forme ale verbului „a avea” fără cratimă: „ți am promis” → „ți-am promis”.
-    text = text.replace(/(?<![\p{L}\p{N}_])(mi|ți|îi|ne|v|le|te|m)\s+(am|ai|a|au|ați)(?=\s+[\p{L}])/giu, '$1-$2');
-    text = text.replace(/(?<![\p{L}\p{N}_])(l)\s+(am|ai|a|au|ați)(?=\s+[\p{L}])/giu, '$1-$2');
-
-    // Regula generală de mai sus ar uni „Îi ai pe cap” în „Îi-ai”; aici „îi”
-    // este pronume obiect, nu cliticul din „îi-ai”. Reaplicăm corecția după ea.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])([Îî]i)-(ai|am|ați|au)(?![\p{L}\p{N}_])/giu,
-        (_, pronoun, auxiliary) => `${pronoun} ${auxiliary.toLocaleLowerCase('ro-RO')}`
-    );
-
-    // „l aș fi sunat” -> „l-aș fi sunat”: condiționalul cu pronume clitic necesita o regulă separată.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])([lL])[ \t]+(aș|aş)(?=[ \t]+[\p{L}])/giu,
-        (match, clitic, auxiliary) => {
-            const allCaps = match === match.toLocaleUpperCase('ro-RO');
-            return `${clitic}-${allCaps ? 'AȘ' : 'aș'}`;
-        }
-    );
-
-    // Forme cu „e” și pronume: „mi e dor” → „mi-e dor”.
-    text = text.replace(/(?<![\p{L}\p{N}_])(mi|ți|i)\s+e(?=\s+[\p{L}])/giu, '$1-e');
-
-    // Clitic + „o” înaintea unui verb: „mi o țin” → „mi-o țin”.
-    // Limităm corecția la forme verbale cunoscute pentru a nu strica expresii ca „Spune-mi o poveste”.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])([Mm]i|[Țț]i|[Ii]|[Nn]e|[Vv]|[Ll]e)[ \t]+[oO](?=[ \t]+([\p{L}]+)(?![\p{L}\p{N}_]))/giu,
-        (match, clitic, followingWord) => {
-            const normalizedVerb = followingWord.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-            if (!CLITIC_O_FOLLOWING_VERBS.has(normalizedVerb)) return match;
-            const allCaps = clitic.length > 1 && clitic === clitic.toLocaleUpperCase('ro');
-            return `${clitic}-${allCaps ? 'O' : 'o'}`;
-        }
-    );
-
-    // Forma elidată „s-o” (= „să o”) înaintea unui verb: „s o sunăm” → „s-o sunăm”.
-    // Cerem o formă verbală recunoscută ca să nu unim „s o” în expresii nominale.
-    text = text.replace(
-        /(?<![\p{L}\p{N}_])([Ss])[ \t]+[oO](?=[ \t]+([\p{L}]+)(?![\p{L}\p{N}_]))/giu,
-        (match, clitic, followingWord) => {
-            const normalizedVerb = followingWord.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-            if (!CLITIC_O_FOLLOWING_VERBS.has(normalizedVerb)) return match;
-            const allCaps = followingWord === followingWord.toLocaleUpperCase('ro') && /[A-ZĂÂÎȘȚ]/.test(followingWord);
-            return `${clitic}-${allCaps && clitic === 'S' ? 'O' : 'o'}`;
-        }
-    );
-
-    // Conjuncție/prepoziție + pronume clitic: „să i spun” → „să-i spun”.
-    text = text.replace(/(?<![\p{L}\p{N}_])(să|că|de|pe)\s+(i|l)(?=\s+[\p{L}])/giu, '$1-$2');
-
-    // Imperativ + pronume: evităm caracterele chirilice accidentale din variantele copiate.
-    text = text.replace(/(?<![\p{L}\p{N}_])(iartă|lasă|uită|ascultă)\s+(mă)(?=\s+[\p{L}]|[.!?,;:]|$)/giu, '$1-$2');
-    text = text.replace(/(?<![\p{L}\p{N}_])(dați|luați|duceți|feriți|uitați)\s+(vă)(?=\s+[\p{L}]|[.!?,;:]|$)/giu, '$1-$2');
 
     // Doar litere mici izolate (trunchieri „c”/„s” → „că”/„să”); majusculele („Vitamina C”, „Harry S. Truman”) rămân neatinse.
     text = text.replace(/(?<!\d)(^|[\s])([cs])(?=[\s.,!?:;]|$)/gm, function(match, spatiu, litera) {
@@ -3125,553 +2771,26 @@ function formatSubtitleLine(text) {
 }
 
 // ============================================================
-// DETECTARE PRUDENTĂ A SCRIERII SURSEI
-// Detectăm scrierea dominantă, nu pretindem că identificăm perfect limba.
-// Util pentru surse etichetate greșit de furnizori și pentru a evita verificări
-// QA care presupun engleza când cue-urile sunt, de fapt, într-o altă scriere.
-// ============================================================
-function detectSubtitleSourceScriptProfile(itemsOrText) {
-    const sourceText = Array.isArray(itemsOrText)
-        ? itemsOrText.map(item => String(item?.text || '')).join(' ')
-        : String(itemsOrText || '');
-    const letterCount = (sourceText.match(/\p{L}/gu) || []).length;
-    const scripts = [
-        { key: 'Latin', label: 'scriere latină', pattern: /\p{Script=Latin}/gu },
-        { key: 'Arabic', label: 'scriere arabică (posibil persană/arabă/urdu; limba exactă nu este confirmată)', pattern: /\p{Script=Arabic}/gu },
-        { key: 'Cyrillic', label: 'scriere chirilică (limba exactă nu este confirmată)', pattern: /\p{Script=Cyrillic}/gu },
-        { key: 'CJK', label: 'scriere CJK (chineză/japoneză/coreeană; limba exactă nu este confirmată)', pattern: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu },
-        { key: 'Hebrew', label: 'scriere ebraică (limba exactă nu este confirmată)', pattern: /\p{Script=Hebrew}/gu },
-        { key: 'Greek', label: 'scriere greacă (limba exactă nu este confirmată)', pattern: /\p{Script=Greek}/gu },
-        { key: 'Devanagari', label: 'scriere devanagari (limba exactă nu este confirmată)', pattern: /\p{Script=Devanagari}/gu },
-        { key: 'Thai', label: 'scriere thailandeză (limba exactă nu este confirmată)', pattern: /\p{Script=Thai}/gu }
-    ];
-    const counts = scripts.map(entry => ({
-        ...entry,
-        count: (sourceText.match(entry.pattern) || []).length
-    })).sort((a, b) => b.count - a.count);
-    const top = counts[0] || { key: 'Unknown', label: 'scriere necunoscută', count: 0 };
-    const ratio = letterCount ? top.count / letterCount : 0;
-    const dominant = letterCount >= 30 && ratio >= 0.55;
-    const script = dominant ? top.key : 'Mixed/unknown';
-    const label = dominant ? top.label : 'scriere mixtă sau nedeterminată';
-    return {
-        script,
-        label,
-        ratio: Number(ratio.toFixed(4)),
-        letterCount,
-        scriptCount: top.count,
-        isNonLatinDominant: Boolean(dominant && top.key !== 'Latin'),
-        isLatinDominant: Boolean(dominant && top.key === 'Latin')
-    };
-}
-
-function getSourceLanguagePromptOverride(profile) {
-    if (!profile?.isNonLatinDominant) return '';
-    return `\n\nOVERRIDE IMPORTANT PRIVIND LIMBA SURSEI\nAnaliza caracterelor arată că sursa este predominant în ${profile.label}. Aceasta este o identificare a scrierii, nu o certitudine asupra limbii exacte. Instrucțiunile generale de mai sus presupun în mod implicit engleza, dar pentru ACEASTĂ rulare nu presupune că originalul este englezesc: traduce conținutul efectiv furnizat în română, folosind sensul și contextul fiecărui cue din scrierea detectată. Nu trata textul sursă ca pe un cuvânt stâlcit doar pentru că nu este latin. Păstrează nume, credite, sloganuri sau expresii străine când sunt intenționate și relevante; nu le șterge doar pentru că sunt într-o altă limbă. Nu inventa replici și nu copia sensul unui cue în vecinul său. Dacă un fragment rămâne ambiguu, alege varianta cea mai prudentă compatibilă cu contextul.\n`;
-}
-
-// ============================================================
-// GARDĂ DE LIMBĂ PENTRU SURSA SUBTITRĂRII
-// Add-on-ul așteaptă în mod normal o sursă engleză. Detectarea folosește
-// întâi scrierea dominantă, apoi indicatori lexicali conservatori pentru
-// câteva limbi cu alfabet latin. Nu blochează automat cazurile ambigue.
-// ============================================================
-function subtitleBodyForLanguageCheck(value) {
-    return String(value || '')
-        .replace(/^\uFEFF/, '')
-        .replace(/^\s*\d+\s*$/gm, ' ')
-        .replace(/^\s*\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->[^\n]*$/gm, ' ')
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function classifyLatinSubtitleLanguage(value) {
-    const normalized = subtitleBodyForLanguageCheck(value)
-        .normalize('NFKD')
-        .replace(/\p{M}/gu, '')
-        .toLowerCase();
-    const tokens = normalized.match(/[\p{L}]+(?:['’][\p{L}]+)*/gu) || [];
-    const normalizedTokens = tokens.map(token => token.replace(/[’']/g, ''));
-    if (normalizedTokens.length < 100) {
-        return { language: 'unknown', confidence: 0, tokenCount: normalizedTokens.length, englishScore: 0 };
-    }
-
-    // Common function words / phrases. We deliberately require a large corpus
-    // and a margin over English before rejecting a Latin-script source.
-    const dictionaries = {
-        English: 'the and are was were with you your youre youve they them their this that these those what when where who why how have has had dont didnt wont cant couldnt wouldnt isnt arent im its there about because for but from would should could just know think right really well not will he she him her we our been being into very people come going got here now then said look need want like okay yeah sure thing things make made lets hey been did does did you i am if to of in is it on as at an my me his its can do so'.split(' '),
-        Spanish: 'el los las que una uno por para con como pero muy mas esta estan son somos ustedes tiene tienes quiero puedo porque aqui ahora esto eso ella ellos entonces cual cuando donde quien nunca siempre tengo estoy estas eres verdad dios gracias perdon quieres sabes hace puede puedes vamos tengo hay tambien todo todos nada desde entre hacia sobre sin antes despues hombre mujer senor senora'.split(' '),
-        French: 'le les des du et que dans pour avec pas vous nous ils elles est sont mais pourquoi parce comment alors tres tout cette bien qui quoi plus encore jamais oui mon ton votre je tu elle sommes suis avez avoir etre chez sans meme rien quand depuis comme celui celle celui-ci quelque votre nos vos leur leurs fait faire peut veux voulez merci monsieur madame ici maintenant toujours jamais'.split(' '),
-        German: 'der die das und nicht ich du er sie wir ihr ist sind mit von fur auf was wer wie warum aber weil kein eine einen doch schon jetzt bitte danke haben habe hast kann kannst noch auch aus nach den dem des ein meine dein mein bist seid war waren wurde wird zu im am zum zur dich mir uns euch ja nein wieder immer nichts etwas alles jemand jemandem haben haben sie'.split(' '),
-        Italian: 'il lo gli le di che per con sono non ma come perche una uno cosa questo questa siamo siete loro lei lui vuoi posso molto bene anche allora grazie signore signora nella degli dalla qui ora quando dove chi tutto tutti niente mai adesso avete hanno ho hai serve pero scusa forse sempre davvero uomo donna siamo degli delle dalla'.split(' '),
-        Portuguese: 'o os as de do da dos das que em um uma nao para com por voce voces ele ela nos isso esta sao mais muito aqui agora porque mas obrigado obrigada senhora senhor tambem tudo todo nada nunca sempre ja entao gente tinha tem tenho somos seria pode quero estou estava quando onde quem muito bem aqui ali voce'.split(' '),
-        Dutch: 'de het een en van ik je hij zij we zijn niet in op dat wat met voor maar als wel naar is hebben heeft was waren zou kunnen jouw deze dit die omdat waarom waar hier daar geen alles iemand iedereen toch graag dank mijn jouw onze jullie hun werd wordt had heb heeft'.split(' '),
-        Romanian: 'si sau nu pentru este sunt avea am ai are fost putea pot asta acolo aici daca cand unde care ceva foarte mult meu mea lui ei noi voi dumneavoastra multumesc te ma imi iti va se sa din intr catre despre pentru nu dar atunci cine cum aceasta acest aceste aceea acela sunteti esti suntem aveti avem avem'.split(' '),
-        Polish: 'nie jest sie ze ale dla jak na tak tego to co przez maja byc mam masz jego jej pan pani prosze dziekuje tylko bardzo tutaj teraz nigdy zawsze wszystko nic jeszcze gdzie kiedy dlaczego jestem jestes mamy macie maja'.split(' ')
-    };
-    const tokenCount = normalizedTokens.length;
-    const rates = Object.entries(dictionaries).map(([language, list]) => {
-        const set = new Set(list);
-        let hits = 0;
-        for (const token of normalizedTokens) if (set.has(token)) hits++;
-        return { language, hits, score: hits / tokenCount };
-    }).sort((a, b) => b.score - a.score);
-    const englishScore = rates.find(item => item.language === 'English')?.score || 0;
-    const bestForeign = rates.find(item => item.language !== 'English') || { language: 'unknown', score: 0 };
-    const minimumForeignScore = tokenCount >= 500 ? 0.095 : 0.13;
-    const minimumMargin = tokenCount >= 500 ? 0.045 : 0.065;
-    const stronglyNonEnglish = bestForeign.score >= minimumForeignScore &&
-        bestForeign.score > englishScore * 1.45 + 0.02 &&
-        bestForeign.score - englishScore >= minimumMargin;
-
-    return {
-        language: stronglyNonEnglish ? bestForeign.language : (englishScore >= 0.075 ? 'English-likely' : 'unknown'),
-        confidence: stronglyNonEnglish ? bestForeign.score : englishScore,
-        tokenCount,
-        englishScore,
-        foreignScore: bestForeign.score,
-        foreignLanguage: bestForeign.language,
-        isStrongForeignLanguage: Boolean(stronglyNonEnglish)
-    };
-}
-
-function detectExpectedEnglishSubtitle(value) {
-    const scriptProfile = detectSubtitleSourceScriptProfile(value);
-    if (scriptProfile.isNonLatinDominant) {
-        return {
-            isEnglishLikely: false,
-            reason: `scriere predominant non-latină (${scriptProfile.label}, ${Math.round(scriptProfile.ratio * 100)}%)`,
-            language: scriptProfile.script,
-            confidence: scriptProfile.ratio,
-            scriptProfile
-        };
-    }
-    const lexical = classifyLatinSubtitleLanguage(value);
-    if (lexical.isStrongForeignLanguage) {
-        return {
-            isEnglishLikely: false,
-            reason: `indicatori lexicali pentru ${lexical.language} (scor ${Math.round(lexical.foreignScore * 100)}%, engleză ${Math.round(lexical.englishScore * 100)}%)`,
-            language: lexical.language,
-            confidence: lexical.foreignScore,
-            scriptProfile,
-            lexicalProfile: lexical
-        };
-    }
-    return {
-        isEnglishLikely: true,
-        reason: scriptProfile.isLatinDominant ? 'scriere latină; nu a fost identificată o altă limbă cu încredere suficientă' : 'limbă nedeterminată; nu există dovezi suficiente pentru blocare',
-        language: lexical.language || 'unknown',
-        confidence: lexical.confidence || 0,
-        scriptProfile,
-        lexicalProfile: lexical
-    };
-}
-
-// ============================================================
-// FILTRARE ÎNAINTE DE AFIȘAREA CANDIDAȚILOR ÎN ADD-ON
-// Eticheta `eng` sau parametrul languages=en nu sunt suficiente: verificăm
-// conținutul real înainte ca o subtitrare să fie afișată în lista Stremio.
-// Candidații neverificabili sunt omiși în loc să fie prezentați drept surse EN.
-// ============================================================
-function getSubtitleLanguageDeclaration(row) {
-    const value = String(row?.lang ?? row?.language ?? row?.language_name ?? row?.lang_name ?? '').trim().toLowerCase();
-    if (!value) return 'unknown';
-    if (value === 'en' || value === 'eng' || value === 'english' || /\benglish\b/.test(value)) return 'english';
-    return 'other';
-}
-
-function inspectCandidateSubtitleLanguage(subtitleText, declaredEnglish = false) {
-    const body = subtitleBodyForLanguageCheck(subtitleText);
-    const letters = body.match(/\p{L}/gu) || [];
-    if (letters.length < 5) {
-        return { allowed: false, reason: 'prea puțin text pentru verificarea limbii', language: 'unknown', confidence: 0 };
-    }
-
-    const scripts = [
-        { key: 'Arabic', pattern: /\p{Script=Arabic}/gu },
-        { key: 'Cyrillic', pattern: /\p{Script=Cyrillic}/gu },
-        { key: 'CJK', pattern: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu },
-        { key: 'Hebrew', pattern: /\p{Script=Hebrew}/gu },
-        { key: 'Greek', pattern: /\p{Script=Greek}/gu },
-        { key: 'Devanagari', pattern: /\p{Script=Devanagari}/gu },
-        { key: 'Thai', pattern: /\p{Script=Thai}/gu },
-        { key: 'Armenian', pattern: /\p{Script=Armenian}/gu },
-        { key: 'Georgian', pattern: /\p{Script=Georgian}/gu },
-        { key: 'Bengali', pattern: /\p{Script=Bengali}/gu },
-        { key: 'Gujarati', pattern: /\p{Script=Gujarati}/gu },
-        { key: 'Gurmukhi', pattern: /\p{Script=Gurmukhi}/gu },
-        { key: 'Kannada', pattern: /\p{Script=Kannada}/gu },
-        { key: 'Malayalam', pattern: /\p{Script=Malayalam}/gu },
-        { key: 'Tamil', pattern: /\p{Script=Tamil}/gu },
-        { key: 'Telugu', pattern: /\p{Script=Telugu}/gu },
-        { key: 'Sinhala', pattern: /\p{Script=Sinhala}/gu },
-        { key: 'Lao', pattern: /\p{Script=Lao}/gu },
-        { key: 'Khmer', pattern: /\p{Script=Khmer}/gu },
-        { key: 'Myanmar', pattern: /\p{Script=Myanmar}/gu },
-        { key: 'Ethiopic', pattern: /\p{Script=Ethiopic}/gu }
-    ];
-    const scriptCounts = scripts.map(entry => ({
-        key: entry.key,
-        count: (body.match(entry.pattern) || []).length
-    })).sort((a, b) => b.count - a.count);
-    const topForeignScript = scriptCounts[0] || { key: 'unknown', count: 0 };
-    const foreignScriptRatio = topForeignScript.count / letters.length;
-    // Detectăm și subtitrările scurte; nu așteptăm pragul mai mare folosit
-    // de diagnosticul general al întregului fișier.
-    if (topForeignScript.count >= 5 && foreignScriptRatio >= 0.45) {
-        return {
-            allowed: false,
-            reason: `scriere predominant ${topForeignScript.key.toLowerCase()} (${Math.round(foreignScriptRatio * 100)}%)`,
-            language: topForeignScript.key,
-            confidence: foreignScriptRatio
-        };
-    }
-
-    const lexical = classifyLatinSubtitleLanguage(body);
-    if (lexical.isStrongForeignLanguage) {
-        return {
-            allowed: false,
-            reason: `indicatori lexicali pentru ${lexical.language}`,
-            language: lexical.language,
-            confidence: lexical.foreignScore || lexical.confidence || 0
-        };
-    }
-
-    // Pentru subtitrări lungi cerem dovezi pozitive de engleză chiar dacă furnizorul
-    // le-a etichetat `eng`. Dacă scorul este insuficient, nu le afișăm ca surse EN.
-    if (lexical.tokenCount >= 100) {
-        if (lexical.englishScore >= 0.075) {
-            return { allowed: true, reason: 'engleză probabilă', language: 'English', confidence: lexical.englishScore };
-        }
-        return {
-            allowed: false,
-            reason: `engleza nu a putut fi confirmată (scor ${Math.round((lexical.englishScore || 0) * 100)}%)`,
-            language: lexical.language || 'unknown',
-            confidence: lexical.englishScore || 0
-        };
-    }
-
-    // Pentru surse scurte, metadatele EN pot fi folosite numai după ce conținutul
-    // a trecut deja filtrele de script și de indicatori puternici pentru alte limbi.
-    if (declaredEnglish) {
-        return { allowed: true, reason: 'metadate EN și conținut compatibil', language: 'English', confidence: 0.5 };
-    }
-
-    return { allowed: false, reason: 'limba sursei nu poate fi confirmată din conținut', language: 'unknown', confidence: 0 };
-}
-
-function sourceLanguagePreflightCacheKey(provider, identifier) {
-    return crypto.createHash('sha256')
-        .update(`candidate-language-v1|${String(provider || '')}|${String(identifier || '')}`)
-        .digest('hex');
-}
-
-function readSourceLanguagePreflightCache(key) {
-    const entry = sourceLanguagePreflightCache.get(key);
-    if (!entry) return null;
-    if (entry.expiresAt <= Date.now()) {
-        sourceLanguagePreflightCache.delete(key);
-        return null;
-    }
-    // Reinsert to keep recent reads at the end (small LRU cache).
-    sourceLanguagePreflightCache.delete(key);
-    sourceLanguagePreflightCache.set(key, entry);
-    return entry.result;
-}
-
-function writeSourceLanguagePreflightCache(key, result) {
-    const ttl = result?.rateLimited
-        ? SOURCE_LANGUAGE_PREFLIGHT_RATE_LIMIT_TTL_MS
-        : result?.verified
-            ? SOURCE_LANGUAGE_PREFLIGHT_CACHE_TTL_MS
-            : SOURCE_LANGUAGE_PREFLIGHT_FAILURE_TTL_MS;
-    sourceLanguagePreflightCache.delete(key);
-    sourceLanguagePreflightCache.set(key, { result, expiresAt: Date.now() + ttl });
-    while (sourceLanguagePreflightCache.size > SOURCE_LANGUAGE_PREFLIGHT_CACHE_MAX) {
-        const oldestKey = sourceLanguagePreflightCache.keys().next().value;
-        sourceLanguagePreflightCache.delete(oldestKey);
-    }
-}
-
-function stableSubdlLanguageCandidateIdentifier(candidate) {
-    const raw = String(candidate?.nId || '').trim();
-    if (raw.startsWith('api_')) {
-        const decoded = decodeSubdlApiReference(raw);
-        if (decoded) return `api:${decoded.nId}:${decoded.fileNId || ''}`;
-    }
-    if (raw.startsWith('url_')) {
-        try {
-            const originalUrl = Buffer.from(raw.slice(4), 'base64url').toString('utf8');
-            const parsed = new URL(originalUrl);
-            // Signed query parameters can change on each search. Keep only stable file IDs.
-            const ids = ['n_id', 'nid', 'file_n_id', 'filenid', 'subtitle_id', 'subtitleid', 'file_id', 'fileid']
-                .map(key => `${key}=${parsed.searchParams.get(key) || ''}`)
-                .filter(value => !value.endsWith('='))
-                .sort();
-            return `url:${parsed.hostname.toLowerCase()}${parsed.pathname}${ids.length ? `?${ids.join('&')}` : ''}`;
-        } catch (_) {}
-    }
-    return raw;
-}
-
-async function verifySubtitleCandidateLanguage(candidate, provider, configData, filename = '') {
-    const identifier = provider === 'SubDL'
-        ? stableSubdlLanguageCandidateIdentifier(candidate)
-        : String(candidate?.originalUrl || '');
-    // Include configuration and requested filename in the hash; credentials are
-    // hashed immediately and are never stored in plaintext in the cache key.
-    const cacheContext = provider === 'SubDL' ? String(configData || '') : '';
-    const cacheKey = sourceLanguagePreflightCacheKey(provider, `${cacheContext}|${identifier}|${String(filename || '')}`);
-    const cached = readSourceLanguagePreflightCache(cacheKey);
-    if (cached) return { ...cached, cached: true };
-
-    // Multiple concurrent addon requests often ask to verify the same subtitle.
-    // Share one in-flight download instead of consuming the SubDL quota twice.
-    const active = sourceLanguagePreflightInflight.get(cacheKey);
-    if (active) {
-        try { await active; } catch (_) {}
-        const afterWait = readSourceLanguagePreflightCache(cacheKey);
-        if (afterWait) return { ...afterWait, cached: true };
-    }
-
-    let releaseInflight;
-    const inflightGate = new Promise(resolve => { releaseInflight = resolve; });
-    sourceLanguagePreflightInflight.set(cacheKey, inflightGate);
-    try {
-        // Another request may have populated cache while this call was waiting
-        // to acquire the per-candidate in-flight slot.
-        const secondCacheCheck = readSourceLanguagePreflightCache(cacheKey);
-        if (secondCacheCheck) return { ...secondCacheCheck, cached: true };
-        if (provider === 'SubDL' && Date.now() < subdlRateLimitedUntil) {
-            const limited = {
-                allowed: false, verified: false, rateLimited: true,
-                reason: 'SubDL limitare de descărcare activă', language: 'unknown', confidence: 0
-            };
-            writeSourceLanguagePreflightCache(cacheKey, limited);
-            return limited;
-        }
-
-        if (provider === 'SubDL') {
-            const budget = reserveSubdlLanguagePreflightSlot();
-            if (!budget.allowed) {
-                const limited = {
-                    allowed: false, verified: false, budgetLimited: true,
-                    reason: 'bugetul zilnic pentru verificarea candidaților SubDL a fost atins',
-                    language: 'unknown', confidence: 0
-                };
-                writeSourceLanguagePreflightCache(cacheKey, limited);
-                return limited;
-            }
-        }
-
-        const declaredEnglish = getSubtitleLanguageDeclaration(candidate?.sourceData) === 'english';
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), SOURCE_LANGUAGE_PREFLIGHT_TIMEOUT_MS);
-        let result;
-        try {
-            let text;
-            if (provider === 'SubDL') {
-                // Use the original opaque reference to download; the stable identifier is cache-only.
-                text = await getSubdlSubtitleText(configData, String(candidate?.nId || ''), filename, {
-                    timeoutMs: SOURCE_LANGUAGE_PREFLIGHT_TIMEOUT_MS - 500,
-                    signal: controller.signal
-                });
-            } else {
-                const bytes = await fetchValidatedSubtitleBytes(candidate.originalUrl, '', 'none', {
-                    timeoutMs: SOURCE_LANGUAGE_PREFLIGHT_TIMEOUT_MS - 500,
-                    signal: controller.signal
-                });
-                text = normalizeDownloadedSubtitle(bytes, candidate.originalUrl, filename);
-            }
-            result = inspectCandidateSubtitleLanguage(text, declaredEnglish);
-            result.verified = true;
-        } catch (error) {
-            const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
-            const rateLimited = provider === 'SubDL' && status === 429;
-            if (rateLimited) subdlRateLimitedUntil = Math.max(subdlRateLimitedUntil, Date.now() + SUBDL_RATE_LIMIT_COOLDOWN_MS);
-            result = {
-                allowed: false,
-                verified: false,
-                ...(rateLimited ? { rateLimited: true } : {}),
-                reason: rateLimited ? 'SubDL a impus limita de descărcare (429)' : (controller.signal.aborted ? 'verificare întreruptă la expirarea timpului' : 'conținutul nu a putut fi verificat'),
-                language: 'unknown',
-                confidence: 0
-            };
-        } finally {
-            clearTimeout(timer);
-        }
-
-        writeSourceLanguagePreflightCache(cacheKey, result);
-        return result;
-    } finally {
-        if (sourceLanguagePreflightInflight.get(cacheKey) === inflightGate) sourceLanguagePreflightInflight.delete(cacheKey);
-        releaseInflight();
-    }
-}
-
-async function filterSubtitleCandidatesBySourceLanguage(candidates, provider, configData, filename = '', desiredCount = Infinity) {
-    const input = Array.isArray(candidates) ? candidates : [];
-    if (!input.length) return [];
-    // Do not verify SubDL candidates if a 429 is already known for this process;
-    // show OpenSubtitles alternatives instead of hammering the exhausted provider.
-    // Otherwise verify actual content, in small batches, and cache each result by
-    // stable subtitle IDs (not volatile signed URLs) for 24 hours.
-    if (provider === 'SubDL' && Date.now() < subdlRateLimitedUntil) {
-        console.log('[SOURCE LANGUAGE FILTER] SubDL temporar dezactivat după răspunsul 429; folosesc alternativele OpenSubtitles.');
-        return [];
-    }
-    const accepted = [];
-    let rejectedForeign = 0;
-    let rejectedUnverified = 0;
-    let checked = 0;
-
-    // Lucrăm în loturi mici și ne oprim imediat ce avem suficiente variante valide.
-    // Astfel, o listă obișnuită nu declanșează descărcarea tuturor celor 24 de fișiere.
-    for (let base = 0; base < input.length && accepted.length < desiredCount; base += SOURCE_LANGUAGE_PREFLIGHT_CONCURRENCY) {
-        const batch = input.slice(base, base + SOURCE_LANGUAGE_PREFLIGHT_CONCURRENCY);
-        const batchResults = await Promise.all(batch.map(async candidate => {
-            try {
-                return await verifySubtitleCandidateLanguage(candidate, provider, configData, filename);
-            } catch (_) {
-                return { allowed: false, verified: false, reason: 'verificare eșuată', language: 'unknown', confidence: 0 };
-            }
-        }));
-        checked += batch.length;
-        // Păstrăm ordinea de clasare în interiorul fiecărui lot.
-        for (let index = 0; index < batch.length; index++) {
-            // Este posibil ca mai mulți candidați din același lot să treacă;
-            // păstrăm numai câți vor fi afișați efectiv în add-on.
-            if (accepted.length >= desiredCount) continue;
-            const verdict = batchResults[index];
-            if (verdict?.allowed) {
-                accepted.push(batch[index]);
-            } else if (verdict?.verified) {
-                rejectedForeign++;
-            } else {
-                rejectedUnverified++;
-            }
-        }
-        if (provider === 'SubDL' && batchResults.some(result => result?.rateLimited || result?.budgetLimited)) break;
-    }
-    console.log(`[SOURCE LANGUAGE FILTER] ${provider}: ${checked} candidate verificate; ${accepted.length} păstrate; ${rejectedForeign} eliminate ca non-EN/limbă neconfirmată; ${rejectedUnverified} eliminate deoarece sursa nu a putut fi verificată.`);
-    return accepted;
-}
-
-function isAllowedOpenSubtitlesFallbackUrl(value) {
-    if (!isValidSubtitleSourceUrl(value)) return false;
-    try {
-        const url = new URL(String(value));
-        const allowedHosts = new Set([
-            'dl.opensubtitles.com', 'opensubtitles.com', 'www.opensubtitles.com',
-            'dl.opensubtitles.org', 'opensubtitles.org', 'www.opensubtitles.org'
-        ]);
-        return url.protocol === 'https:' && allowedHosts.has(url.hostname.toLowerCase()) && (!url.port || url.port === '443');
-    } catch (_) { return false; }
-}
-
-function encodeSubtitleLanguageFallbackCandidates(candidates) {
-    const clean = (Array.isArray(candidates) ? candidates : []).filter(item =>
-        item && typeof item.url === 'string' && item.url.length <= 2048 && isAllowedOpenSubtitlesFallbackUrl(item.url)
-    ).slice(0, 2).map(item => ({
-        url: String(item.url),
-        name: sanitizeSubtitleLogValue(item.name || 'OpenSubtitles alternativă', 180)
-    }));
-    while (clean.length) {
-        const token = Buffer.from(JSON.stringify(clean), 'utf8').toString('base64url');
-        if (token.length <= 6000) return token;
-        clean.pop();
-    }
-    return '';
-}
-
-function decodeSubtitleLanguageFallbackCandidates(encoded, legacyUrl = '', legacyName = '', primaryUrl = '') {
-    const result = [];
-    const seen = new Set([String(primaryUrl || '')]);
-    const add = (candidateUrl, candidateName) => {
-        const url = String(candidateUrl || '').trim();
-        if (!url || url.length > 2048 || seen.has(url) || !isAllowedOpenSubtitlesFallbackUrl(url)) return;
-        seen.add(url);
-        result.push({ url, name: sanitizeSubtitleLogValue(candidateName || 'OpenSubtitles alternativă', 180) });
-    };
-    // Legacy SubDL links carry one server-generated OpenSubtitles fallback.
-    add(legacyUrl, legacyName);
-    const token = String(encoded || '');
-    if (token && token.length <= 6000 && /^[A-Za-z0-9_-]+$/.test(token)) {
-        try {
-            const parsed = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
-            if (Array.isArray(parsed)) {
-                for (const candidate of parsed) {
-                    if (candidate && typeof candidate === 'object') add(candidate.url, candidate.name);
-                    if (result.length >= 3) break;
-                }
-            }
-        } catch (_) { /* malformed fallback lists are safely ignored */ }
-    }
-    return result.slice(0, 3);
-}
-
-async function fetchOpenSubtitlesFallbackCandidates(type, id, excludeUrls = []) {
-    const normalizedType = ['movie', 'series'].includes(String(type || '').toLowerCase())
-        ? String(type).toLowerCase()
-        : (String(id || '').split(':').length >= 3 ? 'series' : 'movie');
-    // imdb IDs / Stremio series IDs only; no user-provided hostname or arbitrary path enters the request.
-    const normalizedId = String(id || '').trim().slice(0, 100);
-    if (!/^tt\d{5,}(?::\d{1,3}){0,2}$/.test(normalizedId)) return [];
-    const lookupUrl = `https://opensubtitles-v3.strem.io/subtitles/${normalizedType}/${normalizedId}.json`;
-    const excluded = new Set((Array.isArray(excludeUrls) ? excludeUrls : []).map(value => String(value || '')));
-    try {
-        const response = await axios.get(lookupUrl, {
-            timeout: 6500,
-            maxContentLength: 8 * 1024 * 1024,
-            headers: { 'User-Agent': BROWSER_USER_AGENT_FETCH }
-        });
-        const rows = Array.isArray(response?.data?.subtitles) ? response.data.subtitles : [];
-        const seen = new Set(excluded);
-        const result = [];
-        for (const row of rows) {
-            const url = String(row?.url || '').trim();
-            if (getSubtitleLanguageDeclaration(row) !== 'english' || !isAllowedOpenSubtitlesFallbackUrl(url) || seen.has(url)) continue;
-            seen.add(url);
-            result.push({ url, name: String(row?.name || row?.filename || row?.release || 'OpenSubtitles alternativă').slice(0, 180) });
-            if (result.length >= 3) break;
-        }
-        console.log(`${c.yellow}[OpenSubtitles fallback] Căutare de rezervă: ${result.length} URL-uri EN eligibile pentru ${normalizedId}.${c.reset}`);
-        return result;
-    } catch (error) {
-        console.log(`${c.yellow}[OpenSubtitles fallback] Căutarea suplimentară a eșuat (${Number(error?.response?.status || 0) || 'rețea'}).${c.reset}`);
-        return [];
-    }
-}
-
-function buildSourceLanguageWarningSrt(profile) {
-    const reason = sanitizeSubtitleLogValue(profile?.reason || 'limba sursei este incertă', 180);
-    const display = `RO Sub Translator: subtitrarea selectată nu pare să fie în engleză (${reason}). Traducerea a fost oprită pentru a evita un rezultat greșit. Selectează altă variantă.`;
-    return `1\n00:00:00,000 --> 00:00:08,000\n${display}\n`;
-}
-
-// ============================================================
 // MASTER CINEMATIC TRANSLATION PROMPT
 // ============================================================
 
 const MASTER_TRANSLATION_PROMPT = `MISSION
-Translate every supplied subtitle block into natural, modern spoken Romanian for films and TV. The source is usually English, but follow the language actually present in the supplied cue if it differs. Localize the intended meaning and tone; do not copy source-language word order when it sounds unnatural in Romanian.
+Translate every supplied English subtitle block into natural, modern spoken Romanian for films and TV. Localize the intended meaning and tone; do not copy English word order when it sounds unnatural in Romanian.
 
 OUTPUT — CRITICAL
 - Return ONLY a valid JSON array, with exactly one object for every supplied ID, in the original order.
 - Every object must have exactly these fields: {"id": integer, "text": "Romanian translation"}.
 - Preserve IDs exactly. Never omit, duplicate, invent, merge, or move content to a neighboring ID.
 - Input IDs may contain gaps when subtitle blocks were filtered before translation. Never renumber by position or infer an ID from its neighbors: copy each supplied ID exactly, even when the numbers are not consecutive.
-- Before returning, verify that every text belongs to the source block with the same ID; do not shift translations forward or backward when a block is unusual, numeric, empty-looking, or difficult to translate.
+- Before returning, verify that every text belongs to the English block with the same ID; do not shift translations forward or backward when a block is unusual, numeric, empty-looking, or difficult to translate.
 - Do not return markdown, code fences, comments, or explanations.
 
 TRANSLATION AND CONTEXT
 - Translate every meaningful sentence, phrase, joke, idiom, slang expression, and fragment into Romanian. Preserve names and established foreign expressions only when they genuinely belong in the source.
 - MUSIC LYRICS EXCLUSION — The preprocessing code removes text enclosed by paired music-note markers (♪...♪, ♫...♫, ♬...♬, ♩...♩) BEFORE this prompt is built. Such lyrics must not appear in this request. Translate only the remaining real dialogue, including dialogue sharing a source block with lyrics; never invent replacement text for removed song lyrics. This applies to regular and SDH subtitles and must not remove non-song dialogue.
-- Use neighboring source subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
+- Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
-- If the source block begins with a lowercase letter in a case-bearing script, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
+- If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
 - Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
 - Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
 - Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
@@ -3718,7 +2837,7 @@ INTERJECTIONS AND FILLERS
 - NEVER include non-dialogue sound effects, music cues, stage directions, or vocal-action captions in the Romanian subtitle output. Remove cues such as “(sighs)”, “[whistling]”, „(bufnește)”, „(șuierături)”, „(bufnire)” and „(plângând)” completely. Do not remove dialogue that mentions a sound, laughter, singing, or music when that dialogue is outside parentheses/brackets.
 
 FINAL CHECK
-Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, balance between visual lines, dialogue format, filler cleanup, and one-to-one ID alignment. Check that ordinary source text was translated, that meaningful reactions were not discarded, and that no dialogue was lost during reformatting. Correct clear errors without adding or deleting meaning.
+Before returning JSON, proofread every translation against its English source and context. Verify meaning, natural Romanian syntax, direct-object/preposition relationships, singular/plural, register, explicitness, spelling, diacritics, line lengths, balance between visual lines, dialogue format, filler cleanup, and one-to-one ID alignment. Check that ordinary English was translated, that meaningful reactions were not discarded, and that no dialogue was lost during reformatting. Correct clear errors without adding or deleting meaning.
 `;
 
 
@@ -3763,7 +2882,6 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
 
     return `
 ${MASTER_TRANSLATION_PROMPT}
-${getSourceLanguagePromptOverride(allItems.sourceLanguageProfile)}
 
 ${mediaContextBlock}Context inainte (pentru referinta):
 ${contextBefore.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
@@ -5546,87 +4664,8 @@ function stripEnglishNamesFromText(text, names) {
         .replace(/[ \t]{2,}/g, ' ');
 }
 
-// Suprimă false pozitive ale detectorului englezesc când textul-țintă are dovezi
-// gramaticale/lexicale puternice de română și nu conține o expresie englezească clară.
-// Nu modifică traducerea și nu elimină cuvinte: controlează doar avertizarea QA.
-function normalizeLanguageQaText(text) {
-    return String(text || '')
-        .replace(/<[^>]+>/g, ' ')
-        .normalize('NFC')
-        .toLocaleLowerCase('ro-RO')
-        .replace(/[’‘]/g, "'")
-        .replace(/[“”„"]/g, ' ')
-        .replace(/[–—]/g, '-')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function hasClearEnglishFragmentForEnglishQa(text) {
-    const clean = normalizeLanguageQaText(text);
-    if (!clean) return false;
-    // Nu folosim \\b pentru marginile cuvintelor englezești: în JavaScript,
-    // \\b nu tratează diacriticele românești ca litere și poate vedea „i” în „și”
-    // ca pe un pronume englezesc separat. Lookaround-urile Unicode evită acest caz.
-    const patterns = [
-        /(?<![\p{L}\p{N}_])(?:i|you|we|they|he|she|it)\s+(?:am|are|is|was|were|have|has|had|do|does|did|can|could|will|would|should|need|want|know|think|said|say|go|come|like|love)(?![\p{L}\p{N}_])/iu,
-        /(?<![\p{L}\p{N}_])(?:don't|doesn't|didn't|can't|couldn't|wouldn't|shouldn't|won't|isn't|aren't|wasn't|weren't|haven't|hasn't|hadn't)(?![\p{L}\p{N}_])/iu,
-        /(?<![\p{L}\p{N}_])(?:thank you|come on|let me|you know|i mean|what the hell|don't know|i don't|i can't|i am|i was|you are|this is|it is)(?![\p{L}\p{N}_])/iu,
-        /(?<![\p{L}\p{N}_])(?:my|your|his|her|our|their)\s+[a-z]{3,}(?![\p{L}\p{N}_])/iu,
-        /(?<![\p{L}\p{N}_])(?:very|really|just|only|still|already)\s+(?:good|bad|well|hard|much|better|worse|different|beautiful)(?![\p{L}\p{N}_])/iu,
-        /(?<![\p{L}\p{N}_])(?:i|you|we|they|he|she|it|the|and|but|or|yes|no|hello|thanks|please|sorry|okay|ok)(?![\p{L}\p{N}_])/iu
-    ];
-    return patterns.some(pattern => pattern.test(clean));
-}
-
-// Dovezi lexical/gramaticale că textul-țintă este română. Al doilea parametru
-// permite verificarea separată a expresiilor englezești în propoziții mixte.
-function hasStrongRomanianEvidenceForEnglishQa(text, ignoreEnglishSignals = false) {
-    const clean = normalizeLanguageQaText(text);
-    if (!clean) return false;
-    if (!ignoreEnglishSignals && hasClearEnglishFragmentForEnglishQa(clean)) return false;
-
-    const words = clean.match(/[\p{L}]+/gu) || [];
-    if (!words.length) return false;
-    const romanianEvidenceWords = new Set([
-        'și','să','se','este','sunt','era','erau','nu','da','că','ca','cu','de','din','în','pe','la','un','o',
-        'eu','tu','el','ea','noi','voi','ei','ele','mai','foarte','pentru','dar','sau','care','ce','cine','cum',
-        'unde','când','aici','acolo','trebuie','poate','fost','avea','am','ai','are','au','mă','te','îl','îi','mi',
-        'ți','lor','lui','mea','ta','tău','meu','faci','fac','face','facem','altceva','afară','muncă','munca',
-        'știu','știi','știe','vrei','vreau','bine','acum','așa','îmi','îți','noastră','voastră'
-    ]);
-    const romanianSpecificWords = new Set([
-        'faci','altceva','afară','muncă','munca','fost','aveam','aveai','făcut','facem','știu','știi','vrei','vreau',
-        'trebuie','îmi','îți','pentru','acolo','acum','așa','bine','spune','spuneți','vorbești','vorbesc'
-    ]);
-    const englishOnlyMarkers = new Set([
-        'the','and','but','if','then','than','they','them','their','we','us','our','you','your','he','him','his',
-        'she','her','it','its','this','that','these','those','what','which','who','where','when','why','how','with',
-        'from','into','onto','about','after','before','without','against','between','through','because','while',
-        'would','could','should','will','shall','can','cannot','do','does','did','have','has','had','not','yes','no',
-        'my','there','here','now','good','bad','right','wrong','well','better','worse','something','anything',
-        'hello','thanks','thank','please','sorry','maybe','really','just','only','still','already','nothing','okay','ok'
-    ]);
-    const romanianSignalCount = words.filter(word => romanianEvidenceWords.has(word)).length;
-    const romanianSpecificCount = words.filter(word => romanianSpecificWords.has(word)).length;
-    const englishMarkerCount = words.filter(word => englishOnlyMarkers.has(word)).length;
-    return (ignoreEnglishSignals || englishMarkerCount === 0) && (
-        romanianSignalCount >= 3 ||
-        (romanianSignalCount >= 2 && romanianSpecificCount >= 1)
-    );
-}
-
 // Variantă pentru o replică: folosește numele deduse din tot fișierul (item.nameTokens).
 function itemHasUntranslatedEnglish(item, translated) {
-    const nameEvidence = new Set(item?.nameTokens || []);
-    collectEnglishNameEvidence(String(item?.text || '').replace(/<[^>]+>/g, ''), nameEvidence);
-    const targetWithoutNames = stripEnglishNamesFromText(String(translated || '').replace(/<[^>]+>/g, ''), nameEvidence);
-
-    // Prioritate pentru falsul pozitiv: replicile care au indicii românești puternice
-    // nu sunt marcate doar pentru cuvinte scurte/ambigue. Un fragment englezesc clar
-    // din interiorul unei propoziții românești rămâne însă raportabil.
-    const hasRomanianEvidence = hasStrongRomanianEvidenceForEnglishQa(targetWithoutNames, true);
-    if (hasRomanianEvidence && hasClearEnglishFragmentForEnglishQa(targetWithoutNames)) return true;
-    if (hasStrongRomanianEvidenceForEnglishQa(targetWithoutNames)) return false;
     return hasUntranslatedEnglish(item.text, translated, item.nameTokens, item.romanianWordEvidence);
 }
 
@@ -5665,9 +4704,9 @@ function hasUntranslatedEnglish(original, translated, nameTokens, romanianWordEv
     const originalNorm = normalize(origClean);
     const translatedNorm = normalize(transClean);
 
-    // Dacă o replică este alcătuită dintr-un singur cuvânt despărțit prin cratime,
-    // verificăm forma unită. O acceptăm doar dacă forma apare ca un cuvânt tradus
-    // fără cratimă în altă replică; astfel, engleza rămasă obișnuită este în continuare verificată.
+    // Dacă un cuvânt este fragmentat intenționat între două subtitrări
+    // (de ex. o glumă bazată pe silabe), nu îl clasificăm drept engleză rămasă
+    // când forma unită există deja printre traducerile românești.
     if (romanianWordEvidence instanceof Set) {
         const splitWord = transClean.trim().match(
             /^([\p{L}]{1,4}(?:[-‐‑‒–—][\p{L}]{1,4}){1,5})[.!?…,:;]*$/u
@@ -5691,67 +4730,86 @@ function hasUntranslatedEnglish(original, translated, nameTokens, romanianWordEv
         'see','sees','saw','say','says','said','tell','tells','told','find','finds','found','leave','leaves','left','keep','keeps','kept',
         'disregard','forget','ignore','remember','good','bad','right','wrong','now','here','there','very','really','just','only','still',
         'already','first','last','next','back','again','colonel','minutes','ready','killed','enough','nothing','maybe','little','well','sure',
-        'itself','himself','herself','themselves','myself','yourself','such','indictment','however','although','though','perhaps','rather','still',
-        // Cuvinte englezești izolate care au fost observate în output și care
-        // nu sunt forme românești valide. Sunt folosite doar ca semnal de control.
-        'innate'
+        'itself','himself','herself','themselves','myself','yourself','such','indictment','however','although','though','perhaps','rather',
+        'innate','am','are','is','was','were','love','loves','loved','like','likes','liked','hate','hates','hated','feel','feels','felt',
+        'understand','understands','understood','believe','believes','believed','help','helps','helped','leave','leaves','alone'
     ]);
-
     const tokenize = value => value.match(/[a-zăâîșț]+(?:'[a-zăâîșț]+)?/g) || [];
     const tw = tokenize(translatedNorm);
     const ow = tokenize(originalNorm);
 
-    const namedTitle = /\b(?:The\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,5}|Nobody\s+Beats\s+the\s+Wiz)\b/.test(transClean);
+    const namedTitlePattern = /\b(?:The\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,5}|Nobody\s+Beats\s+the\s+Wiz)\b/;
+    // Verificăm și textul brut: eliminarea automată a numelor poate scoate
+    // bucăți din titluri și ar transforma un titlu păstrat în falsă alarmă.
+    const namedTitle = namedTitlePattern.test(transClean) || namedTitlePattern.test(String(translated).replace(/<[^>]+>/g, ''));
     const romanianSignals = /\b(?:și|să|se|este|sunt|era|erau|nu|da|că|ca|cu|de|din|în|pe|la|un|o|eu|tu|el|ea|noi|voi|ei|ele|mai|foarte|pentru|dar|sau|care|ce|cine|cum|unde|când|aici|acolo|trebuie|poate|fost|avea|am|ai|are|au|mă|te|îl|îi|mi|ți|lor|lui|mea|ta|tău|meu)\b/i;
+    const hasRomanianSignal = romanianSignals.test(transClean);
 
-    if (originalNorm === translatedNorm) {
-        if (namedTitle && !romanianSignals.test(transClean) && tw.length <= 8) return false;
-        const strong = tw.filter(w => strongEnglish.has(w)).length;
-        const markers = tw.filter(w => englishMarkers.has(w)).length;
-        if (strong >= 1 || markers >= 2) return true;
-        if (tw.length >= 5 && markers >= 2) return true;
-        return false;
-    }
+    // Semnale structurale cu precizie mare. Spre deosebire de lista de cuvinte,
+    // acestea cer o secvență recognoscibilă de engleză și pot detecta engleza
+    // rămasă chiar dacă restul replicii este românesc.
+    const obviousEnglishPhrases = [
+        /\b(?:thank|thanks)\s+you\b/,
+        /\b(?:i|you|we|they|he|she|it)\s+(?:am|are|is|was|were|have|has|had|do|does|did|can|could|will|would|should|want|wants|need|needs|know|knows|think|thought|love|loves|like|likes|hate|hates|feel|feels|get|got|go|went|come|came|see|saw|say|said|mean|means|look|looks|take|took|make|made|tell|told)\b/,
+        /\b(?:i|you|we|they|he|she|it)\s+(?:don't|doesn't|didn't|can't|couldn't|won't|wouldn't|shouldn't|isn't|aren't|wasn't|weren't|haven't|hasn't|hadn't)\b/,
+        /\b(?:what|where|when|why|how)\s+(?:do|does|did|is|are|was|were|can|could|would|will|should|have|has)\b/,
+        /\b(?:do|does|did|can|could|would|will|should|don't|doesn't|didn't|can't|couldn't|won't|wouldn't|shouldn't)\s+(?:i|you|we|they|he|she|it|not|know|want|need|have|go|come|understand|mean)\b/,
+        /\b(?:come on|get out|shut up|no way|you know|of course|right now|here we go|what the hell|what the fuck|my bad|never mind|leave me alone|let me go|let me see|look at me|i love you|love you|miss you|good for you)\b/
+    ];
+    const hasObviousEnglishPhrase = obviousEnglishPhrases.some(rx => rx.test(translatedNorm));
 
-    const distinctive = new Set(['the','from','however','although','because','without','between','maybe','please','sorry','thanks','thank','your','would','could','should','cannot','itself','such','indictment','secure']);
-    const distinctiveHits = tw.filter(w => distinctive.has(w));
-
-    // Protejează numele proprii păstrate intenționat din original, inclusiv
-    // nume de forma „Tyler, the Creator”. Dacă secvența englezească apare
-    // identic și în ORIGINAL și este clar parte dintr-un nume propriu, nu o
-    // marca drept cuvânt netradus.
+    // Titlurile și numele proprii păstrate intenționat nu sunt traduceri ratate.
     const properNameMatches = transClean.match(/\b[A-Z][A-Za-zÀ-ÖØ-öø-ÿ]+(?:\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ]+){0,3}(?:,\s*the\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ]+)?\b/g) || [];
     const hasPreservedProperName = properNameMatches.some(name => {
         const normalizedName = normalize(name);
         return normalizedName.length >= 4 && originalNorm.includes(normalizedName);
     });
 
-    if (distinctiveHits.length) {
-        if (hasPreservedProperName && distinctiveHits.every(w => w === 'the' || w === 'a' || w === 'an')) return false;
-        if (namedTitle && distinctiveHits.every(w => w === 'the' || w === 'a' || w === 'an')) return false;
-        return true;
-    }
+    const distinctive = new Set(['the','from','however','although','because','without','between','maybe','please','sorry','thanks','thank','your','would','could','should','cannot','itself','such','indictment','secure']);
+    const distinctiveHits = tw.filter(w => distinctive.has(w));
 
-    if (tw.length <= 8) {
+    // Dacă traducerea este identică sursei, poate fi o replică complet netradusă.
+    // Aceasta este singura ramură în care un cuvânt englezesc izolat e suficient,
+    // fiindcă nu există nicio modificare care să indice că replica a fost tradusă.
+    if (originalNorm === translatedNorm) {
+        if (namedTitle && !hasRomanianSignal && tw.length <= 8) return false;
         const strong = tw.filter(w => strongEnglish.has(w)).length;
-        const originalStrong = ow.filter(w => strongEnglish.has(w)).length;
-        const originalMarkers = ow.filter(w => englishMarkers.has(w)).length;
-        if (strong >= 2 && (originalStrong >= 1 || originalMarkers >= 2)) return true;
-
-        const obviousPhrases = [
-            /\b(need|want|know|think|look|come|go|get|take|give|tell|find|leave|keep)\s+(me|us|you|him|her|them|it)\b/,
-            /\b(i|you|we|they|he|she)\s+(need|want|know|think|have|can|will|would|could|should)\b/,
-            /\b(and|but|or)\s+(disregard|forget|ignore|remember)\b/
-        ];
-        if (obviousPhrases.some(rx => rx.test(translatedNorm))) return true;
+        const markers = tw.filter(w => englishMarkers.has(w)).length;
+        if (hasObviousEnglishPhrase) return true;
+        if (strong >= 1 || markers >= 2) return true;
+        return false;
     }
 
+    if (hasObviousEnglishPhrase) return true;
+    if (hasPreservedProperName && distinctiveHits.every(w => w === 'the')) return false;
+    if (namedTitle && distinctiveHits.every(w => w === 'the' || w === 'a' || w === 'an')) return false;
+
+    // FIX: înainte, orice apariție unică de „sorry”, „maybe”, „your”, „please” etc.
+    // declanșa alarma chiar în mijlocul unei traduceri românești corecte. O singură
+    // potrivire nu mai este suficientă decât dacă ea constituie aproape toată replica.
+    const nonTitleDistinctiveHits = distinctiveHits.filter(w => w !== 'the');
+    if (nonTitleDistinctiveHits.length >= 2) return true;
+    if (nonTitleDistinctiveHits.length === 1 && tw.length <= 2 && !hasRomanianSignal) return true;
+
+    // Pentru fragmente mai lungi, cerem mai multe indicii englezești și o proporție
+    // mare de cuvinte din vocabularul de control. Nu penalizăm un singur cuvânt
+    // englezesc rămas într-o propoziție în mare parte românească.
     if (tw.length >= 4) {
         const markerCount = tw.filter(w => englishMarkers.has(w)).length;
         const strongCount = tw.filter(w => strongEnglish.has(w)).length;
         const ratio = markerCount / tw.length;
-        if (markerCount >= 5 && ratio >= 0.30) return true;
-        if (strongCount >= 3 && ratio >= 0.35) return true;
+        if (markerCount >= 3 && ratio >= 0.45) return true;
+        if (!hasRomanianSignal && strongCount >= 3 && ratio >= 0.40) return true;
+    }
+
+    // Pereche verb + pronume în engleză este un indiciu solid chiar dacă are doar
+    // două cuvinte; regex-urile de mai sus acoperă structurile uzuale.
+    if (tw.length <= 8) {
+        const obviousPhrases = [
+            /\b(?:need|want|know|think|look|come|go|get|take|give|tell|find|leave|keep)\s+(?:me|us|you|him|her|them|it)\b/,
+            /\b(?:and|but|or)\s+(?:disregard|forget|ignore|remember)\b/
+        ];
+        if (obviousPhrases.some(rx => rx.test(translatedNorm))) return true;
     }
     return false;
 }
@@ -5760,27 +4818,9 @@ function hasCorruptedSubtitleText(text, originalText) {
     if (isJunkOrInterjection(originalText)) return false;
 
     const s = String(text || '').replace(/<[^>]+>/g, '').trim();
-    const source = String(originalText || '').replace(/<[^>]+>/g, '');
     if (!s) return true;
     if (/^(?:[-–—\s.?!,;:'"])+$/.test(s)) return true;
-
-    // Scrierea străină nu este, de una singură, dovadă de text corupt.
-    // Dacă acel tip de scriere apare și în cue-ul sursă, păstrăm numele/termenul/
-    // expresia exact așa cum a fost furnizată și nu ridicăm avertizare doar pentru limbă.
-    // Dacă apare numai în țintă, rămâne un semnal de posibil text netradus/corupt.
-    const foreignScriptPatterns = [
-        /\p{Script=Cyrillic}/u, // chirilic, inclusiv extensii Unicode
-        /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u, // CJK
-        /\p{Script=Arabic}/u, // arabă/persană/urdu
-        /\p{Script=Greek}/u, // greacă, inclusiv litere accentuate
-        /\p{Script=Hebrew}/u, // ebraică
-        /\p{Script=Devanagari}/u, // devanagari
-        /\p{Script=Thai}/u // thailandeză
-    ];
-    for (const pattern of foreignScriptPatterns) {
-        if (pattern.test(s) && !pattern.test(source)) return true;
-    }
-
+    if (/[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF]/.test(s)) return true;
     // Detectează coruperea de capitalizare dintr-un cuvânt (de ex. „cEEa”).
     // Nu marchează acronimele, „iPhone” sau „iOS”; cere și o terminație cu litere mici.
     if (/(?<![\p{L}])[\p{Ll}][\p{Lu}]{2,}[\p{Ll}]+(?![\p{L}])/u.test(s)) return true;
@@ -5823,15 +4863,6 @@ function applySourceGroundedSemanticFixes(original, translation) {
     let text = applyBecauseOfWhatISaidCorrection(original, translation);
     const sourceText = String(original || '').replace(/<[^>]+>/g, ' ');
     const sourceNorm = sourceText.toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
-
-    // ID 1654 din verificarea SRT: „n-o uzi niciodată” era de fapt „n-o uiți niciodată”.
-    // Corectăm numai când sursa engleză conține „forget”, ca să nu stricăm sensul literal „water it”.
-    if (/\bforget\b/i.test(sourceNorm)) {
-        text = text.replace(
-            /(?<![\p{L}\p{N}_])(să[ \t]+n-[ \t]*o[ \t]+)uzi([ \t]+niciodată)(?![\p{L}\p{N}_])/giu,
-            (match, prefix, ending) => `${prefix}uiți${ending}`
-        );
-    }
 
     // Reparație foarte îngustă, activată numai dacă engleza conține verbul tranzitiv
     // „dry + my/the vagina”. Nu schimbă alte utilizări ale lui „mă usucă”.
@@ -6458,8 +5489,8 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
                 id: item.id,
                 original: item.text,
                 translation: translatedById[String(item.id)],
-                context_anterior_sursa: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
-                context_urmator_sursa: next ? `[${next.id}] ${next.text}` : '(niciunul)',
+                context_anterior_en: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
+                context_urmator_en: next ? `[${next.id}] ${next.text}` : '(niciunul)',
                 context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
                 context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)',
                 avertisment_semantic: [
@@ -6469,7 +5500,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
             };
         });
 
-        const prompt = `Ești un editor profesionist de subtitrări SURSA → ROMÂNĂ. Revizuiești traducerea existentă, nu o retraducești automat.
+        const prompt = `Ești un editor profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Revizuiești traducerea existentă, nu o retraducești automat.
 
 SCOP
 Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică.
@@ -6490,10 +5521,9 @@ VERIFICĂ ÎN ORDINE
 
 REGULĂ DE PRUDENȚĂ
 Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
-${getSourceLanguagePromptOverride(contextItems.sourceLanguageProfile)}
 ${isTargetedReview && batch.some(entry => !String(translatedById[String(entry.id)] || '').trim()) ? '\nIMPORTANT: dacă un obiect are câmpul „translation” gol, nu există text de păstrat pentru acel ID. Tradu acel original în română pe baza contextului și returnează textul pentru acel ID; nu-l omite.\n' : ''}
 DATE DE VERIFICAT:
-Fiecare obiect include id, original, translation, context_anterior_sursa, context_urmator_sursa, context_anterior_ro, context_urmator_ro și, uneori, avertisment_semantic. Contextul este doar pentru înțelegere; corectează numai replica curentă.
+Fiecare obiect include id, original, translation, context_anterior_en, context_urmator_en, context_anterior_ro, context_urmator_ro și, uneori, avertisment_semantic. Contextul este doar pentru înțelegere; corectează numai replica curentă.
 ${JSON.stringify(payload, null, 2)}
 
 Returnează DOAR JSON valid:
@@ -6952,22 +5982,6 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])nu\s+v-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu v-a păsat'],
     [/(?<![\p{L}\p{N}_])nu\s+vă-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu v-a păsat'],
     [/(?<![\p{L}\p{N}_])nu\s+le-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu le-a păsat'],
-    // Corecturi generale cu încredere ridicată, adăugate după verificare.
-    [/(?<![\p{L}\p{N}_])lucurile(?![\p{L}\p{N}_])/giu, 'lucrurile'],
-    [/(?<![\p{L}\p{N}_])lucuri(?![\p{L}\p{N}_])/giu, 'lucruri'],
-    [/(?<![\p{L}\p{N}_])imedat(?![\p{L}\p{N}_])/giu, 'imediat'],
-    [/(?<![\p{L}\p{N}_])obstreticieni(?![\p{L}\p{N}_])/giu, 'obstetricieni'],
-    [/(?<![\p{L}\p{N}_])molicula(?![\p{L}\p{N}_])/giu, 'molecula'],
-    [/(?<![\p{L}\p{N}_])molicule(?![\p{L}\p{N}_])/giu, 'molecule'],
-    [/(?<![\p{L}\p{N}_])socializze(?![\p{L}\p{N}_])/giu, 'socializeze'],
-    [/(?<![\p{L}\p{N}_])remodernează(?![\p{L}\p{N}_])/giu, 'remodelează'],
-    [/(?<![\p{L}\p{N}_])ca un tobă(?![\p{L}\p{N}_])/giu, 'ca o tobă'],
-    [/(?<![\p{L}\p{N}_])1m-au(?![\p{L}\p{N}_])/giu, 'm-au'],
-    [/(?<![\p{L}\p{N}_])ur-\s*te(?![\p{L}\p{N}_])/giu, 'urcă-te'],
-    [/(?<![\p{L}\p{N}_])poate nazi o să(?![\p{L}\p{N}_])/giu, 'poate n-o să'],
-    [/(?<![\p{L}\p{N}_])era pe ce a era(?![\p{L}\p{N}_])/giu, 'era cât pe ce'],
-    [/(?<![\p{L}\p{N}_])ce adică(?![\p{L}\p{N}_])/giu, 'cum adică'],
-
     [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are']
 ];
 
@@ -6999,7 +6013,6 @@ function detectLocalGrammarReviewReasons(text) {
     // Nu rescriem automat: sunt trimise la verificare AI numai replicile marcate.
     const highConfidenceRomanianQualityGuards = [
         { pattern: /(?<![\p{L}])introm(?![\p{L}])/iu, message: 'posibil cuvânt trunchiat/inexistent „introm”' },
-        // ARNm este abrevierea validă pentru ARN mesager; nu îl tratăm ca typo.
         { pattern: /(?<![\p{L}])eau\s+(?:de\s+)?\d+(?:\s*,\s*\d+)?(?![\p{L}])/iu, message: 'posibil cuvânt trunchiat înaintea unui număr („eau de 12, 15”)' },
         { pattern: /(?<![\p{L}])necesiți(?![\p{L}])/iu, message: 'formă verbală românească suspectă „necesiți”' },
         { pattern: /(?<![\p{L}])flori[-\s]+soarelui(?![\p{L}])/iu, message: 'posibil calc/declinare greșită „flori-soarelui”' },
@@ -7269,73 +6282,6 @@ function findRepeatedTranslationIssues(items, translatedById) {
     return issues;
 }
 
-// Detectează cazul mai puternic în care o propoziție românească întreagă, adăugată
-// la finalul unui cue, se repetă la începutul cue-ului următor. Nu rescrie automat:
-// trimite numai cue-ul care pare să fi preluat textul spre verificare contextuală.
-function findRepeatedTrailingSentenceIssues(items, translatedById) {
-    const issues = [];
-    const clean = value => String(value || '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-    const words = value => normalizeRepeatedTranslationCheckText(value).split(' ').filter(Boolean);
-    const sourceWords = value => clean(value)
-        .toLocaleLowerCase('en-US')
-        .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
-
-    for (let i = 0; i < items.length - 1; i++) {
-        const first = items[i];
-        const second = items[i + 1];
-        if (first.musicOnly || second.musicOnly || isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
-
-        const firstId = String(first.id);
-        const secondId = String(second.id);
-        const firstNumericId = Number(first.sourceId ?? first.id);
-        const secondNumericId = Number(second.sourceId ?? second.id);
-        if (!Number.isFinite(firstNumericId) || !Number.isFinite(secondNumericId) || secondNumericId !== firstNumericId + 1) continue;
-
-        const firstTarget = clean(translatedById[firstId]).replace(/^[-–—]\s*/, '');
-        const secondTarget = clean(translatedById[secondId]).replace(/^[-–—]\s*/, '');
-        if (!firstTarget || !secondTarget) continue;
-
-        // Cerem o propoziție finală care vine DUPĂ alt conținut în primul cue;
-        // liniile identice integral sunt deja gestionate de findRepeatedTranslationIssues.
-        const lastSentenceMatch = firstTarget.match(/([^.!?…]+[.!?…]["”’»)]*)\s*$/u);
-        if (!lastSentenceMatch) continue;
-        const sentence = lastSentenceMatch[1].trim();
-        const sentenceStart = firstTarget.lastIndexOf(sentence);
-        if (sentenceStart <= 0) continue;
-
-        const sentenceWords = words(sentence);
-        const secondWords = words(secondTarget);
-        if (sentenceWords.length < 4 || secondWords.length < sentenceWords.length) continue;
-        if (!sentenceWords.every((word, index) => word === secondWords[index])) continue;
-
-        // Dacă originalele repetă efectiv aceleași cuvinte la limită, repetarea poate
-        // fi legitimă. În caz contrar, semnalăm pentru comparație AI cu ambele surse.
-        const firstSourceWords = sourceWords(first.text);
-        const secondSourceWords = sourceWords(second.text);
-        let sourceRepeatsAtBoundary = false;
-        const maxOverlap = Math.min(8, firstSourceWords.length, secondSourceWords.length);
-        for (let length = maxOverlap; length >= 3; length--) {
-            const sourceTail = firstSourceWords.slice(-length);
-            if (sourceTail.every((word, index) => word === secondSourceWords[index])) {
-                sourceRepeatsAtBoundary = true;
-                break;
-            }
-        }
-        if (sourceRepeatsAtBoundary) continue;
-
-        issues.push({
-            item: first,
-            pairedItem: second,
-            reason: `propoziție completă posibil duplicată la limită: ID ${firstId} se termină cu „${sentence}”, care se repetă la începutul ID ${secondId}; compară originalele și elimină textul preluat numai din ID-ul greșit, fără a muta conținut între ID-uri`
-        });
-    }
-
-    return issues;
-}
-
 // Detectează contaminarea dintre două cue-uri consecutive: traducerea primului
 // cue se termină cu o expresie lungă care reapare la începutul traducerii următorului,
 // deși originalul primului cue este neterminat. Semnalul nu mută și nu șterge text;
@@ -7351,7 +6297,6 @@ function findPossibleBoundaryOverlapIssues(items, translatedById) {
         'poate', 'pot', 'sa', 'să', 'se', 'și', 'sunt', 'te', 'tu', 'un', 'una', 'în'
     ]);
     const clean = value => String(value || '')
-        .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/gu, '') // controale bidi/BOM, nu text de subtitrare
         .replace(/<[^>]+>/g, ' ')
         .replace(/\|/g, ' ')
         .replace(/\s+/g, ' ')
@@ -7366,7 +6311,7 @@ function findPossibleBoundaryOverlapIssues(items, translatedById) {
         // Punctuația finală indică de regulă o propoziție completă; elipsele sau
         // lipsa punctuației finale indică adesea că sursa continuă în cue-ul următor.
         const endsWithEllipsis = /(?:\.{3}|…)\s*$/u.test(text);
-        const endsWithSentencePunctuation = /[.!?؟۔]["”’')\]]*\s*$/u.test(text);
+        const endsWithSentencePunctuation = /[.!?]["”’')\]]*\s*$/u.test(text);
         return endsWithEllipsis || !endsWithSentencePunctuation;
     };
 
@@ -7522,7 +6467,6 @@ function findAdjacentSemanticOverlapIssues(items, translatedById) {
     ]);
 
     const clean = value => String(value || '')
-        .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/gu, '') // controale bidi/BOM, nu text de subtitrare
         .replace(/<[^>]+>/g, ' ')
         .replace(/\|/g, ' ')
         .replace(/\s+/g, ' ')
@@ -7531,14 +6475,8 @@ function findAdjacentSemanticOverlapIssues(items, translatedById) {
         .normalize('NFC')
         .toLocaleLowerCase('ro-RO')
         .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
-    const hasTerminalPunctuation = value => /[.!?؟۔…]["”’')\]]*\s*$/u.test(clean(value));
-    const sourceBeginsLowercase = value => {
-        const firstLetter = clean(value).match(/^[\s"“”'‘’([{—–-]*([\p{L}])/u)?.[1] || '';
-        if (!firstLetter) return false;
-        // Pentru alfabetele fără majuscule/minuscule (arabic, ebraic, chinez etc.),
-        // nu respingem o continuare doar pentru că scriptul nu are caz.
-        return /\p{Ll}/u.test(firstLetter) || (!/[\p{Lu}\p{Lt}]/u.test(firstLetter) && /\p{L}/u.test(firstLetter));
-    };
+    const hasTerminalPunctuation = value => /[.!?…]["”’')\]]*\s*$/u.test(clean(value));
+    const sourceBeginsLowercase = value => /^[\s"“”'‘’([{—–-]*\p{Ll}/u.test(clean(value));
     const sourceLooksLikeContinuation = (firstSource, secondSource) =>
         Boolean(clean(firstSource) && clean(secondSource)) &&
         !hasTerminalPunctuation(firstSource) &&
@@ -7655,7 +6593,7 @@ function findAdjacentSemanticOverlapIssues(items, translatedById) {
         if (seenPairs.has(pairKey)) continue;
         seenPairs.add(pairKey);
 
-        const reason = `posibilă suprapunere de sens între ID ${firstId} și ${secondId}: expresia „${overlap.phrase}” apare în ambele traduceri; originalul sursă al ID ${firstId} continuă fără punctuație, dar traducerea lui încheie o propoziție. Verifică dacă ID ${firstId} anticipează sensul din ID ${secondId}; corectează numai redundanța demonstrabilă, fără a muta text între ID-uri`;
+        const reason = `posibilă suprapunere de sens între ID ${firstId} și ${secondId}: expresia „${overlap.phrase}” apare în ambele traduceri; originalul EN al ID ${firstId} continuă fără punctuație, dar traducerea lui încheie o propoziție. Verifică dacă ID ${firstId} anticipează sensul din ID ${secondId}; corectează numai redundanța demonstrabilă, fără a muta text între ID-uri`;
         issues.push({ item: first, pairedItem: second, reason });
         issues.push({
             item: second,
@@ -7727,7 +6665,7 @@ function findRepeatedBoundaryConnectorIssues(items, translatedById) {
         if (seen.has(issueId)) continue;
         seen.add(issueId);
 
-        const reason = `conector repetat între două fragmente consecutive: „${tail[1]}”; originalele-sursă indică plasarea conectorului ${tailSupportedBySource ? `la ID ${currentItem.id}` : headSupportedBySource ? `la ID ${nextItem.id}` : 'doar după compararea contextului'}; verifică dacă traducerea a adăugat conectorul în blocul greșit`;
+        const reason = `conector repetat între două fragmente consecutive: „${tail[1]}”; originalele EN indică plasarea conectorului ${tailSupportedBySource ? `la ID ${currentItem.id}` : headSupportedBySource ? `la ID ${nextItem.id}` : 'doar după compararea contextului'}; verifică dacă traducerea a adăugat conectorul în blocul greșit`;
         issues.push({ item: issueItem, reason, pairedItem: issueItem === currentItem ? nextItem : currentItem });
     }
     return issues;
@@ -7821,7 +6759,7 @@ async function runLocalGrammarQualityPass(items, translatedById) {
     // Verifică relația dintre două blocuri: un „dar” la sfârșitul primului
     // bloc urmat imediat de „dar” la începutul celui de-al doilea poate dubla
     // aceeași legătură logică. Ambele fragmente sunt trimise împreună la review.
-    for (const boundaryIssue of (items.sourceLanguageProfile?.isNonLatinDominant ? [] : findRepeatedBoundaryConnectorIssues(items, translatedById))) {
+    for (const boundaryIssue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
         const id = String(boundaryIssue.item.id);
         const existing = flagged.find(entry => String(entry.item.id) === id);
         if (existing) {
@@ -7843,21 +6781,9 @@ async function runLocalGrammarQualityPass(items, translatedById) {
         }
     }
 
-    // Propozițiile complete duplicate la limita cue-urilor sunt un semnal mai puternic
-    // decât simpla suprapunere lexicală; trimitem cue-ul precedent la review contextual.
-    for (const duplicateSentenceIssue of findRepeatedTrailingSentenceIssues(items, translatedById)) {
-        const id = String(duplicateSentenceIssue.item.id);
-        const existing = flagged.find(entry => String(entry.item.id) === id);
-        if (existing) {
-            if (!existing.reasons.includes(duplicateSentenceIssue.reason)) existing.reasons.push(duplicateSentenceIssue.reason);
-        } else {
-            flagged.push({ item: duplicateSentenceIssue.item, reasons: [duplicateSentenceIssue.reason] });
-        }
-    }
-
     // Semnal separat pentru sens anticipat în traducerea precedentă (ex. EN cue 130
     // continuă în 131, dar RO 130 încheie fraza și repetă „în comun” din RO 131).
-    for (const overlapIssue of (items.sourceLanguageProfile?.isNonLatinDominant ? [] : findAdjacentSemanticOverlapIssues(items, translatedById))) {
+    for (const overlapIssue of findAdjacentSemanticOverlapIssues(items, translatedById)) {
         const id = String(overlapIssue.item.id);
         const existing = flagged.find(entry => String(entry.item.id) === id);
         if (existing) {
@@ -8957,16 +7883,6 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     const sourceBlockCount = (String(srtText || '').match(/-->/g) || []).length;
     const parseStats = { fillerBlocksFiltered: 0, otherBlocksFiltered: 0, invalidBlocksSkipped: 0, duplicateIdsRenumbered: 0 };
     const items = parseSrt(srtText, parseStats);
-    // Detectăm scrierea sursei o singură dată pentru întregul fișier, ca promptul și QA
-    // să nu presupună engleza când furnizorul a returnat o subtitrare etichetată greșit.
-    items.sourceLanguageProfile = detectSubtitleSourceScriptProfile(items);
-    if (items.sourceLanguageProfile.letterCount) {
-        const percent = Math.round(items.sourceLanguageProfile.ratio * 100);
-        console.log(`${c.cyan}[SRT] Scriere predominantă a sursei: ${items.sourceLanguageProfile.label} (${percent}% din litere; ${items.sourceLanguageProfile.letterCount} litere analizate).${c.reset}`);
-        if (items.sourceLanguageProfile.isNonLatinDominant) {
-            console.log(`${c.yellow}[SRT] Sursa nu pare să fie în scriere latină; traducerea continuă fără a elimina text străin din cue-uri. Promptul contextual a fost adaptat, iar suprapunerile ambigue nu vor fi transformate automat în avertismente doar de euristici englezești.${c.reset}`);
-        }
-    }
     // Citit de buildTranslationPrompt; același array `items` este transmis tuturor calupurilor.
     items.mediaContext = String(mediaContext || '');
     const englishNameEvidence = buildEnglishNameEvidence(items);
@@ -9310,7 +8226,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         const reasons = collectQualityReviewReasons(item, text, items, translatedById);
         if (reasons.length) unresolvedQualityMap.set(id, { item, reasons: [...new Set(reasons)] });
     }
-    for (const issue of (items.sourceLanguageProfile?.isNonLatinDominant ? [] : findRepeatedBoundaryConnectorIssues(items, translatedById))) {
+    for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
         const id = String(issue.item.id);
         const existing = unresolvedQualityMap.get(id);
         if (existing) existing.reasons.push(issue.reason);
@@ -9400,48 +8316,22 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
             finalRepairReasonById[id] = uniqueReasons.join('; ');
         }
     }
-    for (const issue of (items.sourceLanguageProfile?.isNonLatinDominant ? [] : findRepeatedBoundaryConnectorIssues(items, translatedById))) {
+    for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
         const id = String(issue.item.id);
         if (!finalRepairCandidates.some(item => String(item.id) === id)) {
             finalRepairCandidates.push(issue.item);
         }
         finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
     }
-    // Euristica de suprapunere semantică presupune frecvent limbă engleză și
-    // punctuație latină. Pentru o sursă predominant non-latină, nu trimitem toate
-    // potrivirile ei cu încredere scăzută la Gemini; folosim detectorul mai strict
-    // de suprapunere chiar la limita cue-urilor de mai jos și păstrăm decizia contextuală.
-    const adjacentSemanticCandidates = items.sourceLanguageProfile?.isNonLatinDominant
-        ? []
-        : findAdjacentSemanticOverlapIssues(items, translatedById);
-    for (const issue of adjacentSemanticCandidates) {
+    for (const issue of findAdjacentSemanticOverlapIssues(items, translatedById)) {
         const id = String(issue.item.id);
         if (!finalRepairCandidates.some(item => String(item.id) === id)) {
             finalRepairCandidates.push(issue.item);
         }
         finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
     }
-    for (const issue of findRepeatedTrailingSentenceIssues(items, translatedById)) {
-        const id = String(issue.item.id);
-        if (!finalRepairCandidates.some(item => String(item.id) === id)) {
-            finalRepairCandidates.push(issue.item);
-        }
-        finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
-    }
-    // Când sursa folosește un script non-latin, euristicile locale bazate pe engleză
-    // nu pot decide dacă o suprapunere semantică e legitimă. Trimitem perechile la
-    // verificarea contextuală, care vede ambele originale și ambele traduceri.
-    if (items.sourceLanguageProfile?.isNonLatinDominant) {
-        for (const issue of findPossibleBoundaryOverlapIssues(items, translatedById)) {
-            const id = String(issue.item.id);
-            if (!finalRepairCandidates.some(item => String(item.id) === id)) finalRepairCandidates.push(issue.item);
-            finalRepairReasonById[id] = [
-                finalRepairReasonById[id],
-                `${issue.reason}; sursa folosește un script non-latin: decide din context dacă repetiția este reală sau text preluat din cue-ul vecin`
-            ].filter(Boolean).join('; ');
-        }
-    }
-    // Suprapunerile sunt verificate contextual; nu ștergem text doar pe baza unei potriviri lexicale.
+    // Suprapunerea lexicală la limită nu declanșează reparare automată: lipsa dovezii
+    // că textul a fost efectiv preluat nu justifică rescrierea cue-urilor.
 
     if (finalRepairCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
         const beforeFinalRepair = new Map(finalRepairCandidates.map(item => [
@@ -9589,15 +8479,6 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         console.log(`${c.yellow}[Versuri muzicale] ${musicTokenFallbackCount} cue-uri mixte au revenit la sursa mascată deoarece un token protejat nu a supraviețuit; versurile vor fi eliminate din rezultat, iar QA poate semnala dialogul netradus.${c.reset}`);
     }
 
-    // Curățarea finală a liniuțelor rulează DUPĂ toate eliminările de paranteze/cue-uri.
-    // Un singur vorbitor nu primește liniuță; când rămân două replici dialogate, ambele marcaje se păstrează.
-    for (const item of items) {
-        const id = String(item.id);
-        const current = String(translatedById[id] || '');
-        if (!current.trim()) continue;
-        translatedById[id] = formatSubtitleLayout(current).trim();
-    }
-
     const suppressedFillerIdSet = new Set(suppressedFillerIds);
     const suppressedFinalOutputIdSet = new Set([
         ...suppressedFillerIdSet,
@@ -9615,7 +8496,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         const reasons = collectQualityReviewReasons(item, text, items, translatedById);
         if (reasons.length) finalQualityFlags.push({ item, reasons: [...new Set(reasons)] });
     }
-    for (const issue of (items.sourceLanguageProfile?.isNonLatinDominant ? [] : findRepeatedBoundaryConnectorIssues(items, translatedById))) {
+    for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
         const id = String(issue.item.id);
         if (suppressedFinalOutputIdSet.has(id)) continue;
         const existing = finalQualityFlags.find(entry => String(entry.item.id) === id);
@@ -9631,7 +8512,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     // nu este suficientă pentru a produce un avertisment QA FINAL. Dacă ID-ul are
     // deja un alt semnal independent de calitate, atașăm suprapunerea ca informație
     // suplimentară; altfel păstrăm doar un mesaj diagnostic, fără alarmă QA.
-    const finalBoundaryOverlapIssues = items.sourceLanguageProfile?.isNonLatinDominant ? [] : findPossibleBoundaryOverlapIssues(items, translatedById);
+    const finalBoundaryOverlapIssues = findPossibleBoundaryOverlapIssues(items, translatedById);
     const independentFinalFlagIds = new Set(finalQualityFlags.map(entry => String(entry.item.id)));
     const boundaryOverlapDiagnostics = [];
     for (const issue of finalBoundaryOverlapIssues) {
@@ -9708,7 +8589,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     // românesc nu este, singură, dovadă de eroare. Nu o raportăm din nou ca avertisment
     // QA FINAL; numai alte indicii concrete, independente, pot păstra ID-ul în avertismente.
     // Suprapunerile semantice rămân verificate separat după toate etapele de reparare.
-    const finalAdjacentSemanticOverlapIssues = items.sourceLanguageProfile?.isNonLatinDominant ? [] : findAdjacentSemanticOverlapIssues(items, translatedById);
+    const finalAdjacentSemanticOverlapIssues = findAdjacentSemanticOverlapIssues(items, translatedById);
     for (const issue of finalAdjacentSemanticOverlapIssues) {
         const id = String(issue.item.id);
         const pairedId = String(issue.pairedItem?.id ?? '');
@@ -9772,10 +8653,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         console.log(`${c.yellow}[QA FINAL] AVERTISMENTE: ${finalReviewWarnings.size} replici au semnale de calitate care merită revizuire; acestea nu blochează livrarea subtitrării. ${warningSamples.join(' | ')}${remaining > 0 ? ` | și încă ${remaining}` : ''}.${c.reset}`);
     }
     if (!unresolvedFinalItems.length && !finalReviewWarnings.size) {
-        const sourceNote = items.sourceLanguageProfile?.isNonLatinDominant
-            ? ` Sursa este predominant în ${items.sourceLanguageProfile.label}; verificările locale nu pot garanta fidelitatea semantică la fel ca o sursă engleză și au fost evitate avertizările bazate exclusiv pe euristici englezești.`
-            : '';
-        console.log(`${c.green}[QA FINAL] OK: toate replicile relevante au traducere și nu au fost detectate probleme de calitate rămase.${sourceNote}${c.reset}`);
+        console.log(`${c.green}[QA FINAL] OK: toate replicile relevante au traducere și nu au fost detectate probleme de calitate rămase.${c.reset}`);
     }
 
     let removedMusicSegmentsFromOutput = 0;
@@ -9987,10 +8865,7 @@ async function fetchValidatedSubtitleUrl(initialUrl) {
 
 // Descarcă un candidat de subtitrare ca bytes, urmărind manual redirecționările
 // și validând fiecare destinație pentru a păstra protecția SSRF.
-async function fetchValidatedSubtitleBytes(initialUrl, subdlApiKey = '', authMode = 'header', requestOptions = {}) {
-    const requestedTimeout = Number(requestOptions?.timeoutMs);
-    const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0 ? Math.min(30000, requestedTimeout) : 12000;
-    const signal = requestOptions?.signal;
+async function fetchValidatedSubtitleBytes(initialUrl, subdlApiKey = '', authMode = 'header') {
     let currentUrl = initialUrl;
     const maxRedirects = 5;
 
@@ -10018,8 +8893,7 @@ async function fetchValidatedSubtitleBytes(initialUrl, subdlApiKey = '', authMod
         try {
             response = await axios.get(requestUrl, {
                 headers: downloadHeaders,
-                timeout: timeoutMs,
-                ...(signal ? { signal } : {}),
+                timeout: 12000,
                 maxContentLength: 25 * 1024 * 1024,
                 maxBodyLength: 25 * 1024 * 1024,
                 responseType: 'arraybuffer',
@@ -10051,25 +8925,23 @@ async function fetchValidatedSubtitleBytes(initialUrl, subdlApiKey = '', authMod
     throw new Error('prea multe redirecționări pentru subtitrarea alternativă');
 }
 
-async function fetchSubdlDirectWithFallback(url, apiKey, requestOptions = {}) {
+async function fetchSubdlDirectWithFallback(url, apiKey) {
     let headerError;
     try {
-        return await fetchValidatedSubtitleBytes(url, apiKey, 'header', requestOptions);
+        return await fetchValidatedSubtitleBytes(url, apiKey, 'header');
     } catch (error) {
         headerError = error;
-        if (requestOptions?.signal?.aborted) throw error;
         const status = Number(error?.response?.status || 0);
         if (![400, 401, 403, 404, 405].includes(status)) throw error;
     }
     try {
-        return await fetchValidatedSubtitleBytes(url, apiKey, 'query', requestOptions);
+        return await fetchValidatedSubtitleBytes(url, apiKey, 'query');
     } catch (queryError) {
-        if (requestOptions?.signal?.aborted) throw queryError;
         const queryStatus = Number(queryError?.response?.status || 0);
         if (![400, 401, 403, 404, 405].includes(queryStatus)) throw queryError;
         console.log(`[SubDL] Descărcarea directă cu autentificare a fost refuzată (${queryStatus}); încerc URL-ul original fără credentiale.`);
         try {
-            return await fetchValidatedSubtitleBytes(url, '', 'none', requestOptions);
+            return await fetchValidatedSubtitleBytes(url, '', 'none');
         } catch (anonymousError) {
             // Retain the last real response status for diagnostics, never the URL or key.
             if (!anonymousError.response && headerError?.response) anonymousError.response = headerError.response;
@@ -10441,19 +9313,12 @@ app.get('/:configData/translate', async (req, res) => {
     const subdlFilename = String(req.query.filename || '').slice(0, 500);
     const fallbackTargetUrl = String(req.query.fallbackTargetUrl || '').trim();
     const fallbackSubtitleName = String(req.query.fallbackSubtitleName || '').slice(0, 300);
-    const fallbackCandidatesToken = String(req.query.fallbackCandidates || '').trim();
-    const fallbackTypeHint = ['movie', 'series'].includes(String(req.query.fallbackType || '').toLowerCase())
-        ? String(req.query.fallbackType).toLowerCase()
-        : (String(imdbId || '').split(':').length >= 3 ? 'series' : 'movie');
-    if (fallbackCandidatesToken.length > 6000 || (fallbackCandidatesToken && !/^[A-Za-z0-9_-]+$/.test(fallbackCandidatesToken))) {
-        return res.status(400).send('Lista de subtitrări alternative invalidă.');
-    }
 
     if (isInternalSubdl && (targetUrl || req.query.source !== 'SubDL')) {
         return res.status(400).send('Parametri SubDL interni invalizi.');
     }
     if (!isInternalSubdl && (fallbackTargetUrl || req.query.fallbackSubtitleName)) {
-        return res.status(400).send('Parametri fallback legacy invalizi.');
+        return res.status(400).send('Parametri fallback interni invalizi.');
     }
     if (!targetUrl && !isInternalSubdl) {
         console.log(`${c.red}✖ EROARE: Lipsă URL sursă.${c.reset}`);
@@ -10487,7 +9352,7 @@ app.get('/:configData/translate', async (req, res) => {
     if (isInternalSubdl) {
         // Opaque SubDL references never become URLs. Downloads are performed in-process
         // by getSubdlSubtitleText(), while every external download still uses SSRF checks.
-        cacheKey = `subdl-ref:${configData}:${subdlRef}:${subdlFilename}:${fallbackTargetUrl}:${fallbackCandidatesToken}`;
+        cacheKey = `subdl-ref:${configData}:${subdlRef}:${subdlFilename}:${fallbackTargetUrl}`;
     } else {
         try {
             validatedTarget = await validateTargetUrl(targetUrl);
@@ -10495,7 +9360,7 @@ app.get('/:configData/translate', async (req, res) => {
             console.log(`${c.red}✖ EROARE: URL sursă respins: ${error.message}${c.reset}`);
             return res.status(400).send(error.message);
         }
-        cacheKey = `${validatedTarget.url}|language-fallbacks:${fallbackCandidatesToken}`;
+        cacheKey = validatedTarget.url;
     }
 
     const cachedEntry = getMemoryCacheEntry(cacheKey);
@@ -10533,94 +9398,27 @@ app.get('/:configData/translate', async (req, res) => {
             let effectiveVersionTag = String(req.query.v || '');
             
             processPromise = (async () => {
-                const mediaTitlePromise = fetchMediaTitle(imdbId).catch(() => '');
-                const languageFallbacks = decodeSubtitleLanguageFallbackCandidates(
-                    fallbackCandidatesToken,
-                    fallbackTargetUrl,
-                    fallbackSubtitleName,
-                    isInternalSubdl ? '' : validatedTarget.url
-                );
-                let srtRes = null;
-                let primaryDownloadError = null;
-                try {
-                    srtRes = isInternalSubdl
-                        ? { data: await getSubdlSubtitleText(configData, subdlRef, subdlFilename) }
-                        : await fetchValidatedSubtitleUrl(validatedTarget.url);
-                } catch (error) {
-                    primaryDownloadError = error;
-                    const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
-                    console.log(`${c.yellow}[Subtitrări] Descărcarea sursei selectate a eșuat (${status || 'rețea'}); verific alternativele disponibile.${c.reset}`);
-                }
-
-                let sourceProfile = srtRes ? detectExpectedEnglishSubtitle(String(srtRes.data || '')) : null;
-                if (sourceProfile && !sourceProfile.isEnglishLikely) {
-                    console.log(`${c.yellow}[SOURCE LANGUAGE GUARD] Sursa selectată nu pare engleză: ${sourceProfile.reason}. Nu trimit acest conținut la Gemini.${c.reset}`);
-                }
-
-                // If the chosen subtitle failed to download or its content strongly
-                // suggests another language, try only validated OpenSubtitles alternatives.
-                if (!srtRes || !sourceProfile?.isEnglishLikely) {
-                    let acceptedFallback = null;
-                    const attemptedFallbackUrls = new Set();
-                    const tryOpenSubtitlesCandidates = async (candidates, phaseLabel) => {
-                        const list = Array.isArray(candidates) ? candidates : [];
-                        for (let index = 0; index < list.length; index++) {
-                            const candidate = list[index];
-                            if (!candidate?.url || attemptedFallbackUrls.has(String(candidate.url))) continue;
-                            attemptedFallbackUrls.add(String(candidate.url));
+                const [srtRes, mediaTitle] = await Promise.all([
+                    isInternalSubdl
+                        ? getSubdlSubtitleText(configData, subdlRef, subdlFilename).then(data => ({ data })).catch(async subdlError => {
+                            if (!fallbackTargetUrl) throw subdlError;
+                            let validatedFallbackTarget;
                             try {
-                                const validatedFallback = await validateTargetUrl(candidate.url);
-                                const candidateResponse = await fetchValidatedSubtitleUrl(validatedFallback.url);
-                                const candidateProfile = detectExpectedEnglishSubtitle(String(candidateResponse.data || ''));
-                                if (!candidateProfile.isEnglishLikely) {
-                                    console.log(`${c.yellow}[SOURCE LANGUAGE GUARD] Respinsă alternativa OpenSubtitles (${phaseLabel} ${index + 1}/${list.length}): ${candidateProfile.reason}.${c.reset}`);
-                                    continue;
-                                }
-                                return { response: candidateResponse, profile: candidateProfile, candidate, index };
-                            } catch (fallbackError) {
-                                console.log(`${c.yellow}[SOURCE LANGUAGE GUARD] Alternativa OpenSubtitles (${phaseLabel} ${index + 1}/${list.length}) nu a putut fi folosită (${Number(fallbackError?.response?.status || 0) || 'rețea'}).${c.reset}`);
+                                validatedFallbackTarget = await validateTargetUrl(fallbackTargetUrl);
+                            } catch (_) {
+                                throw subdlError;
                             }
-                        }
-                        return null;
-                    };
-
-                    acceptedFallback = await tryOpenSubtitlesCandidates(languageFallbacks, 'atașată');
-                    // Older cached Stremio URLs may not carry fallbackCandidates; also refresh the
-                    // public OpenSubtitles listing after a SubDL failure rather than immediately failing.
-                    if (!acceptedFallback && isInternalSubdl) {
-                        const freshFallbacks = await fetchOpenSubtitlesFallbackCandidates(
-                            fallbackTypeHint,
-                            imdbId,
-                            [...attemptedFallbackUrls]
-                        );
-                        acceptedFallback = await tryOpenSubtitlesCandidates(freshFallbacks, 'proaspătă');
-                    }
-
-                    if (acceptedFallback) {
-                        srtRes = acceptedFallback.response;
-                        sourceProfile = acceptedFallback.profile;
-                        const wasSubdl = isInternalSubdl;
-                        effectiveSubtitleSource = wasSubdl
-                            ? 'OpenSubtitles (fallback după detectarea limbii sursei)'
-                            : 'OpenSubtitles (fallback după detectarea limbii sursei)';
-                        effectiveSubtitleName = acceptedFallback.candidate.name || 'OpenSubtitles alternativă';
-                        effectiveVersionTag = `${effectiveVersionTag || 'subtitle'}-language-fallback-${acceptedFallback.index + 1}`;
-                        console.log(`${c.green}[SOURCE LANGUAGE GUARD] O alternativă OpenSubtitles a fost acceptată; sursa pare engleză.${c.reset}`);
-                    } else if (srtRes) {
-                        qaStatus.hasErrors = true;
-                        qaStatus.hasWarnings = true;
-                        qaStatus.sourceLanguageRejected = true;
-                        console.log(`${c.red}[SOURCE LANGUAGE GUARD] OPRIT: sursa selectată nu pare engleză și nu a fost găsită o alternativă validă. Traducerea Gemini nu va porni.${c.reset}`);
-                        return buildSourceLanguageWarningSrt(sourceProfile);
-                    } else {
-                        if (isInternalSubdl) {
-                            console.log(`${c.red}[SubDL fallback] EȘEC: SubDL nu a furnizat fișierul, iar variantele OpenSubtitles atașate și căutarea de rezervă nu au produs o subtitrare EN descărcabilă.${c.reset}`);
-                        }
-                        throw primaryDownloadError || new Error('Nu s-a putut descărca subtitrarea selectată sau o alternativă validă.');
-                    }
-                }
-
-                const mediaTitle = await mediaTitlePromise;
+                            const status = Number(subdlError?.response?.status || subdlError?.subdlDownloadMeta?.status || 0);
+                            console.log(`${c.yellow}[SubDL] Descărcarea a eșuat (${status || 'rețea'}); încerc fallback OpenSubtitles.${c.reset}`);
+                            const fallbackResponse = await fetchValidatedSubtitleUrl(validatedFallbackTarget.url);
+                            effectiveSubtitleSource = 'OpenSubtitles (fallback după SubDL)';
+                            effectiveSubtitleName = fallbackSubtitleName || 'OpenSubtitles fallback';
+                            effectiveVersionTag = 'opensubtitles-fallback';
+                            return fallbackResponse;
+                        })
+                        : fetchValidatedSubtitleUrl(validatedTarget.url),
+                    fetchMediaTitle(imdbId)
+                ]);
                 rememberOriginalSource(cacheKey, String(srtRes.data || ''));
 
                 logTranslationStart(imdbId, mediaTitle, {
@@ -11047,8 +9845,11 @@ function parseSrt(srt, stats = null) {
 
         const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(rawText);
         let text = cleanTextForJson(rawText);
-        // Liniuțele nu se șterg anticipat în preprocesare: formatSubtitleLayout le decide
-        // după ce știe dacă a rămas un singur vorbitor sau un schimb real de replici.
+        // Replică originală cu doi vorbitori din care a rămas unul singur (celălalt era „Uh...”,
+        // „Oh.” etc.): liniuța de dialog nu mai are rost.
+        if (lines.length > 3 && text && !text.includes('\n') && /^[-–—]\s+\S/.test(text)) {
+            text = text.replace(/^[-–—]\s+/, '');
+        }
 
         if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) {
             if (stats) {
