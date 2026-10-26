@@ -209,16 +209,12 @@ function logTranslationStart(mediaId, mediaTitle, subtitleInfo = {}) {
         .replace(/\s+/g, ' ')
         .trim();
     const details = cleanTitle ? `${cleanId} — ${cleanTitle}` : cleanId;
-    const subtitleName = sanitizeSubtitleLogValue(subtitleInfo.subtitleName) || 'Nedisponibilă (link vechi)';
-    const subtitleSource = resolveSubtitleSourceLabel(subtitleInfo.subtitleSource, subtitleInfo.versionTag);
-
-    // Păstrăm antetul existent și adăugăm sursa/subtitrarea selectată, fără URL-uri sau secrete.
+    // Nu afișăm în log numele fișierului ales sau furnizorul; selecția și verificarea
+    // limbii rămân active intern, dar logul de rulare păstrează doar titlul media.
     const divider = '\x1b[90m────────────────────────────────────\x1b[0m';
     console.log(divider);
     console.log(`\x1b[96m${headline}\x1b[0m`);
     console.log(`\x1b[93m${details}\x1b[0m`);
-    console.log(`\x1b[95m📄 Subtitrare selectată: ${subtitleName}\x1b[0m`);
-    console.log(`\x1b[95m📚 Sursă subtitrare: ${subtitleSource}\x1b[0m`);
     console.log(divider);
 }
 function rememberOriginalSource(key, text) {
@@ -260,7 +256,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.63',
+    version: '13.2.64',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1489,10 +1485,6 @@ async function handleSubtitles(req, res) {
         // numele release-ului nu trebuie să împingă în jos o potrivire video exactă.
         // Între potrivirile confirmate păstrăm ordinea upstream a OpenSubtitles.
         const hasReportedHashMatches = Boolean(userVideoHash && diverseSubs.some(s => s.hashMatch));
-        if (userVideoHash) {
-            const hashMatchCount = diverseSubs.filter(s => s.hashMatch).length;
-            console.log(`${c.cyan}[Subtitrări] videoHash ${hashMatchCount ? `confirmat pentru ${hashMatchCount} variante OpenSubtitles` : 'transmis, dar fără potrivire explicită; fallback la scorul release-ului'}${c.reset}`);
-        }
         const compareOpenSubtitlesCandidates = (a, b) => {
             if (hasReportedHashMatches && Boolean(a.hashMatch) !== Boolean(b.hashMatch)) {
                 return a.hashMatch ? -1 : 1;
@@ -5406,8 +5398,87 @@ function stripEnglishNamesFromText(text, names) {
         .replace(/[ \t]{2,}/g, ' ');
 }
 
+// Suprimă false pozitive ale detectorului englezesc când textul-țintă are dovezi
+// gramaticale/lexicale puternice de română și nu conține o expresie englezească clară.
+// Nu modifică traducerea și nu elimină cuvinte: controlează doar avertizarea QA.
+function normalizeLanguageQaText(text) {
+    return String(text || '')
+        .replace(/<[^>]+>/g, ' ')
+        .normalize('NFC')
+        .toLocaleLowerCase('ro-RO')
+        .replace(/[’‘]/g, "'")
+        .replace(/[“”„"]/g, ' ')
+        .replace(/[–—]/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function hasClearEnglishFragmentForEnglishQa(text) {
+    const clean = normalizeLanguageQaText(text);
+    if (!clean) return false;
+    // Nu folosim \\b pentru marginile cuvintelor englezești: în JavaScript,
+    // \\b nu tratează diacriticele românești ca litere și poate vedea „i” în „și”
+    // ca pe un pronume englezesc separat. Lookaround-urile Unicode evită acest caz.
+    const patterns = [
+        /(?<![\p{L}\p{N}_])(?:i|you|we|they|he|she|it)\s+(?:am|are|is|was|were|have|has|had|do|does|did|can|could|will|would|should|need|want|know|think|said|say|go|come|like|love)(?![\p{L}\p{N}_])/iu,
+        /(?<![\p{L}\p{N}_])(?:don't|doesn't|didn't|can't|couldn't|wouldn't|shouldn't|won't|isn't|aren't|wasn't|weren't|haven't|hasn't|hadn't)(?![\p{L}\p{N}_])/iu,
+        /(?<![\p{L}\p{N}_])(?:thank you|come on|let me|you know|i mean|what the hell|don't know|i don't|i can't|i am|i was|you are|this is|it is)(?![\p{L}\p{N}_])/iu,
+        /(?<![\p{L}\p{N}_])(?:my|your|his|her|our|their)\s+[a-z]{3,}(?![\p{L}\p{N}_])/iu,
+        /(?<![\p{L}\p{N}_])(?:very|really|just|only|still|already)\s+(?:good|bad|well|hard|much|better|worse|different|beautiful)(?![\p{L}\p{N}_])/iu,
+        /(?<![\p{L}\p{N}_])(?:i|you|we|they|he|she|it|the|and|but|or|yes|no|hello|thanks|please|sorry|okay|ok)(?![\p{L}\p{N}_])/iu
+    ];
+    return patterns.some(pattern => pattern.test(clean));
+}
+
+// Dovezi lexical/gramaticale că textul-țintă este română. Al doilea parametru
+// permite verificarea separată a expresiilor englezești în propoziții mixte.
+function hasStrongRomanianEvidenceForEnglishQa(text, ignoreEnglishSignals = false) {
+    const clean = normalizeLanguageQaText(text);
+    if (!clean) return false;
+    if (!ignoreEnglishSignals && hasClearEnglishFragmentForEnglishQa(clean)) return false;
+
+    const words = clean.match(/[\p{L}]+/gu) || [];
+    if (!words.length) return false;
+    const romanianEvidenceWords = new Set([
+        'și','să','se','este','sunt','era','erau','nu','da','că','ca','cu','de','din','în','pe','la','un','o',
+        'eu','tu','el','ea','noi','voi','ei','ele','mai','foarte','pentru','dar','sau','care','ce','cine','cum',
+        'unde','când','aici','acolo','trebuie','poate','fost','avea','am','ai','are','au','mă','te','îl','îi','mi',
+        'ți','lor','lui','mea','ta','tău','meu','faci','fac','face','facem','altceva','afară','muncă','munca',
+        'știu','știi','știe','vrei','vreau','bine','acum','așa','îmi','îți','noastră','voastră'
+    ]);
+    const romanianSpecificWords = new Set([
+        'faci','altceva','afară','muncă','munca','fost','aveam','aveai','făcut','facem','știu','știi','vrei','vreau',
+        'trebuie','îmi','îți','pentru','acolo','acum','așa','bine','spune','spuneți','vorbești','vorbesc'
+    ]);
+    const englishOnlyMarkers = new Set([
+        'the','and','but','if','then','than','they','them','their','we','us','our','you','your','he','him','his',
+        'she','her','it','its','this','that','these','those','what','which','who','where','when','why','how','with',
+        'from','into','onto','about','after','before','without','against','between','through','because','while',
+        'would','could','should','will','shall','can','cannot','do','does','did','have','has','had','not','yes','no',
+        'my','there','here','now','good','bad','right','wrong','well','better','worse','something','anything',
+        'hello','thanks','thank','please','sorry','maybe','really','just','only','still','already','nothing','okay','ok'
+    ]);
+    const romanianSignalCount = words.filter(word => romanianEvidenceWords.has(word)).length;
+    const romanianSpecificCount = words.filter(word => romanianSpecificWords.has(word)).length;
+    const englishMarkerCount = words.filter(word => englishOnlyMarkers.has(word)).length;
+    return (ignoreEnglishSignals || englishMarkerCount === 0) && (
+        romanianSignalCount >= 3 ||
+        (romanianSignalCount >= 2 && romanianSpecificCount >= 1)
+    );
+}
+
 // Variantă pentru o replică: folosește numele deduse din tot fișierul (item.nameTokens).
 function itemHasUntranslatedEnglish(item, translated) {
+    const nameEvidence = new Set(item?.nameTokens || []);
+    collectEnglishNameEvidence(String(item?.text || '').replace(/<[^>]+>/g, ''), nameEvidence);
+    const targetWithoutNames = stripEnglishNamesFromText(String(translated || '').replace(/<[^>]+>/g, ''), nameEvidence);
+
+    // Prioritate pentru falsul pozitiv: replicile care au indicii românești puternice
+    // nu sunt marcate doar pentru cuvinte scurte/ambigue. Un fragment englezesc clar
+    // din interiorul unei propoziții românești rămâne însă raportabil.
+    const hasRomanianEvidence = hasStrongRomanianEvidenceForEnglishQa(targetWithoutNames, true);
+    if (hasRomanianEvidence && hasClearEnglishFragmentForEnglishQa(targetWithoutNames)) return true;
+    if (hasStrongRomanianEvidenceForEnglishQa(targetWithoutNames)) return false;
     return hasUntranslatedEnglish(item.text, translated, item.nameTokens, item.romanianWordEvidence);
 }
 
@@ -10332,7 +10403,7 @@ app.get('/:configData/translate', async (req, res) => {
 
                 let sourceProfile = srtRes ? detectExpectedEnglishSubtitle(String(srtRes.data || '')) : null;
                 if (sourceProfile && !sourceProfile.isEnglishLikely) {
-                    console.log(`${c.yellow}[SOURCE LANGUAGE GUARD] Sursa selectată „${sanitizeSubtitleLogValue(effectiveSubtitleName)}” nu pare engleză: ${sourceProfile.reason}. Nu trimit acest conținut la Gemini.${c.reset}`);
+                    console.log(`${c.yellow}[SOURCE LANGUAGE GUARD] Sursa selectată nu pare engleză: ${sourceProfile.reason}. Nu trimit acest conținut la Gemini.${c.reset}`);
                 }
 
                 // If the chosen subtitle failed to download or its content strongly
@@ -10346,7 +10417,7 @@ app.get('/:configData/translate', async (req, res) => {
                             const candidateResponse = await fetchValidatedSubtitleUrl(validatedFallback.url);
                             const candidateProfile = detectExpectedEnglishSubtitle(String(candidateResponse.data || ''));
                             if (!candidateProfile.isEnglishLikely) {
-                                console.log(`${c.yellow}[SOURCE LANGUAGE GUARD] Respinsă alternativa ${index + 1}/${languageFallbacks.length} „${sanitizeSubtitleLogValue(candidate.name)}”: ${candidateProfile.reason}.${c.reset}`);
+                                console.log(`${c.yellow}[SOURCE LANGUAGE GUARD] Respinsă alternativa ${index + 1}/${languageFallbacks.length}: ${candidateProfile.reason}.${c.reset}`);
                                 continue;
                             }
                             acceptedFallback = { response: candidateResponse, profile: candidateProfile, candidate, index };
@@ -10365,7 +10436,7 @@ app.get('/:configData/translate', async (req, res) => {
                             : 'OpenSubtitles (fallback după detectarea limbii sursei)';
                         effectiveSubtitleName = acceptedFallback.candidate.name || 'OpenSubtitles alternativă';
                         effectiveVersionTag = `${effectiveVersionTag || 'subtitle'}-language-fallback-${acceptedFallback.index + 1}`;
-                        console.log(`${c.green}[SOURCE LANGUAGE GUARD] Alternativa OpenSubtitles a fost acceptată: „${sanitizeSubtitleLogValue(effectiveSubtitleName)}”; sursa pare engleză.${c.reset}`);
+                        console.log(`${c.green}[SOURCE LANGUAGE GUARD] O alternativă OpenSubtitles a fost acceptată; sursa pare engleză.${c.reset}`);
                     } else if (srtRes) {
                         qaStatus.hasErrors = true;
                         qaStatus.hasWarnings = true;
