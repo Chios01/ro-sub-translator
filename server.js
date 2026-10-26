@@ -209,12 +209,16 @@ function logTranslationStart(mediaId, mediaTitle, subtitleInfo = {}) {
         .replace(/\s+/g, ' ')
         .trim();
     const details = cleanTitle ? `${cleanId} — ${cleanTitle}` : cleanId;
-    // Nu afișăm în log numele fișierului ales sau furnizorul; selecția și verificarea
-    // limbii rămân active intern, dar logul de rulare păstrează doar titlul media.
+    // Restabilim informațiile de diagnostic care existau înainte: numele subtitrării
+    // și furnizorul. Nu se afișează URL-uri, tokenuri sau chei API.
+    const subtitleName = sanitizeSubtitleLogValue(subtitleInfo.subtitleName) || 'Nedisponibilă (link vechi)';
+    const subtitleSource = resolveSubtitleSourceLabel(subtitleInfo.subtitleSource, subtitleInfo.versionTag);
     const divider = '\x1b[90m────────────────────────────────────\x1b[0m';
     console.log(divider);
     console.log(`\x1b[96m${headline}\x1b[0m`);
     console.log(`\x1b[93m${details}\x1b[0m`);
+    console.log(`\x1b[95m📄 Subtitrare selectată: ${subtitleName}\x1b[0m`);
+    console.log(`\x1b[95m📚 Sursă subtitrare: ${subtitleSource}\x1b[0m`);
     console.log(divider);
 }
 function rememberOriginalSource(key, text) {
@@ -256,7 +260,7 @@ function cleanMemoryCache(protectedKey = null) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.67',
+    version: '13.2.68',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
