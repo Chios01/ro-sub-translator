@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.77',
+    version: '13.2.78',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5884,6 +5884,9 @@ function detectLocalGrammarReviewReasons(text) {
         { pattern: /(?<![\p{L}])flori[-\s]+soarelui(?![\p{L}])/iu, message: 'posibil calc/declinare greșită „flori-soarelui”' },
         { pattern: /(?<![\p{L}])modalitate\s+noi\s+\p{L}+(?![\p{L}])/iu, message: 'construcție gramaticală suspectă după „modalitate noi”' },
         { pattern: /(?<![\p{L}])din\s+cauz[ăa]\s+la(?![\p{L}])/iu, message: 'construcție gramaticală suspectă „din cauză la”; necesită verificare contextuală' },
+        // Cifră izolată „1” injectată accidental înainte de „din cauza” (ex. OCR/Gemini).
+        // Nu o ștergem automat: semnalăm replica pentru verificare contextuală cu sursa.
+        { pattern: /(?<![\p{L}\p{N}])1\s+din\s+cauza\b/iu, message: 'cifră izolată „1” înainte de „din cauza”; verifică dacă este inserată accidental comparând cu originalul' },
         { pattern: /(?<![\p{L}])din\s+cauza\s+(?:voastră|voștri|voastre),?\s*a\s+doi(?![\p{L}])/iu, message: 'construcție suspectă „din cauza voastră, a doi”' },
         { pattern: /(?<![\p{L}])lăsați-mi\s+(?:echipa|grupul|echipajul|oamenii|soldații|soldatii)\s+să(?![\p{L}])/iu, message: 'posibilă ordine greșită a pronumelui în construcția „lăsați-mi ... să”' },
         { pattern: /(?<![\p{L}])(?:lucrura|acesa|întregă|nite|introm|nimani|resuscitatăm)(?![\p{L}])/iu, message: 'posibilă deformare/greșeală ortografică' },
