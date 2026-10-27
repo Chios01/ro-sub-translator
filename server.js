@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.67',
+    version: '13.2.68',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2568,32 +2568,46 @@ function formatSubtitleLayout(value) {
         entries.push({ text: raw, dialogue: false });
     }
 
-    // If the model produces more than two lines, keep the complete content and
-    // compact the overflow into the second line instead of silently truncating it.
-    // Un rând fără liniuță care urmează imediat după un rând cu liniuță este continuarea
-    // aceluiași vorbitor („- Respirație clară / bilateral. / - Bine...”). La fel, un rând cu liniuță
-    // început cu literă mică după o frază neîncheiată. Le lipim de vorbitorul lor ÎNAINTE de comprimare,
-    // altfel al doilea vorbitor ajunge cu liniuță în mijlocul rândului.
+    // Dacă am obținut mai mult de 2 intrări, le restrângem logic la 2.
     if (entries.length > 2) {
         const merged = [];
-        for (const entry of entries) {
-            const previous = merged[merged.length - 1];
-            const continuation = previous && previous.dialogue && !entry.dialogue;
-            const lowercaseContinuation = previous && previous.dialogue && entry.dialogue &&
-                /^[a-zăâîșț]/u.test(entry.text) && !/[.!?…:]["”»)]*$/u.test(previous.text);
-            if (continuation || lowercaseContinuation) {
-                previous.text = (previous.text + ' ' + entry.text).trim();
+        for (let i = 0; i < entries.length; i++) {
+            const entry = entries[i];
+            if (merged.length === 0) {
+                merged.push(entry);
                 continue;
             }
-            merged.push({ text: entry.text, dialogue: entry.dialogue });
-        }
-        entries = merged;
-    }
+            const previous = merged[merged.length - 1];
 
-    if (entries.length > 2) {
-        const first = entries[0];
-        const remainder = entries.slice(1).map(entry => entry.dialogue ? `- ${entry.text}` : entry.text).join(' ');
-        entries = [first, { text: remainder, dialogue: false }];
+            // Cazul 1: Continuare normală (rândul precedent are liniuță, acesta nu)
+            const continuation = previous.dialogue && !entry.dialogue;
+
+            // Cazul 2: Continuare forțată (rândul precedent NU avea liniuță, dar al doilea are).
+            // Repară situații gen: "Cred că ai un atac" / "- de panică."
+            const invertedContinuation = !previous.dialogue && entry.dialogue;
+
+            // Cazul 3: Continuare cu literă mică
+            const lowercaseContinuation = previous.dialogue && entry.dialogue &&
+                /^[a-zăâîșț]/u.test(entry.text) && !/[.!?…:]["”»)]*$/u.test(previous.text);
+
+            if (continuation || invertedContinuation || lowercaseContinuation) {
+                // Dacă e "invertedContinuation", prima bucată devine și ea parte din dialog.
+                if (invertedContinuation) previous.dialogue = true;
+                previous.text = (previous.text + ' ' + entry.text).trim();
+            } else {
+                // Un vorbitor nou și legitim rămâne pe rândul următor.
+                merged.push({ text: entry.text, dialogue: entry.dialogue });
+            }
+        }
+
+        // Dacă totuși au rămas mai mult de 2 (caz extrem de rar), forțăm unificarea primelor două.
+        while (merged.length > 2) {
+            const first = merged.shift();
+            merged[0].text = (first.text + ' ' + merged[0].text).trim();
+            merged[0].dialogue = first.dialogue || merged[0].dialogue;
+        }
+
+        entries = merged;
     }
 
     const capFirst = value => String(value || '').replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
