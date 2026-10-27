@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.73',
+    version: '13.2.74',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2621,6 +2621,39 @@ function formatSubtitleLayout(value) {
         entries.push({ text: raw, dialogue: false });
     }
 
+    // O replică marcată cu liniuță, urmată de o linie fără liniuță, poate fi
+    // o singură frază ruptă de model. Dacă prima parte nu încheie o propoziție,
+    // unim continuarea înainte de ramura care altfel ar capitaliza rândul doi.
+    const endsCompleteSentence = text => /[.!?…]["”»)]*$/u.test(String(text || '').trim());
+    const lowercaseContinuationInitial = (previousText, continuationText) => {
+        const next = String(continuationText || '');
+        if (endsCompleteSentence(previousText)) return next;
+        const firstWord = next.match(/^([A-ZĂÂÎȘȚ][\p{L}-]*)/u);
+        if (!firstWord) return next;
+
+        // Listă prudentă de cuvinte care apar frecvent cu majusculă greșită la
+        // începutul rândului, deși sunt continuarea aceleiași fraze. Nu coborâm
+        // automat orice cuvânt cu majusculă, pentru a proteja numele proprii.
+        const commonContinuationWords = new Set([
+            'în', 'și', 'dar', 'iar', 'însă', 'de', 'din', 'la', 'pe', 'pentru', 'cu', 'că', 'ca', 'să',
+            'nu', 'o', 'un', 'una', 'acest', 'această', 'acești', 'aceste', 'acestea', 'asta', 'astfel',
+            'e', 'este', 'sunt', 'era', 'erau', 'avea', 'aveau', 'am', 'ai', 'avem', 'aveți', 'au',
+            'vreau', 'vrei', 'vrea', 'vrem', 'vreți', 'vor', 'putea', 'puteam', 'puteai', 'puteau', 'pot',
+            'poate', 'probabil', 'trebuie', 'trebuia', 'trebuiau', 'fac', 'face', 'faci', 'făcea', 'făceau',
+            'diagnostică', 'importantă', 'important', 'mai', 'foarte', 'tot', 'toate', 'toți', 'toată',
+            'lucrurile', 'acum', 'atunci', 'deja', 'doar', 'încă', 'nici', 'prea', 'aproape', 'bine',
+            'îmi', 'îți', 'îi', 'își', 'ne', 'vă', 'mă', 'te', 'se', 'îl', 'le', 'mi', 'ți'
+        ]);
+        if (!commonContinuationWords.has(firstWord[1].toLocaleLowerCase('ro-RO'))) return next;
+        return next.replace(/^([A-ZĂÂÎȘȚ])/u, ch => ch.toLocaleLowerCase('ro-RO'));
+    };
+
+    if (entries.length === 2 && entries[0].dialogue && !entries[1].dialogue &&
+        !endsCompleteSentence(entries[0].text)) {
+        const continuation = lowercaseContinuationInitial(entries[0].text, entries[1].text);
+        entries = [{ text: `${entries[0].text} ${continuation}`.trim(), dialogue: true }];
+    }
+
     // Dacă am obținut mai mult de 2 intrări, le restrângem logic la 2.
     if (entries.length > 2) {
         const merged = [];
@@ -2646,7 +2679,10 @@ function formatSubtitleLayout(value) {
             if (continuation || invertedContinuation || lowercaseContinuation) {
                 // Dacă e "invertedContinuation", prima bucată devine și ea parte din dialog.
                 if (invertedContinuation) previous.dialogue = true;
-                previous.text = (previous.text + ' ' + entry.text).trim();
+                const continuationText = continuation
+                    ? lowercaseContinuationInitial(previous.text, entry.text)
+                    : entry.text;
+                previous.text = (previous.text + ' ' + continuationText).trim();
             } else {
                 // Un vorbitor nou și legitim rămâne pe rândul următor.
                 merged.push({ text: entry.text, dialogue: entry.dialogue });
