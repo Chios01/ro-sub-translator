@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.78',
+    version: '13.2.79',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1903,6 +1903,9 @@ const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed
 // Extensie îngustă pentru etichete SDH frecvente care nu erau acoperite de lista de bază.
 // Sunt expresii închise/descrieri de sunet; nu se aplică în interiorul replicilor obișnuite.
 const SOUND_CUE_EXTENDED_LABEL_PATTERNS = [
+    // Etichete SDH suplimentare întâlnite în surse reale; reguli limitate la etichete complete,
+    // nu la propoziții care doar menționează aceste sunete.
+    /^(?:(?:tires?|tyres?)\s+(?:screeching|squealing)|gunshots?\s+echo(?:es|ing)?|indistinct\s+conversations?(?:\s*,\s*typewriters?\s+clicking)?|(?:vehicle|car)\s+door\s+(?:opens?,?\s*closes?|opens?\s+and\s+closes?)|engine\s+(?:starts?,?\s*idling|rev(?:s|ving)?|stops?)|(?:horns?|car\s+horn)\s+(?:honks?|honking)(?:\s+in\s+the\s+distance)?|(?:telephones?|phones?)\s+ringing|typewriters?\s+clicking|liquid\s+pouring|bag\s+thuds?|bell\s+chimes?|suspenseful\s+music\s+plays?|engine\s+stops?,?\s+music\s+stops?|explosion\s*,?\s*glass\s+(?:shattered|shattering))[.!…]*$/iu,
     /^(?:crowd\s+)?clamor(?:s|ed|ing)?[.!…]*$/iu,
     /^(?:yell(?:s|ed|ing)?|cheer(?:s|ed|ing)?|(?:crowd\s+)?cheering)[.!…]*$/iu,
     /^(?:stammer(?:s|ed|ing)?|mutter(?:s|ed|ing)?|scoff(?:s|ed|ing)?|snarl(?:s|ed|ing)?|shriek(?:s|ed|ing)?|mouthing|straining)[.!…]*$/iu,
