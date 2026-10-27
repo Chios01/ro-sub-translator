@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.64',
+    version: '13.2.66',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2201,19 +2201,34 @@ function stripAllInterjections(value) {
         const marker = line.match(/^(\s*[-–—]\s*)/u);
         const prefix = marker ? marker[0] : '';
         let body = marker ? line.slice(marker[0].length) : line;
+        const before = body;
 
-        // Eliminăm șușotelile artificiale „șșș”, inclusiv când sunt repetate,
-        // dar nu ștergem cuvinte-răspuns precum Yeah, Huh? sau Uh-huh.
+        // Eliminăm șușotelile artificiale „șșș”, fără să ștergem răspunsuri cu sens.
         body = body.replace(/(?<![\p{L}\p{N}])ș{2,}t?(?![\p{L}\p{N}])/giu, ' ');
-        body = body.replace(/[ \t]{2,}/g, ' ').trim();
-        // Corectează doar punctuația contradictorie; o virgulă simplă la capătul rândului rămâne.
-        body = body.replace(/([.!?…])[,;:]+/g, '$1');
-        body = body.replace(/^[ \t]*[.,;:]+[ \t]*(?=[\p{L}])/u, '');
+        const removed = body !== before;
 
-        // Linii alcătuite doar din vocalizări repetitive fără sens: „hm hm hm hm”.
-        // Răspunsurile semantice și unitățile de măsură sunt protejate de clasificator.
+        // Nu normalizăm punctuația pe rândurile în care nu am eliminat nimic:
+        // astfel, virgulele de la capătul rândului și pauzele originale rămân intacte.
+        if (removed) {
+            body = body
+                .replace(/[ \t]{2,}/g, ' ')
+                .replace(/\s+([,;:!?])/g, '$1')
+                .replace(/([.!?…])\s*,+/g, '$1')
+                .replace(/,\s*,/g, ' ')
+                .replace(/([,;:])\s*([,;:])+/g, '$1')
+                .replace(/^[ \t]*[,;:!?…]+[ \t]*/g, '')
+                .replace(/^[ \t]*\.(?!\.)[ \t]*/g, '')
+                .replace(/[ \t]*[,;:]+[ \t]*$/g, '')
+                .replace(/^[ \t]*[-–—]+[ \t]*$/g, '');
+        }
+
+        body = body.trim();
+        // Păstrăm filtrarea conservatoare existentă pentru replici formate doar din vocalizări.
         if (isOnlyStandaloneFillerSequence(body)) return '';
         if (!body || !/[\p{L}\p{N}]/u.test(body)) return '';
+        if (removed && /^[a-zăâîșț]/u.test(body)) {
+            body = body.replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
+        }
         return prefix + body;
     }).filter(Boolean).join('\n');
 }
@@ -2234,9 +2249,12 @@ function normalizeSubtitleDashes(value) {
 // Elimină numai liniuța de dialog de la începutul fiecărui rând.
 // Lucrează independent pe rânduri: nu unește, nu sortează și nu reordonează replicile.
 function stripLeadingDialogueDashes(value) {
-    return String(value || '').split(/\r?\n/).map(line =>
-        line.replace(/^(\s*)[-–—][ \t]+(?=\S)/u, '$1')
-    ).join('\n');
+    const lines = String(value || '').split(/\r?\n/);
+    // Două sau mai multe replici cu liniuță = dialog între vorbitori: liniuțele rămân.
+    const dashLines = lines.filter(line => /^\s*[-–—][ \t]*(?=\S)/u.test(line)).length;
+    if (dashLines >= 2) return lines.join('\n');
+    // Un singur vorbitor: eliminăm liniuța, acceptând și „-Text”; „-5” rămâne intact.
+    return lines.map(line => line.replace(/^(\s*)[-–—][ \t]*(?=[\p{L}„“"'‘(¿¡….])/u, '$1')).join('\n');
 }
 
 
@@ -2245,7 +2263,11 @@ function stripSpeakerNameLabels(value) {
     // Păstrăm și alte forme verbale frecvente care pot apărea înaintea unei explicații.
     const protectedIntroLabels = new Set([
         'imagine', 'remember', 'listen', 'look', 'wait', 'think', 'consider',
-        'suppose', 'note', 'notice', 'picture', 'understand', 'beware', 'warning', 'okay'
+        'suppose', 'note', 'notice', 'picture', 'understand', 'beware',
+        'warning', 'okay', 'ok', 'well', 'now', 'here', 'please', 'sorry', 'yes', 'no', 'so',
+        'first', 'second', 'third', 'next', 'then', 'today', 'tonight', 'tomorrow', 'caution',
+        'attention', 'danger', 'important', 'example', 'question', 'answer', 'reminder', 'rule',
+        'truth', 'fact', 'hey', 'hello', 'right', 'anyway'
     ]);
     const pattern = /(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?([A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,3}):\s*/g;
     return String(value || '').replace(pattern, (full, linePrefix, formattingPrefix, label) => {
@@ -2509,6 +2531,14 @@ function formatSubtitleLayout(value) {
         // is required so ordinary hyphenated prose is not split accidentally.
         // Separatorul poate lipsi (iese uneori „în...- Înțeleg.”): îl acceptăm doar dacă după
         // liniuță urmează o literă mare sau ghilimele.
+        // Uneori modelul pune două personaje pe același rând, separate prin „/ - ”.
+        // Recunoaștem separatorul explicit și păstrăm fiecare vorbitor pe rând separat.
+        const slashSeparatedDialogue = raw.match(/^\s*[-–—]\s*(.+?[.!?…])\s*\/\s*[-–—]\s*(?=[A-ZĂÂÎȘȚ„“"])(.+)$/);
+        if (slashSeparatedDialogue) {
+            entries.push({ text: slashSeparatedDialogue[1].trim(), dialogue: true });
+            entries.push({ text: slashSeparatedDialogue[2].trim(), dialogue: true });
+            continue;
+        }
         const prefixedDoubleDialogue = raw.match(/^\s*[-–—]\s*(.+?[.!?…])\s*[-–—]\s*(?=[A-ZĂÂÎȘȚ„“"])(.+)$/);
         if (prefixedDoubleDialogue) {
             entries.push({ text: prefixedDoubleDialogue[1].trim(), dialogue: true });
@@ -2584,7 +2614,11 @@ function formatSubtitleLayout(value) {
     }
 
     if (entries.length === 2 && entries.some(entry => entry.dialogue)) {
-        return entries.map(emit).join('\n');
+        // Două replici în același bloc SRT sunt doi vorbitori: fiecare primește propriul rând,
+        // cu liniuță și majusculă, chiar dacă modelul a omis marcajul celei de-a doua replici.
+        const line1 = entries[0].dialogue ? `- ${capFirst(entries[0].text)}` : entries[0].text;
+        const line2 = `- ${capFirst(entries[1].text)}`;
+        return `${line1}\n${line2}`;
     }
 
     if (entries.length === 2 && entries.every(entry => !entry.dialogue)) {
