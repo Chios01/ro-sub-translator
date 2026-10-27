@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.83',
+    version: '13.2.84',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1941,7 +1941,9 @@ const SOUND_CUE_COMPOUND_LABEL_PATTERNS = [
     /^(?:gunshots?|gunfire|shots?|kissing|slapping|snapping fingers|fingers snapping|paper rustling|papers rustling|metal scraping|metal squeaking|glass breaking|glass shattering|music slows?,?\s*(?:ends?|stops?)|doorbell rings?|bell rings?|ringtone rings?)[.!…]*$/iu,
     /^(?:the\s+)?(?:metal|glass|wood|door|bell|engine|vehicle|car|blade|knife)\s+(?:rings?|ringing|groans?|groaning|squeaks?|squeaking|scrapes?|scraping|creaks?|creaking|clatters?|clattering)(?:\s*[,;]\s*(?:rings?|ringing|groans?|groaning|squeaks?|squeaking|scrapes?|scraping|creaks?|creaking|clatters?|clattering)){1,3}[.!…]*$/iu,
     /^(?:gunshots?|gunfire|shots?|explosion|glass breaks?|glass shatters?)(?:\s*[,;]\s*(?:shell casings?|bullets?|debris|glass|windows?)\s+(?:fall(?:s|ing)?|drop(?:s|ping)?|clatter(?:s|ing)?|break(?:s|ing)?|shatter(?:s|ing)?|scatter(?:s|ing)?)){1,2}[.!…]*$/iu,
-    /^(?:mumbling|mumbles?|muttering|mutters?|groaning|groans?|grunting|grunts?|sighing|sighs?|gasping|gasps?|whistling|whistles?|kissing|slapping|snapping fingers)(?:\s*[,;]\s*(?:mumbling|mumbles?|muttering|mutters?|groaning|groans?|grunting|grunts?|sighing|sighs?|gasping|gasps?|whistling|whistles?|kissing|slapping|snapping fingers)){1,3}[.!…]*$/iu
+    /^(?:mumbling|mumbles?|muttering|mutters?|groaning|groans?|grunting|grunts?|sighing|sighs?|gasping|gasps?|whistling|whistles?|kissing|slapping|snapping fingers)(?:\s*[,;]\s*(?:mumbling|mumbles?|muttering|mutters?|groaning|groans?|grunting|grunts?|sighing|sighs?|gasping|gasps?|whistling|whistles?|kissing|slapping|snapping fingers)){1,3}[.!…]*$/iu,
+    // Variante precise pentru cue-uri ne-vocale întâlnite în testul real; doar etichete complete.
+    /^(?:metal(?:lic)?\s+(?:rings?|ringing|clangs?|clanging)(?:\s*[,;]\s*(?:squeaks?|squeaking|scrapes?|scraping))?|(?:doorbell|bell|alarm|phone|telephone)\s+(?:rings?|ringing)|(?:kissing|slapping|palm slap|palm slaps|indistinct shouting|muffled shouting|distant shouting)|gunshots?\s*[,;]\s*(?:shell\s+)?casings?\s+(?:falling|fall)|(?:shell\s+)?casings?\s+(?:falling|fall))[.!…]*$/iu
 ];
 
 function isExtendedSoundCueLabel(text) {
@@ -3318,6 +3320,7 @@ OUTPUT — CRITICAL
 TRANSLATION AND CONTEXT
 - Translate every meaningful sentence, phrase, joke, idiom, slang expression, and fragment into Romanian. Preserve names and established foreign expressions only when they genuinely belong in the source.
 - MUSIC LYRICS EXCLUSION — The preprocessing code removes text enclosed by paired music-note markers (♪...♪, ♫...♫, ♬...♬, ♩...♩) BEFORE this prompt is built. Such lyrics must not appear in this request. Translate only the remaining real dialogue, including dialogue sharing a source block with lyrics; never invent replacement text for removed song lyrics. This applies to regular and SDH subtitles and must not remove non-song dialogue.
+- UNMARKED SONG LYRICS — Some subtitle sources omit music-note markers. When the supplied block sequence and adjacent source lines make it CLEAR that a line is sung lyrics from an ongoing song/chorus, rather than spoken dialogue, return exactly \"__RO_ST_SKIP_SONG_LYRIC__\" as its text. The program will omit that cue; never expose the marker in the final SRT. Be conservative: repetition alone is NOT enough, and do NOT suppress emotional or shouted dialogue (for example, a person repeating \"I loved you!\"). If you are unsure whether it is sung, translate it as dialogue. If a block contains identifiable spoken dialogue as well as lyrics but has no explicit music markers to separate them, translate the spoken dialogue only; do not return the skip marker when any spoken dialogue remains.
 - Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
 - If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
@@ -4717,6 +4720,10 @@ function hasCorruptedSubtitleText(text, originalText) {
     // Detectează coruperea de capitalizare dintr-un cuvânt (de ex. „cEEa”).
     // Nu marchează acronimele, „iPhone” sau „iOS”; cere și o terminație cu litere mici.
     if (/(?<![\p{L}])[\p{Ll}][\p{Lu}]{2,}[\p{Ll}]+(?![\p{L}])/u.test(s)) return true;
+    // O traducere de un singur cuvânt scurt, cu majusculă inițială dar fără nicio vocală,
+    // este de obicei text corupt (de ex. „Gtt”). Acronimele majuscule sunt exceptate.
+    const bareWord = s.replace(/[.!?…]+$/u, '').trim();
+    if (/^\p{Lu}[\p{Ll}]{2,5}$/u.test(bareWord) && !/[aeiouyăâî]/iu.test(bareWord)) return true;
 
     return false;
 }
@@ -4998,9 +5005,15 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
             // Cue-urile strict numerice sunt copiate byte-for-byte după parsare;
             // toate celelalte ID-uri folosesc exclusiv răspunsul asociat explicit de model.
+            let mainSongLyricSkips = 0;
             const results = chunk.map(obj => {
                 if (isNumericVerbatimCue(obj.text) || obj.musicOnly) {
                     return { id: obj.id, text: String(obj.text || '') };
+                }
+                if (isSongLyricSkip(dict[String(obj.id)]) && !/individual/i.test(requestLabel)) {
+                    getIntentionallySuppressedTranslationIds(keyStates).add(String(obj.id));
+                    mainSongLyricSkips++;
+                    return { id: obj.id, text: '' };
                 }
                 const candidate = getUsableFormattedTranslation(obj.id, dict[String(obj.id)]);
                 if (candidate && !hasAllProtectedMusicTokens(obj, candidate)) {
@@ -5009,6 +5022,10 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 }
                 return { id: obj.id, text: candidate || ' ' };
             });
+
+            if (mainSongLyricSkips) {
+                console.log(`${c.cyan}[Versuri muzicale] Gemini a identificat contextual ${mainSongLyricSkips} ID-uri ca versuri fără marcaje; omise intenționat.${c.reset}`);
+            }
 
             // Verificările de limbă și fidelitate rulează o singură dată după toate calupurile,
             // unde pot corecta problemele contextual în loc să emită avertismente premature.
@@ -6792,6 +6809,9 @@ function assessEmptyRecoveryCandidate(item, candidateRaw) {
     if (isEmptyRecoverySoundCueSkip(candidateRaw) && !isStandaloneNonDialogueSoundCue(item.text)) {
         return { ok: false, reason: 'markerul de omitere este permis doar pentru un cue non-dialogat din sursă' };
     }
+    if (isSongLyricSkip(candidateRaw)) {
+        return { ok: false, reason: 'markerul pentru versuri este permis numai în traseul de omitere intenționată' };
+    }
 
     const candidate = formatSubtitleLine(String(candidateRaw || ''));
     if (!candidate || !candidate.replace(/<[^>]+>/g, '').trim()) {
@@ -6804,6 +6824,11 @@ function assessEmptyRecoveryCandidate(item, candidateRaw) {
 }
 
 const EMPTY_RECOVERY_SOUND_CUE_SKIP = '__RO_ST_SKIP_SOUND_CUE__';
+const SONG_LYRIC_SKIP = '__RO_ST_SKIP_SONG_LYRIC__';
+
+function isSongLyricSkip(value) {
+    return String(value ?? '').trim() === SONG_LYRIC_SKIP;
+}
 
 function isEmptyRecoverySoundCueSkip(value) {
     return String(value ?? '').trim() === EMPTY_RECOVERY_SOUND_CUE_SKIP;
@@ -6828,8 +6853,9 @@ ${stageLabel.toUpperCase()} — TRADUCERI RĂMASE GOALE.
 
 Tradu în română naturală fiecare replică din lista de mai jos. Aceste blocuri au trecut deja de filtrarea inițială a subtitrărilor. Pentru dialogul obișnuit, fragmente incomplete, replici de un singur cuvânt, întrebări și reacții cu sens, întoarce întotdeauna o traducere română nevidă. Nu lăsa câmpul text gol și nu omite niciun ID. Pentru dialog normal, returnează numai textul tradus, fără paranteze rotunde/drepte adăugate în jurul replicii.
 
-Toate elementele de mai jos au trecut deja de filtrul local pentru cue-uri sonore. Tratează fiecare intrare ca pe un fragment scurt de replică/rostire și redă-i sensul în română ca text de dialog, nu ca etichetă de acțiune sau indicație scenică/sonoră. Nu transforma textul în formulări precum „oftează”, „râsete”, „muzică în fundal” sau „suspină” și nu adăuga paranteze pentru a-l prezenta ca indicație. Pentru o sursă foarte scurtă, alege cea mai firească formulare orală pe care o susține textul, fără să inventezi informații. Fiecare ID trebuie să primească o traducere românească nevidă. Nu inventa omisiuni intenționate.
+Toate elementele de mai jos au trecut deja de filtrul local pentru cue-uri sonore. Tratează fiecare intrare ca pe un fragment scurt de replică/rostire și redă-i sensul în română ca text de dialog, nu ca etichetă de acțiune sau indicație scenică/sonoră. Nu transforma textul în formulări precum „oftează”, „râsete”, „muzică în fundal” sau „suspină” și nu adăuga paranteze pentru a-l prezenta ca indicație. Pentru o sursă foarte scurtă, alege cea mai firească formulare orală pe care o susține textul, fără să inventezi informații. Fiecare ID de dialog trebuie să primească o traducere românească nevidă. Singura excepție este un ID identificat clar, într-un lot cu context suficient, ca vers cântat fără marcaje: pentru acesta este permis markerul tehnic de omitere descris mai jos. Nu inventa alte omisiuni intenționate.
 Nu folosi niciun marker intern, token special sau placeholder în câmpul text. Clasificarea și omiterea cue-urilor sonore sunt responsabilitatea verificării locale, nu a modelului.
+${(!forceTranslate && !/individual/i.test(stageLabel)) ? 'Dacă un grup conține versuri cântate fără note muzicale, iar contextul din grup arată CLAR că un ID este numai vers muzical (nu replică vorbită), întoarce exact __RO_ST_SKIP_SONG_LYRIC__ în câmpul text pentru acel ID; nu folosi markerul doar pentru că o replică se repetă sau este emoțională. Dacă există dubiu, traduce ca dialog. Markerul va fi omis din SRT.\n' : ''}
 ${forceTranslate ? '\nRECUPERARE OBLIGATORIE: răspunsul anterior a folosit un marker de omitere nepermis pentru aceste ID-uri. Tradu fiecare ID de mai jos ca fragment scurt de dialog; markerul special este interzis. Nu îl reformula ca etichetă de sunet sau indicație scenică și nu omite nimic.' : ''}
 Returnează DOAR un array JSON valid, cu exact un obiect per ID, în aceeași ordine. Fiecare obiect trebuie să aibă câmpurile id (număr întreg) și text (șir). Nu include markdown, explicații sau alte câmpuri.
 ${strictJsonRetry ? '\nRETRY TEHNIC: întoarce numai JSON valid, păstrează exact ID-urile și nu lăsa niciun câmp text gol.' : ''}
@@ -6962,6 +6988,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
         const rejectionReasons = new Map();
         const markerRetryAttemptedIds = new Set();
         let intentionalSoundSkips = 0;
+        let intentionalSongSkips = 0;
         let repeatedEmptyResponseSkips = 0;
 
         // Dacă Gemini folosește markerul interzis pentru dialog, reîncercăm o singură
@@ -7012,6 +7039,14 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
 
         for (const item of batch) {
             const id = String(item.id);
+            if (isSongLyricSkip(recoveryDict[id]) && !markerRetryAttemptedIds.has(id) && !/individual/i.test(stageLabel)) {
+                getIntentionallySuppressedTranslationIds(keyStates).add(id);
+                translatedById[id] = '';
+                failedById.delete(id);
+                individualRetryById.delete(id);
+                intentionalSongSkips++;
+                continue;
+            }
             if (isEmptyRecoverySoundCueSkip(recoveryDict[id]) && isStandaloneNonDialogueSoundCue(item.text)) {
                 markIntentionalSoundCueSuppressed(item, translatedById, keyStates);
                 failedById.delete(id);
@@ -7065,6 +7100,9 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
 
         if (intentionalSoundSkips) {
             console.log(`${c.cyan}[${stageLabel}] ${intentionalSoundSkips} ID-uri marcate explicit ca descrieri sonore; lăsate goale intenționat și excluse din retry/QA.${c.reset}`);
+        }
+        if (intentionalSongSkips) {
+            console.log(`${c.cyan}[${stageLabel}] ${intentionalSongSkips} ID-uri identificate ca versuri cântate fără marcaje și omise intenționat.${c.reset}`);
         }
         if (repeatedEmptyResponseSkips) {
             console.log(`${c.cyan}[${stageLabel}] ${repeatedEmptyResponseSkips} ID-uri au primit din nou text explicit gol într-un lot mic; suprimate fără split, retry individual sau QA FINAL.${c.reset}`);
@@ -7398,6 +7436,7 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
         const unresolved = [];
         const markerRetryAttemptedIds = new Set();
         let intentionalSoundSkips = 0;
+        let intentionalSongSkips = 0;
 
         // La recuperarea finală aplicăm aceeași limită: markerul invalid pentru
         // dialog primește o singură reîncercare grupată, nu split-uri în cascadă.
@@ -7440,6 +7479,12 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
 
         for (const item of batch) {
             const id = String(item.id);
+            if (isSongLyricSkip(recoveryDict[id]) && !markerRetryAttemptedIds.has(id)) {
+                getIntentionallySuppressedTranslationIds(keyStates).add(id);
+                translatedById[id] = '';
+                intentionalSongSkips++;
+                continue;
+            }
             if (isEmptyRecoverySoundCueSkip(recoveryDict[id]) && isStandaloneNonDialogueSoundCue(item.text)) {
                 markIntentionalSoundCueSuppressed(item, translatedById, keyStates);
                 intentionalSoundSkips++;
@@ -7459,6 +7504,9 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
 
         if (intentionalSoundSkips) {
             console.log(`${c.cyan}[Final Empty Recovery] ${intentionalSoundSkips} ID-uri marcate ca descrieri sonore și scoase din retry/QA.${c.reset}`);
+        }
+        if (intentionalSongSkips) {
+            console.log(`${c.cyan}[Final Empty Recovery] ${intentionalSongSkips} ID-uri identificate ca versuri cântate și scoase din retry/QA.${c.reset}`);
         }
 
         // Dacă JSON-ul este valid, dar lipsesc rezultate sau unele texte nu trec
@@ -7939,8 +7987,9 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         }
     }
 
+    const mainSuppressedIds = getIntentionallySuppressedTranslationIds(keyStates);
     const eligibleMainItems = items.filter(item => {
-        if (item.musicOnly) return false;
+        if (item.musicOnly || mainSuppressedIds.has(String(item.id))) return false;
         const source = String(item.text || '').replace(/<[^>]+>/g, '').trim();
         return Boolean(source) && !isJunkOrInterjection(item.text);
     });
@@ -8099,6 +8148,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     }
     for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
         const id = String(issue.item.id);
+        if (getIntentionallySuppressedTranslationIds(keyStates).has(id)) continue;
         const existing = unresolvedQualityMap.get(id);
         if (existing) existing.reasons.push(issue.reason);
         else unresolvedQualityMap.set(id, { item: issue.item, reasons: [issue.reason] });
@@ -8169,6 +8219,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     for (const item of items) {
         if (item.musicOnly) continue;
         const id = String(item.id);
+        if (getIntentionallySuppressedTranslationIds(keyStates).has(id)) continue;
         const originalClean = isEffectivelyEmptySubtitleText(item.text)
             ? ''
             : String(item.text || '').replace(/<[^>]+>/g, '').trim();
@@ -8187,6 +8238,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     }
     for (const issue of findRepeatedBoundaryConnectorIssues(items, translatedById)) {
         const id = String(issue.item.id);
+        if (getIntentionallySuppressedTranslationIds(keyStates).has(id)) continue;
         if (!finalRepairCandidates.some(item => String(item.id) === id)) {
             finalRepairCandidates.push(issue.item);
         }
@@ -8194,6 +8246,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     }
     for (const issue of findAdjacentSemanticOverlapIssues(items, translatedById)) {
         const id = String(issue.item.id);
+        if (getIntentionallySuppressedTranslationIds(keyStates).has(id)) continue;
         if (!finalRepairCandidates.some(item => String(item.id) === id)) {
             finalRepairCandidates.push(issue.item);
         }
@@ -9700,6 +9753,10 @@ function findOpenSongInteriorBlocks(blocks) {
                 i = j;
                 break;
             }
+            // O cue cu propriile marcaje (de ex. un vers încadrat complet în ♪...♪)
+            // nu închide și nu rupe cântecul exterior; acel cue este filtrat separat de
+            // protectMusicalLyricSegments. Păstrăm următoarele versuri nemarcate în același span.
+            if (cue.kind === 'other') continue;
             if (cue.kind !== 'none') break;
             span.push({ index: j, text: cue.text });
         }
