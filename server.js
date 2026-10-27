@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.68',
+    version: '13.2.69',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -9364,8 +9364,19 @@ function findOpenSongInteriorBlocks(blocks) {
     return interior;
 }
 
+// Normalizează notele muzicale afectate de mojibake înaintea detectării cântecelor.
+// Exemple: ♩ -> â™©, ♬ -> â™¬, ♫ -> â™«, ♪ -> â™ª când UTF-8 este decodat greșit.
+// Normalizarea trebuie să se întâmple înainte de findOpenSongInteriorBlocks și de filtrarea cue-urilor.
+function normalizeMusicMarkers(text) {
+    return String(text || '')
+        .replace(/â™ª/giu, '♪')
+        .replace(/â™«/giu, '♫')
+        .replace(/â™¬/giu, '♬')
+        .replace(/â™©/giu, '♩');
+}
+
 function parseSrt(srt, stats = null) {
-    const normalized = String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, '');
+    const normalized = normalizeMusicMarkers(String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, ''));
     const blocks = normalized.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
     const songInteriorBlocks = findOpenSongInteriorBlocks(blocks);
     const result = [];
