@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.78',
+    version: '13.2.82',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1903,6 +1903,20 @@ const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed
 // Extensie îngustă pentru etichete SDH frecvente care nu erau acoperite de lista de bază.
 // Sunt expresii închise/descrieri de sunet; nu se aplică în interiorul replicilor obișnuite.
 const SOUND_CUE_EXTENDED_LABEL_PATTERNS = [
+    // Etichete de melodii și interpretări muzicale. Sunt recunoscute numai ca etichete complete;
+    // include titluri cu paranteze pătrate imbricate, ex. "Cat People [Putting Out Fire]".
+    /^(?:[^.!?\r\n]{1,100}['’]s?\s+["“].{1,120}["”]\s+(?:plays?|playing)|["“].{1,120}["”]\s+playing\s+(?:on|in)\s+(?:the\s+)?(?:piano|organ|guitar|violin|keyboard|instrument))\s*[.!…]*$/iu,
+    // Etichete izolate concrete observate în sursa Motor City; fără potrivire în interiorul dialogului.
+    /^(?:no audio|engine starts?|engine starts?,?\s*(?:idling|rev(?:s|ving)?)|engine cranking|engine rev(?:s|ving)|helicopter blades? whirring|inhales sharply,?\s*groans?|footsteps? departing|knock on (?:the )?door|buzzer sounds?,?\s*lock clicks?|handcuffs? clinking|sirens? wailing(?:\s+in\s+(?:the\s+)?distance)?|machine whirring|tapping(?: continues)?|keys jingling|music slows?,?\s*continues|indistinct conversations?,?\s*(?:voices echoing|telephone ringing|typewriters? clicking)|ice clattering,?\s*music continues|gun thuds?,?\s*blade squeaking|paper crinkling|glass breaks?|glass breaking|music builds?,?\s*continues|birds chirping,?\s*vehicle approaching|bat thudding,?\s*man groaning|fingers snapping|plastic crinkling|water splashes|lock clicks?,?\s*buzzer sounds?|click,?\s*dial tone|blade slicing,?\s*man grunts?|gunshots?|gunfire continues|engine starts?,?\s*revs?|horn blares?,?\s*tires? screeching|glass breaking,?\s*tires? screeching|clattering in distance|birds chirping,?\s*cawing|wick hissing,?\s*explosion echoes?|explosion,?\s*glass breaking|gunshot echoes?,?\s*man grunts?|blade slicing,?\s*gunshot echoes?|engines? rev(?:s|ving)?,?\s*tires? screech(?:ing)?|tires? screeching,?\s*engine revving)\s*[.!…]*$/iu,
+    // Variante compuse întâlnite în ieșirea Motor City: regulile se aplică etichetei complete.
+    /^(?:(?:the\s+)?engine\s+(?:rev(?:s|ving)?|starts?(?:\s*,?\s*idling)?|turns?\s+over)(?:\s*,\s*|\s+and\s+)(?:the\s+)?(?:tires?|tyres?)\s+(?:screeching|squealing|skidding)|(?:the\s+)?(?:tires?|tyres?)\s+(?:screeching|squealing|skidding)(?:\s*,\s*|\s+and\s+)(?:the\s+)?engine\s+(?:rev(?:s|ving)?|turns?\s+over)|(?:the\s+)?(?:horns?|car horns?)\s+(?:honking|honks?)(?:\s+in\s+(?:the\s+)?distance)|(?:the\s+)?sirens?\s+(?:(?:sounds?|wails?|howls?)(?:\s+in\s+(?:the\s+)?distance)?|in\s+(?:the\s+)?distance))[.!…]*$/iu,
+    // Etichete muzicale SDH: nu se aplică versurilor sau propozițiilor complete de dialog.
+    /^(?:(?:the\s+)?(?:(?:slow|down[- ]tempo|dramatic|suspenseful|background|soft|upbeat|romantic|instrumental|gentle|tense|ominous|mellow|low|loud|intense|melancholy)\s+)?music(?:\s+(?:plays?|playing|continues?|swells?|fades?(?:\s+(?:out|away))?|starts?|stops?|intensifies|builds|grows?\s+louder|gets?\s+louder|slows?(?:\s*(?:,|and)\s*stops?)?|becomes?\s+(?:more\s+)?intense|rises|picks?\s+up|ends?))?|(?:the\s+)?music\s+(?:slows?\s*,\s*stops?|stops?\s*,?\s*(?:then\s+)?starts?))[.!…]*$/iu,
+    // Alte etichete complete, scurte și recognoscibile de efect sonor.
+    /^(?:(?:the\s+)?helicopter\s+blades?\s+(?:spin|rotate|turn|whir)|(?:the\s+)?(?:machine|machinery)\s+(?:runs?|running|operates?|whirs?)|(?:the\s+)?door\s+(?:opens?|closes?|shuts?)(?:\s*,?\s*(?:the\s+)?(?:bell|doorbell)\s+(?:rings?|chimes?))?|(?:the\s+)?(?:doorbell|bell|typewriter bell)\s+(?:rings?|chimes?)|(?:the\s+)?(?:keys?|keyring)\s+(?:jangle|jangles|jangling|rattle|rattles|rattling|clink|clinks|clinking)|(?:the\s+)?(?:lock|latch)\s+(?:clicks?|clicking)(?:\s*,?\s*(?:the\s+)?(?:doorbell|bell)\s+(?:rings?|chimes?))?|(?:the\s+)?(?:footsteps?|steps)\s+(?:recede|receding|fade(?:\s+away)?|approach|approaching)|(?:the\s+)?papers?\s+(?:rustle|rustling|crinkle|crinkling)|(?:the\s+)?(?:glass|window)\s+(?:shatters?|shattering|breaks?|breaking)|(?:the\s+)?(?:gun|weapon)\s+(?:cocks?|cocking|is\s+cocked|being\s+cocked|clicks?|clicking)|(?:the\s+)?(?:blade|knife)\s+(?:cuts?|cutting|slashes?|slashing)|(?:the\s+)?metal\s+(?:clatters?|clattering|rings?|scrapes?|scraping)|(?:the\s+)?birds?\s+(?:chirp|chirping)(?:\s+and\s+(?:caw|caws|cawing))?|(?:the\s+)?crickets?\s+(?:chirp|chirping)(?:\s+in\s+(?:the\s+)?distance)?|(?:the\s+)?(?:vehicles?|cars?)\s+(?:approach|approaching|recede|receding|drive\s+away)|(?:the\s+)?liquid\s+(?:pours?|pouring)|(?:an?\s+)?explosion\s+(?:echoes?|echoing)(?:\s*,?\s*(?:the\s+)?engine\s+(?:rev(?:s|ving)?))?|(?:the\s+)?(?:explosion|gunshot|gunfire|shots?)\s*,?\s*(?:the\s+)?(?:glass\s+(?:shatters?|shattering)|bullets?\s+ricochet(?:s|ing)?)|(?:the\s+)?(?:air|wind)\s+(?:hisses?|hissing|whistles?|whistling)|(?:the\s+)?valve\s+(?:squeaks?|squeaking)(?:\s*,?\s*(?:the\s+)?(?:hissing|hiss)\s+(?:stops?|ends?))|(?:no sound|nothing audible|silence follows))[.!…]*$/iu,
+    // Etichete SDH suplimentare întâlnite în surse reale; reguli limitate la etichete complete,
+    // nu la propoziții care doar menționează aceste sunete.
+    /^(?:(?:tires?|tyres?)\s+(?:screeching|squealing)|gunshots?\s+echo(?:es|ing)?|indistinct\s+conversations?(?:\s*,\s*typewriters?\s+clicking)?|(?:vehicle|car)\s+door\s+(?:opens?,?\s*closes?|opens?\s+and\s+closes?)|engine\s+(?:starts?,?\s*idling|rev(?:s|ving)?|stops?)|(?:horns?|car\s+horn)\s+(?:honks?|honking)(?:\s+in\s+the\s+distance)?|(?:telephones?|phones?)\s+ringing|typewriters?\s+clicking|liquid\s+pouring|bag\s+thuds?|bell\s+chimes?|suspenseful\s+music\s+plays?|engine\s+stops?,?\s+music\s+stops?|explosion\s*,?\s*glass\s+(?:shattered|shattering))[.!…]*$/iu,
     /^(?:crowd\s+)?clamor(?:s|ed|ing)?[.!…]*$/iu,
     /^(?:yell(?:s|ed|ing)?|cheer(?:s|ed|ing)?|(?:crowd\s+)?cheering)[.!…]*$/iu,
     /^(?:stammer(?:s|ed|ing)?|mutter(?:s|ed|ing)?|scoff(?:s|ed|ing)?|snarl(?:s|ed|ing)?|shriek(?:s|ed|ing)?|mouthing|straining)[.!…]*$/iu,
@@ -1961,7 +1975,7 @@ function stripBracketedSegments(text) {
 
     // Eliminăm doar cue-uri sonore delimitate; parantezele care conțin dialog,
     // explicații sau informație narativă rămân intacte. Repetăm pentru segmente imbricate.
-    const bracketedSegmentPattern = /\([^()\[\]]*\)|\[[^()\[\]]*\]|\([^()\[\]\r\n]{1,80}\]|\[[^()\[\]\r\n]{1,80}\)/g;
+    const bracketedSegmentPattern = /\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)+\]|\([^()\[\]]*\)|\[[^()\[\]]*\]|\([^()\[\]\r\n]{1,80}\]|\[[^()\[\]\r\n]{1,80}\)/g;
     let previous;
     do {
         previous = clean;
@@ -9415,10 +9429,11 @@ function protectMusicalLyricSegments(text, cueSequence) {
         return token;
     });
 
-    // Unele subtitrări marchează versul doar cu nota de început (de ex. „♪ <i>vers...</i>”)
-    // și omit nota de închidere. Fără această plasă de siguranță, markerul este șters ulterior
-    // de normalizare, iar versul ajunge la Gemini ca dialog și poate rămâne tradus în rezultat.
-    // Păstrăm orice text de dialog aflat înaintea notei și mascăm doar coada neînchisă.
+    // Unele surse deschid versul cu o singură notă („♪ vers...”) și nu o închid
+    // în același bloc SRT. NU mascăm automat tot restul blocului: acesta poate conține
+    // și dialog, separat prin rând nou, separatorul „ / ” sau o reacție scurtă („Ow!”).
+    // Dacă nu există separator, textul rămas după marcator este tratat ca vers; un bloc
+    // mixt fără niciun separator este ambiguu și necesită verificare pe SRT-ul sursă.
     const unpairedTailMatch = maskedText.match(/([♪♫♬♩])([\s\S]*)$/u);
     if (unpairedTailMatch) {
         const tailStart = unpairedTailMatch.index;
@@ -9431,27 +9446,39 @@ function protectMusicalLyricSegments(text, cueSequence) {
             .trim();
 
         if (/[\p{L}\p{N}]/u.test(visibleTail)) {
-            // Dacă în coadă există deja un token de vers protejat, îl păstrăm separat:
-            // astfel, notele incomplete nu invalidează tokenurile create pentru perechi valide.
-            const tailParts = tail.split(/(ZXQKEEPSONG\d+PART\d+QXZ)/giu);
-            const protectedTail = tailParts.map(part => {
-                if (/^ZXQKEEPSONG\d+PART\d+QXZ$/iu.test(part)) return part;
+            const candidates = [];
+            const addBoundary = (regex, priority) => {
+                const match = regex.exec(tail);
+                if (match && match.index > 0) candidates.push({ index: match.index, priority });
+            };
+            // Delimitări structurale care apar în subtitrări reale.
+            addBoundary(/\r?\n/u, 0);
+            addBoundary(/<br\s*\/?>/iu, 1);
+            // „ / ” separă frecvent două replici în același bloc SRT.
+            addBoundary(/\s+\/\s+/u, 2);
+            // Reacții foarte scurte, recognoscibile ca replici, nu sunt absorbite în vers.
+            addBoundary(/\s+(?=(?:ow|ouch|oh|ah+|aah+|hey|whoa|huh|yes|yeah|yep|no|nope|stop|help|wait|what|fuck|shit|damn)\b)/iu, 3);
 
-                const visiblePart = part
-                    .replace(/<[^>]*>/g, ' ')
-                    .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
-                    .trim();
-                if (!/[\p{L}\p{N}]/u.test(visiblePart)) return part;
+            candidates.sort((a, b) => a.index - b.index || a.priority - b.priority);
+            const boundary = candidates[0]?.index ?? -1;
+            const lyricPart = boundary >= 0 ? tail.slice(0, boundary) : tail;
+            const visibleLyricPart = lyricPart
+                .replace(protectedTokenRe, ' ')
+                .replace(/[♪♫♬♩]/gu, ' ')
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
+                .trim();
 
+            if (/[\p{L}\p{N}]/u.test(visibleLyricPart)) {
                 const token = `ZXQKEEPSONG${cueSequence}PART${segments.length}QXZ`;
-                segments.push({ token, original: part });
-                return token;
-            }).join('');
-
-            maskedText = maskedText.slice(0, tailStart) + protectedTail;
+                segments.push({ token, original: lyricPart });
+                const remainder = boundary >= 0 ? tail.slice(boundary) : '';
+                maskedText = maskedText.slice(0, tailStart) + token + remainder;
+            }
         } else if (tail.length) {
-            // Nota de închidere singură la sfârșitul replicii („vers ♪”): mascăm versul din fața ei,
-            // pe același rând, fără să atingem eventualele tokenuri deja create.
+            // O notă izolată la sfârșitul blocului poate închide un vers început pe rândul
+            // curent. Masca se limitează la textul de dinaintea notei din același rând,
+            // fără să atingă tokenurile de vers deja protejate.
             const lineStart = maskedText.lastIndexOf('\n', tailStart - 1) + 1;
             const lineHead = maskedText.slice(lineStart, tailStart);
             const tokenMatches = [...lineHead.matchAll(/ZXQKEEPSONG\d+PART\d+QXZ/giu)];
@@ -9471,6 +9498,32 @@ function protectMusicalLyricSegments(text, cueSequence) {
     }
 
     return { text: maskedText, segments };
+}
+
+// În interiorul unui cântec delimitat de note, păstrăm blocurile care arată suficient
+// de mult ca replici vorbite. Este un filtru conservator: poate lăsa unele versuri
+// ambigue să ajungă la Gemini, dar evită ștergerea automată a dialogului.
+function looksLikeProbableSpokenDialogue(text) {
+    const clean = String(text || '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
+        .replace(/[♪♫♬♩🎵🎶]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!clean) return false;
+
+    const wordCount = (clean.match(/[\p{L}\p{N}]+(?:['’][\p{L}]+)?/gu) || []).length;
+    if (!wordCount) return false;
+
+    // Întrebările și reacțiile scurte sunt mult mai probabil dialog decât versuri.
+    if (/[?？]/u.test(clean)) return true;
+    if (/^(?:ow|ouch|oh|ah+|aah+|hey|hi|hello|whoa|huh|yes|yeah|yep|no|nope|stop|help|wait|what|fuck|shit|damn|miller|found it|come on|let's go|go on|thank you|thanks|sorry|okay|ok|all right)[.!…]*$/iu.test(clean)) return true;
+
+    // Replici scurte cu semne de punctuație conversațională; intenționat conservator.
+    if (wordCount <= 7 && /[.!…]$/u.test(clean)) return true;
+    if (wordCount <= 12 && /\b(?:don't|do not|can't|cannot|won't|will not|didn't|doesn't|isn't|aren't|fuck(?:ing|ed)?|shit|stop|help|wait|listen|look)\b/iu.test(clean)) return true;
+
+    return false;
 }
 function isMusicOnlyMaskedCue(text, musicSegments) {
     if (!Array.isArray(musicSegments) || musicSegments.length === 0) return false;
@@ -9608,7 +9661,7 @@ function findOpenSongInteriorBlocks(blocks) {
             else if (endStyle && !startStyle) kind = 'close';
             else kind = 'other';
         }
-        return { start: toMs(timing[1]), end: toMs(timing[2]), kind };
+        return { start: toMs(timing[1]), end: toMs(timing[2]), kind, text };
     });
 
     const interior = new Set();
@@ -9620,12 +9673,14 @@ function findOpenSongInteriorBlocks(blocks) {
             const previous = cues[j - 1];
             if (!cue || !previous || !(cue.start - previous.end <= 3000)) break;
             if (cue.kind === 'close') {
-                span.forEach(index => interior.add(index));
+                span.forEach(entry => {
+                    if (!looksLikeProbableSpokenDialogue(entry.text)) interior.add(entry.index);
+                });
                 i = j;
                 break;
             }
             if (cue.kind !== 'none') break;
-            span.push(j);
+            span.push({ index: j, text: cue.text });
         }
     }
     return interior;
