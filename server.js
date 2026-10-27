@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.75',
+    version: '13.2.76',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2666,7 +2666,13 @@ function formatSubtitleLayout(value) {
     if (entries.length === 2 && entries[0].dialogue && !entries[1].dialogue &&
         !endsCompleteSentence(entries[0].text)) {
         const continuation = lowercaseContinuationInitial(entries[0].text, entries[1].text);
-        entries = [{ text: `${entries[0].text} ${continuation}`.trim(), dialogue: true }];
+        // Ambele fragmente formează aceeași intervenție: dacă o liniuță a apărut
+        // doar pe prima linie, nu o păstrăm ca și cum ar fi dialog dual.
+        // Cazurile cu un al doilea vorbitor marcat sunt tratate separat mai jos
+        // și își păstrează liniuțele.
+        const mergedText = `${entries[0].text} ${continuation}`.trim()
+            .replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
+        entries = [{ text: mergedText, dialogue: false }];
     }
 
     // Dacă am obținut mai mult de 2 intrări, le restrângem logic la 2.
