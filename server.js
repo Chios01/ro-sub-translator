@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.81',
+    version: '13.2.78',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1903,20 +1903,6 @@ const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed
 // Extensie îngustă pentru etichete SDH frecvente care nu erau acoperite de lista de bază.
 // Sunt expresii închise/descrieri de sunet; nu se aplică în interiorul replicilor obișnuite.
 const SOUND_CUE_EXTENDED_LABEL_PATTERNS = [
-    // Etichete de melodii și interpretări muzicale. Sunt recunoscute numai ca etichete complete;
-    // include titluri cu paranteze pătrate imbricate, ex. "Cat People [Putting Out Fire]".
-    /^(?:[^.!?\r\n]{1,100}['’]s?\s+["“].{1,120}["”]\s+(?:plays?|playing)|["“].{1,120}["”]\s+playing\s+(?:on|in)\s+(?:the\s+)?(?:piano|organ|guitar|violin|keyboard|instrument))\s*[.!…]*$/iu,
-    // Etichete izolate concrete observate în sursa Motor City; fără potrivire în interiorul dialogului.
-    /^(?:no audio|engine starts?|engine starts?,?\s*(?:idling|rev(?:s|ving)?)|engine cranking|engine rev(?:s|ving)|helicopter blades? whirring|inhales sharply,?\s*groans?|footsteps? departing|knock on (?:the )?door|buzzer sounds?,?\s*lock clicks?|handcuffs? clinking|sirens? wailing(?:\s+in\s+(?:the\s+)?distance)?|machine whirring|tapping(?: continues)?|keys jingling|music slows?,?\s*continues|indistinct conversations?,?\s*(?:voices echoing|telephone ringing|typewriters? clicking)|ice clattering,?\s*music continues|gun thuds?,?\s*blade squeaking|paper crinkling|glass breaks?|glass breaking|music builds?,?\s*continues|birds chirping,?\s*vehicle approaching|bat thudding,?\s*man groaning|fingers snapping|plastic crinkling|water splashes|lock clicks?,?\s*buzzer sounds?|click,?\s*dial tone|blade slicing,?\s*man grunts?|gunshots?|gunfire continues|engine starts?,?\s*revs?|horn blares?,?\s*tires? screeching|glass breaking,?\s*tires? screeching|clattering in distance|birds chirping,?\s*cawing|wick hissing,?\s*explosion echoes?|explosion,?\s*glass breaking|gunshot echoes?,?\s*man grunts?|blade slicing,?\s*gunshot echoes?|engines? rev(?:s|ving)?,?\s*tires? screech(?:ing)?|tires? screeching,?\s*engine revving)\s*[.!…]*$/iu,
-    // Variante compuse întâlnite în ieșirea Motor City: regulile se aplică etichetei complete.
-    /^(?:(?:the\s+)?engine\s+(?:rev(?:s|ving)?|starts?(?:\s*,?\s*idling)?|turns?\s+over)(?:\s*,\s*|\s+and\s+)(?:the\s+)?(?:tires?|tyres?)\s+(?:screeching|squealing|skidding)|(?:the\s+)?(?:tires?|tyres?)\s+(?:screeching|squealing|skidding)(?:\s*,\s*|\s+and\s+)(?:the\s+)?engine\s+(?:rev(?:s|ving)?|turns?\s+over)|(?:the\s+)?(?:horns?|car horns?)\s+(?:honking|honks?)(?:\s+in\s+(?:the\s+)?distance)|(?:the\s+)?sirens?\s+(?:(?:sounds?|wails?|howls?)(?:\s+in\s+(?:the\s+)?distance)?|in\s+(?:the\s+)?distance))[.!…]*$/iu,
-    // Etichete muzicale SDH: nu se aplică versurilor sau propozițiilor complete de dialog.
-    /^(?:(?:the\s+)?(?:(?:slow|down[- ]tempo|dramatic|suspenseful|background|soft|upbeat|romantic|instrumental|gentle|tense|ominous|mellow|low|loud|intense|melancholy)\s+)?music(?:\s+(?:plays?|playing|continues?|swells?|fades?(?:\s+(?:out|away))?|starts?|stops?|intensifies|builds|grows?\s+louder|gets?\s+louder|slows?(?:\s*(?:,|and)\s*stops?)?|becomes?\s+(?:more\s+)?intense|rises|picks?\s+up|ends?))?|(?:the\s+)?music\s+(?:slows?\s*,\s*stops?|stops?\s*,?\s*(?:then\s+)?starts?))[.!…]*$/iu,
-    // Alte etichete complete, scurte și recognoscibile de efect sonor.
-    /^(?:(?:the\s+)?helicopter\s+blades?\s+(?:spin|rotate|turn|whir)|(?:the\s+)?(?:machine|machinery)\s+(?:runs?|running|operates?|whirs?)|(?:the\s+)?door\s+(?:opens?|closes?|shuts?)(?:\s*,?\s*(?:the\s+)?(?:bell|doorbell)\s+(?:rings?|chimes?))?|(?:the\s+)?(?:doorbell|bell|typewriter bell)\s+(?:rings?|chimes?)|(?:the\s+)?(?:keys?|keyring)\s+(?:jangle|jangles|jangling|rattle|rattles|rattling|clink|clinks|clinking)|(?:the\s+)?(?:lock|latch)\s+(?:clicks?|clicking)(?:\s*,?\s*(?:the\s+)?(?:doorbell|bell)\s+(?:rings?|chimes?))?|(?:the\s+)?(?:footsteps?|steps)\s+(?:recede|receding|fade(?:\s+away)?|approach|approaching)|(?:the\s+)?papers?\s+(?:rustle|rustling|crinkle|crinkling)|(?:the\s+)?(?:glass|window)\s+(?:shatters?|shattering|breaks?|breaking)|(?:the\s+)?(?:gun|weapon)\s+(?:cocks?|cocking|is\s+cocked|being\s+cocked|clicks?|clicking)|(?:the\s+)?(?:blade|knife)\s+(?:cuts?|cutting|slashes?|slashing)|(?:the\s+)?metal\s+(?:clatters?|clattering|rings?|scrapes?|scraping)|(?:the\s+)?birds?\s+(?:chirp|chirping)(?:\s+and\s+(?:caw|caws|cawing))?|(?:the\s+)?crickets?\s+(?:chirp|chirping)(?:\s+in\s+(?:the\s+)?distance)?|(?:the\s+)?(?:vehicles?|cars?)\s+(?:approach|approaching|recede|receding|drive\s+away)|(?:the\s+)?liquid\s+(?:pours?|pouring)|(?:an?\s+)?explosion\s+(?:echoes?|echoing)(?:\s*,?\s*(?:the\s+)?engine\s+(?:rev(?:s|ving)?))?|(?:the\s+)?(?:explosion|gunshot|gunfire|shots?)\s*,?\s*(?:the\s+)?(?:glass\s+(?:shatters?|shattering)|bullets?\s+ricochet(?:s|ing)?)|(?:the\s+)?(?:air|wind)\s+(?:hisses?|hissing|whistles?|whistling)|(?:the\s+)?valve\s+(?:squeaks?|squeaking)(?:\s*,?\s*(?:the\s+)?(?:hissing|hiss)\s+(?:stops?|ends?))|(?:no sound|nothing audible|silence follows))[.!…]*$/iu,
-    // Etichete SDH suplimentare întâlnite în surse reale; reguli limitate la etichete complete,
-    // nu la propoziții care doar menționează aceste sunete.
-    /^(?:(?:tires?|tyres?)\s+(?:screeching|squealing)|gunshots?\s+echo(?:es|ing)?|indistinct\s+conversations?(?:\s*,\s*typewriters?\s+clicking)?|(?:vehicle|car)\s+door\s+(?:opens?,?\s*closes?|opens?\s+and\s+closes?)|engine\s+(?:starts?,?\s*idling|rev(?:s|ving)?|stops?)|(?:horns?|car\s+horn)\s+(?:honks?|honking)(?:\s+in\s+the\s+distance)?|(?:telephones?|phones?)\s+ringing|typewriters?\s+clicking|liquid\s+pouring|bag\s+thuds?|bell\s+chimes?|suspenseful\s+music\s+plays?|engine\s+stops?,?\s+music\s+stops?|explosion\s*,?\s*glass\s+(?:shattered|shattering))[.!…]*$/iu,
     /^(?:crowd\s+)?clamor(?:s|ed|ing)?[.!…]*$/iu,
     /^(?:yell(?:s|ed|ing)?|cheer(?:s|ed|ing)?|(?:crowd\s+)?cheering)[.!…]*$/iu,
     /^(?:stammer(?:s|ed|ing)?|mutter(?:s|ed|ing)?|scoff(?:s|ed|ing)?|snarl(?:s|ed|ing)?|shriek(?:s|ed|ing)?|mouthing|straining)[.!…]*$/iu,
@@ -1975,7 +1961,7 @@ function stripBracketedSegments(text) {
 
     // Eliminăm doar cue-uri sonore delimitate; parantezele care conțin dialog,
     // explicații sau informație narativă rămân intacte. Repetăm pentru segmente imbricate.
-    const bracketedSegmentPattern = /\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)+\]|\([^()\[\]]*\)|\[[^()\[\]]*\]|\([^()\[\]\r\n]{1,80}\]|\[[^()\[\]\r\n]{1,80}\)/g;
+    const bracketedSegmentPattern = /\([^()\[\]]*\)|\[[^()\[\]]*\]|\([^()\[\]\r\n]{1,80}\]|\[[^()\[\]\r\n]{1,80}\)/g;
     let previous;
     do {
         previous = clean;
