@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.69',
+    version: '13.2.70',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2020,7 +2020,53 @@ function applyRomanianOrthographyRepairs(value) {
     text = text.replace(/(?<![\p{L}\p{N}_])(Îi|îi)-(ai|am|ați|au)(?![\p{L}\p{N}_])/giu, '$1 $2');
     text = text.replace(/(?<![\p{L}\p{N}_])([Dd]ă)-jos(?![\p{L}\p{N}_])/giu, '$1 jos');
 
-    // 2. Repară „Ți pasă” / „ți place” / „nu-îți” / „l aș”
+    // 2. Repară pronume frecvent deformate, cu reguli contextuale pentru a nu schimba sensul.
+    // „Țimi pasă” este o deformare a lui „Îmi pasă”; păstrăm majusculele și spațierea.
+    text = text.replace(
+        /(?<![-\p{L}\p{N}_])([Țț])imi([ \t]+)pasă(?![\p{L}\p{N}_])/giu,
+        (match, firstLetter, spacing) => preserveInitialCase(match, `îmi${spacing}pasă`)
+    );
+
+    // „mi pasă” fără diacritica inițială -> „îmi pasă”; nu atingem „nu-mi pasă”.
+    text = text.replace(
+        /(?<![-\p{L}\p{N}_])mi([ \t]+)pasă(?![\p{L}\p{N}_])/giu,
+        (match, spacing) => preserveInitialCase(match, `îmi${spacing}pasă`)
+    );
+
+    // „ti pasă/place/spun...” -> „îți ...” doar în contexte verbale clare.
+    text = text.replace(
+        /(?<![-\p{L}\p{N}_])ti([ \t]+)(pasă|place|plac|vine|vin|pare|par|spun|spui|spune|spunem|spuneți|spuneti|zic|zici|zice|zicem|dau|dai|dă|iau|iei|ia|fac|faci|face|facem|faceți|faceti|știu|stiu|știi|stii|știe|stie)(?![\p{L}\p{N}_])/giu,
+        (match, spacing, verb) => preserveInitialCase(match, `îți${spacing}${verb}`)
+    );
+
+    // Normalizează formele independente fără diacritice: „imi”/„iti”, precum și „iți”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])(imi|iti|iți)(?![\p{L}\p{N}_])/giu,
+        match => preserveInitialCase(match, match.toLocaleLowerCase('ro-RO') === 'imi' ? 'îmi' : 'îți')
+    );
+
+    // „isi” -> „își” numai înaintea unor verbe uzuale, astfel încât numele izolat „Isi” rămâne intact.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])isi(?=[ \t]+(?:face|fac|spune|spun|dă|dau|pune|pun|ia|iau|ține|tine|țin|tin|vede|văd|vad|știu|stiu|știe|stie|dorește|doreste|doresc|amintește|aminteste|amintesc|găsește|gaseste|găsesc|gasesc|pierde|pierd|permite|permit|imaginează|imagineaza|cumpără|cumpara|simte|simt|schimbă|schimba|întoarce|intoarce|joacă|joaca|pregătește|pregateste|păstrează|pastreaza|ascunde|ascund|ridică|ridica|reține|retine|aduce|aduc|așteaptă|asteapta|oprește|opresc|întreabă|intreaba|uită|uita|arată|arata)(?![\p{L}\p{N}_]))/giu,
+        match => preserveInitialCase(match, 'își')
+    );
+
+    // „ii” -> „îi” numai înaintea unor verbe/structuri uzuale; „ii naționale” rămâne neschimbat.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])ii(?=[ \t]+(?:place|plac|pare|par|vine|vin|spune|spun|spui|spunem|spuneți|spuneti|dau|dă|da|dăm|dam|dați|dati|fac|face|faci|facem|faceți|faceti|văd|vad|vede|vedea|știu|stiu|știe|stie|știi|stii|dorește|doreste|este|era|erau|e|ajut|ajută|ajuta|aduc|aduce|trimit|trimite|cumpăr|cumpar|găsesc|gasesc|pierd|pierde|întreb|intreb|aștept|astept|ascult|cred|sun|chem|salut|iubesc|vreau|pot)(?![\p{L}\p{N}_]))/giu,
+        match => preserveInitialCase(match, 'îi')
+    );
+
+    // „va” este ambiguu (auxiliar de viitor), deci îl corectăm la „vă” numai înaintea unor forme finite clare.
+    // „va spune” rămâne neschimbat; „va dau cheile” devine „vă dau cheile”.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])va(?=[ \t]+(?:place|plac|pare|par|dau|spun|fac|văd|vad|ajut|aduc|întreb|intreb|ascult|cred|vreau|pot|țin|tin|chem|caut|trimit|ofer|primesc|iubesc|urăsc|urasc|salut|sun|știu|stiu|înțeleg|inteleg|aștept|astept|găsesc|gasesc|las|pun|iau|am)(?![\p{L}\p{N}_]))/giu,
+        match => preserveInitialCase(match, 'vă')
+    );
+
+    // Normalizarea de mai sus poate crea „nu-îmi/nu-îți”; păstrăm ortografia clitică existentă.
+    text = text.replace(/(?<![\p{L}\p{N}_])(nu|ce|că|să|de)-îți(?![\p{L}\p{N}_])/giu, '$1-ți');
+    text = text.replace(/(?<![\p{L}\p{N}_])(nu|ce|că|să|de)-îmi(?![\p{L}\p{N}_])/giu, '$1-mi');
     text = text.replace(/(?<![-\p{L}\p{N}_])([țȚ])i[ \t]+pasă(?![\p{L}\p{N}_])/giu, (match, firstLetter) =>
         match === match.toLocaleUpperCase('ro-RO') ? 'ÎȚI PASĂ' : (firstLetter === 'Ț' ? 'Îți pasă' : 'îți pasă'));
     text = text.replace(/(?<![-\p{L}\p{N}_])([Țț])i([ \t]+)place(?![\p{L}\p{N}_])/giu, (match, firstLetter, spacing) =>
