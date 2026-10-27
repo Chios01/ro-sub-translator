@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.76',
+    version: '13.2.77',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -369,10 +369,137 @@ app.get('/download-srt/:index', (req, res) => {
 });
 
 // ============================================================
+// VALIDATION ENDPOINT ABUSE PROTECTION
+// ============================================================
+// Protecție in-memory, fără dependențe externe și fără modificarea
+// contractului API folosit de add-on. Limitele sunt separate pe rută și IP.
+// Pe Render folosim CF-Connecting-IP dacă este valid; în lipsă, încercăm
+// primul IP valid din X-Forwarded-For, apoi adresa socketului.
+const VALIDATION_RATE_WINDOW_MS = 60 * 1000;
+const VALIDATION_HOUR_WINDOW_MS = 60 * 60 * 1000;
+const VALIDATION_MAX_PER_MINUTE = 20;
+const VALIDATION_MAX_PER_HOUR = 100;
+const VALIDATION_MAX_CONCURRENT_PER_ROUTE = 10;
+const VALIDATION_MAX_CONCURRENT_TOTAL = 20;
+const VALIDATION_CONCURRENCY_RETRY_SECONDS = 5;
+const VALIDATION_MAX_TRACKED_BUCKETS = 20000;
+
+const validationRequestHistory = new Map();
+const validationActiveByRoute = new Map();
+let validationActiveTotal = 0;
+let validationRequestCount = 0;
+
+function getValidationClientIp(req) {
+    const cfConnectingIp = String(req.headers?.['cf-connecting-ip'] || '').trim();
+    if (net.isIP(cfConnectingIp)) return cfConnectingIp.toLowerCase();
+
+    const forwardedFor = String(req.headers?.['x-forwarded-for'] || '');
+    for (const candidate of forwardedFor.split(',')) {
+        const ip = candidate.trim().replace(/^\[([^\]]+)\](?::\d+)?$/, '$1');
+        if (net.isIP(ip)) return ip.toLowerCase();
+    }
+
+    const socketIp = String(req.socket?.remoteAddress || req.ip || '').trim();
+    if (net.isIP(socketIp)) return socketIp.toLowerCase();
+    return 'unknown';
+}
+
+function pruneValidationRequestHistory(now) {
+    for (const [key, timestamps] of validationRequestHistory) {
+        const recent = timestamps.filter(ts => ts > now - VALIDATION_HOUR_WINDOW_MS);
+        if (!recent.length) validationRequestHistory.delete(key);
+        else if (recent.length !== timestamps.length) validationRequestHistory.set(key, recent);
+    }
+}
+
+function sendValidationRateLimit(res, retryAfterSeconds, message) {
+    res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterSeconds || 1))));
+    return res.status(429).json({
+        valid: false,
+        error: message || 'Prea multe cereri de validare. Încearcă din nou mai târziu.'
+    });
+}
+
+function createValidationProtection(routeKey) {
+    return function validationProtection(req, res, next) {
+        const now = Date.now();
+        validationRequestCount++;
+
+        // Curățare periodică, ca istoricul IP-urilor să nu crească la infinit.
+        if (validationRequestCount % 100 === 0 || validationRequestHistory.size >= VALIDATION_MAX_TRACKED_BUCKETS) {
+            pruneValidationRequestHistory(now);
+        }
+
+        const ip = getValidationClientIp(req);
+        const bucketKey = `${routeKey}:${ip}`;
+        const isKnownBucket = validationRequestHistory.has(bucketKey);
+        if (!isKnownBucket && validationRequestHistory.size >= VALIDATION_MAX_TRACKED_BUCKETS) {
+            res.set('Retry-After', '60');
+            return res.status(503).json({
+                valid: false,
+                error: 'Serviciul de validare este ocupat. Încearcă din nou în scurt timp.'
+            });
+        }
+
+        const oldHits = validationRequestHistory.get(bucketKey) || [];
+        const hits = oldHits.filter(ts => ts > now - VALIDATION_HOUR_WINDOW_MS);
+        const minuteHits = hits.filter(ts => ts > now - VALIDATION_RATE_WINDOW_MS);
+        let retryAfterMs = 0;
+
+        if (minuteHits.length >= VALIDATION_MAX_PER_MINUTE) {
+            retryAfterMs = Math.max(
+                retryAfterMs,
+                minuteHits[minuteHits.length - VALIDATION_MAX_PER_MINUTE] + VALIDATION_RATE_WINDOW_MS - now
+            );
+        }
+        if (hits.length >= VALIDATION_MAX_PER_HOUR) {
+            retryAfterMs = Math.max(
+                retryAfterMs,
+                hits[hits.length - VALIDATION_MAX_PER_HOUR] + VALIDATION_HOUR_WINDOW_MS - now
+            );
+        }
+        if (retryAfterMs > 0) {
+            if (hits.length) validationRequestHistory.set(bucketKey, hits);
+            return sendValidationRateLimit(res, Math.ceil(retryAfterMs / 1000));
+        }
+
+        const routeActive = validationActiveByRoute.get(routeKey) || 0;
+        if (routeActive >= VALIDATION_MAX_CONCURRENT_PER_ROUTE || validationActiveTotal >= VALIDATION_MAX_CONCURRENT_TOTAL) {
+            return sendValidationRateLimit(
+                res,
+                VALIDATION_CONCURRENCY_RETRY_SECONDS,
+                'Sunt prea multe validări simultane. Încearcă din nou în câteva secunde.'
+            );
+        }
+
+        hits.push(now);
+        validationRequestHistory.set(bucketKey, hits);
+
+        validationActiveByRoute.set(routeKey, routeActive + 1);
+        validationActiveTotal++;
+        let released = false;
+        const releaseSlot = () => {
+            if (released) return;
+            released = true;
+            validationActiveTotal = Math.max(0, validationActiveTotal - 1);
+            const currentRouteActive = validationActiveByRoute.get(routeKey) || 0;
+            if (currentRouteActive <= 1) validationActiveByRoute.delete(routeKey);
+            else validationActiveByRoute.set(routeKey, currentRouteActive - 1);
+        };
+        res.once('finish', releaseSlot);
+        res.once('close', releaseSlot);
+        next();
+    };
+}
+
+const validateGeminiKeyProtection = createValidationProtection('/validate-key');
+const validateSubdlKeyProtection = createValidationProtection('/validate-subdl-key');
+
+// ============================================================
 // VALIDATE GEMINI KEY & CONFIGURE
 // ============================================================
 
-app.post('/validate-key', async (req, res) => {
+app.post('/validate-key', validateGeminiKeyProtection, async (req, res) => {
     // Cheia este primită în corpul POST, nu în URL, pentru a evita expunerea
     // în URL-uri, istoricul browserului și logurile de acces.
     const key = String(req.body?.key || '').trim();
@@ -398,7 +525,7 @@ app.post('/validate-key', async (req, res) => {
     }
 });
 
-app.post('/validate-subdl-key', async (req, res) => {
+app.post('/validate-subdl-key', validateSubdlKeyProtection, async (req, res) => {
     const key = String(req.body?.key || '').trim();
     if (!key || key.length > 1000 || /[\r\n\u0000]/.test(key)) {
         return res.status(400).json({ valid: false, error: 'Cheie SubDL goală sau invalidă.' });
