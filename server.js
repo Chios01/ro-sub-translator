@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.70',
+    version: '13.2.71',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5598,6 +5598,10 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])ete\s+arestat(?![\p{L}\p{N}_])/giu, 'ești arestat'],
     [/(?<![\p{L}\p{N}_])eu\s+doar\s+livreze(?![\p{L}\p{N}_])/giu, 'eu doar livrez'],
     [/(?<![\p{L}\p{N}_])am\s+s-o\s+încerc\s+să(?![\p{L}\p{N}_])/giu, 'am să încerc să'],
+    // Corecturi pentru „nu” fragmentat accidental și contracții lipite greșit.
+    // Limităm potrivirea la tokenuri întregi, ca să nu atingem cuvinte precum „n-ucenic”.
+    [/(?<![\p{L}\p{N}_])n\s*[-–—]\s*u(?![\p{L}\p{N}_])/giu, 'nu'],
+    [/(?<![\p{L}\p{N}_])navem(?![\p{L}\p{N}_])/giu, 'n-avem'],
     [/(?<![\p{L}\p{N}_])n-vii(?![\p{L}\p{N}_])/giu, 'nu vii'],
     [/(?<![\p{L}\p{N}_])n-știu(?![\p{L}\p{N}_])/giu, 'nu știu'],
     [/(?<![\p{L}\p{N}_])plangi(?![\p{L}\p{N}_])/giu, 'plângi'],
