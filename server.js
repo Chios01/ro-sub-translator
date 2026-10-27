@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.74',
+    version: '13.2.75',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2443,8 +2443,23 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/[^\S\r\n]+/g, ' ');
 
     // După eliminarea unei ezitări, repară majuscula de început de propoziție.
-    // Nu forța majuscula după „...” (propoziția continuă) și nici după abrevieri uzuale (dl., dna, nr., etc.).
-    cleaned = cleaned.replace(/(^|(?<!\.)(?<!\b(?:[Dd]l|[Dd]na|[Dd]r|[Nn]r|[Ee]tc|[Ee]x))[.!?]\s+)([a-zăâîșț])/g, (m, prefix, letter) => prefix + letter.toUpperCase());
+    // Nu forța majuscula după „...” (propoziția continuă), după abrevieri uzuale
+    // (dl., dna., dr., nr., etc.) sau după inițiale/acronime punctate (R.J., J.R.R., U.S.A.).
+    // Pentru inițiale, verificăm tokenul dinaintea punctului în callback, evitând o listă
+    // rigidă de nume proprii. Corectăm doar literele mici; nu coborâm majuscule deja existente.
+    cleaned = cleaned.replace(/(^|(?<!\.)[.!?]\s+)([a-zăâîșț])/g, (m, prefix, letter, offset, wholeText) => {
+        const punctuationMatch = prefix.match(/[.!?]/);
+        if (punctuationMatch && punctuationMatch[0] === '.') {
+            const punctuationOffset = offset + prefix.indexOf('.');
+            const textBeforeDot = wholeText.slice(0, punctuationOffset);
+            const tokenMatch = textBeforeDot.match(/(?:^|\s)(\S+)$/u);
+            const precedingToken = tokenMatch ? tokenMatch[1] : '';
+            const isDottedInitialism = /^(?:\p{Lu}\.)*\p{Lu}$/u.test(precedingToken);
+            const isKnownAbbreviation = /^(?:dl|dna|dr|nr|etc|ex)$/iu.test(precedingToken);
+            if (isDottedInitialism || isKnownAbbreviation) return m;
+        }
+        return prefix + letter.toUpperCase();
+    });
     
     if (/^[-–—\s.?!,;:'"]+$/.test(cleaned)) return '';
 
