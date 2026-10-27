@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.71',
+    version: '13.2.72',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5598,6 +5598,25 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])ete\s+arestat(?![\p{L}\p{N}_])/giu, 'ești arestat'],
     [/(?<![\p{L}\p{N}_])eu\s+doar\s+livreze(?![\p{L}\p{N}_])/giu, 'eu doar livrez'],
     [/(?<![\p{L}\p{N}_])am\s+s-o\s+încerc\s+să(?![\p{L}\p{N}_])/giu, 'am să încerc să'],
+    // Corecturi OCR pentru prepozițiile „dintr-o/dintr-un” și „într-o/într-un”.
+    // Cazuri observate: „din 1r-o”, „din 1r-un”, „1ntr-o”, „1ntr-un”.
+    // Acceptăm numai spații orizontale pentru a nu traversa două rânduri SRT.
+    [/(?<![\p{L}\p{N}_])din[ \t]*1r-o(?![\p{L}\p{N}_])/giu, 'dintr-o'],
+    [/(?<![\p{L}\p{N}_])din[ \t]*1r-un(?![\p{L}\p{N}_])/giu, 'dintr-un'],
+    // Pentru „1” în loc de „î”, păstrăm majusculele și capitalizăm la început de propoziție.
+    [/(?<![\p{L}\p{N}_])1ntr-o(?![\p{L}\p{N}_])/giu, (match, offset, whole) => {
+        const letters = match.slice(1).replace(/[^\p{L}]/gu, '');
+        if (letters && letters === letters.toLocaleUpperCase('ro-RO')) return 'ÎNTR-O';
+        const before = whole.slice(0, offset);
+        return (!before.trim() || /[.!?…][\s”»'"]*$/u.test(before)) ? 'Într-o' : 'într-o';
+    }],
+    [/(?<![\p{L}\p{N}_])1ntr-un(?![\p{L}\p{N}_])/giu, (match, offset, whole) => {
+        const letters = match.slice(1).replace(/[^\p{L}]/gu, '');
+        if (letters && letters === letters.toLocaleUpperCase('ro-RO')) return 'ÎNTR-UN';
+        const before = whole.slice(0, offset);
+        return (!before.trim() || /[.!?…][\s”»'"]*$/u.test(before)) ? 'Într-un' : 'într-un';
+    }],
+
     // Corecturi pentru „nu” fragmentat accidental și contracții lipite greșit.
     // Limităm potrivirea la tokenuri întregi, ca să nu atingem cuvinte precum „n-ucenic”.
     [/(?<![\p{L}\p{N}_])n\s*[-–—]\s*u(?![\p{L}\p{N}_])/giu, 'nu'],
@@ -5640,7 +5659,11 @@ const LOCAL_GRAMMAR_FIXES = [
 function applyLocalGrammarDeterministicFixes(text) {
     let result = String(text || '');
     for (const [pattern, replacement] of LOCAL_GRAMMAR_FIXES) {
-        result = result.replace(pattern, match => {
+        result = result.replace(pattern, (...args) => {
+            const match = args[0];
+            // Înlocuirile funcționale sunt folosite numai când au nevoie de context,
+            // de exemplu pentru capitalizarea lui „într-o” la început de propoziție.
+            if (typeof replacement === 'function') return replacement(...args);
             if (match === match.toUpperCase()) return replacement.toUpperCase();
             if (match[0] === match[0].toUpperCase()) {
                 return replacement.charAt(0).toUpperCase() + replacement.slice(1);
