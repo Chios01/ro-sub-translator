@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.82',
+    version: '13.2.83',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1933,8 +1933,23 @@ const SOUND_CUE_EXTENDED_LABEL_PATTERNS = [
     /^(?:HE|SHE|THEY|SOMEONE|MAN|WOMAN|[A-Z][A-Z'’.-]*(?:\s+[A-Z][A-Z'’.-]*){0,2})\s+(?:INHALES?|EXHALES?|BREATHES?(?:\s+(?:DEEPLY|DEEP|HEAVILY|UNEVENLY|SOFTLY|SHALLOWLY|RAGGEDLY|RAPIDLY|SHARPLY))?|MUMBLES?|MUTTERS?(?:\s+TO\s+(?:HIMSELF|HERSELF|THEMSELVES))?|STAMMERS?|SIGHS?|GASPS?|GROANS?|GRUNTS?|SOBS?(?:\s+(?:LOUDLY|SOFTLY|QUIETLY))?|CHUCKLES?|CHIRPS?(?:\s+NONSENSE)?|CLEARS?\s+(?:HIS\s+|HER\s+|THEIR\s+)?THROAT|COUGHS?|LAUGHS?|CRIES?|WHIMPERS?|SNIFFS?|SPLUTTERS?|REVS?)(?:\s+(?:SOFTLY|QUIETLY|LOUDLY|DEEPLY|HEAVILY|GENTLY|UNEVENLY|SHALLOWLY|RAGGEDLY|RAPIDLY|SHARPLY|ANXIOUSLY|CAUTIOUSLY))?[.!…]*$/u
 ];
 
+// Compuși SDH rămași uneori nefiltrați fiindcă sunt în propoziție (ex. „Metal rings, squeaks”)
+// ori au virgulă terminală. Sunt tratați ca efecte numai când CU TOTUL textul are forma unei etichete.
+const SOUND_CUE_COMPOUND_LABEL_PATTERNS = [
+    /^(?:(?:the|a|an|some|soft|loud|quiet|distant|faint|heavy|sharp|brief|short|metallic|indistinct|muffled|background)\s+)*(?:metal|glass|wood|door|doorbell|bell|phone|telephone|ringtone|alarm|engine|motor|car|vehicle|horn|gun|weapon|gunshot|gunfire|shots?|shell casings?|paper|papers|blade|knife|insects?|crickets?|birds?|vehicles?|cars?|footsteps?|music|voices?|conversations?)\s+(?:rings?|ringing|sounds?|squeaks?|squeaking|scrapes?|scraping|creaks?|creaking|breaks?|breaking|shatters?|shattering|clatters?|clattering|slows?|ends?|stops?|fades?(?:\s+out)?|intensifies|builds|swells?|starts?|clicks?|clicking|bangs?|fires?|firing|fall(?:s|ing)|drops?|dropping|snaps?|slicing|cuts?|cutting|chirps?|chirping|approaches?|approaching|passes?|passing|recedes?|receding|rev(?:s|ving)|screeching|squealing|rustles?|rustling|shuffles?|shuffling|crinkles?|crinkling|inhales?|exhales?|grunts?|groans?|shouting|screaming|kissing|slaps?|smacking|mumbles?|mumbling|murmurs?|whistling|singing|chimes?|echoes?|echoing)(?:\s+(?:in|from)\s+(?:the\s+)?distance)?(?:\s*[,;]\s*(?:(?:the|a|an|some|soft|loud|quiet|distant|faint|heavy|sharp|brief|short|metallic|indistinct|muffled|background)\s+)*(?:metal|glass|wood|door|doorbell|bell|phone|telephone|ringtone|alarm|engine|motor|car|vehicle|horn|gun|weapon|gunshot|gunfire|shots?|shell casings?|paper|papers|blade|knife|insects?|crickets?|birds?|vehicles?|cars?|footsteps?|music|voices?|conversations?)\s+(?:rings?|ringing|sounds?|squeaks?|squeaking|scrapes?|scraping|creaks?|creaking|breaks?|breaking|shatters?|shattering|clatters?|clattering|slows?|ends?|stops?|fades?(?:\s+out)?|intensifies|builds|swells?|starts?|clicks?|clicking|bangs?|fires?|firing|fall(?:s|ing)|drops?|dropping|snaps?|slicing|cuts?|cutting|chirps?|chirping|approaches?|approaching|passes?|passing|recedes?|receding|rev(?:s|ving)|screeching|squealing|rustles?|rustling|shuffles?|shuffling|crinkles?|crinkling|inhales?|exhales?|grunts?|groans?|shouting|screaming|kissing|slaps?|smacking|mumbles?|mumbling|murmurs?|whistling|singing|chimes?|echoes?|echoing)(?:\s+(?:in|from)\s+(?:the\s+)?distance)?){0,2}[.!…]*$/iu,
+    /^(?:kissing|kiss(?:es|ing)?|a kiss|slap(?:s|ping)?|a slap|palm slap|palm slaps|snapping fingers|fingers snapping|fingers snap|indistinct shouting|indistinct screaming|indistinct voices?|indistinct conversations?|muffled shouting|distant shouting|inhales? sharply|inhales? deeply|exhales? slowly|deep breathing|heavy breathing)[.!…]*$/iu,
+    /^(?:gunshots?|gunfire|shots?|kissing|slapping|snapping fingers|fingers snapping|paper rustling|papers rustling|metal scraping|metal squeaking|glass breaking|glass shattering|music slows?,?\s*(?:ends?|stops?)|doorbell rings?|bell rings?|ringtone rings?)[.!…]*$/iu,
+    /^(?:the\s+)?(?:metal|glass|wood|door|bell|engine|vehicle|car|blade|knife)\s+(?:rings?|ringing|groans?|groaning|squeaks?|squeaking|scrapes?|scraping|creaks?|creaking|clatters?|clattering)(?:\s*[,;]\s*(?:rings?|ringing|groans?|groaning|squeaks?|squeaking|scrapes?|scraping|creaks?|creaking|clatters?|clattering)){1,3}[.!…]*$/iu,
+    /^(?:gunshots?|gunfire|shots?|explosion|glass breaks?|glass shatters?)(?:\s*[,;]\s*(?:shell casings?|bullets?|debris|glass|windows?)\s+(?:fall(?:s|ing)?|drop(?:s|ping)?|clatter(?:s|ing)?|break(?:s|ing)?|shatter(?:s|ing)?|scatter(?:s|ing)?)){1,2}[.!…]*$/iu,
+    /^(?:mumbling|mumbles?|muttering|mutters?|groaning|groans?|grunting|grunts?|sighing|sighs?|gasping|gasps?|whistling|whistles?|kissing|slapping|snapping fingers)(?:\s*[,;]\s*(?:mumbling|mumbles?|muttering|mutters?|groaning|groans?|grunting|grunts?|sighing|sighs?|gasping|gasps?|whistling|whistles?|kissing|slapping|snapping fingers)){1,3}[.!…]*$/iu
+];
+
 function isExtendedSoundCueLabel(text) {
     return SOUND_CUE_EXTENDED_LABEL_PATTERNS.some(pattern => pattern.test(text));
+}
+
+function isCompoundSoundCueLabel(text) {
+    return SOUND_CUE_COMPOUND_LABEL_PATTERNS.some(pattern => pattern.test(text));
 }
 
 
@@ -2021,8 +2036,10 @@ function isStandaloneNonDialogueSoundCue(value) {
     // care clasifică adjectivele de respirație drept sunete.
     if (/^slow\s*,\s*deep\s+breaths?[.!…]*$/iu.test(text)) return false;
 
-    // Etichetele explicite deja recunoscute rămân tratamentul cu cea mai mare încredere.
-    if (SOUND_CUE_LABEL_RE.test(text) || isExtendedSoundCueLabel(text)) return true;
+    // Etichetele SDH apar frecvent cu virgulă la final sau cu mai multe evenimente separate prin virgulă.
+    // Normalizăm numai punctuația terminală pentru clasificare; textul efectiv nu este rescris aici.
+    const labelCandidate = text.replace(/[,;:]+$/u, '').trim();
+    if (SOUND_CUE_LABEL_RE.test(labelCandidate) || isExtendedSoundCueLabel(labelCandidate) || isCompoundSoundCueLabel(labelCandidate)) return true;
 
     // Regula generală pentru caption-uri SDH: folosește structura, stilul editorial și
     // semantica acustică, nu o listă de expresii complete specifice unui singur film.
@@ -9634,8 +9651,9 @@ function isSubtitleAdOrCreditCue(text, nearFileEdge) {
 
 // Detectează versurile din interiorul unui cântec care se întinde pe mai multe replici:
 // prima replică are nota de deschidere, ultima are nota de închidere, iar cele din mijloc
-// nu au nicio notă. Condiții de siguranță: cel mult 14 replici, pauză de cel mult 3 secunde
-// între replici consecutive și nicio altă notă în interior. Returnează indicii blocurilor.
+// nu au nicio notă. Cântecele lungi au pauze de beat/silențiu între subtitluri: permitem până la
+// 90 de blocuri, 15 s între blocuri și 4 minute în total. Limitele temporale și markerul de închidere
+// sunt obligatorii; în interior, replicile care par dialog vorbit sunt păstrate.
 function findOpenSongInteriorBlocks(blocks) {
     const toMs = value => {
         const m = String(value).match(/^(\d{2}):(\d{2}):(\d{2}),(\d{3})$/);
@@ -9668,10 +9686,13 @@ function findOpenSongInteriorBlocks(blocks) {
     for (let i = 0; i < cues.length; i++) {
         if (!cues[i] || cues[i].kind !== 'open') continue;
         const span = [];
-        for (let j = i + 1; j < cues.length && j <= i + 14; j++) {
+        for (let j = i + 1; j < cues.length && j <= i + 90; j++) {
             const cue = cues[j];
             const previous = cues[j - 1];
-            if (!cue || !previous || !(cue.start - previous.end <= 3000)) break;
+            // Nu lăsăm o singură notă să tragă în filtru scene îndepărtate: trebuie ca
+            // fiecare spațiu să fie rezonabil și întregul cântec să rămână în fereastra de 4 minute.
+            if (!cue || !previous || !Number.isFinite(cue.start) || !Number.isFinite(previous.end) ||
+                cue.start - previous.end > 15000 || cue.start - cues[i].start > 240000) break;
             if (cue.kind === 'close') {
                 span.forEach(entry => {
                     if (!looksLikeProbableSpokenDialogue(entry.text)) interior.add(entry.index);
