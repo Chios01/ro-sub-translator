@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.84',
+    version: '13.2.85',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -9482,10 +9482,45 @@ function maskPerLineMusicNotes(text, cueSequence, segments) {
     }).join('\n');
 }
 
+function maskRepeatedLeadingMusicSegments(text, cueSequence, segments) {
+    // Unele SRT-uri pun câte un marcator de început pentru fiecare cântăreț în același cue:
+    // „- ♪ Ooh, ooh - ♪ What can I do?”. Tratarea primului ♪ și a celui de-al doilea ca
+    // pereche ar lăsa al doilea vers fără protecție. Dacă toate marcatoarele sunt la începutul
+    // unor segmente separate prin liniuță, mascăm fiecare segment independent.
+    return String(text || '').split('\n').map(line => {
+        const markers = [...line.matchAll(/[♪♫♬♩]/gu)];
+        if (markers.length < 2) return line;
+        const firstPrefix = line.slice(0, markers[0].index);
+        if (!/^\s*(?:[-–—]\s*)?$/u.test(firstPrefix)) return line;
+
+        const separators = [];
+        for (let i = 0; i < markers.length - 1; i++) {
+            const between = line.slice(markers[i].index + markers[i][0].length, markers[i + 1].index);
+            const separator = between.match(/\s*[-–—]\s*$/u);
+            if (!separator) return line;
+            separators.push({ start: markers[i + 1].index - separator[0].length, end: markers[i + 1].index });
+        }
+
+        let output = firstPrefix;
+        for (let i = 0; i < markers.length; i++) {
+            const start = markers[i].index;
+            const end = i < separators.length ? separators[i].start : line.length;
+            const original = line.slice(start, end).trimEnd();
+            if (!/[\p{L}\p{N}]/u.test(original.replace(/[♪♫♬♩]/gu, ' '))) return line;
+            const token = `ZXQKEEPSONG${cueSequence}PART${segments.length}QXZ`;
+            segments.push({ token, original });
+            output += token;
+            if (i < separators.length) output += line.slice(separators[i].start, markers[i + 1].index);
+        }
+        return output;
+    }).join('\n');
+}
+
 function protectMusicalLyricSegments(text, cueSequence) {
     const segments = [];
     // Emoji-urile 🎵/🎶 sunt folosite uneori în loc de ♪.
-    const sourceText = maskPerLineMusicNotes(String(text || '').replace(/[🎵🎶]/gu, '♪'), cueSequence, segments);
+    let sourceText = maskPerLineMusicNotes(String(text || '').replace(/[🎵🎶]/gu, '♪'), cueSequence, segments);
+    sourceText = maskRepeatedLeadingMusicSegments(sourceText, cueSequence, segments);
     let maskedText = sourceText.replace(/([♪♫♬♩])([\s\S]*?)\1/gu, (whole, _marker, inner) => {
         const visibleInner = String(inner || '')
             .replace(/<[^>]*>/g, ' ')
@@ -9526,8 +9561,23 @@ function protectMusicalLyricSegments(text, cueSequence) {
             addBoundary(/<br\s*\/?>/iu, 1);
             // „ / ” separă frecvent două replici în același bloc SRT.
             addBoundary(/\s+\/\s+/u, 2);
-            // Reacții foarte scurte, recognoscibile ca replici, nu sunt absorbite în vers.
-            addBoundary(/\s+(?=(?:ow|ouch|oh|ah+|aah+|hey|whoa|huh|yes|yeah|yep|no|nope|stop|help|wait|what|fuck|shit|damn)\b)/iu, 3);
+            // Reacțiile foarte scurte pot fi dialog după o porțiune cântată („♪ vers / Ow!”),
+            // dar nu trebuie păstrate când ele însele sunt marcate ca muzică („♪ Yeah”, „♪ Oh”).
+            // Acceptăm această delimitare doar dacă înaintea reacției există text real de vers;
+            // un simplu marcator muzical nu este suficient.
+            const reactionBoundaryRe = /\s+(?=(?:ow|ouch|oh|ah+|aah+|hey|whoa|huh|yes|yeah|yep|no|nope|stop|help|wait|what|fuck|shit|damn)\b)/iu;
+            const reactionBoundary = reactionBoundaryRe.exec(tail);
+            if (reactionBoundary && reactionBoundary.index > 0) {
+                const prefixBeforeReaction = tail.slice(0, reactionBoundary.index)
+                    .replace(protectedTokenRe, ' ')
+                    .replace(/[♪♫♬♩]/gu, ' ')
+                    .replace(/<[^>]*>/g, ' ')
+                    .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
+                    .trim();
+                if (/[\p{L}\p{N}]/u.test(prefixBeforeReaction)) {
+                    candidates.push({ index: reactionBoundary.index, priority: 3 });
+                }
+            }
 
             candidates.sort((a, b) => a.index - b.index || a.priority - b.priority);
             const boundary = candidates[0]?.index ?? -1;
