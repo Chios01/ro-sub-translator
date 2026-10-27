@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.72',
+    version: '13.2.73',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2021,6 +2021,13 @@ function applyRomanianOrthographyRepairs(value) {
     text = text.replace(/(?<![\p{L}\p{N}_])([Dd]ă)-jos(?![\p{L}\p{N}_])/giu, '$1 jos');
 
     // 2. Repară pronume frecvent deformate, cu reguli contextuale pentru a nu schimba sensul.
+    // „Țimi pas de ...” -> „Îmi pasă de ...”. Regula este limitată la
+    // construcția idiomatică „îmi pasă de”, ca să nu atingă alte expresii cu „pas”.
+    text = text.replace(
+        /(?<![-\p{L}\p{N}_])([Țț])imi([ \t]+)pas(?=[ \t]+de\b)/giu,
+        (match, firstLetter, spacing) => preserveInitialCase(match, `îmi${spacing}pasă`)
+    );
+
     // „Țimi pasă” este o deformare a lui „Îmi pasă”; păstrăm majusculele și spațierea.
     text = text.replace(
         /(?<![-\p{L}\p{N}_])([Țț])imi([ \t]+)pasă(?![\p{L}\p{N}_])/giu,
