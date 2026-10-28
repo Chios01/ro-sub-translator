@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.92',
+    version: '13.2.96',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2043,11 +2043,15 @@ function isLikelyLeadingSpeakerLabel(inner, prefix, suffix) {
 
     const normalized = clean.toLocaleLowerCase('en-US');
     if (/^(?:in|speaking in|spoken in|subtitled in|untranslated in)\s+[\p{L}-]+(?:\s+[\p{L}-]+){0,2}$/iu.test(clean)) return true;
-    if (/^(?:text message|phone message|radio message|computer voice|voice[- ]over|off[- ]screen|on[- ]screen|on television|on tv|over the radio|telephone|radio|narrator|announcer|speaker|unknown speaker|unidentified voice)$/iu.test(clean)) return true;
+    if (/^(?:text message|phone message|radio message|computer voice|voice[- ]over|off[- ]screen|on[- ]screen|on television|on tv|over the radio|telephone|radio|narrator|announcer|speaker|unknown speaker|unidentified voice|(?:man|woman|voice|speaker|announcer|narrator) over (?:the )?(?:P\.?A\.?|speakers?|radio|intercom|phone))$/iu.test(clean)) return true;
     if (/^(?:(?:dr|mr|mrs|ms|miss|prof|capt|captain|lt|sgt|officer|detective|agent|sir|lady)\.?)\s+[\p{L}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}][\p{L}\p{M}'’.-]*){0,2}$/iu.test(clean)) return true;
 
     // Numele pot apărea și cu litere mici în surse SDH (ex. [ocasta]).
     if (/^[\p{L}][\p{L}\p{M}'’.-]{0,24}$/u.test(clean)) return true;
+
+    // Etichete descriptive cu numele personajului, ex. [young Reacher], [Young Reacher].
+    // Sunt eliminate numai la începutul rândului și numai când urmează text de replică.
+    if (visibleSuffix && /^(?:(?:young|old|older|younger|elderly|little|adult|male|female|unidentified|unknown|youngest|older|younger)\s+)?[\p{Lu}][\p{L}\p{M}'’.-]*(?:\s+[\p{Lu}][\p{L}\p{M}'’.-]*){0,2}$/u.test(clean)) return true;
 
     // Etichete de rol/canal, de regulă în majuscule: MAN ON TV, WOMAN ON PHONE etc.
     if (clean === clean.toLocaleUpperCase('en-US') &&
@@ -2059,6 +2063,37 @@ function isLikelyLeadingSpeakerLabel(inner, prefix, suffix) {
     return false;
 }
 
+function isObviousBracketedNonDialogueCue(value, openChar, prefix, suffix) {
+    const text = String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 180) return false;
+    if (isStandaloneNonDialogueSoundCue(text) || isExtendedSoundCueLabel(text) || isCompoundSoundCueLabel(text)) return true;
+
+    // Etichete SDH frecvente rămase după testarea subtitrărilor reale.
+    // Sunt clasificate doar în interiorul parantezelor, nu ca text liber de dialog.
+    if (/^(?:over speakers?|over the speakers?|through speakers?|music volume decreases|music volume increases|volume decreases|volume increases|indistinct (?:police )?radio chatter|indistinct chatter(?: in the distance)?|rap music and chatter continues?|playful chatter|two silenced gunshots?|silenced gunshots?|body thuds?|hawks|no audio|over the P\.?A\.?|(?:[\p{Lu}][\p{L}'’.-]*\s+){0,2}clears? throat|clearing (?:his|her|their|my|your) throat|throat clearing|doors? opening in distance|exhales? sharply)$/iu.test(text)) return true;
+
+    // Echivalente românești ale indicațiilor SDH care pot apărea deja în subtitrarea tradusă.
+    if (/^(?:insecte? țârâind|bufniță huhurând|două focuri de armă cu amortizor|foc de armă cu amortizor|trupul se prăbușește|fulger și tunet|clopoțel(?:ul)?(?: de la intrare)? sună|știri difuzate în fundal|vase zăngănind|casa de marcat tipărește|romantism jucăuș|vase sparte|melodia se stinge|uși care se deschid în depărtare|murmur neclar în depărtare|muzică rap în depărtare|muzică rap continuă în depărtare|melodia continuă încet în boxe|pași care alerg)$/iu.test(text)) return true;
+
+    // Clasificare structurală limitată la conținut între paranteze: un eveniment sonor
+    // trebuie să aibă atât un substantiv/sursă acustică, cât și un verb de eveniment.
+    // Excludem propoziții de dialog la persoana I/II și texte cu punctuație de întrebare/citat.
+    if (/^(?:i|you|we|they|he|she|it)\b/iu.test(text) || /[?"“”]/u.test(text)) return false;
+    const hasSoundSource = /\b(?:insects?|bugs?|owl|owls|birds?|hawks?|animal|animals|gunshots?|gunfire|shots?|body|bodies|entry bell|bell|doorbell|newscast|dishes|cash register|song|music|vehicle|car|radio|chatter|conversation|door|lock|cell door|brakes?|siren|rap|bed|showers?|alarm|gate|footsteps?|line|phone|speaker|speakers|inmates?|crowd|engine|keys?|glass|thunder|wind|rain|thud|buzz|ringing)\b/iu.test(text);
+    const hasSoundAction = /\b(?:chirring|chirp(?:s|ed|ing)?|hooting|hoot(?:s|ed|ing)?|thud(?:s|ded|ding)?|grunting|grunt(?:s|ed|ing)?|cracks?|cracking|jingl(?:e|es|ed|ing)|ding(?:s|ed|ing)?|playing|plays|clinking|clink(?:s|ed|ing)|printing|prints|fades?|fading|squeak(?:s|ed|ing)?|hiss(?:es|ed|ing)?|continues?|continuing|chattering|chatter(?:s|ed)?|creak(?:s|ed|ing)?|running|buzz(?:es|ed|ing)?|ring(?:s|ing)|opens?|opening|closes?|closing|decreases?|increases?|clears? throat|stops?|stopping|rumbling|wailing|crashing|clatters?|clattering|shuts? off|shutting off|plays? quietly|departs?|passes?)\b/iu.test(text) || SOUND_CUE_ACTION_RE.test(text) || SOUND_CUE_STRUCTURAL_ACTION_RE.test(text);
+    const hasAcousticNoun = SOUND_CUE_STRUCTURAL_NOUN_RE.test(text) || /\b(?:gunshots?|gunfire|shots?|body|bell|newscast|dishes|cash register|song|vehicle|car|radio|door|lock|cell door|brakes?|siren|rap|bed|showers?|alarm|gate|footsteps?|line|phone|speaker|inmates?|hawks?|insects?|owl|thunder|wind|rain)\b/iu.test(text);
+    if (hasSoundSource && hasSoundAction && hasAcousticNoun && text.split(/\s+/u).length <= 12) return true;
+
+    // Un cue între paranteze pătrate, singur pe rând, nu este dialog dacă nu e o
+    // tastă/comandă protejată și nu conține punctuație de dialog.
+    const visiblePrefix = String(prefix || '').replace(/<[^>]*>/g, ' ').trim();
+    const visibleSuffix = String(suffix || '').replace(/<[^>]*>/g, ' ').trim();
+    if (openChar === '[' && /^(?:[-–—]\s*)?$/u.test(visiblePrefix) && !visibleSuffix &&
+        !/[.!?;:,"“”]/u.test(text) && text.split(/\s+/u).length === 1) return true;
+
+    return false;
+}
+
 function shouldRemoveBracketSegment(openChar, inner, prefix, suffix) {
     const clean = String(inner || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     if (!clean) return true;
@@ -2066,7 +2101,7 @@ function shouldRemoveBracketSegment(openChar, inner, prefix, suffix) {
 
     // Eliminăm indicații de sunet/voce chiar și când apar în mijlocul unei fraze.
     // Clasificarea cere ca întregul conținut dintre delimitatori să fie un cue.
-    if (isStandaloneNonDialogueSoundCue(clean)) return true;
+    if (isObviousBracketedNonDialogueCue(clean, openChar, prefix, suffix)) return true;
 
     // Etichete de limbă/canal și indicații SDH concise, nu text dialogat obișnuit.
     if (/^(?:in|speaking in|spoken in|subtitled in|untranslated in)\s+[\p{L}-]+(?:\s+[\p{L}-]+){0,2}$/iu.test(clean)) return true;
@@ -2074,6 +2109,69 @@ function shouldRemoveBracketSegment(openChar, inner, prefix, suffix) {
 
     if (openChar === '[' && isLikelyLeadingSpeakerLabel(clean, prefix, suffix)) return true;
     return false;
+}
+
+// Elimină etichetele non-dialogate care încep la începutul unui rând și se întind
+// pe mai multe rânduri (ex. [♪ artist: / "Song Title"]). Nu atinge parantezele
+// inline precum „Press [Enter]”, iar tagurile obișnuite de un singur rând continuă
+// să fie gestionate de stripBracketedSegments.
+function stripLeadingMultilineNonDialogueTags(value) {
+    let text = String(value || '');
+    let removedCount = 0;
+    let safety = 0;
+
+    while (safety++ < 200) {
+        const startTagPattern = /(^|\n)([ \t]*(?:[-–—][ \t]*)?(?:<(?:i|b|u)>[ \t]*)?)(\[|\()/g;
+        let match;
+        let found = null;
+
+        while ((match = startTagPattern.exec(text)) !== null) {
+            const openIndex = match.index + match[1].length + match[2].length;
+            const endIndex = findBalancedBracketEnd(text, openIndex);
+            if (endIndex < 0) continue;
+
+            const inner = text.slice(openIndex + 1, endIndex);
+            // Funcția vizează numai taguri realmente multi-linie. Nu șterge aici
+            // expresii normale dintre paranteze, inclusiv taste de interfață.
+            if (!/[\r\n]/.test(inner)) continue;
+
+            const normalized = inner
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            if (!normalized) {
+                found = { openIndex, endIndex };
+                break;
+            }
+
+            const suffix = text.slice(endIndex + 1);
+            const hasMusicNotation = /[♪♫♬♩]/u.test(inner);
+            const hasArtistAndQuotedTitle = /^[^.!?]{1,100}:\s*\/?\s*["“][^"”]{1,120}["”]$/u.test(normalized);
+            const isSoundCue = isObviousBracketedNonDialogueCue(normalized, match[3], match[2], suffix) ||
+                isStandaloneNonDialogueSoundCue(normalized) ||
+                SOUND_CUE_EXTENDED_LABEL_PATTERNS.some(pattern => {
+                    pattern.lastIndex = 0;
+                    return pattern.test(normalized);
+                });
+            const isSpeakerLabel = match[3] === '[' &&
+                isLikelyLeadingSpeakerLabel(normalized, match[2], suffix);
+
+            if (hasMusicNotation || hasArtistAndQuotedTitle || isSoundCue || isSpeakerLabel) {
+                found = { openIndex, endIndex };
+                break;
+            }
+        }
+
+        if (!found) break;
+
+        // Scoatem paranteza completă, inclusiv toate newline-urile din interior,
+        // dar păstrăm prefixul de dialog (<i>, „- ” etc.) și orice text exterior.
+        text = text.slice(0, found.openIndex) + text.slice(found.endIndex + 1);
+        // Nu facem trim global aici: păstrăm ordinea și separatorii replicilor.
+        removedCount++;
+    }
+
+    return { text, removedCount };
 }
 
 function stripBracketedSegments(text) {
@@ -2204,6 +2302,10 @@ function isStandaloneNonDialogueSoundCue(value) {
 function stripNonDialogueSoundMarkup(value) {
     let clean = String(value || '');
     let removedCount = 0;
+
+    const multilineTags = stripLeadingMultilineNonDialogueTags(clean);
+    clean = multilineTags.text;
+    removedCount += multilineTags.removedCount;
 
     const bracketed = stripBracketedSegments(clean);
     clean = bracketed.text;
@@ -3648,7 +3750,7 @@ INTERJECTIONS AND FILLERS
 - Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief, and “Aha” when expressing realization.
 - Use neighboring subtitles and the scene context to decide whether an interjection is noise or meaningful speech. Never automatically delete meaningful reactions, acknowledgments, questions, pain, warnings, relief, or commands just because they occur in the interjection inventory. Translate those naturally into Romanian.
 - Before returning, compare the beginning and end of each translation with its source so that cleaning a filler does not accidentally remove adjacent dialogue.
-- REGULĂ STRICTĂ PENTRU PARANTEZE: elimină integral orice text dintre paranteze rotunde (...) sau drepte [...], indiferent dacă este descriere sonoră, indicație de acțiune sau alt text. Acest conținut nu trebuie să apară în subtitrarea română. Dacă într-un bloc există dialog și în afara parantezelor, păstrează tot dialogul exterior.
+- ETICHETE ȘI CUE-URI: elimină etichetele de vorbitor și indicațiile non-dialogate de sunet/muzică dintre paranteze rotunde sau drepte când apar la începutul rândului (eventual după liniuța de dialog sau un tag de formatare); tratează ca un singur tag și etichetele care se întind pe mai multe rânduri. Nu traduce titluri de melodii sau efecte sonore folosite ca etichete. Păstrează textul literal dintre paranteze din mijlocul unei fraze, inclusiv taste/comenzi precum „Press [Enter] to continue” și indicații editoriale precum [sic]. Nu șterge dialogul exterior tagului.
 - PENTRU DIALOG NORMAL, returnează traducerea ca text simplu: nu pune replica tradusă între paranteze rotunde sau drepte și nu adăuga paranteze decorative în jurul întregii traduceri. Parantezele/parantezele drepte nu se folosesc ca ambalaj pentru o replică normală.
 - NEVER include non-dialogue sound effects, music cues, stage directions, or vocal-action captions in the Romanian subtitle output. Remove cues such as “(sighs)”, “[whistling]”, „(bufnește)”, „(șuierături)”, „(bufnire)” and „(plângând)” completely. Do not remove dialogue that mentions a sound, laughter, singing, or music when that dialogue is outside parentheses/brackets.
 
@@ -3679,15 +3781,18 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
     const contextAfter = allItems.slice(chunkEnd, Math.min(allItems.length, chunkEnd + CONTEXT_LINES_AFTER));
 
     const sourceIndexById = getTranslationSourceIndexById(allItems);
+    // Plasă de siguranță: Gemini nu primește etichete/cue-uri non-dialogate rămase
+    // accidental în sursă sau în context. Curățarea păstrează [Enter] când este literal.
+    const hideTagsFromAI = value => stripNonDialogueSoundMarkup(value).text.trim();
     const keysToTranslate = chunk.map(obj => {
         const absoluteIndex = sourceIndexById.get(String(obj.id));
         const previous = Number.isInteger(absoluteIndex) ? allItems[absoluteIndex - 1] : null;
         const next = Number.isInteger(absoluteIndex) ? allItems[absoluteIndex + 1] : null;
         return {
             id: obj.id,
-            text: obj.text,
-            context_anterior: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
-            context_urmator: next ? `[${next.id}] ${next.text}` : '(niciunul)'
+            text: hideTagsFromAI(obj.text),
+            context_anterior: previous ? `[${previous.id}] ${hideTagsFromAI(previous.text)}` : '(niciunul)',
+            context_urmator: next ? `[${next.id}] ${hideTagsFromAI(next.text)}` : '(niciunul)'
         };
     });
 
@@ -3700,10 +3805,10 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
 ${MASTER_TRANSLATION_PROMPT}
 
 ${mediaContextBlock}Context inainte (pentru referinta):
-${contextBefore.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
+${contextBefore.map(i => `[${i.id}]${hideTagsFromAI(i.text)}`).join('\n') || '(niciunul)'}
 
 Context dupa (pentru referinta):
-${contextAfter.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
+${contextAfter.map(i => `[${i.id}]${hideTagsFromAI(i.text)}`).join('\n') || '(niciunul)'}
 
 Context anterior tradus in Romana (pentru continuitate):
 ${previousTranslatedContext.map(i => `[${i.id}]${i.text}`).join('\n') || '(niciunul)'}
@@ -9858,8 +9963,10 @@ function protectMusicalLyricSegments(text, cueSequence) {
                 const match = regex.exec(tail);
                 if (match && match.index > 0) candidates.push({ index: match.index, priority });
             };
-            // Delimitări structurale care apar în subtitrări reale.
-            addBoundary(/\r?\n/u, 0);
+            // O simplă întrerupere de rând este de obicei word-wrap în versurile cântate,
+            // nu o limită între cântec și dialog. O folosim ca delimitare numai dacă
+            // rândul următor începe cu o liniuță explicită de dialog.
+            addBoundary(/\r?\n(?=[ \t]*[-–—]\s+)/u, 0);
             addBoundary(/<br\s*\/?>/iu, 1);
             // „ / ” separă frecvent două replici în același bloc SRT.
             addBoundary(/\s+\/\s+/u, 2);
@@ -10178,6 +10285,20 @@ function parseSrt(srt, stats = null) {
         // Reclamele/creditele furnizorilor de subtitrări nu sunt dialog: le eliminăm înainte de Gemini.
         if (isSubtitleAdOrCreditCue(rawText, blockIndex < 8 || blockIndex >= blocks.length - 8)) {
             if (stats) stats.otherBlocksFiltered++;
+            continue;
+        }
+
+        // Eliminăm înainte de protejarea versurilor tagurile non-dialogate care
+        // încep la început de rând și se întind pe mai multe rânduri (ex. [♪ artist: / "Song"]).
+        // Astfel, niciun fragment al etichetei nu poate ajunge în promptul Gemini.
+        const leadingMultilineTags = stripLeadingMultilineNonDialogueTags(rawText);
+        rawText = leadingMultilineTags.text;
+        if (stats && leadingMultilineTags.removedCount) {
+            stats.nonDialogueSegmentsRemoved += leadingMultilineTags.removedCount;
+        }
+        if (leadingMultilineTags.removedCount &&
+            !rawText.replace(/^[ \t]*[-–—][ \t]*$/gm, '').trim()) {
+            if (stats) stats.nonDialogueBlocksFiltered++;
             continue;
         }
 
