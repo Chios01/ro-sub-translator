@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.97',
+    version: '13.2.98',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1954,6 +1954,35 @@ function isCompoundSoundCueLabel(text) {
     return SOUND_CUE_COMPOUND_LABEL_PATTERNS.some(pattern => pattern.test(text));
 }
 
+// Cue-uri SDH frecvente care au rămas în ieșiri reale deoarece formularea diferă
+// între engleză și română. Sunt expresii complete, nu căutări de cuvinte în dialog.
+// Aceeași clasificare este folosită înainte de Gemini și pentru markup-ul dintre paranteze.
+const SOUND_CUE_ADDITIONAL_CAPTION_PATTERNS = [
+    /^(?:thunder(?:\s+cracks?)?|thunderclaps?|tunet(?:e|ul)?|fulger(?:e)?|urlete?(?:\s+în\s+depărtare)?|strigăte(?:\s+furioase)?|huiduieli|discuții\s+neclare|conversații\s+neclare|voci\s+neclare|gemete(?:\s+de\s+durere)?(?:\s*,\s*(?:gâfâit(?:uri)?|huiduieli))?)[.!…]*$/iu,
+    /^(?:(?:[\p{Lu}][\p{L}\p{M}'’.-]{1,24})\s+)?(?:sighs?|sighing|laughs?|laughing|groans?|groaning|grunts?|grunting|gasps?|gasping|sobs?|sobbing|exhales?|exhaling|inhales?|inhaling|suspina|suspină|suspinând|oftează|ofteaza|râde|râzând|geme|gemând|gâfâie|gâfâind|sforăie|șuieră)(?:\s+(?:deeply|nervously|sharply|softly|heavily|loudly|quietly|deep|nervous|adânc|nervos|nervoasă|puternic|încet|brusc|scurt))?[.!…]*$/iu,
+    /^(?:the\s+)?pounding\s+(?:the\s+)?floor\s+with\s+(?:a\s+)?cane[.!…]*$/iu,
+    /^(?:(?:the\s+)?group\s+(?:(?:resumes?|starts?|continues?)\s+)?chanting|chanting(?:\s+(?:continues?|stops?))?|group\s+chanting\s+(?:continues?|stops?))[.!…]*$/iu,
+    /^(?:the\s+)?engine\s+purr(?:s|ed|ing)?[.!…]*$/iu,
+    /^(?:the\s+)?car\s+depart(?:s|ed|ing)?[.!…]*$/iu,
+    /^(?:the\s+)?siren\s+whoop(?:s|ed|ing)?[.!…]*$/iu,
+    /^(?:the\s+)?insects?\s+trill(?:s|ed|ing)?[.!…]*$/iu,
+    /^(?:(?:the\s+)?(?:dispatcher|officer|man|woman|voice|dispecer(?:ul)?|ofițer(?:ul)?|bărbat(?:ul)?|femeie(?:a)?)\s+)(?:(?:continues?\s+)?(?:speaking|talking|speaks?|talks?|vorbește|vorbind|continuă\s+să\s+vorbească)\s+)?(?:in\s+continuing\s+)?(?:continues?\s+)?(?:speaking\s+)?(?:indistinctly|indistinct|unintelligibly|neclar|neinteligibil(?:ă|e)?|în\s+continuare\s+neclar)(?:\s+in\s+the\s+distance|\s+în\s+depărtare)?[.!…]*$/iu,
+    /^(?:dispecer(?:ul)?|ofițer(?:ul)?|bărbat(?:ul)?|femeie(?:a)?)\s+(?:vorbește|vorbind|continuă\s+să\s+vorbească)(?:\s+în\s+continuare)?\s+(?:neclar|neinteligibil(?:ă|e)?)(?:\s+în\s+depărtare)?[.!…]*$/iu,
+    /^(?:scârțâit(?:ul)?\s+(?:de\s+)?(?:anvelope(?:lor)?|cauciucuri)|declic(?:ul)?\s+(?:al\s+)?(?:aparatului\s+foto|aparat\s+foto)|clic(?:ul)?\s+(?:al\s+)?(?:aparatului\s+foto|aparat\s+foto))[.!…]*$/iu,
+    /^(?:oprește|opreste|pornește|porneste)\s+motorul[.!…]*$/iu,
+    /^(?:motorul|motor)\s+(?:se\s+)?(?:oprește|opreste|pornește|porneste|se\s+stinge)[.!…]*$/iu,
+    /^(?:greier(?:ii|i)?|cicale|cicad(?:e|ele)?|broașt(?:e|ele)|câin(?:i|ii)|mulțim(?:ea|ii)|oase(?:le)?|anvelope(?:le)?|ploaie|ploaia|motor(?:ul)?)\s+(?:cântă|cântând|țârâie|țârâind|orăcăie|orăcăind|latră|lătrând|murmură|murmurând|trosnind|trosnesc|căzând|scârțâie|scârțâind|se\s+oprește|oprește|pornește)(?:\s+(?:în\s+depărtare|în\s+fundal|continuă|neîncetat))?[.!…]*$/iu
+];
+
+function isAdditionalSoundCueCaption(value) {
+    const text = String(value || '')
+        .replace(/<[^>]*>/g, ' ')
+        .normalize('NFC')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!text || text.length > 180 || /[?"“”]/u.test(text)) return false;
+    return SOUND_CUE_ADDITIONAL_CAPTION_PATTERNS.some(pattern => pattern.test(text));
+}
 
 // Clasificator structural pentru caption-uri SDH scrise în stil editorial (de regulă cu majuscule).
 // În loc să enumerăm fiecare expresie completă („KEYS JANGLE”, „CAR HORN TOOTS” etc.),
@@ -2066,7 +2095,7 @@ function isLikelyLeadingSpeakerLabel(inner, prefix, suffix) {
 function isObviousBracketedNonDialogueCue(value, openChar, prefix, suffix) {
     const text = String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     if (!text || text.length > 180) return false;
-    if (isStandaloneNonDialogueSoundCue(text) || isExtendedSoundCueLabel(text) || isCompoundSoundCueLabel(text)) return true;
+    if (isAdditionalSoundCueCaption(text) || isStandaloneNonDialogueSoundCue(text) || isExtendedSoundCueLabel(text) || isCompoundSoundCueLabel(text)) return true;
 
     // Etichete SDH frecvente rămase după testarea subtitrărilor reale.
     // Sunt clasificate doar în interiorul parantezelor, nu ca text liber de dialog.
@@ -2272,7 +2301,7 @@ function isStandaloneNonDialogueSoundCue(value) {
     // Etichetele SDH apar frecvent cu virgulă la final sau cu mai multe evenimente separate prin virgulă.
     // Normalizăm numai punctuația terminală pentru clasificare; textul efectiv nu este rescris aici.
     const labelCandidate = text.replace(/[,;:]+$/u, '').trim();
-    if (SOUND_CUE_LABEL_RE.test(labelCandidate) || isExtendedSoundCueLabel(labelCandidate) || isCompoundSoundCueLabel(labelCandidate)) return true;
+    if (isAdditionalSoundCueCaption(labelCandidate) || SOUND_CUE_LABEL_RE.test(labelCandidate) || isExtendedSoundCueLabel(labelCandidate) || isCompoundSoundCueLabel(labelCandidate)) return true;
 
     // Regula generală pentru caption-uri SDH: folosește structura, stilul editorial și
     // semantica acustică, nu o listă de expresii complete specifice unui singur film.
