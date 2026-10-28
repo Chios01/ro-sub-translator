@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.91',
+    version: '13.2.92',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6175,7 +6175,25 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])era pe ce a era(?![\p{L}\p{N}_])/giu, 'era cât pe ce'],
     [/(?<![\p{L}\p{N}_])ce adică(?![\p{L}\p{N}_])/giu, 'cum adică'],
 
-    [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are']
+    [/\bnare(?=\s+(?:niciun(?:ul|a)?|nicio|nimic|sens|rost)\b)/giu, 'n-are'],
+
+    // Corecturi punctuale pentru erorile confirmate în QA (v13.2.92).
+    // Se aplică numai formelor observate; nu modifică layout-ul subtitrărilor.
+    [/(?<![\p{L}\p{N}_])ce\s+primesc(?![\p{L}\p{N}_])/giu, 'ce primesc'],
+    [/(?<![\p{L}\p{N}_])pierdi\s+cunoștința(?![\p{L}\p{N}_])/giu, 'pierzi cunoștința'],
+    [/(?<![\p{L}\p{N}_])mînecile(?![\p{L}\p{N}_])/giu, 'mânecile'],
+    [/(?<![\p{L}\p{N}_])mînecă(?![\p{L}\p{N}_])/giu, 'mânecă'],
+    [/(?<![\p{L}\p{N}_])mîneca(?![\p{L}\p{N}_])/giu, 'mâneca'],
+    [/(?<![\p{L}\p{N}_])mîneci(?![\p{L}\p{N}_])/giu, 'mâneci'],
+    [/(?<![\p{L}\p{N}_])glonțe(?![\p{L}\p{N}_])/giu, 'gloanțe'],
+    [/(?<![\p{L}\p{N}_])că-i\s+se\s+oferă(?![\p{L}\p{N}_])/giu, 'că i se oferă'],
+    [/(?<![\p{L}\p{N}_])mi\s+îndeplinesc(?![\p{L}\p{N}_])/giu, 'îmi îndeplinesc'],
+    [/(?<![\p{L}\p{N}_])eu\s+lucrează(?![\p{L}\p{N}_])/giu, 'eu lucrez'],
+    [/(?<![\p{L}\p{N}_])să\s+ghidheze(?![\p{L}\p{N}_])/giu, 'să ghideze'],
+    [/(?<![\p{L}\p{N}_])sintezoiz(?![\p{L}\p{N}_])/giu, 'sintezoid'],
+    [/(?<![\p{L}\p{N}_])ceea\s+care(?![\p{L}\p{N}_])/giu, 'cea care'],
+    // „snap” este tradus doar în expresia exactă verificată, nu la nivel global.
+    [/(?<![\p{L}\p{N}_])l-a\s+șters\s+din\s+existență\s+cu\s+o\s+snap(?![\p{L}\p{N}_])/giu, 'l-a șters din existență pocnind din degete']
 ];
 
 function applyLocalGrammarDeterministicFixes(text) {
