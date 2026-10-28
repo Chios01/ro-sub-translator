@@ -2695,25 +2695,6 @@ function applyDeterministicSemanticFix(original, translation) {
     return text;
 }
 
-function isSevereWeakSubtitleLineEnding(value) {
-    const text = String(value || '').replace(/\s+/g, ' ').trim();
-    if (/(?:\bsau\s+nu|(?:\bnu,\s*)+nu)[,;:]*$/iu.test(text)) return false;
-    const lastWord = (text.match(/\S+$/u) || [''])[0];
-    return /^(?:nu|dacă)[,;:]*$/iu.test(lastWord);
-}
-
-function isWeakSubtitleLineEnding(value) {
-    const text = String(value || '').replace(/\s+/g, ' ').trim();
-    if (!text) return false;
-
-    // Nu mutăm expresii firești precum „sau nu / aprobat” și nici șiruri
-    // intenționat repetitive („nu, nu, nu”) doar pentru a evita cuvântul „nu”.
-    if (/(?:\bsau\s+nu|(?:\bnu,\s*)+nu)[,;:]*$/iu.test(text)) return false;
-
-    const lastWord = (text.match(/\S+$/u) || [''])[0];
-    return /^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă|mai|nu|dacă|care|cel|cea|cei|cele|unei|unui|unor|l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar)[,;:]*$/iu.test(lastWord);
-}
-
 function splitSubtitleIntoTwoLines(value, maxChars = 42) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     if (!text) return [];
@@ -2729,8 +2710,7 @@ function splitSubtitleIntoTwoLines(value, maxChars = 42) {
         const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
         const rightFirstWord = (right.match(/^\S+/) || [''])[0].toLowerCase();
         let penalty = 0;
-        if (isSevereWeakSubtitleLineEnding(left)) penalty += 20;
-        else if (isWeakSubtitleLineEnding(left)) penalty += 8;
+        if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă|mai|care|unei|unui|unor)$/i.test(leftLastWord)) penalty += 8;
         // Evită să rupă grupurile auxiliare/clitice chiar înaintea verbului: „l-am / folosi”.
         if (/^(?:l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar)$/iu.test(leftLastWord)) penalty += 10;
         if (/^(?:de|din|în|la|pe|pentru|și|să|cu|că|care|un|o)$/i.test(rightFirstWord)) penalty += 3;
@@ -2806,8 +2786,7 @@ function splitSubtitleIntoTwoLinesWithinLimits(value, firstMaxChars, secondMaxCh
         const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
         const rightFirstWord = (right.match(/^\S+/) || [''])[0].toLowerCase();
         let penalty = 0;
-        if (isSevereWeakSubtitleLineEnding(left)) penalty += 20;
-        else if (isWeakSubtitleLineEnding(left)) penalty += 8;
+        if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă|mai|care|unei|unui|unor)$/iu.test(leftLastWord)) penalty += 8;
         if (/^(?:l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar)$/iu.test(leftLastWord)) penalty += 10;
         if (/^(?:de|din|în|la|pe|pentru|și|să|cu|că|care|un|o)$/iu.test(rightFirstWord)) penalty += 3;
         if (/[.!?…,:;]$/.test(left)) penalty -= 4;
@@ -3053,29 +3032,49 @@ function formatSubtitleLayout(value) {
 
         // Nu păstrăm nici măcar o ruptură punctuată dacă lasă agățat un cuvânt
         // funcțional sau desparte un auxiliar de verb.
-        const weakEnding = isWeakSubtitleLineEnding(first);
+        const weakEnding = /(?:^|\s)(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|unei|unui|unor|mai|că|ca|dacă|nu|îi|i|le|mi|ți|ne|vă|care|l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar)[,;:]*$/iu.test(first.trim());
 
-        // Păstrăm o ruptură deja făcută după punctuație dacă ambele rânduri sunt rezonabile.
+        // Dacă textul conține o limită clară de propoziție care încape în două
+        // rânduri, păstrăm acea limită înainte de a decide dacă păstrăm ruptura curentă.
+        const existingSentenceSplit = findSubtitleSentenceSplit(joined, 42);
+        if (bothFit && existingSentenceSplit) return existingSentenceSplit.join('\n');
+
+        // Nu mutăm o ruptură deja acceptabilă doar ca să umplem primul rând.
+        // Dacă ambele rânduri sunt în toleranța istorică de 43, păstrăm ruptura,
+        // cu excepția cazurilor identificabile de cuvânt agățat sau punctuație.
         if (bothFit && firstEndsSentence && !weakEnding) return first + '\n' + second;
 
-        // Toleranța istorică este 43 pentru rândurile deja formatate. Rândurile
-        // nou împachetate rămân însă limitate la 42, inclusiv prefixul de dialog.
-        if (joined.length <= 42) return joined;
+        // Dacă reunirea încape într-un singur rând, păstrăm comportamentul
+        // istoric de compactare, dar respectăm o limită de propoziție existentă.
+        if (joined.length <= 42) {
+            const compactSentenceSplit = findSubtitleSentenceSplit(joined, 42);
+            if (compactSentenceSplit) return compactSentenceSplit.join('\n');
+            return joined;
+        }
 
-        // Dacă există o limită naturală de propoziție care încape în două rânduri,
-        // preferăm acea ruptură în locul unei tăieturi în mijlocul propoziției următoare.
-        const sentenceSplit = findSubtitleSentenceSplit(joined, 42);
-        if (sentenceSplit) return sentenceSplit.join('\n');
+        if (bothFit && !weakEnding) return first + '\n' + second;
 
-        // Repară rupturile care lasă agățate prepoziții/articole/adverbe sau
-        // despart un auxiliar de verb („pentru / reconstrucție”, „mai / bine”, „l-am / folosi”).
-        if (weakEnding) return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
+        // Pentru o ruptură gramatical slabă, încercăm să o reparăm în exact două
+        // rânduri de maximum 43, fără a crea un al treilea rând inutil.
+        if (bothFit && weakEnding) {
+            const repaired = splitSubtitleIntoTwoLinesWithinLimits(joined, 43, 43);
+            if (repaired.length === 2 &&
+                !/(?:^|\s)(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|unei|unui|unor|mai|că|ca|dacă|nu|care)[,;:]*$/iu.test(repaired[0].trim())) {
+                return repaired.join('\n');
+            }
+            // Dacă nu găsim o reparație sigură, păstrăm cele două rânduri
+            // inițiale în loc să le transformăm automat în trei.
+            return first + '\n' + second;
+        }
 
-        // Dacă un rând depășește pragul istoric, reîmpachetăm textul. Word-wrap-ul
-        // permite trei sau mai multe rânduri când textul nu încape în două.
-        if (!bothFit) return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
+        // Un rând care depășește pragul istoric de 43 trebuie reîmpachetat.
+        // Împachetarea strictă la 42 și toleranța de două rânduri rămân în helper.
+        if (!bothFit) {
+            const sentenceSplit = findSubtitleSentenceSplit(joined, 42);
+            if (sentenceSplit) return sentenceSplit.join('\n');
+            return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
+        }
 
-        // Păstrăm ruptura existentă dacă ambele rânduri au cel mult 43 de caractere; o reparăm doar când există un indiciu concret de ruptură gramaticală slabă sau când un rând depășește pragul. Cuvinte precum „nu” și „dacă” sunt tratate ca terminații slabe.
         return first + '\n' + second;
     }
 
