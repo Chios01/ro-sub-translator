@@ -1987,34 +1987,53 @@ function isGenericUppercaseSoundCaption(text, words) {
 const SOUND_CUE_LABEL_RE = /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|background|gentle|heavy|slight|small|short|brief|off-screen|în fundal|încet|încetișor|tare|ușor|scurt|scurtă|puternic|puternică|îndepărtat(?:ă|e)?|slab(?:ă|e)?)\s+)*(?:sound(?:s)?(?:\s+of)?|noise(?:s)?(?:\s+of)?|music(?:\s+(?:playing|continues|swells|fades|starts|stops|in background))?|applause|laughter|laugh(?:s|ing)?|footsteps?|knocking|banging|pounding|thudding|thumping|doorbell|ringing|beeping|buzzing|clicking|clattering|crashing|slamming|creaking|cough(?:ing|s)?|sigh(?:ing|s)?|gasp(?:ing|s)?|groan(?:ing|s)?|grunt(?:ing|s)?|snoring|heavy breathing|breathing heavily|breathing|whispering|singing|humming|babbling|murmuring|whimpering|growling|snorting|sniffing|sneezing|screaming|shouting|panting|chirping|howling|rustling|rattling|rumbling|whistling|clapping|shuffling|swallowing|gulping|squeaking|squealing|scraping|scratching|wind howling|birds? chirping|doorbell ringing|phone ringing|background music|bătaie(?:\s+în\s+ușă)?|bătăi(?:\s+în\s+ușă)?|gângurit(?:ul)?|mormăit(?:ul|uri)?|suspin(?:ând|e|uri)?|oftat(?:ul)?|râs(?:ul)?|râde|râzând|râsete|plâns(?:ul)?|plânge|plângând|plânsete|pași|aplauze|urale|tușit(?:ul)?|tușește|tușind|gâfâit(?:ul|uri)?|gâfâie|gâfâind|bufnet(?:ul|e)?|bufnește|bufnire|bufniri|pufnet(?:ul|e)?|pufnește|pufnire|foșnet(?:ul|e|uri)?|foșnește|fâșâit(?:ul|uri)?|fâșâie|trosnet(?:ul|e)?|trosnește|zgomot(?:e)?(?:\s+de\s+[^.!?]{1,60})?|sunet(?:e)?(?:\s+de\s+[^.!?]{1,60})?|șuieră|șuierând|șuierături|fluieră|fluierând|fluierături|geme|gemând|geamăt(?:e)?|gemete|horcăie|horcăit(?:ul|uri)?|sforăie|sforăit|adulmecă|fornăie|sughiță|sughițuri|fredonează|cântă\s+încet|face\s+fâ+|bate\s+din\s+palme|clopoțel|răpăit|zdrăngănit|vibrează|hârâit)(?:\s+(?:in the background|from outside|from inside|în fundal|se aude|continuă|încet|tare|ușor|puternic|loudly|softly))?[.!…]*$/iu;
 
 function stripBracketedSegments(text) {
-    let removedCount = 0;
-    let clean = String(text || '');
+    const source = String(text || '');
+    const opening = new Map([['(', ')'], ['[', ']'], ['{', '}']]);
+    const closing = new Set([')', ']', '}']);
+    const stack = [];
+    const ranges = [];
 
-    // Eliminăm doar cue-uri sonore delimitate; parantezele care conțin dialog,
-    // explicații sau informație narativă rămân intacte. Repetăm pentru segmente imbricate.
-    const bracketedSegmentPattern = /\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)+\]|\([^()\[\]]*\)|\[[^()\[\]]*\]|\([^()\[\]\r\n]{1,80}\]|\[[^()\[\]\r\n]{1,80}\)/g;
-    let previous;
-    do {
-        previous = clean;
-        clean = clean.replace(bracketedSegmentPattern, match => {
-            const inner = match.slice(1, -1).trim();
-            const explicitSpeakerSoundCue = /^(?:(?:he|she|they|someone|the man|the woman|a man|a woman|the boy|the girl)\s+)(?:laughs?|sighs?|gasps?|groans?|grunts?|sobs?|cries?|coughs?|whispers?|mumbles?|mutters?|breathes?|inhales?|exhales?|sniffs?|screams?|shouts?)(?:\s+(?:softly|quietly|loudly|deeply|heavily))?[.!…]*$/iu.test(inner);
-            if (!isStandaloneNonDialogueSoundCue(inner) && !explicitSpeakerSoundCue) return match;
-            removedCount++;
-            return ' ';
-        });
-    } while (clean !== previous);
+    // Eliminăm orice segment delimitat, indiferent de conținut, inclusiv
+    // etichete de vorbitor și segmente cu paranteze imbricate sau mixte.
+    for (let i = 0; i < source.length; i++) {
+        const ch = source[i];
+        if (opening.has(ch)) {
+            stack.push({ char: ch, expected: opening.get(ch), start: i });
+        } else if (closing.has(ch) && stack.length && stack[stack.length - 1].expected === ch) {
+            const open = stack.pop();
+            ranges.push([open.start, i + 1]);
+        }
+    }
 
-    // Reparăm punctuația și spațiile rămase după eliminarea segmentelor delimitate.
+    // Păstrăm textul din afara segmentelor complete; parantezele neînchise
+    // nu declanșează ștergerea arbitrară a restului replicii.
+    ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const merged = [];
+    for (const range of ranges) {
+        const last = merged[merged.length - 1];
+        if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+        else merged.push(range.slice());
+    }
+
+    let clean = '';
+    let cursor = 0;
+    for (const [from, to] of merged) {
+        clean += source.slice(cursor, from) + ' ';
+        cursor = to;
+    }
+    clean += source.slice(cursor);
+
     clean = clean
-        .replace(/^([ \t]*)[:,;][ \t]*/gm, '$1')
+        .replace(/[ \t]{2,}/g, ' ')
         .replace(/[ \t]+([,;:!?])/g, '$1')
         .replace(/[,;:][ \t]*([.!?])/g, '$1')
-        .replace(/[ \t]{2,}/g, ' ')
-        .replace(/\n[ \t]*\n+/g, '\n');
-    if (removedCount && /^[ \t\r\n\-–—,;:.!?…]+$/.test(clean)) clean = '';
+        .replace(/([.!?…])[ \t]*([,;:])/g, '$1')
+        .replace(/^[ \t]*[,;:][ \t]*/gm, '')
+        .replace(/[ \t]+$/gm, '')
+        .replace(/\n[ \t]*\n+/g, '\n')
+        .trim();
 
-    return { text: clean, removedCount };
+    return { text: clean, removedCount: merged.length };
 }
 
 // Detectează și etichetele sonore care apar singure, fără paranteze: „Whistling”,
