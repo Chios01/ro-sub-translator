@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.86',
+    version: '13.2.87',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2710,7 +2710,9 @@ function splitSubtitleIntoTwoLines(value, maxChars = 42) {
         const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
         const rightFirstWord = (right.match(/^\S+/) || [''])[0].toLowerCase();
         let penalty = 0;
-        if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă)$/i.test(leftLastWord)) penalty += 8;
+        if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă|mai|care|unei|unui|unor)$/i.test(leftLastWord)) penalty += 8;
+        // Evită să rupă grupurile auxiliare/clitice chiar înaintea verbului: „l-am / folosi”.
+        if (/^(?:l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar)$/iu.test(leftLastWord)) penalty += 10;
         if (/^(?:de|din|în|la|pe|pentru|și|să|cu|că|care|un|o)$/i.test(rightFirstWord)) penalty += 3;
         if (/[.!?…,:;]$/.test(left)) penalty -= 4;
         const balancePenalty = Math.abs(left.length - right.length) * 0.35;
@@ -2779,6 +2781,23 @@ function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0) {
     const valid = preferred.length <= 2 && preferred.every((line, index) =>
         line.length <= (index === 0 ? contentLimit : maxChars));
     return valid ? preferred : wrapSubtitleLines(text, maxChars, prefixLength);
+}
+
+// Păstrează o ruptură după o propoziție completă atunci când ambele fragmente
+// încap în limita de afișare. Evită, de exemplu, „Da, eram la piscină. Niște puști / făceau mișto”.
+function findSubtitleSentenceSplit(value, maxChars = 42) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    const candidates = [];
+    const re = /([.!?…]+[”»)]*)\s+(?=[A-ZĂÂÎȘȚ„“"])/gu;
+    let match;
+    while ((match = re.exec(text)) !== null) {
+        const left = text.slice(0, match.index + match[1].length).trim();
+        const right = text.slice(match.index + match[0].length).trim();
+        if (!left || !right || left.length > maxChars || right.length > maxChars) continue;
+        candidates.push({ left, right, score: Math.abs(left.length - right.length) });
+    }
+    candidates.sort((a, b) => a.score - b.score);
+    return candidates.length ? [candidates[0].left, candidates[0].right] : null;
 }
 
 function formatSubtitleLayout(value) {
@@ -2940,7 +2959,7 @@ function formatSubtitleLayout(value) {
         if (entry.dialogue) return wrapEntry(entry).join('\n') || ' ';
 
         const compactText = entry.text.replace(/\s+/g, ' ').trim();
-        if (compactText && compactText.length <= 42) return compactText;
+        if (compactText && compactText.length <= 43) return compactText;
         return wrapSubtitleLinesSmart(compactText, 42).join('\n') || ' ';
     }
 
@@ -2969,19 +2988,33 @@ function formatSubtitleLayout(value) {
         }
 
         const joined = (first + ' ' + second).trim();
-        const bothFit = first.length <= 42 && second.length <= 42;
+        const bothFit = first.length <= 43 && second.length <= 43;
 
-        // Păstrăm despărțirea la punctuație dacă ambele rânduri respectă limita.
-        if (bothFit && firstEndsSentence) return first + '\n' + second;
+        // Nu păstrăm nici măcar o ruptură punctuată dacă lasă agățat un cuvânt
+        // funcțional sau desparte un auxiliar de verb.
+        const weakEnding = /(?:^|\s)(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|unei|unui|unor|mai|că|ca|îi|i|le|mi|ți|ne|vă|care|l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar)[,;:]*$/iu.test(first.trim());
 
-        // Două fragmente care încap împreună rămân un singur rând.
+        // Păstrăm o ruptură deja făcută după punctuație dacă ambele rânduri sunt rezonabile.
+        if (bothFit && firstEndsSentence && !weakEnding) return first + '\n' + second;
+
+        // Toleranța istorică este 43 pentru rândurile deja formatate. Rândurile
+        // nou împachetate rămân însă limitate la 42, inclusiv prefixul de dialog.
         if (joined.length <= 42) return joined;
 
-        // Dacă oricare dintre rândurile existente depășește limita, reîmpachetăm
-        // întregul text. Pentru replici lungi sunt permise 3+ rânduri, fără trunchiere.
+        // Dacă există o limită naturală de propoziție care încape în două rânduri,
+        // preferăm acea ruptură în locul unei tăieturi în mijlocul propoziției următoare.
+        const sentenceSplit = findSubtitleSentenceSplit(joined, 42);
+        if (sentenceSplit) return sentenceSplit.join('\n');
+
+        // Repară rupturile care lasă agățate prepoziții/articole/adverbe sau
+        // despart un auxiliar de verb („pentru / reconstrucție”, „mai / bine”, „l-am / folosi”).
+        if (weakEnding) return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
+
+        // Dacă un rând depășește pragul istoric, reîmpachetăm textul. Word-wrap-ul
+        // permite trei sau mai multe rânduri când textul nu încape în două.
         if (!bothFit) return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
 
-        // Ambele rânduri sunt deja conforme; păstrăm ruptura originală.
+        // Rândurile deja rezonabile rămân în aceeași ordine și cu ruptura lor.
         return first + '\n' + second;
     }
 
