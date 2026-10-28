@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.87',
+    version: '13.2.88',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2771,16 +2771,56 @@ function wrapSubtitleLines(value, maxChars = 42, prefixLength = 0) {
 }
 
 
-// Preferă despărțirea naturală deja folosită de proiect atunci când două
-// rânduri încap în limită; folosește word-wrap nelimitat doar dacă e necesar.
-function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0) {
+// Împarte în două rânduri în limite date, păstrând cuvintele întregi.
+// Această variantă este folosită numai ca toleranță de rezervă atunci când
+// împărțirea strictă la 42 ar produce inutil un al treilea rând.
+function splitSubtitleIntoTwoLinesWithinLimits(value, firstMaxChars, secondMaxChars) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return [];
+    const candidates = [];
+    for (let i = 1; i < text.length - 1; i++) {
+        if (text[i] !== ' ') continue;
+        const left = text.slice(0, i).trim();
+        const right = text.slice(i + 1).trim();
+        if (!left || !right || left.length > firstMaxChars || right.length > secondMaxChars) continue;
+        const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
+        const rightFirstWord = (right.match(/^\S+/) || [''])[0].toLowerCase();
+        let penalty = 0;
+        if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă|mai|care|unei|unui|unor)$/iu.test(leftLastWord)) penalty += 8;
+        if (/^(?:l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar)$/iu.test(leftLastWord)) penalty += 10;
+        if (/^(?:de|din|în|la|pe|pentru|și|să|cu|că|care|un|o)$/iu.test(rightFirstWord)) penalty += 3;
+        if (/[.!?…,:;]$/.test(left)) penalty -= 4;
+        const balancePenalty = Math.abs(left.length - right.length) * 0.35;
+        // Penalizează ușor depășirea limitei normale, astfel încât 42 rămâne ținta.
+        const overflowPenalty = Math.max(0, left.length - 42) * 0.25 + Math.max(0, right.length - 42) * 0.25;
+        candidates.push({ left, right, score: balancePenalty + penalty + overflowPenalty });
+    }
+    if (!candidates.length) return [];
+    candidates.sort((a, b) => a.score - b.score);
+    return [candidates[0].left, candidates[0].right];
+}
+
+// Preferă mai întâi împărțirea strictă la 42. Dacă aceasta ar produce 3 rânduri,
+// permite doar atunci o toleranță de până la 45 caractere pentru a păstra 2 rânduri.
+// Pentru dialog cu doi vorbitori, apelantul dezactivează explicit toleranța.
+function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSoftTwoLineWrap = true) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     if (!text) return [];
     const contentLimit = Math.max(1, maxChars - prefixLength);
     const preferred = splitSubtitleIntoTwoLines(text, contentLimit);
     const valid = preferred.length <= 2 && preferred.every((line, index) =>
         line.length <= (index === 0 ? contentLimit : maxChars));
-    return valid ? preferred : wrapSubtitleLines(text, maxChars, prefixLength);
+    if (valid) return preferred;
+
+    if (allowSoftTwoLineWrap) {
+        // Maximul vizibil rămâne 45 (inclusiv „- ” dacă există). Nu folosim
+        // toleranța dacă textul nu poate încăpea în două rânduri nici așa.
+        const tolerant = splitSubtitleIntoTwoLinesWithinLimits(
+            text, contentLimit + 3, maxChars + 3
+        );
+        if (tolerant.length === 2) return tolerant;
+    }
+    return wrapSubtitleLines(text, maxChars, prefixLength);
 }
 
 // Păstrează o ruptură după o propoziție completă atunci când ambele fragmente
@@ -2943,8 +2983,8 @@ function formatSubtitleLayout(value) {
 
     // Întoarce toate rândurile necesare. Liniuța intră în calculul limitei:
     // primul rând al unui vorbitor are maximum 40 de caractere de replică + „- ”.
-    const wrapEntry = (entry, capitalizeUnmarked = false) => {
-        const lines = wrapSubtitleLinesSmart(entry.text, 42, entry.dialogue ? 2 : 0);
+    const wrapEntry = (entry, capitalizeUnmarked = false, allowSoftTwoLineWrap = true) => {
+        const lines = wrapSubtitleLinesSmart(entry.text, 42, entry.dialogue ? 2 : 0, allowSoftTwoLineWrap);
         if (!lines.length) return [];
         if (entry.dialogue) {
             lines[0] = `- ${capFirst(lines[0])}`;
@@ -2966,13 +3006,13 @@ function formatSubtitleLayout(value) {
     // La dialog dublu fiecare vorbitor își păstrează liniuța; dacă o replică
     // este lungă, continuarea ei trece pe rânduri suplimentare fără a repeta liniuța.
     if (entries.length === 2 && entries.every(entry => entry.dialogue)) {
-        return entries.flatMap(entry => wrapEntry(entry)).join('\n') || ' ';
+        return entries.flatMap(entry => wrapEntry(entry, false, false)).join('\n') || ' ';
     }
 
     // Pentru o intrare mixtă, păstrăm comportamentul de capitalizare existent,
     // dar aplicăm word-wrap și ținem cont de spațiul ocupat de liniuță.
     if (entries.length === 2 && entries.some(entry => entry.dialogue)) {
-        return entries.flatMap(entry => wrapEntry(entry, true)).join('\n') || ' ';
+        return entries.flatMap(entry => wrapEntry(entry, true, false)).join('\n') || ' ';
     }
 
     if (entries.length === 2 && entries.every(entry => !entry.dialogue)) {
