@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.89',
+    version: '13.2.90',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2710,10 +2710,12 @@ function splitSubtitleIntoTwoLines(value, maxChars = 42) {
         const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
         const rightFirstWord = (right.match(/^\S+/) || [''])[0].toLowerCase();
         let penalty = 0;
-        if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă|mai|care|unei|unui|unor)$/i.test(leftLastWord)) penalty += 8;
+        if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă|mai|care|unei|unui|unor|dacă|nu|deși|sau|nici|doar|încă|când|unde|cum)$/iu.test(leftLastWord)) penalty += 8;
         // Evită să rupă grupurile auxiliare/clitice chiar înaintea verbului: „l-am / folosi”.
         if (/^(?:l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar)$/iu.test(leftLastWord)) penalty += 10;
-        if (/^(?:de|din|în|la|pe|pentru|și|să|cu|că|care|un|o)$/i.test(rightFirstWord)) penalty += 3;
+        if (/^(?:de|din|în|la|pe|pentru|și|să|cu|că|care|un|o)$/iu.test(rightFirstWord)) penalty += 3;
+        // Evită să separe un număr de substantivul/expresia care îl precede („cei 12”).
+        if (/^\d+(?:[.,]\d+)?$/u.test(rightFirstWord)) penalty += 8;
         if (/[.!?…,:;]$/.test(left)) penalty -= 4;
         const balancePenalty = Math.abs(left.length - right.length) * 0.35;
         candidates.push({ left, right, score: balancePenalty + penalty });
@@ -2733,7 +2735,7 @@ function splitSubtitleIntoTwoLines(value, maxChars = 42) {
         const right = text.slice(i + 1).trim();
         if (!left || !right) continue;
         const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
-        const penalty = /^(?:a|al|ai|ale|cu|de|din|în|la|pe|pentru|prin|să|și|un|o|că|ca)$/i.test(leftLastWord) ? 8 : 0;
+        const penalty = /^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă|mai|care|unei|unui|unor|dacă|nu|deși|sau|nici|doar|încă|când|unde|cum)$/iu.test(leftLastWord) ? 8 : 0;
         allBreaks.push({ left, right, score: Math.abs(left.length - right.length) + penalty });
     }
     if (allBreaks.length) {
@@ -2786,9 +2788,11 @@ function splitSubtitleIntoTwoLinesWithinLimits(value, firstMaxChars, secondMaxCh
         const leftLastWord = (left.match(/\S+$/) || [''])[0].toLowerCase();
         const rightFirstWord = (right.match(/^\S+/) || [''])[0].toLowerCase();
         let penalty = 0;
-        if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă|mai|care|unei|unui|unor)$/iu.test(leftLastWord)) penalty += 8;
+        if (/^(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|ori|că|ca|îi|i|le|mi|ți|ne|vă|mai|care|unei|unui|unor|dacă|nu|deși|sau|nici|doar|încă|când|unde|cum)$/iu.test(leftLastWord)) penalty += 8;
         if (/^(?:l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar)$/iu.test(leftLastWord)) penalty += 10;
         if (/^(?:de|din|în|la|pe|pentru|și|să|cu|că|care|un|o)$/iu.test(rightFirstWord)) penalty += 3;
+        // Evită să separe un număr de substantivul/expresia care îl precede („cei 12”).
+        if (/^\d+(?:[.,]\d+)?$/u.test(rightFirstWord)) penalty += 8;
         if (/[.!?…,:;]$/.test(left)) penalty -= 4;
         const balancePenalty = Math.abs(left.length - right.length) * 0.35;
         // Penalizează ușor depășirea limitei normale, astfel încât 42 rămâne ținta.
@@ -2800,9 +2804,10 @@ function splitSubtitleIntoTwoLinesWithinLimits(value, firstMaxChars, secondMaxCh
     return [candidates[0].left, candidates[0].right];
 }
 
-// Preferă mai întâi împărțirea strictă la 42. Dacă aceasta ar produce 3 rânduri,
-// permite doar atunci o toleranță de până la 45 caractere pentru a păstra 2 rânduri.
-// Pentru dialog cu doi vorbitori, apelantul dezactivează explicit toleranța.
+// Preferă mai întâi împărțirea strictă la 42. Doar dacă aceasta ar produce
+// un al treilea rând, permite până la 48 de caractere pentru a evita schimbarea
+// inutilă a subtitrărilor care înainte încăpeau în două rânduri. Pentru dialogul
+// cu doi vorbitori, apelantul dezactivează explicit toleranța.
 function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSoftTwoLineWrap = true) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     if (!text) return [];
@@ -2813,10 +2818,10 @@ function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSof
     if (valid) return preferred;
 
     if (allowSoftTwoLineWrap) {
-        // Maximul vizibil rămâne 45 (inclusiv „- ” dacă există). Nu folosim
-        // toleranța dacă textul nu poate încăpea în două rânduri nici așa.
+        // Maximul vizibil de rezervă este 48 (inclusiv „- ” dacă există).
+        // Nu folosim toleranța dacă textul nu poate încăpea în două rânduri nici așa.
         const tolerant = splitSubtitleIntoTwoLinesWithinLimits(
-            text, contentLimit + 3, maxChars + 3
+            text, contentLimit + 6, maxChars + 6
         );
         if (tolerant.length === 2) return tolerant;
     }
@@ -2934,6 +2939,20 @@ function formatSubtitleLayout(value) {
         entries = [{ text: mergedText, dialogue: false }];
     }
 
+    // Mai multe rânduri nemarcate reprezintă de regulă o singură subtitrare
+    // a unui vorbitor, nu vorbitori separați. Le rearanjăm împreună pentru a
+    // evita rândurile 3 create doar de rupturile intermediare venite din model.
+    // Păstrăm întâi, când încape, o limită naturală între propoziții; altfel
+    // încercăm 42 de caractere și toleranța controlată de până la 48.
+    if (entries.length > 2 && entries.every(entry => !entry.dialogue)) {
+        const joinedUnmarked = entries.map(entry => entry.text.trim()).filter(Boolean).join(' ')
+            .replace(/\s+/g, ' ').trim();
+        if (!joinedUnmarked) return ' ';
+        const sentenceSplit = findSubtitleSentenceSplit(joinedUnmarked, 48);
+        if (sentenceSplit) return sentenceSplit.join('\n');
+        return wrapSubtitleLinesSmart(joinedUnmarked, 42).join('\n') || ' ';
+    }
+
     // Dacă am obținut mai mult de 2 intrări, le restrângem logic la 2.
     if (entries.length > 2) {
         const merged = [];
@@ -3018,63 +3037,46 @@ function formatSubtitleLayout(value) {
     if (entries.length === 2 && entries.every(entry => !entry.dialogue)) {
         const first = entries[0].text.trim();
         let second = entries[1].text.trim();
-        const firstEndsSentence = /[.!?…,:;]["”»)]*$/u.test(first);
 
         // Corecție limitată la cazul observat: „... putem vorbi cu / Voi o secundă?”.
-        // Nu coborâm automat alte majuscule în rânduri nemarcate, pentru a păstra
-        // comportamentul testat și a proteja numele sau începuturile legitime.
+        // Nu coborâm automat alte majuscule în rânduri nemarcate.
         if (!/[.!?…]["”»)]*$/u.test(first)) {
             second = second.replace(/^Voi(?=\s|[,.!?;:]|$)/u, 'voi');
         }
 
         const joined = (first + ' ' + second).trim();
         const bothFit = first.length <= 43 && second.length <= 43;
+        const firstEndsSentence = /[.!?…]["”»)]*$/u.test(first);
 
-        // Nu păstrăm nici măcar o ruptură punctuată dacă lasă agățat un cuvânt
-        // funcțional sau desparte un auxiliar de verb.
-        const weakEnding = /(?:^|\s)(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|unei|unui|unor|mai|că|ca|dacă|nu|îi|i|le|mi|ți|ne|vă|care|l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar)[,;:]*$/iu.test(first.trim());
+        // Nu păstrăm rupturi care lasă agățate cuvinte funcționale ori conjuncții.
+        // Lista include explicit cazurile observate: „dacă / știi”, „nu / garantează”
+        // și „în / sfârșit”.
+        const weakEnding = /(?:^|\s)(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|unei|unui|unor|mai|că|ca|îi|i|le|mi|ți|ne|vă|care|l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar|dacă|nu|deși|sau|ori|nici|doar|încă|când|unde|cum|[\p{L}]+-(?:mi|ți|i|l|o|le|ne|vă))[,;:]*$/iu.test(first.trim());
 
-        // Dacă textul conține o limită clară de propoziție care încape în două
-        // rânduri, păstrăm acea limită înainte de a decide dacă păstrăm ruptura curentă.
-        const existingSentenceSplit = findSubtitleSentenceSplit(joined, 42);
-        if (bothFit && existingSentenceSplit) return existingSentenceSplit.join('\n');
+        // Păstrăm ruptura existentă dacă ambele rânduri sunt în limita istorică
+        // de 43 de caractere și nu se termină cu un cuvânt gramatical agățat.
+        // Această verificare trebuie făcută ÎNAINTE de căutarea altor rupturi,
+        // altfel algoritmul mută inutil rânduri care erau deja corecte.
+        if (bothFit && (!weakEnding || firstEndsSentence)) return first + '\n' + second;
 
-        // Nu mutăm o ruptură deja acceptabilă doar ca să umplem primul rând.
-        // Dacă ambele rânduri sunt în toleranța istorică de 43, păstrăm ruptura,
-        // cu excepția cazurilor identificabile de cuvânt agățat sau punctuație.
-        if (bothFit && firstEndsSentence && !weakEnding) return first + '\n' + second;
+        const naturalSentenceSplit = findSubtitleSentenceSplit(joined, 48);
 
-        // Dacă reunirea încape într-un singur rând, păstrăm comportamentul
-        // istoric de compactare, dar respectăm o limită de propoziție existentă.
+        // Dacă textul încape pe un singur rând și nu există o ruptură de propoziție
+        // care trebuie păstrată, îl compactăm ca înainte.
         if (joined.length <= 42) {
-            const compactSentenceSplit = findSubtitleSentenceSplit(joined, 42);
-            if (compactSentenceSplit) return compactSentenceSplit.join('\n');
+            if (firstEndsSentence || /[,;:]\s*["”»)]*$/u.test(first)) return first + '\n' + second;
             return joined;
         }
 
-        if (bothFit && !weakEnding) return first + '\n' + second;
+        // Căutăm o limită de propoziție doar când ruptura existentă e slabă
+        // sau depășește toleranța; nu rearanjăm preventiv rânduri deja acceptabile.
+        if (naturalSentenceSplit) return naturalSentenceSplit.join('\n');
 
-        // Pentru o ruptură gramatical slabă, încercăm să o reparăm în exact două
-        // rânduri de maximum 43, fără a crea un al treilea rând inutil.
-        if (bothFit && weakEnding) {
-            const repaired = splitSubtitleIntoTwoLinesWithinLimits(joined, 43, 43);
-            if (repaired.length === 2 &&
-                !/(?:^|\s)(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|unei|unui|unor|mai|că|ca|dacă|nu|care)[,;:]*$/iu.test(repaired[0].trim())) {
-                return repaired.join('\n');
-            }
-            // Dacă nu găsim o reparație sigură, păstrăm cele două rânduri
-            // inițiale în loc să le transformăm automat în trei.
-            return first + '\n' + second;
-        }
+        // Dacă ruptura era slabă sau un rând depășește 43, reîmpachetăm.
+        // 42 rămâne ținta; limita de 48 se folosește doar pentru a evita un al treilea rând inutil.
+        if (weakEnding || !bothFit) return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
 
-        // Un rând care depășește pragul istoric de 43 trebuie reîmpachetat.
-        // Împachetarea strictă la 42 și toleranța de două rânduri rămân în helper.
-        if (!bothFit) {
-            const sentenceSplit = findSubtitleSentenceSplit(joined, 42);
-            if (sentenceSplit) return sentenceSplit.join('\n');
-            return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
-        }
-
+        // Fallback conservator: păstrează despărțirea inițială.
         return first + '\n' + second;
     }
 
