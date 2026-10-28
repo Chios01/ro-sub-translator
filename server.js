@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.99',
+    version: '13.2.100',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2795,6 +2795,35 @@ function normalizeSubtitleDashes(value) {
     }).filter(line => line.trim()).join('\n');
 }
 
+// Repară numai pierderea evidentă a cratimei celui de-al doilea vorbitor.
+// Sursa trebuie să fi avut cel puțin două rânduri marcate cu liniuță; nu deducem
+// dialog dual doar din faptul că textul tradus ocupă două rânduri.
+function restoreExplicitSourceDialogueDashes(sourceValue, translatedValue) {
+    const source = String(sourceValue || '');
+    const translated = String(translatedValue || '');
+    const sourceDashLines = source.split(/\r?\n/).filter(line =>
+        /^\s*[-–—]+\s*(?=\S)/u.test(line)
+    ).length;
+    if (sourceDashLines < 2 || !translated.trim()) return translated;
+
+    const lines = translated.replace(/\r/g, '').split('\n').map(line => line.trim());
+    // Dacă formatterul a produs mai mult de două rânduri, nu riscăm să marcăm
+    // o continuare vizuală drept un vorbitor nou.
+    if (lines.length !== 2 || !lines[0] || !lines[1]) return translated;
+
+    const body = line => line.replace(/^[-–—]+\s*/u, '').trim();
+    const firstBody = body(lines[0]);
+    const secondBody = body(lines[1]);
+    // Cerem o limită recognoscibilă între replici și un început de rând plauzibil
+    // pentru un vorbitor nou. Nu reconstruim o delimitare dacă textul este ambiguu.
+    const firstEndsUtterance = /[.!?…—–]["”»')\]]*$/u.test(firstBody);
+    const secondLooksLikeSpeaker = /^(?:[\p{Lu}„“"'0-9¿¡])/u.test(secondBody);
+    if (!firstEndsUtterance || !secondLooksLikeSpeaker) return translated;
+
+    const fixed = [`- ${firstBody}`, `- ${secondBody}`];
+    return fixed.join('\n');
+}
+
 // Elimină numai liniuța de dialog de la începutul fiecărui rând.
 // Lucrează independent pe rânduri: nu unește, nu sortează și nu reordonează replicile.
 function stripLeadingDialogueDashes(value) {
@@ -3841,6 +3870,7 @@ SUBTITLE FORMATTING
 - Split at natural phrase boundaries, not arbitrary points. Avoid separating a Romanian preposition, article, or short function word from the phrase it belongs to; if necessary, rephrase concisely without losing meaning.
 - If the thought continues on the second visual line, start that line lowercase unless a proper noun or new sentence requires otherwise.
 - If two speakers share one source block, keep both under the SAME ID on separate lines, each with “- ” and a capitalized first word. Never move a speaker to another ID, and do not merge the two speakers.
+- Preserve explicit dialogue-dash markers from the English source: when two or more source lines begin with a dialogue dash, keep the corresponding speaker turns separately marked with “- ” in Romanian. Do not mistake a normal visual line wrap for a speaker change; when the source has no clear speaker marker, add dialogue dashes only if the text and nearby context clearly establish a second speaker.
 - Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
 INTERJECTIONS AND FILLERS
@@ -9077,6 +9107,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
 
     let removedMusicSegmentsFromOutput = 0;
     let omittedMusicOnlyCuesFromOutput = 0;
+    let restoredDialogueDashCount = 0;
     const output = items
         .flatMap(item => {
             const id = String(item.id);
@@ -9097,13 +9128,18 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
             removedMusicSegmentsFromOutput += cleaned.removedCount;
             if (!cleaned.text.trim()) return [];
 
-            return [`${item.id}\n${item.start} --> ${item.end}\n${cleaned.text}\n`];
+            const dashAlignedText = restoreExplicitSourceDialogueDashes(item.text, cleaned.text);
+            if (dashAlignedText !== cleaned.text) restoredDialogueDashCount++;
+            return [`${item.id}\n${item.start} --> ${item.end}\n${dashAlignedText}\n`];
         }).join('\n');
 
     if (removedMusicSegmentsFromOutput || omittedMusicOnlyCuesFromOutput) {
         // Plasă de siguranță pentru un cue muzical care ar putea apărea în viitor
         // pe un traseu alternativ; fluxul normal le elimină deja în parseSrt.
         console.log(`${c.cyan}[Versuri muzicale] Plasă de siguranță la export: eliminate ${removedMusicSegmentsFromOutput} segmente și ${omittedMusicOnlyCuesFromOutput} blocuri exclusiv muzicale.${c.reset}`);
+    }
+    if (restoredDialogueDashCount) {
+        console.log(`${c.cyan}[Dialog] Reparate la export cratimele explicite ale celui de-al doilea vorbitor în ${restoredDialogueDashCount} blocuri.${c.reset}`);
     }
 
     return output.trim() ? output.trim() + '\n' : '';
