@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.90',
+    version: '13.2.91',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2387,6 +2387,8 @@ function applyRomanianOrthographyRepairs(value) {
 
     // 4. Corecturi sigure din v61 pentru cifre parazite și cuvinte corupte (fără a strica R2D2 / MP3 / EF1)
     text = text.replace(/[ƒƑ]/g, ch => ch === 'Ƒ' ? 'F' : 'f');
+    // Repară caracterul vietnamez ơ/Ơ, care poate apărea accidental în textul românesc.
+    text = text.replace(/[ơƠ]/g, ch => ch === 'Ơ' ? 'Ă' : 'ă');
     text = text.replace(/(?<![\p{L}\p{N}_])de1lă(?![\p{L}\p{N}_])/giu, match => preserveInitialCase(match, 'de la'));
     text = text.replace(/(?<![\p{L}\p{N}_])(\p{Lu}\p{Ll}*|\p{Ll}+)\d+(\p{Ll}+)(?![\p{L}\p{N}_])/gu, '$1$2');
     text = text.replace(/(?<![\p{L}\p{N}_])(\p{Lu}\p{Ll}{2,}|\p{Ll}{3,})\d+(?=\s+(?:pe|în|la|cu|de|că|să|și|sau|dar|pentru|din|spre|sub|peste|către|cineva|el|ea|ei|ele|noi|voi)\b)/giu, '$1');
@@ -2940,10 +2942,12 @@ function splitSubtitleIntoTwoLinesWithinLimits(value, firstMaxChars, secondMaxCh
 // un al treilea rând, permite până la 48 de caractere pentru a evita schimbarea
 // inutilă a subtitrărilor care înainte încăpeau în două rânduri. Pentru dialogul
 // cu doi vorbitori, apelantul dezactivează explicit toleranța.
-function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSoftTwoLineWrap = true) {
+function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSoftTwoLineWrap = true, firstLineExtra = 0) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     if (!text) return [];
-    const contentLimit = Math.max(1, maxChars - prefixLength);
+    // Când rândul începe cu „- ”, permitem un caracter suplimentar pe primul rând
+    // pentru replicile aflate exact la limită, fără să mărim limita rândurilor următoare.
+    const contentLimit = Math.max(1, maxChars - prefixLength + firstLineExtra);
     const preferred = splitSubtitleIntoTwoLines(text, contentLimit);
     const valid = preferred.length <= 2 && preferred.every((line, index) =>
         line.length <= (index === 0 ? contentLimit : maxChars));
@@ -3006,7 +3010,7 @@ function formatSubtitleLayout(value) {
         // --- LOGICĂ ROBUSTĂ PENTRU DIALOG DUAL INLINE ---
         // Cazul 1: rândul începe cu liniuță; a doua liniuță separă vorbitorii
         // chiar și fără punctuație finală sau spațiu după separator.
-        const prefixedDoubleDialogue = raw.match(/^\s*[-–—]\s*(.+?(?:[.!?…]|\s))\s*[-–—]\s*(?=[A-ZĂÂÎȘȚa-zăâîșț0-9„"«])(.+)$/);
+        const prefixedDoubleDialogue = raw.match(/^\s*[-–—]\s*(.+?[.!?…]?)\s+[-–—]\s*(?=[A-ZĂÂÎȘȚa-zăâîșț0-9„"«])(.+)$/);
         if (prefixedDoubleDialogue) {
             entries.push({ text: prefixedDoubleDialogue[1].trim(), dialogue: true });
             entries.push({ text: prefixedDoubleDialogue[2].trim(), dialogue: true });
@@ -3015,7 +3019,7 @@ function formatSubtitleLayout(value) {
 
         // Cazul 2: rândul nu începe cu liniuță, dar separatorul din mijloc
         // indică a doua replică. Este acceptată și lipsa punctuației înaintea lui.
-        const inlineDialogue = raw.match(/^\s*(.+?(?:[.!?…]|\s))\s*[-–—]\s*(?=[A-ZĂÂÎȘȚa-zăâîșț0-9„"«])(.+)$/);
+        const inlineDialogue = raw.match(/^\s*(.+?[.!?…]?)\s+[-–—]\s*(?=[A-ZĂÂÎȘȚa-zăâîșț0-9„"«])(.+)$/);
         if (inlineDialogue) {
             entries.push({ text: inlineDialogue[1].trim(), dialogue: true });
             entries.push({ text: inlineDialogue[2].trim(), dialogue: true });
@@ -3133,9 +3137,10 @@ function formatSubtitleLayout(value) {
     const capFirst = value => String(value || '').replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
 
     // Întoarce toate rândurile necesare. Liniuța intră în calculul limitei:
-    // primul rând al unui vorbitor are maximum 40 de caractere de replică + „- ”.
+    // în mod normal primul rând are 40 de caractere de replică + „- ”;
+    // există o toleranță de un caracter pentru replicile care altfel s-ar rupe inutil la limită.
     const wrapEntry = (entry, capitalizeUnmarked = false, allowSoftTwoLineWrap = true) => {
-        const lines = wrapSubtitleLinesSmart(entry.text, 42, entry.dialogue ? 2 : 0, allowSoftTwoLineWrap);
+        const lines = wrapSubtitleLinesSmart(entry.text, 42, entry.dialogue ? 2 : 0, allowSoftTwoLineWrap, entry.dialogue ? 1 : 0);
         if (!lines.length) return [];
         if (entry.dialogue) {
             lines[0] = `- ${capFirst(lines[0])}`;
