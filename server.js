@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.96',
+    version: '13.2.97',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2313,7 +2313,11 @@ function stripNonDialogueSoundMarkup(value) {
 
 
     // Înlăturăm cue-urile sonore simple rămase pe linii proprii.
-    clean = clean.split('\n').map(line => {
+    // În subtitrările cu mai multe rânduri, nu clasificăm un rând fără liniuță
+    // separat de context: poate fi un cuvânt obișnuit dintr-o frază continuată.
+    const lines = clean.split('\n');
+    clean = lines.map(line => {
+        if (lines.length > 1 && !/^\s*[-–—]/.test(line)) return line;
         if (!isStandaloneNonDialogueSoundCue(line)) return line;
         removedCount++;
         return '';
@@ -2330,8 +2334,9 @@ function stripNonDialogueSoundMarkup(value) {
         .replace(/\n[ \t]*\n+/g, '\n')
         .trim();
 
-    // Și un cue complet rămas pe un singur rând este eliminat, fără a șterge propoziții.
-    if (isStandaloneNonDialogueSoundCue(clean)) {
+    // Clasificăm textul complet drept cue numai dacă a rămas pe un singur rând.
+    // Altfel, normalizarea internă a detectorului ar putea uni rândurile și șterge o frază.
+    if (!clean.includes('\n') && isStandaloneNonDialogueSoundCue(clean)) {
         clean = '';
         removedCount++;
     }
