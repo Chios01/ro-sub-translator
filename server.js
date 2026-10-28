@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.98',
+    version: '13.2.99',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2326,8 +2326,67 @@ function isStandaloneNonDialogueSoundCue(value) {
     return false;
 }
 
-// Filtrare aplicată atât sursei, cât și traducerii finale:
-// elimină cue-urile sonore delimitate sau izolate, dar păstrează parantezele cu dialog.
+// Protecție suplimentară pentru etichetele SDH care încep un rând.
+// Nu depindem exclusiv de lista semantică: un cue nou precum [thunder rolling],
+// [rain falling] sau [the shelves slide] trebuie eliminat înainte ca Gemini să-l vadă.
+// Păstrăm tastele/indicațiile explicite și textul care arată clar ca dialog.
+function isLikelyBracketedDialogueText(value) {
+    const text = String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!text) return false;
+    if (/[?"“”]/u.test(text)) return true;
+    // Replici complete la persoana I/II/plural, nu descrieri SDH de tip „Finlay sighs”.
+    if (/^(?:i|you|we|they)\b/iu.test(text)) return true;
+    return false;
+}
+
+function stripLeadingBracketedMarkup(value) {
+    let removedCount = 0;
+    const lines = String(value || '').split(/\r?\n/);
+    const cleanedLines = lines.map(originalLine => {
+        let line = originalLine;
+        let safety = 0;
+        // Suportăm mai multe etichete consecutive: [Gasps] [Coughs] Replică.
+        while (safety++ < 12) {
+            const match = line.match(/^([ \t]*(?:[-–—][ \t]*)?)(?:<(i|b|u)>[ \t]*)?([\[(])/i);
+            if (!match) break;
+            const openIndex = match[0].length - 1;
+            const endIndex = findBalancedBracketEnd(line, openIndex);
+            if (endIndex < 0) break;
+
+            const inner = line.slice(openIndex + 1, endIndex);
+            const openingChar = line[openIndex];
+            const suffix = line.slice(endIndex + 1);
+            const hasMusicMarkup = /[♪♫♬♩]/u.test(inner);
+            const hasCueSemantics = hasMusicMarkup ||
+                isObviousBracketedNonDialogueCue(inner, openingChar, line.slice(0, openIndex), suffix) ||
+                isStandaloneNonDialogueSoundCue(inner) ||
+                isAdditionalSoundCueCaption(inner) ||
+                isExtendedSoundCueLabel(inner) ||
+                isCompoundSoundCueLabel(inner) ||
+                /^[^.!?]{1,100}:\s*\/?\s*["“][^"”]{1,120}["”]$/u.test(inner.trim());
+            if (isProtectedBracketText(inner) || (!hasCueSemantics && isLikelyBracketedDialogueText(inner))) break;
+
+            // Păstrăm liniuța de dialog. Dacă formatarea HTML încadra numai cue-ul,
+            // eliminăm și tagul de închidere ca să nu rămână <i></i> orfan.
+            let prefix = match[1];
+            let tail = line.slice(endIndex + 1);
+            if (match[2]) {
+                const closingTag = new RegExp('^[ \\t]*<\\/' + match[2] + '>', 'i');
+                if (closingTag.test(tail)) tail = tail.replace(closingTag, '');
+                else prefix += '<' + match[2] + '>';
+            }
+            line = prefix + tail.replace(/^[ \t]+/, '');
+            removedCount++;
+        }
+        return line;
+    });
+
+    return { text: cleanedLines.join('\n'), removedCount };
+}
+
+// Filtrare aplicată sursei înainte de Gemini și folosită ca plasă de siguranță în prompt:
+// elimină cue-urile delimitate/izolate și etichetele de la începutul rândului,
+// dar păstrează textul dintre paranteze care pare dialog sau o tastă literală.
 function stripNonDialogueSoundMarkup(value) {
     let clean = String(value || '');
     let removedCount = 0;
@@ -2335,6 +2394,12 @@ function stripNonDialogueSoundMarkup(value) {
     const multilineTags = stripLeadingMultilineNonDialogueTags(clean);
     clean = multilineTags.text;
     removedCount += multilineTags.removedCount;
+
+    // Fallback structural: elimină orice tag non-dialogat rămas la început de rând,
+    // chiar dacă forma sa exactă nu există încă în inventarul de sunete.
+    const leadingMarkup = stripLeadingBracketedMarkup(clean);
+    clean = leadingMarkup.text;
+    removedCount += leadingMarkup.removedCount;
 
     const bracketed = stripBracketedSegments(clean);
     clean = bracketed.text;
@@ -2354,6 +2419,7 @@ function stripNonDialogueSoundMarkup(value) {
 
     // Eliminăm marcatorii de vorbitor orfani când singurul conținut de după ei era un sunet.
     clean = clean
+        .replace(/^([ \t]*[-–—][ \t]*)[-–—][ \t]+/gm, '$1')
         .replace(/^[ \t]*[-–—][ \t]*$/gm, '')
         .replace(/[ \t]+[-–—][ \t]*$/gm, '')
         .replace(/^([ \t]*)[:,;][ \t]*/gm, '$1')
