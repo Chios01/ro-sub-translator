@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.106',
+    version: '13.2.107',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -8205,7 +8205,7 @@ function isContinuationBlock(prevEnglish, currentEnglish, previousRomanian = '')
     return /[\p{L}\p{N}]/u.test(body);
 }
 
-function applyContinuationCase(items, translatedById) {
+function applyContinuationCase(items, translatedById, options = {}) {
     let changed = 0;
     // Păstrăm comportamentul conservator din v13.2.100: când sursa engleză
     // începe cu literă mică și replica anterioară nu s-a încheiat, este un
@@ -8253,7 +8253,9 @@ function applyContinuationCase(items, translatedById) {
         translatedById[id] = match[1] + lowerWord + current.slice(match[0].length);
         changed++;
     }
-    console.log(`${c.green}✔ [Continuări] ${changed} fragmente continuate au primit literă mică la început.${c.reset}`);
+    if (!options.silent) {
+        console.log(`${c.green}✔ [Continuări] ${changed} fragmente continuate au primit literă mică la început.${c.reset}`);
+    }
     return changed;
 }
 
@@ -8980,6 +8982,11 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     if (finalBracketedOrCueSegmentsRemoved) {
         console.log(`${c.cyan}[Filtru paranteze/cue-uri] Eliminate ${finalBracketedOrCueSegmentsRemoved} segmente delimitate sau cue-uri sonore din traducerile finale.${c.reset}`);
     }
+
+    // Ultima verificare între blocuri consecutive după filtrarea finală și eventualele
+    // recuperări individuale. Aceste etape pot înlocui o traducere după trecerile inițiale
+    // de capitalizare; repetăm numai corecția contextuală sigură, fără log duplicat.
+    applyContinuationCase(items, translatedById, { silent: true });
 
     // Corectare locală conservatoare a majusculelor după toate reviziile AI și
     // filtrele finale, înainte ca QA și exportul SRT să citească textul rezultat.
