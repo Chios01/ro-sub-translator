@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.103',
+    version: '13.2.104',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3831,6 +3831,16 @@ function formatSubtitleLine(text) {
     }
 
     return formatSubtitleLayout(text);
+}
+
+// Ultima garanție pentru export: aplicăm numai formatarea de layout, fără să
+// rerulăm dicționarele sau corecțiile semantice. Dacă formatterul ar returna
+// accidental un text gol pentru o traducere existentă, păstrăm originalul.
+function ensureFinalSubtitleLayoutForExport(value) {
+    const original = String(value ?? '');
+    if (!original.trim()) return original;
+    const candidate = formatSubtitleLayout(original);
+    return String(candidate || '').trim() ? candidate : original;
 }
 
 // ============================================================
@@ -9127,6 +9137,8 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     let removedMusicSegmentsFromOutput = 0;
     let omittedMusicOnlyCuesFromOutput = 0;
     let restoredDialogueDashCount = 0;
+    let finalLayoutAdjustedCount = 0;
+    const finalLayoutAdjustedIds = [];
     const output = items
         .flatMap(item => {
             const id = String(item.id);
@@ -9147,8 +9159,19 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
             removedMusicSegmentsFromOutput += cleaned.removedCount;
             if (!cleaned.text.trim()) return [];
 
-            const dashAlignedText = restoreExplicitSourceDialogueDashes(item.text, cleaned.text);
-            if (dashAlignedText !== cleaned.text) restoredDialogueDashCount++;
+            // Last-mile layout safeguard: later cleanup/recovery steps may alter a
+            // previously formatted value. Reapply layout after every final edit,
+            // immediately before serialization to SRT. Keep the original text if
+            // the formatter unexpectedly returns empty, so formatting can never
+            // delete a valid translation.
+            const finalLayoutText = ensureFinalSubtitleLayoutForExport(cleaned.text);
+            if (finalLayoutText !== cleaned.text.trim()) {
+                finalLayoutAdjustedCount++;
+                if (finalLayoutAdjustedIds.length < 12) finalLayoutAdjustedIds.push(String(item.id));
+            }
+
+            const dashAlignedText = restoreExplicitSourceDialogueDashes(item.text, finalLayoutText);
+            if (dashAlignedText !== finalLayoutText) restoredDialogueDashCount++;
             return [`${item.id}\n${item.start} --> ${item.end}\n${dashAlignedText}\n`];
         }).join('\n');
 
@@ -9159,6 +9182,9 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     }
     if (restoredDialogueDashCount) {
         console.log(`${c.cyan}[Dialog] Reparate la export cratimele explicite ale celui de-al doilea vorbitor în ${restoredDialogueDashCount} blocuri.${c.reset}`);
+    }
+    if (finalLayoutAdjustedCount) {
+        console.log(`${c.cyan}[Layout final] Reformatate chiar înainte de export ${finalLayoutAdjustedCount} subtitrări; ID-uri exemplu: ${finalLayoutAdjustedIds.join(', ')}${finalLayoutAdjustedCount > finalLayoutAdjustedIds.length ? ', ...' : ''}.${c.reset}`);
     }
 
     return output.trim() ? output.trim() + '\n' : '';
