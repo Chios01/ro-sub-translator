@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.112',
+    version: '13.2.113',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2526,6 +2526,13 @@ function applyRomanianOrthographyRepairs(value) {
         return replacement;
     };
 
+    // Erori de ortografie confirmate în subtitrări: corectăm doar cuvinte întregi
+    // și păstrăm capitalizarea, fără să atingem părți din nume sau alte cuvinte.
+    text = text.replace(/(?<![\p{L}\p{N}_])țîn(?![\p{L}\p{N}_])/giu,
+        match => preserveInitialCase(match, 'țin'));
+    text = text.replace(/(?<![\p{L}\p{N}_])(?:aștia|astia)(?![\p{L}\p{N}_])/giu,
+        match => preserveInitialCase(match, 'ăștia'));
+
     // 1. Repară cratima plasată după clitic: „nu ți-știu” / „nu ți-pasă” -> „nu-ți știu” / „nu-ți pasă”
     text = text.replace(/(?<![\p{L}\p{N}_])(nu|că|să|ce)[ \t]+(ți|mi)-(ști\p{L}*|pasă|place|plac|vine|vin|pare|par|amint\p{L}*|spu\p{L}*|zi\p{L}*|da\p{L}*|ia\p{L}*|fac\p{L}*)(?![\p{L}\p{N}_])/giu, '$1-$2 $3');
     text = text.replace(/(?<![\p{L}\p{N}_])([Ss])-[oO][ \t]+nu(?=[ \t]+[\p{L}])/giu, (_, initial) => `${initial}ă n-o`);
@@ -2730,13 +2737,9 @@ const CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN = [...CONTEXTUAL_STANDALONE_FI
 // Elimină întotdeauna vocalizările cerute explicit, atât ca replici izolate,
 // cât și în interiorul unei fraze. Acestea nu se trimit la Gemini pentru traducere.
 function stripSpecifiedVocalizations(value) {
-    // Hm/Hmm/Mm/Mmm/Mhm/Mm-hmm dispar din sursă înainte de Gemini,
-    // atât ca replici izolate, cât și în interiorul unei fraze.
-    // Protejăm „mm” ca unitate după o valoare numerică („20 mm”) și tokenurile din cuvinte.
-    const tokenRe = /(?<![\p{L}\p{N}_-])(?:h+m+|m+h+m+|m+m+(?:-h+m+)?)(?![\p{L}\p{N}_])/giu;
-    const isNumericMillimetres = (token, offset, whole) =>
-        /^mm$/iu.test(token) && /\d\s+$/u.test(whole.slice(0, offset));
-
+    // Hm/Hmm sunt ezitări; Mhm, Mm-hmm și Mm pot fi răspunsuri afirmative.
+    // Nu potrivim un token care face parte dintr-un cuvânt sau începe după cratimă.
+    const tokenRe = /(?<![\p{L}\p{N}_-])h+m+(?![\p{L}\p{N}_])/giu;
     return String(value || '').normalize('NFC').split(/\r?\n/).map(line => {
         if (!line.trim()) return '';
         const marker = line.match(/^(\s*[-–—]\s*)/u);
@@ -2744,30 +2747,16 @@ function stripSpecifiedVocalizations(value) {
         let body = marker ? line.slice(marker[0].length) : line;
         if (!body.trim()) return '';
 
-        const actualMatches = [...body.matchAll(tokenRe)].filter(match =>
-            !isNumericMillimetres(match[0], match.index, body)
-        );
+        const actualMatches = [...body.matchAll(tokenRe)];
         if (!actualMatches.length) return line;
-        tokenRe.lastIndex = 0;
 
-        const hadLeadingToken = /^\s*(?:h+m+|m+h+m+|m+m+(?:-h+m+)?)(?=$|[\s.,!?;:…])/iu.test(body);
-        const withoutTokens = body.replace(tokenRe, (token, offset, whole) =>
-            isNumericMillimetres(token, offset, whole) ? token : ' '
-        ).replace(/[\s.,!?;:…'"()[\]{}-]+/gu, ' ').trim();
-        if (!withoutTokens) return '';
+        const hadLeadingToken = /^\s*h+m+(?=$|[\s.,!?;:…])/iu.test(body);
 
-        // Scoatem și separatorul devenit orfan înaintea unei vocalizări eliminate.
-        body = body.replace(/[,;:]\s*(?:h+m+|m+h+m+|m+m+(?:-h+m+)?)(?=$|[\s.,!?;:…])/giu,
-            (match, offset, whole) => {
-                const token = (match.match(/(?:h+m+|m+h+m+|m+m+(?:-h+m+)?)/iu) || [''])[0];
-                const tokenOffset = offset + match.toLowerCase().lastIndexOf(token.toLowerCase());
-                return isNumericMillimetres(token, tokenOffset, whole) ? match : ' ';
-            }
-        );
-        body = body.replace(tokenRe, (token, offset, whole) =>
-            isNumericMillimetres(token, offset, whole) ? token : ' '
-        );
+        // Eliminăm ezitările și separatoarele devenite orfane, fără să ștergem
+        // cuvintele afirmative Mhm/Mm-hmm/Mm sau restul replicii.
         body = body
+            .replace(/[,;:]\s*h+m+(?=$|[\s.,!?;:…])/giu, ' ')
+            .replace(tokenRe, ' ')
             .replace(/[ \t]{2,}/g, ' ')
             .replace(/\s+([,;:!?])/g, '$1')
             .replace(/([.!?…])[ \t]*[,;:]+/g, '$1')
@@ -2779,6 +2768,7 @@ function stripSpecifiedVocalizations(value) {
             .replace(/[ \t]+([.!?])/g, '$1')
             .replace(/[ \t]{2,}/g, ' ')
             .trim();
+
         if (!body || !/[\p{L}\p{N}]/u.test(body)) return '';
         if (hadLeadingToken) body = body.replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
         return prefix + body;
@@ -2856,12 +2846,17 @@ function restoreExplicitSourceDialogueDashes(sourceValue, translatedValue) {
     const hasDash = line => /^[-–—]+\s*(?=\S)/u.test(line);
     const firstBody = body(lines[0]);
     const secondBody = body(lines[1]);
-    // Cazul simplu: două rânduri, două replici explicite în sursă.
+    // Când sursa are exact două intervenții marcate, iar traducerea are exact
+    // două rânduri, structura sursei este reperul decisiv. Nu cerem punct la prima
+    // replică: vorbitorii pot fi separați chiar și fără punctuație finală.
     const firstEndsUtterance = /[.!?…—–]["”»')\]]*$/u.test(firstBody);
     // „...they said” poate fi începutul celei de-a doua replici; ellipsa nu
     // trebuie să facă imposibilă restaurarea liniuței atunci când sursa o marca.
     const secondLooksLikeSpeaker = /^(?:[\p{Lu}„“"'0-9¿¡]|…|\.{2,})/u.test(secondBody);
     if (lines.length === 2) {
+        if (sourceDashLines === 2) {
+            return [`- ${firstBody}`, `- ${secondBody}`].join('\n');
+        }
         if (!firstEndsUtterance || !secondLooksLikeSpeaker) return translated;
         return [`- ${firstBody}`, `- ${secondBody}`].join('\n');
     }
@@ -2898,25 +2893,37 @@ function alignDialogueDashesToSource(sourceValue, translatedValue) {
     const sourceTurnCount = source.split('\n').filter(line => /^\s*[-–—]+\s*(?=\S)/u.test(line)).length;
     if (!sourceTurnCount) return translated;
 
-    // Mai întâi restaurăm o liniuță explicită pierdută, folosind regula deja testată.
-    let aligned = restoreExplicitSourceDialogueDashes(source, translated);
+    let aligned = String(translated);
+
+    // Regula din v97 separa și două intervenții puse accidental pe același rând,
+    // chiar dacă prima nu avea punct final. În v101 s-a cerut punctuație obligatorie,
+    // iar cazul a încetat să fie separat. O restaurăm DOAR când sursa confirmă exact
+    // două intervenții cu liniuță; astfel, o liniuță de pauză dintr-o singură replică
+    // nu este transformată într-un vorbitor nou.
+    if (sourceTurnCount === 2) {
+        const linesBeforeSplit = aligned.replace(/\r/g, '').split('\n').map(line => line.trim());
+        const currentDashCount = linesBeforeSplit.filter(line => /^[-–—]+\s*(?=\S)/u.test(line)).length;
+        if (currentDashCount < 2) {
+            const inlineSpeaker = /^\s*(?:[-–—]+\s*)?(.+?)\s+[-–—]\s+(?=[\p{Lu}„“"'0-9¿¡])(.+)$/u;
+            for (let i = 0; i < linesBeforeSplit.length; i++) {
+                const match = linesBeforeSplit[i].match(inlineSpeaker);
+                if (!match) continue;
+                linesBeforeSplit.splice(i, 1, `- ${match[1].trim()}`, `- ${match[2].trim()}`);
+                aligned = linesBeforeSplit.join('\n');
+                break;
+            }
+        }
+    }
+
+    // Mai întâi restaurăm liniuțele pierdute atunci când structura tradusă are
+    // aceleași două rânduri ca cele două intervenții marcate din sursă.
+    aligned = restoreExplicitSourceDialogueDashes(source, aligned);
     let lines = aligned.split('\n').map(line => line.trim());
     const dashCount = () => lines.filter(line => /^[-–—]+\s*(?=\S)/u.test(line)).length;
     let surplus = dashCount() - sourceTurnCount;
-    if (surplus <= 0) return aligned;
+    if (surplus <= 0) return lines.join('\n');
 
     const stripsDash = line => String(line || '').replace(/^[-–—]+\s*/u, '').trim();
-    const sourceLines = source.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    const hasDash = line => /^[-–—]+\s*(?=\S)/u.test(String(line || ''));
-
-    // Dacă sursa a fost normalizată ca o continuare nemarcată urmată de un
-    // răspuns marcat, nu păstrăm o liniuță inventată pe prima linie tradusă.
-    if (surplus > 0 && sourceLines.length >= 2 && !hasDash(sourceLines[0]) &&
-        sourceLines.slice(1).some(hasDash) && hasDash(lines[0])) {
-        lines[0] = stripsDash(lines[0]);
-        surplus--;
-    }
-
     const sentenceEnd = /[.!?…][”»'’”)}\]]*$/u;
     const continuationStarts = /^(?:în|și|dar|iar|sau|că|care|ce|pe|de|din|cu|la|pentru|prin|să|nu|mă|te|se|ne|vă|îl|îi|îmi|îți|a|al|ale|ai|un|o|mai|încă|când|unde|cum|dacă|deoarece|fiindcă)\b/iu;
 
@@ -3454,7 +3461,11 @@ function formatSubtitleLayout(value) {
             const previous = merged[merged.length - 1];
 
             // Cazul 1: Continuare normală (rândul precedent are liniuță, acesta nu)
-            const continuation = previous.dialogue && !entry.dialogue && !endsCompleteSentence(previous.text);
+            // Dacă rândul următor NU are liniuță, este continuarea vizuală a aceleiași
+            // intervenții chiar și când rândul precedent se termină cu punct. Un vorbitor
+            // poate rosti mai multe propoziții pe rânduri separate; punctul nu creează un
+            // vorbitor nou. V101 adăugase aici o condiție care producea inutil al treilea rând.
+            const continuation = previous.dialogue && !entry.dialogue;
 
             // Cazul 2: Continuare forțată (rândul precedent NU avea liniuță, dar al doilea are).
             // Repară situații gen: "Cred că ai un atac" / "- de panică."
@@ -3514,7 +3525,7 @@ function formatSubtitleLayout(value) {
         if (entry.dialogue) return wrapEntry(entry).join('\n') || ' ';
 
         const compactText = entry.text.replace(/\s+/g, ' ').trim();
-        if (compactText && compactText.length <= 43) return compactText;
+        if (compactText && compactText.length <= 42) return compactText;
         // A single original visual line may contain several full sentences. Prefer
         // a sentence boundary when both resulting rows fit, before word-balanced wrap.
         const naturalSplit = findSubtitleSentenceSplit(compactText, 42);
@@ -3545,18 +3556,38 @@ function formatSubtitleLayout(value) {
         }
 
         const joined = (first + ' ' + second).trim();
-        const bothFit = first.length <= 43 && second.length <= 43;
+        const bothFit = first.length <= 42 && second.length <= 42;
+        const firstEndsSentence = /[.!?…]["”»)]*$/u.test(first);
 
-        // Regresie evitată față de v13.2.97: păstrăm ruptura deja existentă
-        // când ambele rânduri sunt de maximum 43 de caractere.
-        if (bothFit) return first + '\n' + second;
+        // Repară prioritar rupturile dintre rânduri când textul încape pe un singur
+        // rând de maximum 42 de caractere. Păstrăm totuși limita de propoziție:
+        // „Știu. / Vreau doar să mă placă.” rămâne pe două rânduri.
+        if (joined.length <= 42) {
+            return firstEndsSentence ? first + '\n' + second : joined;
+        }
 
-        // Reîmpachetăm numai când cel puțin un rând depășește toleranța de 43.
-        // Preferăm o limită naturală de propoziție când există una potrivită;
-        // altfel folosim împachetarea obișnuită, fără să pierdem cuvinte.
+        // Nu păstrăm rupturi care lasă agățate cuvinte funcționale ori conjuncții.
+        // Lista include explicit cazurile observate: „dacă / știi”, „nu / garantează”
+        // și „în / sfârșit”.
+        const weakEnding = /(?:^|\s)(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|unei|unui|unor|mai|că|ca|îi|i|le|mi|ți|ne|vă|care|l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar|dacă|nu|deși|sau|ori|nici|doar|încă|când|unde|cum|[\p{L}]+-(?:mi|ți|i|l|o|le|ne|vă))[,;:]*$/iu.test(first.trim());
+
+        // Păstrăm ruptura existentă dacă ambele rânduri respectă limita de 42 de caractere
+        // și nu se termină cu un cuvânt gramatical agățat.
+        // Această verificare trebuie făcută ÎNAINTE de căutarea altor rupturi,
+        // altfel algoritmul mută inutil rânduri care erau deja corecte.
+        if (bothFit && (!weakEnding || firstEndsSentence)) return first + '\n' + second;
+
         const naturalSentenceSplit = findSubtitleSentenceSplit(joined, 42);
+
+        // Căutăm o limită de propoziție doar când ruptura existentă e slabă
+        // sau depășește toleranța; nu rearanjăm preventiv rânduri deja acceptabile.
         if (naturalSentenceSplit) return naturalSentenceSplit.join('\n');
-        return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
+
+        // Dacă ruptura era slabă sau un rând depășește 42, reîmpachetăm strict.
+        if (weakEnding || !bothFit) return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
+
+        // Fallback conservator: păstrează despărțirea inițială.
+        return first + '\n' + second;
     }
 
     // Fallback sigur: toate intrările rămase sunt împachetate, fără a pierde text.
@@ -10653,46 +10684,6 @@ function repairInvalidSubtitleTimings(items) {
     return { repaired, unresolvedIds: unresolved, medianGap };
 }
 
-// Unele surse SRT repetă liniuța la începutul unui cue care continuă aceeași
-// propoziție din cue-ul precedent. Eliminăm doar liniuța inițială a continuării
-// când gramatica engleză o dovedește; liniuța răspunsului din același bloc rămâne.
-function normalizeSourceContinuationDashes(items) {
-    let removed = 0;
-    const continuationStarts = /^(?:in|and|or|but|because|as|which|that|who|where|when|to|with|from|for|of|on|at|if|so|then|until|while|since|after|before|she|he|it|they|we|you|this|these|those)\b/iu;
-    const quoteIntroducerAtEnd = /\b(?:said|told|asked|replied|explained|mentioned|whispered|muttered|shouted|yelled|thought)\s*[,;:]?$/iu;
-    const offerQuestion = /\b(?:would (?:you )?like me to|would you like me|can i|do you want me to)\b[\s\S]*\?\s*$/iu;
-    const offerContinuation = /^(?:maybe|perhaps)\s+(?:i can|i could)\b|^(?:i can|i could)\s+(?:find|help|look|check|go through)\b/iu;
-    const shortResponse = /^(?:no|no thanks|no thank you|yes|yeah|yep|sure|okay|ok|not really)\b[.!?,…]*$/iu;
-    const endsClosed = /[.!?]["'’”»)}\]]*\s*$/u;
-
-    for (let i = 1; i < items.length; i++) {
-        const previous = String(items[i - 1]?.text || '').trim();
-        if (!previous) continue;
-        const previousLines = previous.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-        const previousLast = (previousLines[previousLines.length - 1] || '').replace(/^[-–—]+\s*/u, '').trim();
-        const current = String(items[i]?.text || '');
-        const lines = current.split(/\r?\n/);
-        if (!lines.length || !/^\s*[-–—]+\s*(?=\S)/u.test(lines[0])) continue;
-        const firstBody = lines[0].replace(/^\s*[-–—]+\s*/u, '').trim();
-        if (!firstBody) continue;
-
-        const previousIsOpen = !endsClosed.test(previousLast);
-        const clearLowercaseContinuation = previousIsOpen && continuationStarts.test(firstBody);
-        const quotedContinuation = previousIsOpen && quoteIntroducerAtEnd.test(previousLast);
-        const offerFollowupContinuation = endsClosed.test(previousLast) && offerQuestion.test(previousLast) &&
-            offerContinuation.test(firstBody) && lines.slice(1).some(line =>
-                /^\s*[-–—]+\s*(?=\S)/u.test(line) && shortResponse.test(line.replace(/^\s*[-–—]+\s*/u, '').trim())
-            );
-
-        if (clearLowercaseContinuation || quotedContinuation || offerFollowupContinuation) {
-            lines[0] = lines[0].replace(/^\s*([-–—]+)\s*(?=\S)/u, '');
-            items[i].text = lines.join('\n');
-            removed++;
-        }
-    }
-    return removed;
-}
-
 function parseSrt(srt, stats = null) {
     const rawNormalized = normalizeMusicMarkers(String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, ''));
     // SRT exporters sometimes insert a blank line BETWEEN a cue's timing line
@@ -10886,14 +10877,6 @@ function parseSrt(srt, stats = null) {
         result.forEach((item, index) => { item.id = index + 1; });
         if (stats) stats.duplicateIdsRenumbered = duplicateItems.length;
         console.warn(`[SRT] Au fost găsite ${duplicateItems.length} apariții cu ID duplicat; ID-urile ieșirii au fost normalizate pentru a preveni suprascrierea traducerilor.`);
-    }
-
-    // Corectăm liniuțe repetate accidental pe continuări englezești dovedite contextual.
-    // Nu eliminăm liniuțele răspunsurilor și nu schimbăm ordinea cue-urilor.
-    const continuationDashesRemoved = normalizeSourceContinuationDashes(result);
-    if (stats) stats.sourceContinuationDashesRemoved = continuationDashesRemoved;
-    if (continuationDashesRemoved) {
-        console.log(`[SRT Dialog] Eliminate ${continuationDashesRemoved} liniuțe de continuare duplicate, confirmate de contextul sursei.`);
     }
 
     // Timpurile se copiază din sursă; reparăm numai un interval imposibil când
