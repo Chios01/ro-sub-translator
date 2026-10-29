@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.105',
+    version: '13.2.106',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -8148,7 +8148,9 @@ const CONTINUATION_FUNCTION_WORDS = new Set([
     // continuă gramatical replica precedentă. Lista rămâne închisă pentru a proteja numele.
     'am', 'aș', 'ci', 'primarul', 'șeful', 'm-am', 'm-aș', 'n-am', 'n-aș',
     'i-am', 'i-aș', 'i-ar', 'i-au', 'mi-am', 'ți-am', 'ne-am', 's-a', 's-au',
-    'eram', 'erai', 'erau', 'aflu', 'aflăm', 'încep', 'începe', 'înseamnă'
+    'eram', 'erai', 'erau', 'aflu', 'aflăm', 'încep', 'începe', 'înseamnă',
+    // Forme de continuare observate în subtitrări, folosite doar când contextul nu încheie fraza.
+    'încearcă', 'aspirând', 'transformată', 'transformate', 'transformat'
 ]);
 
 // Vocabular de NUME din sursa engleză: cuvinte care apar cu majusculă și niciodată cu literă mică
@@ -8205,7 +8207,18 @@ function isContinuationBlock(prevEnglish, currentEnglish, previousRomanian = '')
 
 function applyContinuationCase(items, translatedById) {
     let changed = 0;
+    // Păstrăm comportamentul conservator din v13.2.100: când sursa engleză
+    // începe cu literă mică și replica anterioară nu s-a încheiat, este un
+    // semnal puternic că fragmentul continuă. În acest caz folosim vocabularul
+    // de nume din sursă pentru a nu transforma numele proprii în litere mici.
+    const englishNames = buildEnglishNameVocabulary(items);
     const endsSentence = value => /(?<!\.)[.!?]["'’”»)\]]*$/u.test(String(value || '').trim());
+    const sourceStartsLowercase = value => {
+        const text = String(value || '').replace(/<[^>]+>/g, ' ').trim();
+        if (!text || /^[-–—]/u.test(text)) return false;
+        const body = text.replace(/^[.…\s"“‘(\[]+/u, '');
+        return /^[a-z]/u.test(body);
+    };
 
     for (let i = 1; i < items.length; i++) {
         if (items[i - 1].musicOnly || items[i].musicOnly) continue;
@@ -8221,13 +8234,21 @@ function applyContinuationCase(items, translatedById) {
         if (endsSentence(previousRo)) continue;
         if (/^\s*[-–—]/u.test(current)) continue;
 
-        // Detectăm cuvinte și clitice cu cratimă („M-am”, „I-aș”), dar intervenim
-        // doar dacă forma este în lista închisă de cuvinte românești sigure.
         const match = current.match(/^(\s*[.…"„“'‘(\[]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*(?:-[a-zăâîșț]+)*)/u);
         if (!match) continue;
         const word = match[2] + match[3];
         const lowerWord = word.toLocaleLowerCase('ro-RO');
-        if (!CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
+        const sourceConfirmsContinuation = sourceStartsLowercase(currentEnglish);
+
+        if (sourceConfirmsContinuation) {
+            // Reproduce v13.2.100: lowercase the translated initial unless it
+            // matches a proper name identified from the English subtitle corpus.
+            if (englishNames.has(nameKey(lowerWord)) && !CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
+        } else {
+            // When English uses a capital at the start of every subtitle cue,
+            // only change words explicitly approved for a safe continuation.
+            if (!CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
+        }
 
         translatedById[id] = match[1] + lowerWord + current.slice(match[0].length);
         changed++;
