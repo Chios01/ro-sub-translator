@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.102',
+    version: '13.2.103',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3187,13 +3187,13 @@ function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSof
 
     // 42 de caractere rămâne ținta normală; prefixul „- ” ocupă două caractere.
     // Păstrăm parametrul firstLineExtra pentru compatibilitatea apelurilor vechi,
-    // dar plafonul relaxat este controlat explicit mai jos: cel mult +5 caractere.
+    // dar plafonul relaxat este controlat explicit mai jos: cel mult +6 caractere.
     const contentLimit = Math.max(1, maxChars - prefixLength);
-    const relaxedFirstLimit = contentLimit + 5;
-    const relaxedNextLimit = maxChars + 5;
+    const relaxedFirstLimit = contentLimit + 6;
+    const relaxedNextLimit = maxChars + 6;
 
     // În dialogul marcat, o replică puțin peste ținta strictă poate rămâne pe un
-    // singur rând (max. 47 de caractere vizibile cu tot cu „- ”). Asta evită ca
+    // singur rând (max. 48 de caractere vizibile cu tot cu „- ”). Asta evită ca
     // două ture scurte, marcate corect, să devină artificial trei sau patru rânduri.
     if (allowSoftTwoLineWrap && prefixLength > 0 && text.length <= relaxedFirstLimit) {
         return [text];
@@ -3205,8 +3205,8 @@ function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSof
     if (valid) return preferred;
 
     // Dacă limita strictă ar crea un al treilea rând, încercăm o împărțire naturală
-    // în două rânduri, cu maximum 47 de caractere vizibile pe fiecare. Rândul cu
-    // liniuță primește doar 45 de caractere de text + prefixul de două caractere.
+    // în două rânduri, cu maximum 48 de caractere vizibile pe fiecare. Rândul cu
+    // liniuță primește până la 46 de caractere de text + prefixul de două caractere.
     if (allowSoftTwoLineWrap) {
         const relaxed = splitSubtitleIntoTwoLinesWithinLimits(
             text,
