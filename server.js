@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.101',
+    version: '13.2.102',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3185,17 +3185,41 @@ function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSof
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     if (!text) return [];
 
-    // Limită strictă: prefixul „- ” ocupă două caractere din primul rând.
-    // Păstrăm parametrii vechi pentru compatibilitatea apelurilor, dar nu mai
-    // permitem toleranțe de 43–48 de caractere pe rândurile vizibile.
+    // 42 de caractere rămâne ținta normală; prefixul „- ” ocupă două caractere.
+    // Păstrăm parametrul firstLineExtra pentru compatibilitatea apelurilor vechi,
+    // dar plafonul relaxat este controlat explicit mai jos: cel mult +5 caractere.
     const contentLimit = Math.max(1, maxChars - prefixLength);
+    const relaxedFirstLimit = contentLimit + 5;
+    const relaxedNextLimit = maxChars + 5;
+
+    // În dialogul marcat, o replică puțin peste ținta strictă poate rămâne pe un
+    // singur rând (max. 47 de caractere vizibile cu tot cu „- ”). Asta evită ca
+    // două ture scurte, marcate corect, să devină artificial trei sau patru rânduri.
+    if (allowSoftTwoLineWrap && prefixLength > 0 && text.length <= relaxedFirstLimit) {
+        return [text];
+    }
+
     const preferred = splitSubtitleIntoTwoLines(text, contentLimit);
     const valid = preferred.length <= 2 && preferred.every((line, index) =>
         line.length <= (index === 0 ? contentLimit : maxChars));
     if (valid) return preferred;
 
-    // Dacă nu încape pe maximum două rânduri în limite, păstrăm tot textul
-    // pe rânduri suplimentare, fără să depășim limita și fără să rupem cuvinte.
+    // Dacă limita strictă ar crea un al treilea rând, încercăm o împărțire naturală
+    // în două rânduri, cu maximum 47 de caractere vizibile pe fiecare. Rândul cu
+    // liniuță primește doar 45 de caractere de text + prefixul de două caractere.
+    if (allowSoftTwoLineWrap) {
+        const relaxed = splitSubtitleIntoTwoLinesWithinLimits(
+            text,
+            relaxedFirstLimit,
+            relaxedNextLimit
+        );
+        const relaxedValid = relaxed.length === 2 && relaxed.every((line, index) =>
+            line.length <= (index === 0 ? relaxedFirstLimit : relaxedNextLimit));
+        if (relaxedValid) return relaxed;
+    }
+
+    // Dacă nici varianta relaxată nu poate păstra textul în maximum două rânduri,
+    // păstrăm toate cuvintele și folosim împachetarea strictă, fără trunchiere.
     return wrapSubtitleLines(text, maxChars, prefixLength);
 }
 
@@ -3393,7 +3417,7 @@ function formatSubtitleLayout(value) {
     // La dialog dublu fiecare vorbitor își păstrează liniuța; dacă o replică
     // este lungă, continuarea ei trece pe rânduri suplimentare fără a repeta liniuța.
     if (entries.length === 2 && entries.every(entry => entry.dialogue)) {
-        return entries.flatMap(entry => wrapEntry(entry, false, false)).join('\n') || ' ';
+        return entries.flatMap(entry => wrapEntry(entry, false, true)).join('\n') || ' ';
     }
 
     // Pentru o intrare mixtă, păstrăm comportamentul de capitalizare existent,
