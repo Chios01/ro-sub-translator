@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.104',
+    version: '13.2.105',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6456,6 +6456,17 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])să\s+ghidheze(?![\p{L}\p{N}_])/giu, 'să ghideze'],
     [/(?<![\p{L}\p{N}_])sintezoiz(?![\p{L}\p{N}_])/giu, 'sintezoid'],
     [/(?<![\p{L}\p{N}_])ceea\s+care(?![\p{L}\p{N}_])/giu, 'cea care'],
+    // Typos clare observate în verificarea subtitrării Reacher S01E01.
+    // Corectăm numai tokenuri/formulări foarte specifice, nu rescriem propoziții întregi.
+    [/\bdooua\b/giu, 'doua'],
+    [/(?<![\p{L}])cinva(?![\p{L}])/giu, 'cineva'],
+    [/(?<![\p{L}])funciona(?![\p{L}])/giu, 'funcționa'],
+    [/(?<![\p{L}])notiele(?![\p{L}])/giu, 'notițele'],
+    [/(?<![\p{L}])Îți\s+vine\s+să\s+cred(?![\p{L}])/giu, 'Îți vine să crezi'],
+    [/(?<![\p{L}])pin(?=\s+straturile\b)/giu, 'prin'],
+    [/(?<![\p{L}])bet(?=\s+avem\s+motive\b)/giu, 'dar'],
+    [/(?<![\p{L}])Ulțimii(?![\p{L}])/giu, 'Ultimii'],
+
     // „snap” este tradus doar în expresia exactă verificată, nu la nivel global.
     [/(?<![\p{L}\p{N}_])l-a\s+șters\s+din\s+existență\s+cu\s+o\s+snap(?![\p{L}\p{N}_])/giu, 'l-a șters din existență pocnind din degete']
 ];
@@ -8132,7 +8143,12 @@ const CONTINUATION_FUNCTION_WORDS = new Set([
     // („... de când am murit / Acum mai bine de trei secole”).
     'acum', 'este', 'sunt', 'era', 'erau', 'a', 'au', 'ar', 'va', 'vor', 'o', 'nici', 'încă',
     'într-o', 'într-un', 'dintr-o', 'dintr-un', 'oricum', 'acolo', 'aici', 'atât', 'atâta',
-    'mult', 'foarte', 'prea', 'deja', 'încât', 'fiindcă', 'deși', 'însă', 'ori', 'fie'
+    'mult', 'foarte', 'prea', 'deja', 'încât', 'fiindcă', 'deși', 'însă', 'ori', 'fie',
+    // Forme uzuale observate cu majusculă falsă la începutul unui fragment care
+    // continuă gramatical replica precedentă. Lista rămâne închisă pentru a proteja numele.
+    'am', 'aș', 'ci', 'primarul', 'șeful', 'm-am', 'm-aș', 'n-am', 'n-aș',
+    'i-am', 'i-aș', 'i-ar', 'i-au', 'mi-am', 'ți-am', 'ne-am', 's-a', 's-au',
+    'eram', 'erai', 'erau', 'aflu', 'aflăm', 'încep', 'începe', 'înseamnă'
 ]);
 
 // Vocabular de NUME din sursa engleză: cuvinte care apar cu majusculă și niciodată cu literă mică
@@ -8169,49 +8185,56 @@ function buildEnglishNameVocabulary(items) {
     return names;
 }
 
-function isContinuationBlock(prevEnglish, currentEnglish) {
+function isContinuationBlock(prevEnglish, currentEnglish, previousRomanian = '') {
     const cur = String(currentEnglish || '').replace(/<[^>]+>/g, '').trim();
     const prev = String(prevEnglish || '').replace(/<[^>]+>/g, '').trim();
-    if (!cur || !prev) return false;
-    if (/^[-–—]/.test(cur)) return false;
-    const body = cur.replace(/^[.…\s"'“‘(\[]+/, '');
-    if (!/^[a-z]/.test(body)) return false;
-    if (/(?<!\.)[.!?]["”')\]]*$/.test(prev)) return false;
-    return true;
+    const prevRo = String(previousRomanian || '').replace(/<[^>]+>/g, '').trim();
+    if (!cur || !prev || !prevRo) return false;
+
+    // O cratimă explicită la începutul sursei indică un vorbitor nou: nu-i coborâm majuscula.
+    if (/^[-–—]/u.test(cur)) return false;
+
+    // Dacă una dintre variante se încheie clar ca propoziție completă, nu tratăm
+    // următorul cue drept continuare. Punctele din elipse („...”) nu sunt decisive.
+    const endsSentence = value => /(?<!\.)[.!?]["'’”»)\]]*$/u.test(String(value || '').trim());
+    if (endsSentence(prev) || endsSentence(prevRo)) return false;
+
+    const body = cur.replace(/^[.…\s"“‘(\[]+/, '');
+    return /[\p{L}\p{N}]/u.test(body);
 }
 
 function applyContinuationCase(items, translatedById) {
     let changed = 0;
-    const englishNames = buildEnglishNameVocabulary(items);
+    const endsSentence = value => /(?<!\.)[.!?]["'’”»)\]]*$/u.test(String(value || '').trim());
+
     for (let i = 1; i < items.length; i++) {
         if (items[i - 1].musicOnly || items[i].musicOnly) continue;
-        if (!isContinuationBlock(items[i - 1].text, items[i].text)) continue;
 
         const id = String(items[i].id);
         const current = String(translatedById[id] || '');
         const previousRo = String(translatedById[String(items[i - 1].id)] || '').trim();
         if (!current.trim() || !previousRo) continue;
-        if (/(?<!\.)[.!?]["”]?$/.test(previousRo)) continue;
-        if (/^\s*[-–—]/.test(current)) continue;
 
-        const match = current.match(/^(\s*[.…"„“]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*(?:-[a-zăâîșț]+)*)/);
-        if (!match) continue;
-        const word = match[2] + match[3];
         const previousEnglish = String(items[i - 1].text || '').replace(/<[^>]+>/g, ' ').trim();
         const currentEnglish = String(items[i].text || '').replace(/<[^>]+>/g, ' ').trim();
-        const progressiveContinuation = /\b(?:was|were|is|are)\s*$/i.test(previousEnglish) && /^[a-z]+ing\b/i.test(currentEnglish);
-        const lowerWord = word.toLowerCase();
-        // Sursa începe cu literă mică (continuare), deci primul cuvânt românesc este aproape sigur
-        // un cuvânt obișnuit. Îl păstrăm cu majusculă doar dacă este un nume cunoscut din fișier.
-        if (englishNames.has(nameKey(lowerWord)) && !CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
+        if (!isContinuationBlock(previousEnglish, currentEnglish, previousRo)) continue;
+        if (endsSentence(previousRo)) continue;
+        if (/^\s*[-–—]/u.test(current)) continue;
 
-        translatedById[id] = match[1] + match[2].toLowerCase() + match[3] + current.slice(match[0].length);
+        // Detectăm cuvinte și clitice cu cratimă („M-am”, „I-aș”), dar intervenim
+        // doar dacă forma este în lista închisă de cuvinte românești sigure.
+        const match = current.match(/^(\s*[.…"„“'‘(\[]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*(?:-[a-zăâîșț]+)*)/u);
+        if (!match) continue;
+        const word = match[2] + match[3];
+        const lowerWord = word.toLocaleLowerCase('ro-RO');
+        if (!CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
+
+        translatedById[id] = match[1] + lowerWord + current.slice(match[0].length);
         changed++;
     }
     console.log(`${c.green}✔ [Continuări] ${changed} fragmente continuate au primit literă mică la început.${c.reset}`);
     return changed;
 }
-
 
 // ============================================================
 // NORMALIZARE CONSERVATOARE A MAJUSCULELOR ÎN MIJLOCUL FRAZEI
@@ -8222,6 +8245,7 @@ function applyContinuationCase(items, translatedById) {
 // ============================================================
 const COMMON_ROMANIAN_MID_SENTENCE_WORDS = new Set((`
     acesta aceasta aceștia acestea acest acea acei acele acelea acela acelora
+    aflu afli află aflăm aflați aflau am aș ci m-am m-aș n-am n-aș i-am i-aș i-ar i-au
     acelasi aceeași aceleași asemenea alt alta alte alți altor altă altul altele
     am ai a are ar as avem aveți aveau avea aveam aveați avut fiind fost este e sunt
     suntem sunteți erau era erai eram erați fi fie fii fiind fusesem fusese
@@ -8327,7 +8351,7 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
         if (!original.trim()) continue;
 
         let localChanges = 0;
-        const normalized = original.replace(/(?<![\p{L}\p{N}_])([A-ZĂÂÎȘȚ][a-zăâîșț]+)(?![\p{L}\p{N}_])/gu,
+        const normalized = original.replace(/(?<![\p{L}\p{N}_])([A-ZĂÂÎȘȚ][a-zăâîșț]*(?:-[a-zăâîșț]+)*)(?![\p{L}\p{N}_])/gu,
             (wholeWord, _first, offset) => {
                 // Nu procesăm atribute sau nume de tag HTML.
                 const beforeRaw = original.slice(0, offset);
@@ -8348,8 +8372,9 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                     return wholeWord;
                 }
 
-                // Cuvântul precedent are majusculă: este parte dintr-un nume compus („Lumea Nouă”).
-                if (/(?<![\p{L}])[A-ZĂÂÎȘȚ][\p{L}'’-]*$/u.test(before)) return wholeWord;
+                // Protejăm numele compuse, dar permitem cliticele verbale cu cratimă
+                // („Așa M-am gândit”): cratima arată aici o formă gramaticală, nu un nume.
+                if (!wholeWord.includes('-') && /(?<![\p{L}])[A-ZĂÂÎȘȚ][\p{L}'’-]*$/u.test(before)) return wholeWord;
 
                 localChanges++;
                 return word;
@@ -10415,6 +10440,79 @@ function normalizeMusicMarkers(text) {
         .replace(/â™©/giu, '♩');
 }
 
+function subtitleTimestampToMilliseconds(value) {
+    const match = String(value || '').match(/^(\d{2}):(\d{2}):(\d{2}),(\d{3})$/u);
+    if (!match) return null;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    const seconds = Number(match[3]);
+    const milliseconds = Number(match[4]);
+    if (minutes > 59 || seconds > 59) return null;
+    return (((hours * 60 + minutes) * 60 + seconds) * 1000) + milliseconds;
+}
+
+function millisecondsToSubtitleTimestamp(value) {
+    const total = Math.max(0, Math.floor(Number(value) || 0));
+    const hours = Math.floor(total / 3600000);
+    const minutes = Math.floor((total % 3600000) / 60000);
+    const seconds = Math.floor((total % 60000) / 1000);
+    const milliseconds = total % 1000;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
+}
+
+function repairInvalidSubtitleTimings(items) {
+    // Inferim un decalaj uzual doar din perechi valide în același fișier. Dacă
+    // sursa folosește un interval regulat (de ex. ~83 ms), îl putem folosi pentru
+    // o singură limită de sfârșit imposibilă, folosind următorul cue ca reper.
+    const gaps = [];
+    for (let i = 0; i < items.length - 1; i++) {
+        const end = subtitleTimestampToMilliseconds(items[i].end);
+        const nextStart = subtitleTimestampToMilliseconds(items[i + 1].start);
+        if (end === null || nextStart === null || nextStart < end) continue;
+        const gap = nextStart - end;
+        if (gap >= 20 && gap <= 250) gaps.push(gap);
+    }
+    gaps.sort((a, b) => a - b);
+    const medianGap = gaps.length >= 3 ? gaps[Math.floor(gaps.length / 2)] : null;
+    const canInferGap = medianGap !== null && medianGap >= 20 && medianGap <= 200;
+    let repaired = 0;
+    const unresolved = [];
+
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const start = subtitleTimestampToMilliseconds(item.start);
+        const end = subtitleTimestampToMilliseconds(item.end);
+        if (start === null || end === null || end > start) continue;
+
+        let nextIndex = -1;
+        let nextStart = null;
+        for (let j = i + 1; j < items.length; j++) {
+            const candidate = subtitleTimestampToMilliseconds(items[j].start);
+            if (candidate !== null && candidate > start) {
+                nextIndex = j;
+                nextStart = candidate;
+                break;
+            }
+        }
+        const delta = nextStart === null ? null : nextStart - start;
+        if (canInferGap && nextIndex !== -1 && delta >= 300 && delta <= 5000) {
+            const candidateEnd = nextStart - medianGap;
+            if (candidateEnd > start && candidateEnd < nextStart) {
+                const originalEnd = item.end;
+                item.end = millisecondsToSubtitleTimestamp(candidateEnd);
+                repaired++;
+                console.warn(`[SRT Timing] ID ${item.id}: interval invalid (${item.start} --> ${originalEnd}); sfârșitul a fost estimat la ${item.end} pe baza decalajului median de ${medianGap} ms și a următorului cue ID ${items[nextIndex].id}.`);
+                continue;
+            }
+        }
+        unresolved.push(String(item.id));
+        console.warn(`[SRT Timing] ID ${item.id}: sfârșitul ${item.end} nu este după începutul ${item.start}; nu am reparat automat deoarece lipsesc suficiente repere sigure.`);
+    }
+    if (repaired) console.log(`[SRT Timing] Reparat intervalul imposibil pentru ${repaired} cue-uri.`);
+    if (unresolved.length) console.warn(`[SRT Timing] ${unresolved.length} cue-uri au intervale invalide ce necesită verificare manuală (ID: ${unresolved.slice(0, 20).join(', ')}${unresolved.length > 20 ? ', …' : ''}).`);
+    return { repaired, unresolvedIds: unresolved, medianGap };
+}
+
 function parseSrt(srt, stats = null) {
     const normalized = normalizeMusicMarkers(String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, ''));
     const blocks = normalized.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
@@ -10594,6 +10692,9 @@ function parseSrt(srt, stats = null) {
         console.warn(`[SRT] Au fost găsite ${duplicateItems.length} apariții cu ID duplicat; ID-urile ieșirii au fost normalizate pentru a preveni suprascrierea traducerilor.`);
     }
 
+    // Timpurile se copiază din sursă; reparăm numai un interval imposibil când
+    // următorul cue și decalajul median din fișier oferă repere clare. Altfel avertizăm.
+    repairInvalidSubtitleTimings(result);
     return result;
 }
 
