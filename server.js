@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.113',
+    version: '13.2.114',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2658,7 +2658,7 @@ function applyRomanianOrthographyRepairs(value) {
 }
 function cleanTextForJson(text) {
     if (!text) return text;
-    text = String(text).normalize('NFC');
+    text = normalizeRomanianDiacriticCharacters(text);
     let clean = text;
 
     // Elimină doar blocurile de override ASS/SSA; păstrează acoladele și # din dialog.
@@ -2831,12 +2831,21 @@ function normalizeSubtitleDashes(value) {
 // Repară numai pierderea evidentă a cratimei celui de-al doilea vorbitor.
 // Sursa trebuie să fi avut cel puțin două rânduri marcate cu liniuță; nu deducem
 // dialog dual doar din faptul că textul tradus ocupă două rânduri.
+function getSourceDialogueLineMask(sourceValue) {
+    return String(sourceValue || '').replace(/\r/g, '').split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .filter(line => {
+            const body = line.replace(/^[-–—]+\s*/u, '').trim();
+            return Boolean(body) && !isStandaloneNonDialogueSoundCue(body);
+        })
+        .map(line => /^[-–—]+\s*(?=\S)/u.test(line));
+}
+
 function restoreExplicitSourceDialogueDashes(sourceValue, translatedValue) {
     const source = String(sourceValue || '');
     const translated = String(translatedValue || '');
-    const sourceDashLines = source.split(/\r?\n/).filter(line =>
-        /^\s*[-–—]+\s*(?=\S)/u.test(line)
-    ).length;
+    const sourceDashLines = getSourceDialogueLineMask(source).filter(Boolean).length;
     if (sourceDashLines < 2 || !translated.trim()) return translated;
 
     const lines = translated.replace(/\r/g, '').split('\n').map(line => line.trim());
@@ -2890,18 +2899,16 @@ function alignDialogueDashesToSource(sourceValue, translatedValue) {
     const translated = String(translatedValue || '').replace(/\r/g, '');
     if (!translated.trim()) return translated;
 
-    const sourceTurnCount = source.split('\n').filter(line => /^\s*[-–—]+\s*(?=\S)/u.test(line)).length;
+    const sourceLineMask = getSourceDialogueLineMask(source);
+    const sourceTurnCount = sourceLineMask.filter(Boolean).length;
     if (!sourceTurnCount) return translated;
 
-    let aligned = String(translated);
+    let aligned = translated;
 
-    // Regula din v97 separa și două intervenții puse accidental pe același rând,
-    // chiar dacă prima nu avea punct final. În v101 s-a cerut punctuație obligatorie,
-    // iar cazul a încetat să fie separat. O restaurăm DOAR când sursa confirmă exact
-    // două intervenții cu liniuță; astfel, o liniuță de pauză dintr-o singură replică
-    // nu este transformată într-un vorbitor nou.
+    // Când sursa confirmă două intervenții și traducerea le-a pus accidental
+    // pe același rând, separăm doar separatorul de vorbitor (nu o liniuță de pauză).
     if (sourceTurnCount === 2) {
-        const linesBeforeSplit = aligned.replace(/\r/g, '').split('\n').map(line => line.trim());
+        const linesBeforeSplit = aligned.split('\n').map(line => line.trim());
         const currentDashCount = linesBeforeSplit.filter(line => /^[-–—]+\s*(?=\S)/u.test(line)).length;
         if (currentDashCount < 2) {
             const inlineSpeaker = /^\s*(?:[-–—]+\s*)?(.+?)\s+[-–—]\s+(?=[\p{Lu}„“"'0-9¿¡])(.+)$/u;
@@ -2915,20 +2922,37 @@ function alignDialogueDashesToSource(sourceValue, translatedValue) {
         }
     }
 
-    // Mai întâi restaurăm liniuțele pierdute atunci când structura tradusă are
-    // aceleași două rânduri ca cele două intervenții marcate din sursă.
-    aligned = restoreExplicitSourceDialogueDashes(source, aligned);
-    let lines = aligned.split('\n').map(line => line.trim());
-    const dashCount = () => lines.filter(line => /^[-–—]+\s*(?=\S)/u.test(line)).length;
-    let surplus = dashCount() - sourceTurnCount;
+    let lines = aligned.split('\n').map(line => line.trim()).filter(Boolean);
+
+    // Când numărul de rânduri vizuale coincide cu structura sursei, aplicăm
+    // exact masca de liniuțe: true = început de replică, false = continuarea ei.
+    // Acest caz repară inclusiv structura [replică pe două rânduri, replică nouă].
+    // Nu deducem limite când traducerea a schimbat numărul de rânduri.
+    if (sourceTurnCount >= 2 && sourceLineMask.length === lines.length) {
+        lines = lines.map((line, index) => {
+            const body = line.replace(/^[-–—]+\s*/u, '').trim();
+            if (!body) return '';
+            return sourceLineMask[index] ? `- ${body}` : body;
+        }).filter(Boolean);
+        return lines.join('\n');
+    }
+
+    // Pentru două intervenții traduse în exact două rânduri, sursa este reperul decisiv.
+    // Liniuța se restaurează chiar dacă prima replică nu se termină în punctuație.
+    if (sourceTurnCount === 2 && lines.length === 2) {
+        return lines.map(line => `- ${line.replace(/^[-–—]+\s*/u, '').trim()}`).join('\n');
+    }
+
+    // Restaurare conservatoare pentru cazurile în care sursa și traducerea au
+    // număr diferit de rânduri. Nu mutăm și nu unim cuvinte aici.
+    aligned = restoreExplicitSourceDialogueDashes(source, lines.join('\n'));
+    lines = aligned.split('\n').map(line => line.trim()).filter(Boolean);
+    let surplus = lines.filter(line => /^[-–—]+\s*(?=\S)/u.test(line)).length - sourceTurnCount;
     if (surplus <= 0) return lines.join('\n');
 
     const stripsDash = line => String(line || '').replace(/^[-–—]+\s*/u, '').trim();
     const sentenceEnd = /[.!?…][”»'’”)}\]]*$/u;
     const continuationStarts = /^(?:în|și|dar|iar|sau|că|care|ce|pe|de|din|cu|la|pentru|prin|să|nu|mă|te|se|ne|vă|îl|îi|îmi|îți|a|al|ale|ai|un|o|mai|încă|când|unde|cum|dacă|deoarece|fiindcă)\b/iu;
-
-    // Căutăm numai rânduri marcate care urmează unei continuări neterminate.
-    // Replici precum „- Nimic.” după o întrebare completă își păstrează liniuța.
     for (let i = 1; i < lines.length && surplus > 0; i++) {
         if (!/^[-–—]+\s*(?=\S)/u.test(lines[i])) continue;
         const previousBody = stripsDash(lines[i - 1]);
@@ -2938,7 +2962,6 @@ function alignDialogueDashesToSource(sourceValue, translatedValue) {
         lines[i] = currentBody;
         surplus--;
     }
-
     return lines.join('\n');
 }
 
@@ -3022,9 +3045,15 @@ function stripContextualDisposableInterjections(value) {
     }).filter(Boolean).join('\n');
 }
 
+function normalizeRomanianDiacriticCharacters(value) {
+    return String(value ?? '').normalize('NFC').replace(/[şŞţŢ]/gu, ch => ({
+        'ş': 'ș', 'Ş': 'Ș', 'ţ': 'ț', 'Ţ': 'Ț'
+    })[ch]);
+}
+
 function deepCleanSubtitleText(text) {
     if (!text) return text;
-    text = String(text).normalize('NFC');
+    text = normalizeRomanianDiacriticCharacters(text);
 
     // Plasă de siguranță pentru vocalizările care nu trebuie să ajungă în subtitrarea finală.
     text = stripSpecifiedVocalizations(text);
@@ -3285,42 +3314,25 @@ function splitSubtitleIntoTwoLinesWithinLimits(value, firstMaxChars, secondMaxCh
 function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSoftTwoLineWrap = true, firstLineExtra = 0) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     if (!text) return [];
-
-    // 42 de caractere rămâne ținta normală; prefixul „- ” ocupă două caractere.
-    // Păstrăm parametrul firstLineExtra pentru compatibilitatea apelurilor vechi,
-    // dar plafonul relaxat este controlat explicit mai jos: cel mult +6 caractere.
-    const contentLimit = Math.max(1, maxChars - prefixLength);
-    const relaxedFirstLimit = contentLimit + 6;
-    const relaxedNextLimit = maxChars + 6;
-
-    // În dialogul marcat, o replică puțin peste ținta strictă poate rămâne pe un
-    // singur rând (max. 48 de caractere vizibile cu tot cu „- ”). Asta evită ca
-    // două ture scurte, marcate corect, să devină artificial trei sau patru rânduri.
-    if (allowSoftTwoLineWrap && prefixLength > 0 && text.length <= relaxedFirstLimit) {
-        return [text];
-    }
-
+    // Când rândul începe cu „- ”, permitem un caracter suplimentar pe primul rând
+    // pentru replicile aflate exact la limită, fără să mărim limita rândurilor următoare.
+    const contentLimit = Math.max(1, maxChars - prefixLength + firstLineExtra);
     const preferred = splitSubtitleIntoTwoLines(text, contentLimit);
     const valid = preferred.length <= 2 && preferred.every((line, index) =>
         line.length <= (index === 0 ? contentLimit : maxChars));
     if (valid) return preferred;
 
-    // Dacă limita strictă ar crea un al treilea rând, încercăm o împărțire naturală
-    // în două rânduri, cu maximum 48 de caractere vizibile pe fiecare. Rândul cu
-    // liniuță primește până la 46 de caractere de text + prefixul de două caractere.
     if (allowSoftTwoLineWrap) {
-        const relaxed = splitSubtitleIntoTwoLinesWithinLimits(
-            text,
-            relaxedFirstLimit,
-            relaxedNextLimit
+        // Maximum 48 de caractere VIZIBILE pe rând, inclusiv prefixul „- ".
+        // Varianta v97 putea ajunge la 49 pe primul rând; plafonăm doar acel caz.
+        const relaxedFirstLimit = Math.min(contentLimit + 6, maxChars + 6 - prefixLength);
+        const relaxedNextLimit = maxChars + 6;
+        const tolerant = splitSubtitleIntoTwoLinesWithinLimits(
+            text, relaxedFirstLimit, relaxedNextLimit
         );
-        const relaxedValid = relaxed.length === 2 && relaxed.every((line, index) =>
-            line.length <= (index === 0 ? relaxedFirstLimit : relaxedNextLimit));
-        if (relaxedValid) return relaxed;
+        if (tolerant.length === 2 && tolerant.every((line, index) =>
+            line.length <= (index === 0 ? relaxedFirstLimit : relaxedNextLimit))) return tolerant;
     }
-
-    // Dacă nici varianta relaxată nu poate păstra textul în maximum două rânduri,
-    // păstrăm toate cuvintele și folosim împachetarea strictă, fără trunchiere.
     return wrapSubtitleLines(text, maxChars, prefixLength);
 }
 
@@ -3444,7 +3456,7 @@ function formatSubtitleLayout(value) {
         const joinedUnmarked = entries.map(entry => entry.text.trim()).filter(Boolean).join(' ')
             .replace(/\s+/g, ' ').trim();
         if (!joinedUnmarked) return ' ';
-        const sentenceSplit = findSubtitleSentenceSplit(joinedUnmarked, 42);
+        const sentenceSplit = findSubtitleSentenceSplit(joinedUnmarked, 48);
         if (sentenceSplit) return sentenceSplit.join('\n');
         return wrapSubtitleLinesSmart(joinedUnmarked, 42).join('\n') || ' ';
     }
@@ -3500,17 +3512,13 @@ function formatSubtitleLayout(value) {
     // în mod normal primul rând are 40 de caractere de replică + „- ”;
     // primul rând rezervă întotdeauna spațiul ocupat de liniuța de dialog.
     const wrapEntry = (entry, capitalizeUnmarked = false, allowSoftTwoLineWrap = true) => {
-        // Prefer a real sentence boundary over a visually balanced but grammatically
-        // awkward split. Reserve 40 source characters for a dialogue row because
-        // the exported "- " marker consumes two visible characters; keep the
-        // existing relaxed one-row allowance for short marked replies.
-        const text = String(entry.text || '').replace(/\s+/g, ' ').trim();
-        const sentenceLimit = entry.dialogue ? 40 : 42;
-        const canKeepDialogueOnOneRow = entry.dialogue && allowSoftTwoLineWrap && text.length <= 46;
-        const naturalSplit = text.length > sentenceLimit && !canKeepDialogueOnOneRow
-            ? findSubtitleSentenceSplit(text, sentenceLimit)
-            : null;
-        const lines = naturalSplit || wrapSubtitleLinesSmart(text, 42, entry.dialogue ? 2 : 0, allowSoftTwoLineWrap);
+        // Readuce comportamentul v97: țintă de 42 de caractere, toleranță de
+        // un caracter pentru primul rând cu liniuță și toleranță până la 48
+        // doar când aceasta poate păstra replica în două rânduri.
+        const lines = wrapSubtitleLinesSmart(
+            entry.text, 42, entry.dialogue ? 2 : 0,
+            allowSoftTwoLineWrap, entry.dialogue ? 1 : 0
+        );
         if (!lines.length) return [];
         if (entry.dialogue) {
             lines[0] = `- ${capFirst(lines[0])}`;
@@ -3526,9 +3534,7 @@ function formatSubtitleLayout(value) {
 
         const compactText = entry.text.replace(/\s+/g, ' ').trim();
         if (compactText && compactText.length <= 42) return compactText;
-        // A single original visual line may contain several full sentences. Prefer
-        // a sentence boundary when both resulting rows fit, before word-balanced wrap.
-        const naturalSplit = findSubtitleSentenceSplit(compactText, 42);
+        const naturalSplit = findSubtitleSentenceSplit(compactText, 48);
         if (naturalSplit) return naturalSplit.join('\n');
         return wrapSubtitleLinesSmart(compactText, 42).join('\n') || ' ';
     }
@@ -3536,7 +3542,7 @@ function formatSubtitleLayout(value) {
     // La dialog dublu fiecare vorbitor își păstrează liniuța; dacă o replică
     // este lungă, continuarea ei trece pe rânduri suplimentare fără a repeta liniuța.
     if (entries.length === 2 && entries.every(entry => entry.dialogue)) {
-        return entries.flatMap(entry => wrapEntry(entry, false, true)).join('\n') || ' ';
+        return entries.flatMap(entry => wrapEntry(entry, false, false)).join('\n') || ' ';
     }
 
     // Pentru o intrare mixtă, păstrăm comportamentul de capitalizare existent,
@@ -3556,7 +3562,7 @@ function formatSubtitleLayout(value) {
         }
 
         const joined = (first + ' ' + second).trim();
-        const bothFit = first.length <= 42 && second.length <= 42;
+        const bothFit = first.length <= 43 && second.length <= 43;
         const firstEndsSentence = /[.!?…]["”»)]*$/u.test(first);
 
         // Repară prioritar rupturile dintre rânduri când textul încape pe un singur
@@ -3571,19 +3577,19 @@ function formatSubtitleLayout(value) {
         // și „în / sfârșit”.
         const weakEnding = /(?:^|\s)(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|unei|unui|unor|mai|că|ca|îi|i|le|mi|ți|ne|vă|care|l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar|dacă|nu|deși|sau|ori|nici|doar|încă|când|unde|cum|[\p{L}]+-(?:mi|ți|i|l|o|le|ne|vă))[,;:]*$/iu.test(first.trim());
 
-        // Păstrăm ruptura existentă dacă ambele rânduri respectă limita de 42 de caractere
+        // Păstrăm ruptura existentă dacă ambele rânduri respectă limita istorică de 43 de caractere
         // și nu se termină cu un cuvânt gramatical agățat.
         // Această verificare trebuie făcută ÎNAINTE de căutarea altor rupturi,
         // altfel algoritmul mută inutil rânduri care erau deja corecte.
         if (bothFit && (!weakEnding || firstEndsSentence)) return first + '\n' + second;
 
-        const naturalSentenceSplit = findSubtitleSentenceSplit(joined, 42);
+        const naturalSentenceSplit = findSubtitleSentenceSplit(joined, 48);
 
         // Căutăm o limită de propoziție doar când ruptura existentă e slabă
         // sau depășește toleranța; nu rearanjăm preventiv rânduri deja acceptabile.
         if (naturalSentenceSplit) return naturalSentenceSplit.join('\n');
 
-        // Dacă ruptura era slabă sau un rând depășește 42, reîmpachetăm strict.
+        // Dacă ruptura era slabă sau un rând depășește 43, reîmpachetăm.
         if (weakEnding || !bothFit) return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
 
         // Fallback conservator: păstrează despărțirea inițială.
@@ -3958,8 +3964,9 @@ function formatSubtitleLine(text) {
 function ensureFinalSubtitleLayoutForExport(value) {
     const original = String(value ?? '');
     if (!original.trim()) return original;
-    const candidate = formatSubtitleLayout(original);
-    return String(candidate || '').trim() ? candidate : original;
+    const normalized = normalizeRomanianDiacriticCharacters(original);
+    const candidate = formatSubtitleLayout(normalized);
+    return String(candidate || '').trim() ? candidate : normalized;
 }
 
 // ============================================================
