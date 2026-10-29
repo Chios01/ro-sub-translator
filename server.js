@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.107',
+    version: '13.2.108',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3395,7 +3395,17 @@ function formatSubtitleLayout(value) {
     // în mod normal primul rând are 40 de caractere de replică + „- ”;
     // primul rând rezervă întotdeauna spațiul ocupat de liniuța de dialog.
     const wrapEntry = (entry, capitalizeUnmarked = false, allowSoftTwoLineWrap = true) => {
-        const lines = wrapSubtitleLinesSmart(entry.text, 42, entry.dialogue ? 2 : 0, allowSoftTwoLineWrap);
+        // Prefer a real sentence boundary over a visually balanced but grammatically
+        // awkward split. Reserve 40 source characters for a dialogue row because
+        // the exported "- " marker consumes two visible characters; keep the
+        // existing relaxed one-row allowance for short marked replies.
+        const text = String(entry.text || '').replace(/\s+/g, ' ').trim();
+        const sentenceLimit = entry.dialogue ? 40 : 42;
+        const canKeepDialogueOnOneRow = entry.dialogue && allowSoftTwoLineWrap && text.length <= 46;
+        const naturalSplit = text.length > sentenceLimit && !canKeepDialogueOnOneRow
+            ? findSubtitleSentenceSplit(text, sentenceLimit)
+            : null;
+        const lines = naturalSplit || wrapSubtitleLinesSmart(text, 42, entry.dialogue ? 2 : 0, allowSoftTwoLineWrap);
         if (!lines.length) return [];
         if (entry.dialogue) {
             lines[0] = `- ${capFirst(lines[0])}`;
@@ -3411,6 +3421,10 @@ function formatSubtitleLayout(value) {
 
         const compactText = entry.text.replace(/\s+/g, ' ').trim();
         if (compactText && compactText.length <= 42) return compactText;
+        // A single original visual line may contain several full sentences. Prefer
+        // a sentence boundary when both resulting rows fit, before word-balanced wrap.
+        const naturalSplit = findSubtitleSentenceSplit(compactText, 42);
+        if (naturalSplit) return naturalSplit.join('\n');
         return wrapSubtitleLinesSmart(compactText, 42).join('\n') || ' ';
     }
 
@@ -3865,7 +3879,7 @@ TRANSLATION AND CONTEXT
 - UNMARKED SONG LYRICS — Some subtitle sources omit music-note markers. When the supplied block sequence and adjacent source lines make it CLEAR that a line is sung lyrics from an ongoing song/chorus, rather than spoken dialogue, return exactly \"__RO_ST_SKIP_SONG_LYRIC__\" as its text. The program will omit that cue; never expose the marker in the final SRT. Be conservative: repetition alone is NOT enough, and do NOT suppress emotional or shouted dialogue (for example, a person repeating \"I loved you!\"). If you are unsure whether it is sung, translate it as dialogue. If a block contains identifiable spoken dialogue as well as lyrics but has no explicit music markers to separate them, translate the spoken dialogue only; do not return the skip marker when any spoken dialogue remains.
 - Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
-- If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
+- Determine sentence continuation from the syntax and punctuation of BOTH neighboring English cues and the Romanian fragments, not capitalization alone. English first-person “I” and title-cased job titles may begin a cue with a capital even when the Romanian sentence continues. When the previous source/translation remains grammatically open (especially after a comma or semicolon), use lowercase in Romanian for a continuing clause unless it is a proper name or a new speaker turn. Do not lowercase merely because a cue boundary exists.
 - Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
 - Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
 - Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
@@ -8150,7 +8164,11 @@ const CONTINUATION_FUNCTION_WORDS = new Set([
     'i-am', 'i-aș', 'i-ar', 'i-au', 'mi-am', 'ți-am', 'ne-am', 's-a', 's-au',
     'eram', 'erai', 'erau', 'aflu', 'aflăm', 'încep', 'începe', 'înseamnă',
     // Forme de continuare observate în subtitrări, folosite doar când contextul nu încheie fraza.
-    'încearcă', 'aspirând', 'transformată', 'transformate', 'transformat'
+    'încearcă', 'aspirând', 'transformată', 'transformate', 'transformat',
+    // Source English may capitalize these at cue starts (notably “I ...” or title-case roles),
+    // while Romanian syntax requires lowercase after a comma/semicolon or an unfinished clause.
+    'eu', 'cred', 'tai', 'ofițer', 'director', 'agent', 'detectiv', 'șofer', 'căpitan',
+    'manager', 'responsabil', 'lucrez', 'înțeleg', 'știu', 'spun', 'avem', 'așadar'
 ]);
 
 // Vocabular de NUME din sursa engleză: cuvinte care apar cu majusculă și niciodată cu literă mică
