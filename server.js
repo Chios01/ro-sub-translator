@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.108',
+    version: '13.2.110',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2824,21 +2824,40 @@ function restoreExplicitSourceDialogueDashes(sourceValue, translatedValue) {
     if (sourceDashLines < 2 || !translated.trim()) return translated;
 
     const lines = translated.replace(/\r/g, '').split('\n').map(line => line.trim());
-    // Dacă formatterul a produs mai mult de două rânduri, nu riscăm să marcăm
-    // o continuare vizuală drept un vorbitor nou.
-    if (lines.length !== 2 || !lines[0] || !lines[1]) return translated;
+    if (lines.length < 2 || lines.some(line => !line)) return translated;
 
     const body = line => line.replace(/^[-–—]+\s*/u, '').trim();
+    const hasDash = line => /^[-–—]+\s*(?=\S)/u.test(line);
     const firstBody = body(lines[0]);
     const secondBody = body(lines[1]);
-    // Cerem o limită recognoscibilă între replici și un început de rând plauzibil
-    // pentru un vorbitor nou. Nu reconstruim o delimitare dacă textul este ambiguu.
+    // Cazul simplu: două rânduri, două replici explicite în sursă.
     const firstEndsUtterance = /[.!?…—–]["”»')\]]*$/u.test(firstBody);
-    const secondLooksLikeSpeaker = /^(?:[\p{Lu}„“"'0-9¿¡])/u.test(secondBody);
-    if (!firstEndsUtterance || !secondLooksLikeSpeaker) return translated;
+    // „...they said” poate fi începutul celei de-a doua replici; ellipsa nu
+    // trebuie să facă imposibilă restaurarea liniuței atunci când sursa o marca.
+    const secondLooksLikeSpeaker = /^(?:[\p{Lu}„“"'0-9¿¡]|…|\.{2,})/u.test(secondBody);
+    if (lines.length === 2) {
+        if (!firstEndsUtterance || !secondLooksLikeSpeaker) return translated;
+        return [`- ${firstBody}`, `- ${secondBody}`].join('\n');
+    }
 
-    const fixed = [`- ${firstBody}`, `- ${secondBody}`];
-    return fixed.join('\n');
+    // Când primul vorbitor are nevoie de două rânduri vizuale, nu abandonăm
+    // restaurarea: reparăm doar o linie de continuare care începe explicit cu
+    // ellipsă după o replică terminată, dacă în sursă există un vorbitor marcat
+    // suplimentar. Nu reordonăm și nu unim rândurile.
+    const alreadyMarked = lines.filter(hasDash).length;
+    if (alreadyMarked >= sourceDashLines) return translated;
+    let changed = false;
+    for (let i = 1; i < lines.length && lines.filter(hasDash).length < sourceDashLines; i++) {
+        if (hasDash(lines[i])) continue;
+        const prevBody = body(lines[i - 1]);
+        const currentBody = body(lines[i]);
+        const prevEndsUtterance = /[.!?…]["”»')\]]*$/u.test(prevBody);
+        if (prevEndsUtterance && /^(?:…|\.{2,})/u.test(currentBody)) {
+            lines[i] = `- ${currentBody}`;
+            changed = true;
+        }
+    }
+    return changed ? lines.join('\n') : translated;
 }
 
 // Elimină numai liniuța de dialog de la începutul fiecărui rând.
@@ -3880,6 +3899,7 @@ TRANSLATION AND CONTEXT
 - Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
 - Determine sentence continuation from the syntax and punctuation of BOTH neighboring English cues and the Romanian fragments, not capitalization alone. English first-person “I” and title-cased job titles may begin a cue with a capital even when the Romanian sentence continues. When the previous source/translation remains grammatically open (especially after a comma or semicolon), use lowercase in Romanian for a continuing clause unless it is a proper name or a new speaker turn. Do not lowercase merely because a cue boundary exists.
+- Treat dotted initials/abbreviations at the end of an English cue (for example, “O.I.”) as abbreviations rather than a sentence boundary when the next English cue begins with lowercase text and clearly continues the same clause.
 - Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
 - Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
 - Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
@@ -8168,7 +8188,7 @@ const CONTINUATION_FUNCTION_WORDS = new Set([
     // Source English may capitalize these at cue starts (notably “I ...” or title-case roles),
     // while Romanian syntax requires lowercase after a comma/semicolon or an unfinished clause.
     'eu', 'cred', 'tai', 'ofițer', 'director', 'agent', 'detectiv', 'șofer', 'căpitan',
-    'manager', 'responsabil', 'lucrez', 'înțeleg', 'știu', 'spun', 'avem', 'așadar'
+    'manager', 'responsabil', 'lucrez', 'înțeleg', 'știu', 'spun', 'avem', 'așadar', 'deoarece', 'consider'
 ]);
 
 // Vocabular de NUME din sursa engleză: cuvinte care apar cu majusculă și niciodată cu literă mică
@@ -8214,13 +8234,26 @@ function isContinuationBlock(prevEnglish, currentEnglish, previousRomanian = '')
     // O cratimă explicită la începutul sursei indică un vorbitor nou: nu-i coborâm majuscula.
     if (/^[-–—]/u.test(cur)) return false;
 
-    // Dacă una dintre variante se încheie clar ca propoziție completă, nu tratăm
-    // următorul cue drept continuare. Punctele din elipse („...”) nu sunt decisive.
     const endsSentence = value => /(?<!\.)[.!?]["'’”»)\]]*$/u.test(String(value || '').trim());
-    if (endsSentence(prev) || endsSentence(prevRo)) return false;
+    const currentBody = cur.replace(/^[.…\s"“‘(\[]+/u, '');
+    const sourceStartsLowercase = /^[a-z]/u.test(currentBody);
+    // Un acronim cu puncte, precum „O.I.”, nu trebuie confundat cu sfârșitul
+    // propoziției când următorul cue începe cu literă mică („that Joe was heading up?”).
+    // Activăm excepția doar când sursa următoare confirmă sintactic continuarea.
+    const previousEndsWithDottedAbbreviation = value => {
+        const text = String(value || '').trim();
+        return /\b(?:[A-Z]\.){2,}$/u.test(text) || /\b(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof|Rev|Gen|Capt|Lt|Col|Dept|Inc|Ltd|Co|vs|etc)\.$/iu.test(text);
+    };
+    const abbreviationContinuation = sourceStartsLowercase && previousEndsWithDottedAbbreviation(prev);
+    // Sursa prevalează față de un punct românesc posibil greșit numai dacă are
+    // semn clar de continuare (virgulă/;/:), sau următorul cue englezesc începe
+    // cu literă mică și precedentul nu încheie o propoziție (inclusiv acronimul O.I.).
+    const sourceHasOpenPunctuation = /[,;:][\s"'’”»)]*$/u.test(prev);
+    const sourceClearlyContinues = sourceHasOpenPunctuation ||
+        (sourceStartsLowercase && (!endsSentence(prev) || abbreviationContinuation));
+    if ((endsSentence(prev) && !abbreviationContinuation) || (endsSentence(prevRo) && !sourceClearlyContinues)) return false;
 
-    const body = cur.replace(/^[.…\s"“‘(\[]+/, '');
-    return /[\p{L}\p{N}]/u.test(body);
+    return /[\p{L}\p{N}]/u.test(currentBody);
 }
 
 function applyContinuationCase(items, translatedById, options = {}) {
@@ -8230,7 +8263,6 @@ function applyContinuationCase(items, translatedById, options = {}) {
     // semnal puternic că fragmentul continuă. În acest caz folosim vocabularul
     // de nume din sursă pentru a nu transforma numele proprii în litere mici.
     const englishNames = buildEnglishNameVocabulary(items);
-    const endsSentence = value => /(?<!\.)[.!?]["'’”»)\]]*$/u.test(String(value || '').trim());
     const sourceStartsLowercase = value => {
         const text = String(value || '').replace(/<[^>]+>/g, ' ').trim();
         if (!text || /^[-–—]/u.test(text)) return false;
@@ -8249,7 +8281,6 @@ function applyContinuationCase(items, translatedById, options = {}) {
         const previousEnglish = String(items[i - 1].text || '').replace(/<[^>]+>/g, ' ').trim();
         const currentEnglish = String(items[i].text || '').replace(/<[^>]+>/g, ' ').trim();
         if (!isContinuationBlock(previousEnglish, currentEnglish, previousRo)) continue;
-        if (endsSentence(previousRo)) continue;
         if (/^\s*[-–—]/u.test(current)) continue;
 
         const match = current.match(/^(\s*[.…"„“'‘(\[]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*(?:-[a-zăâîșț]+)*)/u);
@@ -10560,7 +10591,23 @@ function repairInvalidSubtitleTimings(items) {
 }
 
 function parseSrt(srt, stats = null) {
-    const normalized = normalizeMusicMarkers(String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, ''));
+    const rawNormalized = normalizeMusicMarkers(String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, ''));
+    // SRT exporters sometimes insert a blank line BETWEEN a cue's timing line
+    // and its text. A naive blank-line split turns the timed cue into an empty
+    // block and leaves the actual dialogue orphaned (e.g. “Pe care o conducea Joe?”).
+    // Collapse only that malformed separator; do not merge two properly numbered cues.
+    let malformedCueSeparatorsRepaired = 0;
+    const normalized = rawNormalized.replace(
+        /(^|\n)(\d+)[ \t]*\n(\d{1,2}:\d{2}:\d{2}[,.]\d{3}[ \t]*-->[ \t]*\d{1,2}:\d{2}:\d{2}[,.]\d{3})\n[ \t]*\n+(?=(?![ \t]*\d+[ \t]*\n[ \t]*\d{1,2}:\d{2}:\d{2}[,.]\d{3}[ \t]*-->)[ \t]*\S)/g,
+        (_match, separator, id, timing) => {
+            malformedCueSeparatorsRepaired++;
+            return `${separator}${id}\n${timing}\n`;
+        }
+    );
+    if (stats) stats.malformedCueSeparatorsRepaired = malformedCueSeparatorsRepaired;
+    if (malformedCueSeparatorsRepaired) {
+        console.warn(`[SRT] Reparat ${malformedCueSeparatorsRepaired} separator(e) goale dintre timpi și text; replicile rămân la ID-urile și timpii lor.`);
+    }
     const blocks = normalized.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
     const songInteriorBlocks = findOpenSongInteriorBlocks(blocks);
     const result = [];
