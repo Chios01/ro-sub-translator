@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.114',
+    version: '13.2.115',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3563,37 +3563,19 @@ function formatSubtitleLayout(value) {
 
         const joined = (first + ' ' + second).trim();
         const bothFit = first.length <= 43 && second.length <= 43;
-        const firstEndsSentence = /[.!?…]["”»)]*$/u.test(first);
 
-        // Repară prioritar rupturile dintre rânduri când textul încape pe un singur
-        // rând de maximum 42 de caractere. Păstrăm totuși limita de propoziție:
-        // „Știu. / Vreau doar să mă placă.” rămâne pe două rânduri.
-        if (joined.length <= 42) {
-            return firstEndsSentence ? first + '\n' + second : joined;
-        }
+        // Păstrează ruptura originală când ambele rânduri sunt deja valide.
+        // Nu căutăm o ruptură „mai bună” și nu unim rânduri scurte: asta a
+        // produs regresii față de v13.2.97. Reîmpachetăm numai dacă un rând
+        // depășește 43 de caractere.
+        if (bothFit) return first + '\n' + second;
 
-        // Nu păstrăm rupturi care lasă agățate cuvinte funcționale ori conjuncții.
-        // Lista include explicit cazurile observate: „dacă / știi”, „nu / garantează”
-        // și „în / sfârșit”.
-        const weakEnding = /(?:^|\s)(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|unei|unui|unor|mai|că|ca|îi|i|le|mi|ți|ne|vă|care|l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar|dacă|nu|deși|sau|ori|nici|doar|încă|când|unde|cum|[\p{L}]+-(?:mi|ți|i|l|o|le|ne|vă))[,;:]*$/iu.test(first.trim());
-
-        // Păstrăm ruptura existentă dacă ambele rânduri respectă limita istorică de 43 de caractere
-        // și nu se termină cu un cuvânt gramatical agățat.
-        // Această verificare trebuie făcută ÎNAINTE de căutarea altor rupturi,
-        // altfel algoritmul mută inutil rânduri care erau deja corecte.
-        if (bothFit && (!weakEnding || firstEndsSentence)) return first + '\n' + second;
-
+        // Pentru rândurile care depășesc limita, preferăm o limită naturală
+        // între propoziții dacă ambele fragmente încap.
         const naturalSentenceSplit = findSubtitleSentenceSplit(joined, 48);
-
-        // Căutăm o limită de propoziție doar când ruptura existentă e slabă
-        // sau depășește toleranța; nu rearanjăm preventiv rânduri deja acceptabile.
         if (naturalSentenceSplit) return naturalSentenceSplit.join('\n');
 
-        // Dacă ruptura era slabă sau un rând depășește 43, reîmpachetăm.
-        if (weakEnding || !bothFit) return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
-
-        // Fallback conservator: păstrează despărțirea inițială.
-        return first + '\n' + second;
+        return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
     }
 
     // Fallback sigur: toate intrările rămase sunt împachetate, fără a pierde text.
