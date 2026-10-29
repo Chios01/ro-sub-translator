@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.115',
+    version: '13.2.100',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1882,7 +1882,7 @@ function isOnlyStandaloneFillerSequence(text) {
     const tokens = normalized.split(' ').filter(Boolean);
     const meaningful = new Set([
         'yeah', 'yep', 'yup', 'ya', 'nah', 'nope',
-        'wow', 'whoa', 'oops', 'ouch', 'mhm', 'mm', 'mmhmm', 'mm-hmm',
+        'wow', 'whoa', 'oops', 'ouch', 'mhm', 'mmhmm', 'mm-hmm',
         'îhî', 'a-ha', 'aha', 'ah', 'ahh', 'ahhh', 'no', 'yes'
     ]);
     // Unitățile după cifre și răspunsurile scurte nu sunt vocalizări de eliminat.
@@ -1958,7 +1958,7 @@ function isCompoundSoundCueLabel(text) {
 // între engleză și română. Sunt expresii complete, nu căutări de cuvinte în dialog.
 // Aceeași clasificare este folosită înainte de Gemini și pentru markup-ul dintre paranteze.
 const SOUND_CUE_ADDITIONAL_CAPTION_PATTERNS = [
-    /^(?:thunder(?:\s+(?:cracks?|roll(?:s|ed|ing)))?|thunderclaps?|rain\s+fall(?:s|ed|ing)?|wind\s+howl(?:s|ed|ing)?|storm\s+(?:rumbles?|roars?)|tunet(?:e|ul)?|fulger(?:e)?|urlete?(?:\s+în\s+depărtare)?|strigăte(?:\s+furioase)?|huiduieli|discuții\s+neclare|conversații\s+neclare|voci\s+neclare|gemete(?:\s+de\s+durere)?(?:\s*,\s*(?:gâfâit(?:uri)?|huiduieli))?)[.!…]*$/iu,
+    /^(?:thunder(?:\s+cracks?)?|thunderclaps?|tunet(?:e|ul)?|fulger(?:e)?|urlete?(?:\s+în\s+depărtare)?|strigăte(?:\s+furioase)?|huiduieli|discuții\s+neclare|conversații\s+neclare|voci\s+neclare|gemete(?:\s+de\s+durere)?(?:\s*,\s*(?:gâfâit(?:uri)?|huiduieli))?)[.!…]*$/iu,
     /^(?:(?:[\p{Lu}][\p{L}\p{M}'’.-]{1,24})\s+)?(?:sighs?|sighing|laughs?|laughing|groans?|groaning|grunts?|grunting|gasps?|gasping|sobs?|sobbing|exhales?|exhaling|inhales?|inhaling|suspina|suspină|suspinând|oftează|ofteaza|râde|râzând|geme|gemând|gâfâie|gâfâind|sforăie|șuieră)(?:\s+(?:deeply|nervously|sharply|softly|heavily|loudly|quietly|deep|nervous|adânc|nervos|nervoasă|puternic|încet|brusc|scurt))?[.!…]*$/iu,
     /^(?:the\s+)?pounding\s+(?:the\s+)?floor\s+with\s+(?:a\s+)?cane[.!…]*$/iu,
     /^(?:(?:the\s+)?group\s+(?:(?:resumes?|starts?|continues?)\s+)?chanting|chanting(?:\s+(?:continues?|stops?))?|group\s+chanting\s+(?:continues?|stops?))[.!…]*$/iu,
@@ -2278,7 +2278,7 @@ function stripBracketedSegments(text) {
 // „râsete”, „bufnire” etc. Este un test de linie întreagă, ca să nu șteargă dialog
 // precum „Râde de mine” sau propoziții care doar menționează un sunet.
 function isStandaloneNonDialogueSoundCue(value) {
-    const text = String(value || '').normalize('NFC')
+    const text = String(value || '')
         .replace(/<[^>]*>/g, ' ')
         .replace(/[♪♫♬♩]+/g, ' ')
         .replace(/^[\s\-–—]+|[\s\-–—]+$/gu, '')
@@ -2289,9 +2289,6 @@ function isStandaloneNonDialogueSoundCue(value) {
     // „Cheers.” este frecvent o replică de dialog (de ex. salut/încheiere),
     // nu o descriere de public care aplaudă. O păstrăm ca text dialogat.
     if (/^cheers[.!…]*$/iu.test(text)) return false;
-
-    // Imperativele izolate pot fi dialog rostit, nu etichete SDH.
-    if (/^(?:scream|laugh|whistle|sing)[.!…]*$/iu.test(text)) return false;
 
     // Variante SDH uzuale pentru o bătaie în ușă, inclusiv cue-uri de trei cuvinte.
     if (/^(?:(?:someone|somebody|a person|the man|the woman)\s+)?(?:knocks?|knocking)\s+on\s+(?:the\s+)?door[.!…]*$/iu.test(text)) return true;
@@ -2391,7 +2388,7 @@ function stripLeadingBracketedMarkup(value) {
 // elimină cue-urile delimitate/izolate și etichetele de la începutul rândului,
 // dar păstrează textul dintre paranteze care pare dialog sau o tastă literală.
 function stripNonDialogueSoundMarkup(value) {
-    let clean = String(value || '').normalize('NFC');
+    let clean = String(value || '');
     let removedCount = 0;
 
     const multilineTags = stripLeadingMultilineNonDialogueTags(clean);
@@ -2410,19 +2407,11 @@ function stripNonDialogueSoundMarkup(value) {
 
 
     // Înlăturăm cue-urile sonore simple rămase pe linii proprii.
-    // În blocurile multiline păstrăm fragmentele obișnuite fără liniuță,
-    // dar permitem eliminarea caption-urilor SDH scrise integral cu majuscule.
+    // În subtitrările cu mai multe rânduri, nu clasificăm un rând fără liniuță
+    // separat de context: poate fi un cuvânt obișnuit dintr-o frază continuată.
     const lines = clean.split('\n');
     clean = lines.map(line => {
-        const body = line.trim().replace(/^[-–—]\s*/u, '');
-        const isDialogueDashLine = /^\s*[-–—]/u.test(line);
-        const uppercaseCaption = lines.length > 1 &&
-            !isDialogueDashLine &&
-            /\p{Lu}/u.test(body) &&
-            /^\p{Lu}[\p{Lu}\p{N} .,'’!?…-]*$/u.test(body);
-        const spokenCommand = /^(?:scream|laugh|whistle|sing)[.!…]*$/iu.test(body);
-
-        if (lines.length > 1 && !isDialogueDashLine && !(uppercaseCaption && !spokenCommand)) return line;
+        if (lines.length > 1 && !/^\s*[-–—]/.test(line)) return line;
         if (!isStandaloneNonDialogueSoundCue(line)) return line;
         removedCount++;
         return '';
@@ -2509,15 +2498,6 @@ function applyRomanianOrthographyRepairs(value) {
     if (value == null || value === '') return value;
     let text = String(value);
 
-    // Ortografie românească modernă; corecții limitate la forme fără ambiguitate.
-    text = text.replace(/(?<![\p{L}])decît(?![\p{L}])/giu, match => {
-        if (match === match.toLocaleUpperCase('ro-RO')) return 'DECÂT';
-        if (match[0] === match[0].toLocaleUpperCase('ro-RO')) return 'Decât';
-        return 'decât';
-    });
-    text = text.replace(/(?<![\p{L}\p{N}_])il(?=[ \t]+(?:țin|tin)(?![\p{L}\p{N}_]))/giu,
-        match => match === match.toLocaleUpperCase('ro-RO') ? 'ÎL' : (match[0] === match[0].toLocaleUpperCase('ro-RO') ? 'Îl' : 'îl'));
-
     const preserveInitialCase = (match, replacement) => {
         if (match === match.toLocaleUpperCase('ro-RO')) return replacement.toLocaleUpperCase('ro-RO');
         if (match[0] === match[0].toLocaleUpperCase('ro-RO')) {
@@ -2525,13 +2505,6 @@ function applyRomanianOrthographyRepairs(value) {
         }
         return replacement;
     };
-
-    // Erori de ortografie confirmate în subtitrări: corectăm doar cuvinte întregi
-    // și păstrăm capitalizarea, fără să atingem părți din nume sau alte cuvinte.
-    text = text.replace(/(?<![\p{L}\p{N}_])țîn(?![\p{L}\p{N}_])/giu,
-        match => preserveInitialCase(match, 'țin'));
-    text = text.replace(/(?<![\p{L}\p{N}_])(?:aștia|astia)(?![\p{L}\p{N}_])/giu,
-        match => preserveInitialCase(match, 'ăștia'));
 
     // 1. Repară cratima plasată după clitic: „nu ți-știu” / „nu ți-pasă” -> „nu-ți știu” / „nu-ți pasă”
     text = text.replace(/(?<![\p{L}\p{N}_])(nu|că|să|ce)[ \t]+(ți|mi)-(ști\p{L}*|pasă|place|plac|vine|vin|pare|par|amint\p{L}*|spu\p{L}*|zi\p{L}*|da\p{L}*|ia\p{L}*|fac\p{L}*)(?![\p{L}\p{N}_])/giu, '$1-$2 $3');
@@ -2619,6 +2592,8 @@ function applyRomanianOrthographyRepairs(value) {
     // Repară caracterul vietnamez ơ/Ơ, care poate apărea accidental în textul românesc.
     text = text.replace(/[ơƠ]/g, ch => ch === 'Ơ' ? 'Ă' : 'ă');
     text = text.replace(/(?<![\p{L}\p{N}_])de1lă(?![\p{L}\p{N}_])/giu, match => preserveInitialCase(match, 'de la'));
+    text = text.replace(/(?<![\p{L}\p{N}_])(\p{Lu}\p{Ll}*|\p{Ll}+)\d+(\p{Ll}+)(?![\p{L}\p{N}_])/gu, '$1$2');
+    text = text.replace(/(?<![\p{L}\p{N}_])(\p{Lu}\p{Ll}{2,}|\p{Ll}{3,})\d+(?=\s+(?:pe|în|la|cu|de|că|să|și|sau|dar|pentru|din|spre|sub|peste|către|cineva|el|ea|ei|ele|noi|voi)\b)/giu, '$1');
     text = text.replace(/(?<=\p{Ll})\.(?=\p{Lu})/gu, '. ');
     text = text.replace(/(?<![\p{L}\p{N}_])supranaturalicunoscut(?![\p{L}\p{N}_])/giu, match => preserveInitialCase(match, 'supranatural cunoscut'));
     text = text.replace(/(?<![\p{L}\p{N}_])nığım[ \t]+pe[ \t]+nimeni(?![\p{L}\p{N}_])/giu, match => preserveInitialCase(match, 'n-am pe nimeni'));
@@ -2658,7 +2633,6 @@ function applyRomanianOrthographyRepairs(value) {
 }
 function cleanTextForJson(text) {
     if (!text) return text;
-    text = normalizeRomanianDiacriticCharacters(text);
     let clean = text;
 
     // Elimină doar blocurile de override ASS/SSA; păstrează acoladele și # din dialog.
@@ -2715,7 +2689,7 @@ const KNOWN_SOURCE_INTERJECTIONS = new Set((
 ).split(/\s+/));
 
 const MEANINGFUL_STANDALONE_REACTIONS = new Set((
-    'a-ha aha aw aww awww ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh-oh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr mhm mm mmhmm mm-hmm mmm-hmm yeah yep yup ya nah nope'
+    'a-ha aha aw aww awww ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh-oh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr mhm mmhmm mm-hmm mmm-hmm yeah yep yup ya nah nope'
 ).split(/\s+/));
 
 const KNOWN_TRANSLATED_INTERJECTIONS = new Set([
@@ -2737,39 +2711,32 @@ const CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN = [...CONTEXTUAL_STANDALONE_FI
 // Elimină întotdeauna vocalizările cerute explicit, atât ca replici izolate,
 // cât și în interiorul unei fraze. Acestea nu se trimit la Gemini pentru traducere.
 function stripSpecifiedVocalizations(value) {
-    // Hm/Hmm sunt ezitări; Mhm, Mm-hmm și Mm pot fi răspunsuri afirmative.
-    // Nu potrivim un token care face parte dintr-un cuvânt sau începe după cratimă.
-    const tokenRe = /(?<![\p{L}\p{N}_-])h+m+(?![\p{L}\p{N}_])/giu;
-    return String(value || '').normalize('NFC').split(/\r?\n/).map(line => {
+    const tokenRe = /(?<![\p{L}\p{N}_])(?:h+m+|m+h+m+|m+m+(?:-h+m+)?)(?![\p{L}\p{N}_])/giu;
+    return String(value || '').split(/\r?\n/).map(line => {
         if (!line.trim()) return '';
         const marker = line.match(/^(\s*[-–—]\s*)/u);
         const prefix = marker ? marker[0] : '';
         let body = marker ? line.slice(marker[0].length) : line;
         if (!body.trim()) return '';
-
-        const actualMatches = [...body.matchAll(tokenRe)];
+        const actualMatches = [...body.matchAll(tokenRe)].filter(match => !( /^mm$/iu.test(match[0]) && /\d\s+$/u.test(body.slice(0, match.index)) ));
         if (!actualMatches.length) return line;
+        tokenRe.lastIndex = 0;
 
-        const hadLeadingToken = /^\s*h+m+(?=$|[\s.,!?;:…])/iu.test(body);
+        const hadLeadingToken = /^\s*(?:h+m+|m+h+m+|m+m+(?:-h+m+)?)(?=$|[\s.,!?;:…])/iu.test(body);
 
-        // Eliminăm ezitările și separatoarele devenite orfane, fără să ștergem
-        // cuvintele afirmative Mhm/Mm-hmm/Mm sau restul replicii.
-        body = body
-            .replace(/[,;:]\s*h+m+(?=$|[\s.,!?;:…])/giu, ' ')
-            .replace(tokenRe, ' ')
-            .replace(/[ \t]{2,}/g, ' ')
-            .replace(/\s+([,;:!?])/g, '$1')
-            .replace(/([.!?…])[ \t]*[,;:]+/g, '$1')
-            .replace(/,\s*,+/g, ',')
-            .replace(/([,;:])\s*([,;:])+/g, '$1')
-            .replace(/^[ \t,;:]+/g, '')
-            .replace(/[ \t,;:]+$/g, '')
-            .replace(/^[.!?…]+[ \t]*/g, '')
-            .replace(/[ \t]+([.!?])/g, '$1')
-            .replace(/[ \t]{2,}/g, ' ')
-            .trim();
+        // Cue-uri formate numai din Hm/Hmm/Mm/Mmm/Mhm/Mm-hmm (inclusiv repetări).
+        const withoutTokens = body.replace(tokenRe, (token, offset, whole) => (/^mm$/iu.test(token) && /\d\s+$/u.test(whole.slice(0, offset))) ? token : ' ').replace(/[\s.,!?;:…'"()[\]{}-]+/gu, ' ').trim();
+        if (!withoutTokens) return '';
 
+        // În fraze, scoatem și separatorii atașați vocalizării, nu restul replicii.
+        body = body.replace(/[,;:]\s*(?:h+m+|m+h+m+|m+m+(?:-h+m+)?)(?=$|[\s.,!?;:…])/giu, (match, offset, whole) => (/^mm$/iu.test(match.trim().replace(/^[,;:]\s*/u, '')) && /\d\s+$/u.test(whole.slice(0, offset))) ? match : ' ');
+        body = body.replace(/(?<![\p{L}\p{N}_])(?:h+m+|m+h+m+|m+m+(?:-h+m+)?)(?![\p{L}\p{N}_])[,;:]?/giu, (match, offset, whole) => (/^mm$/iu.test(match.replace(/[,;:]$/u, '')) && /\d\s+$/u.test(whole.slice(0, offset))) ? match : ' ');
+        body = body.replace(/[ \t]{2,}/g, ' ').replace(/^[ \t,;:]+/, '').replace(/[ \t,;:]+$/g, '').trim();
+        body = body.replace(/([.!?…])[ \t]*[,;:]+/g, '$1');
+        body = body.replace(/^[.!?…]+[ \t]*/, '');
+        body = body.replace(/[ \t]+([.!?])/g, '$1').replace(/[ \t]{2,}/g, ' ').trim();
         if (!body || !/[\p{L}\p{N}]/u.test(body)) return '';
+        // Dacă vocalizarea era la începutul propoziției, majusculăm primul cuvânt rămas.
         if (hadLeadingToken) body = body.replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
         return prefix + body;
     }).filter(Boolean).join('\n');
@@ -2831,138 +2798,30 @@ function normalizeSubtitleDashes(value) {
 // Repară numai pierderea evidentă a cratimei celui de-al doilea vorbitor.
 // Sursa trebuie să fi avut cel puțin două rânduri marcate cu liniuță; nu deducem
 // dialog dual doar din faptul că textul tradus ocupă două rânduri.
-function getSourceDialogueLineMask(sourceValue) {
-    return String(sourceValue || '').replace(/\r/g, '').split('\n')
-        .map(line => line.trim())
-        .filter(Boolean)
-        .filter(line => {
-            const body = line.replace(/^[-–—]+\s*/u, '').trim();
-            return Boolean(body) && !isStandaloneNonDialogueSoundCue(body);
-        })
-        .map(line => /^[-–—]+\s*(?=\S)/u.test(line));
-}
-
 function restoreExplicitSourceDialogueDashes(sourceValue, translatedValue) {
     const source = String(sourceValue || '');
     const translated = String(translatedValue || '');
-    const sourceDashLines = getSourceDialogueLineMask(source).filter(Boolean).length;
+    const sourceDashLines = source.split(/\r?\n/).filter(line =>
+        /^\s*[-–—]+\s*(?=\S)/u.test(line)
+    ).length;
     if (sourceDashLines < 2 || !translated.trim()) return translated;
 
     const lines = translated.replace(/\r/g, '').split('\n').map(line => line.trim());
-    if (lines.length < 2 || lines.some(line => !line)) return translated;
+    // Dacă formatterul a produs mai mult de două rânduri, nu riscăm să marcăm
+    // o continuare vizuală drept un vorbitor nou.
+    if (lines.length !== 2 || !lines[0] || !lines[1]) return translated;
 
     const body = line => line.replace(/^[-–—]+\s*/u, '').trim();
-    const hasDash = line => /^[-–—]+\s*(?=\S)/u.test(line);
     const firstBody = body(lines[0]);
     const secondBody = body(lines[1]);
-    // Când sursa are exact două intervenții marcate, iar traducerea are exact
-    // două rânduri, structura sursei este reperul decisiv. Nu cerem punct la prima
-    // replică: vorbitorii pot fi separați chiar și fără punctuație finală.
+    // Cerem o limită recognoscibilă între replici și un început de rând plauzibil
+    // pentru un vorbitor nou. Nu reconstruim o delimitare dacă textul este ambiguu.
     const firstEndsUtterance = /[.!?…—–]["”»')\]]*$/u.test(firstBody);
-    // „...they said” poate fi începutul celei de-a doua replici; ellipsa nu
-    // trebuie să facă imposibilă restaurarea liniuței atunci când sursa o marca.
-    const secondLooksLikeSpeaker = /^(?:[\p{Lu}„“"'0-9¿¡]|…|\.{2,})/u.test(secondBody);
-    if (lines.length === 2) {
-        if (sourceDashLines === 2) {
-            return [`- ${firstBody}`, `- ${secondBody}`].join('\n');
-        }
-        if (!firstEndsUtterance || !secondLooksLikeSpeaker) return translated;
-        return [`- ${firstBody}`, `- ${secondBody}`].join('\n');
-    }
+    const secondLooksLikeSpeaker = /^(?:[\p{Lu}„“"'0-9¿¡])/u.test(secondBody);
+    if (!firstEndsUtterance || !secondLooksLikeSpeaker) return translated;
 
-    // Când primul vorbitor are nevoie de două rânduri vizuale, nu abandonăm
-    // restaurarea: reparăm doar o linie de continuare care începe explicit cu
-    // ellipsă după o replică terminată, dacă în sursă există un vorbitor marcat
-    // suplimentar. Nu reordonăm și nu unim rândurile.
-    const alreadyMarked = lines.filter(hasDash).length;
-    if (alreadyMarked >= sourceDashLines) return translated;
-    let changed = false;
-    for (let i = 1; i < lines.length && lines.filter(hasDash).length < sourceDashLines; i++) {
-        if (hasDash(lines[i])) continue;
-        const prevBody = body(lines[i - 1]);
-        const currentBody = body(lines[i]);
-        const prevEndsUtterance = /[.!?…]["”»')\]]*$/u.test(prevBody);
-        if (prevEndsUtterance && /^(?:…|\.{2,})/u.test(currentBody)) {
-            lines[i] = `- ${currentBody}`;
-            changed = true;
-        }
-    }
-    return changed ? lines.join('\n') : translated;
-}
-
-// Aliniază liniuțele traduse cu marcajele explicite din sursă.
-// Dacă traducerea are mai multe începuturi de vorbitor decât sursa, eliminăm numai
-// liniuțele suplimentare din continuări clare (rândul precedent nu încheie propoziția).
-// Nu reordonăm, nu unim rânduri și nu eliminăm liniuțe când sursa nu oferă repere.
-function alignDialogueDashesToSource(sourceValue, translatedValue) {
-    const source = String(sourceValue || '').replace(/\r/g, '');
-    const translated = String(translatedValue || '').replace(/\r/g, '');
-    if (!translated.trim()) return translated;
-
-    const sourceLineMask = getSourceDialogueLineMask(source);
-    const sourceTurnCount = sourceLineMask.filter(Boolean).length;
-    if (!sourceTurnCount) return translated;
-
-    let aligned = translated;
-
-    // Când sursa confirmă două intervenții și traducerea le-a pus accidental
-    // pe același rând, separăm doar separatorul de vorbitor (nu o liniuță de pauză).
-    if (sourceTurnCount === 2) {
-        const linesBeforeSplit = aligned.split('\n').map(line => line.trim());
-        const currentDashCount = linesBeforeSplit.filter(line => /^[-–—]+\s*(?=\S)/u.test(line)).length;
-        if (currentDashCount < 2) {
-            const inlineSpeaker = /^\s*(?:[-–—]+\s*)?(.+?)\s+[-–—]\s+(?=[\p{Lu}„“"'0-9¿¡])(.+)$/u;
-            for (let i = 0; i < linesBeforeSplit.length; i++) {
-                const match = linesBeforeSplit[i].match(inlineSpeaker);
-                if (!match) continue;
-                linesBeforeSplit.splice(i, 1, `- ${match[1].trim()}`, `- ${match[2].trim()}`);
-                aligned = linesBeforeSplit.join('\n');
-                break;
-            }
-        }
-    }
-
-    let lines = aligned.split('\n').map(line => line.trim()).filter(Boolean);
-
-    // Când numărul de rânduri vizuale coincide cu structura sursei, aplicăm
-    // exact masca de liniuțe: true = început de replică, false = continuarea ei.
-    // Acest caz repară inclusiv structura [replică pe două rânduri, replică nouă].
-    // Nu deducem limite când traducerea a schimbat numărul de rânduri.
-    if (sourceTurnCount >= 2 && sourceLineMask.length === lines.length) {
-        lines = lines.map((line, index) => {
-            const body = line.replace(/^[-–—]+\s*/u, '').trim();
-            if (!body) return '';
-            return sourceLineMask[index] ? `- ${body}` : body;
-        }).filter(Boolean);
-        return lines.join('\n');
-    }
-
-    // Pentru două intervenții traduse în exact două rânduri, sursa este reperul decisiv.
-    // Liniuța se restaurează chiar dacă prima replică nu se termină în punctuație.
-    if (sourceTurnCount === 2 && lines.length === 2) {
-        return lines.map(line => `- ${line.replace(/^[-–—]+\s*/u, '').trim()}`).join('\n');
-    }
-
-    // Restaurare conservatoare pentru cazurile în care sursa și traducerea au
-    // număr diferit de rânduri. Nu mutăm și nu unim cuvinte aici.
-    aligned = restoreExplicitSourceDialogueDashes(source, lines.join('\n'));
-    lines = aligned.split('\n').map(line => line.trim()).filter(Boolean);
-    let surplus = lines.filter(line => /^[-–—]+\s*(?=\S)/u.test(line)).length - sourceTurnCount;
-    if (surplus <= 0) return lines.join('\n');
-
-    const stripsDash = line => String(line || '').replace(/^[-–—]+\s*/u, '').trim();
-    const sentenceEnd = /[.!?…][”»'’”)}\]]*$/u;
-    const continuationStarts = /^(?:în|și|dar|iar|sau|că|care|ce|pe|de|din|cu|la|pentru|prin|să|nu|mă|te|se|ne|vă|îl|îi|îmi|îți|a|al|ale|ai|un|o|mai|încă|când|unde|cum|dacă|deoarece|fiindcă)\b/iu;
-    for (let i = 1; i < lines.length && surplus > 0; i++) {
-        if (!/^[-–—]+\s*(?=\S)/u.test(lines[i])) continue;
-        const previousBody = stripsDash(lines[i - 1]);
-        const currentBody = stripsDash(lines[i]);
-        if (!previousBody || sentenceEnd.test(previousBody)) continue;
-        if (!continuationStarts.test(currentBody)) continue;
-        lines[i] = currentBody;
-        surplus--;
-    }
-    return lines.join('\n');
+    const fixed = [`- ${firstBody}`, `- ${secondBody}`];
+    return fixed.join('\n');
 }
 
 // Elimină numai liniuța de dialog de la începutul fiecărui rând.
@@ -3012,6 +2871,14 @@ function stripContextualDisposableInterjections(value) {
 
         if (isOnlyStandaloneFillerSequence(body)) return '';
 
+        // „Mhm, I understand.”: eliminăm Mhm doar ca umplutură înaintea unei propoziții;
+        // un „Mhm.” izolat poate fi un răspuns și rămâne intact.
+        const leadingMhm = body.match(/^(mhm|mmhmm|mm-hmm|mmm-hmm)[,;:]\s+(?=\S)/iu);
+        if (leadingMhm) {
+            body = body.slice(leadingMhm[0].length);
+            body = body.replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
+        }
+
         // Începutul: „Um, nu știu.” -> „Nu știu.”
         for (let i = 0; i < 5; i++) {
             const match = body.match(new RegExp('^(' + pattern + ')(?:\\s*[,;:!?.…]+\\s*|\\s+)(?=\\S)', 'iu'));
@@ -3045,15 +2912,8 @@ function stripContextualDisposableInterjections(value) {
     }).filter(Boolean).join('\n');
 }
 
-function normalizeRomanianDiacriticCharacters(value) {
-    return String(value ?? '').normalize('NFC').replace(/[şŞţŢ]/gu, ch => ({
-        'ş': 'ș', 'Ş': 'Ș', 'ţ': 'ț', 'Ţ': 'Ț'
-    })[ch]);
-}
-
 function deepCleanSubtitleText(text) {
     if (!text) return text;
-    text = normalizeRomanianDiacriticCharacters(text);
 
     // Plasă de siguranță pentru vocalizările care nu trebuie să ajungă în subtitrarea finală.
     text = stripSpecifiedVocalizations(text);
@@ -3153,6 +3013,8 @@ function deepCleanSubtitleText(text) {
     cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])șă-și(?![\p{L}\p{N}_])/gu, 'să-și');
     cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])Șă-și(?![\p{L}\p{N}_])/gu, 'Să-și');
 
+    cleaned = cleaned.replace(/^[aA]?[,\s]*mi s-a plătit\.?/gi, 'Mi-am primit banii.');
+    cleaned = cleaned.replace(/^[aA]?[,\s]*am fost plătit[aă]?\.?/gi, 'Mi-am primit banii.');
     cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])distraggă(?![\p{L}\p{N}_])/giu, 'distragă');
     cleaned = applyRomanianOrthographyRepairs(cleaned);
     // Plasă de siguranță finală pentru vocalizări izolate și interjecții vizate.
@@ -3323,15 +3185,12 @@ function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSof
     if (valid) return preferred;
 
     if (allowSoftTwoLineWrap) {
-        // Maximum 48 de caractere VIZIBILE pe rând, inclusiv prefixul „- ".
-        // Varianta v97 putea ajunge la 49 pe primul rând; plafonăm doar acel caz.
-        const relaxedFirstLimit = Math.min(contentLimit + 6, maxChars + 6 - prefixLength);
-        const relaxedNextLimit = maxChars + 6;
+        // Maximul vizibil de rezervă este 48 (inclusiv „- ” dacă există).
+        // Nu folosim toleranța dacă textul nu poate încăpea în două rânduri nici așa.
         const tolerant = splitSubtitleIntoTwoLinesWithinLimits(
-            text, relaxedFirstLimit, relaxedNextLimit
+            text, contentLimit + 6, maxChars + 6
         );
-        if (tolerant.length === 2 && tolerant.every((line, index) =>
-            line.length <= (index === 0 ? relaxedFirstLimit : relaxedNextLimit))) return tolerant;
+        if (tolerant.length === 2) return tolerant;
     }
     return wrapSubtitleLines(text, maxChars, prefixLength);
 }
@@ -3380,9 +3239,9 @@ function formatSubtitleLayout(value) {
             continue;
         }
         // --- LOGICĂ ROBUSTĂ PENTRU DIALOG DUAL INLINE ---
-        // Cazul 1: rândul începe cu liniuță; separăm al doilea vorbitor
-        // numai după punctuație de final de propoziție, nu după o liniuță de pauză.
-        const prefixedDoubleDialogue = raw.match(/^\s*[-–—]\s*(.+?[.!?…])\s+[-–—]\s*(?=[A-ZĂÂÎȘȚa-zăâîșț0-9„"«])(.+)$/);
+        // Cazul 1: rândul începe cu liniuță; a doua liniuță separă vorbitorii
+        // chiar și fără punctuație finală sau spațiu după separator.
+        const prefixedDoubleDialogue = raw.match(/^\s*[-–—]\s*(.+?[.!?…]?)\s+[-–—]\s*(?=[A-ZĂÂÎȘȚa-zăâîșț0-9„"«])(.+)$/);
         if (prefixedDoubleDialogue) {
             entries.push({ text: prefixedDoubleDialogue[1].trim(), dialogue: true });
             entries.push({ text: prefixedDoubleDialogue[2].trim(), dialogue: true });
@@ -3390,8 +3249,8 @@ function formatSubtitleLayout(value) {
         }
 
         // Cazul 2: rândul nu începe cu liniuță, dar separatorul din mijloc
-        // indică a doua replică numai dacă prima propoziție este încheiată.
-        const inlineDialogue = raw.match(/^\s*(.+?[.!?…])\s+[-–—]\s*(?=[A-ZĂÂÎȘȚa-zăâîșț0-9„"«])(.+)$/);
+        // indică a doua replică. Este acceptată și lipsa punctuației înaintea lui.
+        const inlineDialogue = raw.match(/^\s*(.+?[.!?…]?)\s+[-–—]\s*(?=[A-ZĂÂÎȘȚa-zăâîșț0-9„"«])(.+)$/);
         if (inlineDialogue) {
             entries.push({ text: inlineDialogue[1].trim(), dialogue: true });
             entries.push({ text: inlineDialogue[2].trim(), dialogue: true });
@@ -3451,7 +3310,7 @@ function formatSubtitleLayout(value) {
     // a unui vorbitor, nu vorbitori separați. Le rearanjăm împreună pentru a
     // evita rândurile 3 create doar de rupturile intermediare venite din model.
     // Păstrăm întâi, când încape, o limită naturală între propoziții; altfel
-    // reîmpachetăm strict în limitele vizibile de 42 de caractere.
+    // încercăm 42 de caractere și toleranța controlată de până la 48.
     if (entries.length > 2 && entries.every(entry => !entry.dialogue)) {
         const joinedUnmarked = entries.map(entry => entry.text.trim()).filter(Boolean).join(' ')
             .replace(/\s+/g, ' ').trim();
@@ -3473,15 +3332,11 @@ function formatSubtitleLayout(value) {
             const previous = merged[merged.length - 1];
 
             // Cazul 1: Continuare normală (rândul precedent are liniuță, acesta nu)
-            // Dacă rândul următor NU are liniuță, este continuarea vizuală a aceleiași
-            // intervenții chiar și când rândul precedent se termină cu punct. Un vorbitor
-            // poate rosti mai multe propoziții pe rânduri separate; punctul nu creează un
-            // vorbitor nou. V101 adăugase aici o condiție care producea inutil al treilea rând.
             const continuation = previous.dialogue && !entry.dialogue;
 
             // Cazul 2: Continuare forțată (rândul precedent NU avea liniuță, dar al doilea are).
             // Repară situații gen: "Cred că ai un atac" / "- de panică."
-            const invertedContinuation = !previous.dialogue && entry.dialogue && !endsCompleteSentence(previous.text);
+            const invertedContinuation = !previous.dialogue && entry.dialogue;
 
             // Cazul 3: Continuare cu literă mică
             const lowercaseContinuation = previous.dialogue && entry.dialogue &&
@@ -3500,8 +3355,12 @@ function formatSubtitleLayout(value) {
             }
         }
 
-        // Nu forțăm unirea unor intrări distincte doar pentru a ajunge la două:
-        // când sursa conține mai multe ture de vorbitor, păstrăm ordinea și delimitarea.
+        // Dacă totuși au rămas mai mult de 2 (caz extrem de rar), forțăm unificarea primelor două.
+        while (merged.length > 2) {
+            const first = merged.shift();
+            merged[0].text = (first.text + ' ' + merged[0].text).trim();
+            merged[0].dialogue = first.dialogue || merged[0].dialogue;
+        }
 
         entries = merged;
     }
@@ -3510,15 +3369,9 @@ function formatSubtitleLayout(value) {
 
     // Întoarce toate rândurile necesare. Liniuța intră în calculul limitei:
     // în mod normal primul rând are 40 de caractere de replică + „- ”;
-    // primul rând rezervă întotdeauna spațiul ocupat de liniuța de dialog.
+    // există o toleranță de un caracter pentru replicile care altfel s-ar rupe inutil la limită.
     const wrapEntry = (entry, capitalizeUnmarked = false, allowSoftTwoLineWrap = true) => {
-        // Readuce comportamentul v97: țintă de 42 de caractere, toleranță de
-        // un caracter pentru primul rând cu liniuță și toleranță până la 48
-        // doar când aceasta poate păstra replica în două rânduri.
-        const lines = wrapSubtitleLinesSmart(
-            entry.text, 42, entry.dialogue ? 2 : 0,
-            allowSoftTwoLineWrap, entry.dialogue ? 1 : 0
-        );
+        const lines = wrapSubtitleLinesSmart(entry.text, 42, entry.dialogue ? 2 : 0, allowSoftTwoLineWrap, entry.dialogue ? 1 : 0);
         if (!lines.length) return [];
         if (entry.dialogue) {
             lines[0] = `- ${capFirst(lines[0])}`;
@@ -3533,9 +3386,7 @@ function formatSubtitleLayout(value) {
         if (entry.dialogue) return wrapEntry(entry).join('\n') || ' ';
 
         const compactText = entry.text.replace(/\s+/g, ' ').trim();
-        if (compactText && compactText.length <= 42) return compactText;
-        const naturalSplit = findSubtitleSentenceSplit(compactText, 48);
-        if (naturalSplit) return naturalSplit.join('\n');
+        if (compactText && compactText.length <= 43) return compactText;
         return wrapSubtitleLinesSmart(compactText, 42).join('\n') || ' ';
     }
 
@@ -3563,19 +3414,38 @@ function formatSubtitleLayout(value) {
 
         const joined = (first + ' ' + second).trim();
         const bothFit = first.length <= 43 && second.length <= 43;
+        const firstEndsSentence = /[.!?…]["”»)]*$/u.test(first);
 
-        // Păstrează ruptura originală când ambele rânduri sunt deja valide.
-        // Nu căutăm o ruptură „mai bună” și nu unim rânduri scurte: asta a
-        // produs regresii față de v13.2.97. Reîmpachetăm numai dacă un rând
-        // depășește 43 de caractere.
-        if (bothFit) return first + '\n' + second;
+        // Repară prioritar rupturile dintre rânduri când textul încape pe un singur
+        // rând de maximum 42 de caractere. Păstrăm totuși limita de propoziție:
+        // „Știu. / Vreau doar să mă placă.” rămâne pe două rânduri.
+        if (joined.length <= 42) {
+            return firstEndsSentence ? first + '\n' + second : joined;
+        }
 
-        // Pentru rândurile care depășesc limita, preferăm o limită naturală
-        // între propoziții dacă ambele fragmente încap.
+        // Nu păstrăm rupturi care lasă agățate cuvinte funcționale ori conjuncții.
+        // Lista include explicit cazurile observate: „dacă / știi”, „nu / garantează”
+        // și „în / sfârșit”.
+        const weakEnding = /(?:^|\s)(?:a|al|ai|ale|cu|de|din|în|la|lângă|pe|pentru|prin|să|și|un|o|unei|unui|unor|mai|că|ca|îi|i|le|mi|ți|ne|vă|care|l-am|l-ai|l-a|l-au|i-am|i-ai|i-a|i-au|ne-am|m-am|te-am|v-am|le-am|s-a|s-au|s-ar|dacă|nu|deși|sau|ori|nici|doar|încă|când|unde|cum|[\p{L}]+-(?:mi|ți|i|l|o|le|ne|vă))[,;:]*$/iu.test(first.trim());
+
+        // Păstrăm ruptura existentă dacă ambele rânduri sunt în limita istorică
+        // de 43 de caractere și nu se termină cu un cuvânt gramatical agățat.
+        // Această verificare trebuie făcută ÎNAINTE de căutarea altor rupturi,
+        // altfel algoritmul mută inutil rânduri care erau deja corecte.
+        if (bothFit && (!weakEnding || firstEndsSentence)) return first + '\n' + second;
+
         const naturalSentenceSplit = findSubtitleSentenceSplit(joined, 48);
+
+        // Căutăm o limită de propoziție doar când ruptura existentă e slabă
+        // sau depășește toleranța; nu rearanjăm preventiv rânduri deja acceptabile.
         if (naturalSentenceSplit) return naturalSentenceSplit.join('\n');
 
-        return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
+        // Dacă ruptura era slabă sau un rând depășește 43, reîmpachetăm.
+        // 42 rămâne ținta; limita de 48 se folosește doar pentru a evita un al treilea rând inutil.
+        if (weakEnding || !bothFit) return wrapSubtitleLinesSmart(joined, 42).join('\n') || joined;
+
+        // Fallback conservator: păstrează despărțirea inițială.
+        return first + '\n' + second;
     }
 
     // Fallback sigur: toate intrările rămase sunt împachetate, fără a pierde text.
@@ -3667,6 +3537,7 @@ function formatSubtitleLine(text) {
         [/(?<![\p{L}\p{N}_])în ș(?![\p{L}\p{N}_])/giu, 'în șah'],
         [/\bsomom\b/gi, 'somon'],
         [/\bdilettant\b/gi, 'diletant'],
+        [/\bcowboys\b/gi, 'cowboy'],
         [/\bThey need us\.?\b/gi, 'Au nevoie de noi.'],
         [/\bMaybe a little too well,?\s*Robert\.?\b/gi, 'Poate puțin prea bine, Robert.'],
         [/\bInterestingly enough,?\b/gi, 'Destul de interesant,'],
@@ -3764,6 +3635,7 @@ function formatSubtitleLine(text) {
         [/\bfătat de prostie\b/gi, 'futut de prostie'],
         [/\bpsihoopat\b/gi, 'psihopat'],
         [/\bregrei\b/gi, 'regreți'],
+        [/\bo 26\b/gi, 'asta'],
         [/\bputiul\b/gi, 'puțoiul'],
         [/\bPlătitorul de pește\b/gi, 'Strivitorul de calcan'],
         [/\bCentura de Rugină\b/gi, 'Rust Belt'],
@@ -3773,6 +3645,7 @@ function formatSubtitleLine(text) {
         [/\bmass-media principală\b/gi, 'presa mainstream'],
         [/\bun drac de cuvânt\b/gi, 'o vorbă'],
         [/\bScoală-ți-o zile în șir\b/gi, 'Scoală-n puii mei non-stop'],
+        [/\b(un)?\s*modist\s*(\d+)?\b/gi, 'un modest'],
         [/\bprânat\b/gi, 'prins'],
         [/\b(s|S)troș\b/gi, 'Strauss'],
         [/\bștiu la mașină\b/gi, 'știu să dactilografiez'],
@@ -3793,6 +3666,7 @@ function formatSubtitleLine(text) {
         [/(?<![\p{L}\p{N}_])Î j cunosc(?![\p{L}\p{N}_])/giu, 'Îi cunosc'],
         [/\bororbit\b/gi, 'orbit'],
         [/\bi-ale refuze\b/gi, 'să le refuze'],
+        [/\bsecreției\b/gi, 'secretomaniei'],
         [/\baliții\b/gi, 'aliații'],
         [/\bnimiște\b/gi, 'niște'],
         [/\bclasifiat\b/gi, 'clasificat'],
@@ -3817,6 +3691,7 @@ function formatSubtitleLine(text) {
         [/\bpentru a obține concesii consemnând de la ruși\b/gi, 'pentru a obține garanții de la ruși'],
         [/\bfacem bomba sigură\b/gi, 'securizăm bomba'],
         [/\binteresată de provocate\b/gi, 'interesată de capcane'],
+        [/\bjiul\b/gi, 'fel'],
         [/\bdupă o oră și 58 de minute\b/gi, 'în exact o oră și 58 de minute'],
         [/\bil voi suna pe Lloyd Garrison\b/gi, 'îl voi suna pe Lloyd Garrison'],
         [/\bpe banca acuzaților bancă\b/gi, 'pe banca acuzaților'],
@@ -3852,6 +3727,7 @@ function formatSubtitleLine(text) {
         [/\bmi-a învățat\b/gi, 'm-a învățat'],
         [/\bcred că își vor recupera\b/gi, 'crede că își va recupera'],
         [/\bprima șoarece\b/gi, 'primul șoarece'],
+        [/\bPrefeți\b/gi, 'Preferi'],
         [/\bniciunfel\b/gi, 'niciun fel'],
         [/\bUrco\b/gi, 'Urc-o'],
         [/\bn o să\b/gi, 'n-o să'],
@@ -3940,17 +3816,6 @@ function formatSubtitleLine(text) {
     return formatSubtitleLayout(text);
 }
 
-// Ultima garanție pentru export: aplicăm numai formatarea de layout, fără să
-// rerulăm dicționarele sau corecțiile semantice. Dacă formatterul ar returna
-// accidental un text gol pentru o traducere existentă, păstrăm originalul.
-function ensureFinalSubtitleLayoutForExport(value) {
-    const original = String(value ?? '');
-    if (!original.trim()) return original;
-    const normalized = normalizeRomanianDiacriticCharacters(original);
-    const candidate = formatSubtitleLayout(normalized);
-    return String(candidate || '').trim() ? candidate : normalized;
-}
-
 // ============================================================
 // MASTER CINEMATIC TRANSLATION PROMPT
 // ============================================================
@@ -3967,14 +3832,12 @@ OUTPUT — CRITICAL
 - Do not return markdown, code fences, comments, or explanations.
 
 TRANSLATION AND CONTEXT
-- SPEAKER TURNS: If a source cue has separate lines beginning with a dialogue dash, preserve each speaker turn on its own line and retain one leading dash per speaker. Do not treat a pause dash inside a sentence as a new speaker.
 - Translate every meaningful sentence, phrase, joke, idiom, slang expression, and fragment into Romanian. Preserve names and established foreign expressions only when they genuinely belong in the source.
 - MUSIC LYRICS EXCLUSION — The preprocessing code removes text enclosed by paired music-note markers (♪...♪, ♫...♫, ♬...♬, ♩...♩) BEFORE this prompt is built. Such lyrics must not appear in this request. Translate only the remaining real dialogue, including dialogue sharing a source block with lyrics; never invent replacement text for removed song lyrics. This applies to regular and SDH subtitles and must not remove non-song dialogue.
 - UNMARKED SONG LYRICS — Some subtitle sources omit music-note markers. When the supplied block sequence and adjacent source lines make it CLEAR that a line is sung lyrics from an ongoing song/chorus, rather than spoken dialogue, return exactly \"__RO_ST_SKIP_SONG_LYRIC__\" as its text. The program will omit that cue; never expose the marker in the final SRT. Be conservative: repetition alone is NOT enough, and do NOT suppress emotional or shouted dialogue (for example, a person repeating \"I loved you!\"). If you are unsure whether it is sung, translate it as dialogue. If a block contains identifiable spoken dialogue as well as lyrics but has no explicit music markers to separate them, translate the spoken dialogue only; do not return the skip marker when any spoken dialogue remains.
 - Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
-- Determine sentence continuation from the syntax and punctuation of BOTH neighboring English cues and the Romanian fragments, not capitalization alone. English first-person “I” and title-cased job titles may begin a cue with a capital even when the Romanian sentence continues. When the previous source/translation remains grammatically open (especially after a comma or semicolon), use lowercase in Romanian for a continuing clause unless it is a proper name or a new speaker turn. Do not lowercase merely because a cue boundary exists.
-- Treat dotted initials/abbreviations at the end of an English cue (for example, “O.I.”) as abbreviations rather than a sentence boundary when the next English cue begins with lowercase text and clearly continues the same clause.
+- If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
 - Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
 - Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
 - Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
@@ -4001,7 +3864,7 @@ ROMANIAN ACCURACY RULES
 - Before returning, re-read each line aloud in your head: if a native speaker would not say it, rewrite it more simply and naturally while keeping the full meaning.
 
 SUBTITLE FORMATTING
-- Keep each visible line at or below 42 characters whenever the wording allows. Use no more than TWO text lines per subtitle block unless needed to preserve more than two explicitly marked source speaker turns; never merge distinct speaker turns just to force two lines.
+- Keep each visible line at or below 42 characters whenever the wording allows. Use no more than TWO text lines per subtitle block.
 - Prefer a balanced two-line layout. Avoid leaving only one or two short words on the second line when a natural alternative exists.
 - If two ordinary visual lines fit together within 42 characters, merge them into one line unless a meaningful sentence/dialogue boundary should remain.
 - Split at natural phrase boundaries, not arbitrary points. Avoid separating a Romanian preposition, article, or short function word from the phrase it belongs to; if necessary, rephrase concisely without losing meaning.
@@ -6014,8 +5877,6 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
             return { success: false, is429: true, halted: true };
         }
         const batchFixedBefore = fixed;
-        // Aceeași protecție ca în buildTranslationPrompt: Grammar Review nu vede cue-uri SDH.
-        const hideTagsFromAI = value => stripNonDialogueSoundMarkup(value).text.trim();
 
         const payload = batch.map(item => {
             const index = getFastItemIndex(contextItems, item.id);
@@ -6024,10 +5885,10 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
 
             return {
                 id: item.id,
-                original: hideTagsFromAI(item.text),
+                original: item.text,
                 translation: translatedById[String(item.id)],
-                context_anterior_en: previous ? `[${previous.id}] ${hideTagsFromAI(previous.text)}` : '(niciunul)',
-                context_urmator_en: next ? `[${next.id}] ${hideTagsFromAI(next.text)}` : '(niciunul)',
+                context_anterior_en: previous ? `[${previous.id}] ${previous.text}` : '(niciunul)',
+                context_urmator_en: next ? `[${next.id}] ${next.text}` : '(niciunul)',
                 context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
                 context_urmator_ro: next ? `[${next.id}] ${translatedById[String(next.id)] || ''}` : '(niciunul)',
                 avertisment_semantic: [
@@ -6039,7 +5900,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
         const prompt = `Ești un editor profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Revizuiești traducerea existentă, nu o retraducești automat.
 
 SCOP
-Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică. Dacă originalul unui ID este gol după filtrarea cue-urilor non-dialogate, nu inventa o corectură pentru acel ID și nu modifica traducerea lui.
+Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică.
 
 VERIFICĂ ÎN ORDINE
 1. Compară ORIGINALUL, traducerea și contextul imediat înainte/după. Verifică sensul complet, expresiile idiomatice, cine face acțiunea și cine/ce o primește.
@@ -6418,6 +6279,7 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
 // ============================================================
 
 const LOCAL_GRAMMAR_FIXES = [
+    [/(?<![\p{L}\p{N}_])cel mai mare bideu(?![\p{L}\p{N}_])/giu, 'cel care oferă mai mult'],
     [/(?<![\p{L}\p{N}_])vânător de (?:onoruri|arierate)(?![\p{L}\p{N}_])/giu, 'vânător de recompense'],
     [/(?<![\p{L}\p{N}_])mățineau(?![\p{L}\p{N}_])/giu, 'mă țineau'],
     [/(?<![\p{L}\p{N}_])sesimte(?![\p{L}\p{N}_])/giu, 'se simte'],
@@ -6565,17 +6427,6 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])să\s+ghidheze(?![\p{L}\p{N}_])/giu, 'să ghideze'],
     [/(?<![\p{L}\p{N}_])sintezoiz(?![\p{L}\p{N}_])/giu, 'sintezoid'],
     [/(?<![\p{L}\p{N}_])ceea\s+care(?![\p{L}\p{N}_])/giu, 'cea care'],
-    // Typos clare observate în verificarea subtitrării Reacher S01E01.
-    // Corectăm numai tokenuri/formulări foarte specifice, nu rescriem propoziții întregi.
-    [/\bdooua\b/giu, 'doua'],
-    [/(?<![\p{L}])cinva(?![\p{L}])/giu, 'cineva'],
-    [/(?<![\p{L}])funciona(?![\p{L}])/giu, 'funcționa'],
-    [/(?<![\p{L}])notiele(?![\p{L}])/giu, 'notițele'],
-    [/(?<![\p{L}])Îți\s+vine\s+să\s+cred(?![\p{L}])/giu, 'Îți vine să crezi'],
-    [/(?<![\p{L}])pin(?=\s+straturile\b)/giu, 'prin'],
-    [/(?<![\p{L}])bet(?=\s+avem\s+motive\b)/giu, 'dar'],
-    [/(?<![\p{L}])Ulțimii(?![\p{L}])/giu, 'Ultimii'],
-
     // „snap” este tradus doar în expresia exactă verificată, nu la nivel global.
     [/(?<![\p{L}\p{N}_])l-a\s+șters\s+din\s+existență\s+cu\s+o\s+snap(?![\p{L}\p{N}_])/giu, 'l-a șters din existență pocnind din degete']
 ];
@@ -8252,19 +8103,7 @@ const CONTINUATION_FUNCTION_WORDS = new Set([
     // („... de când am murit / Acum mai bine de trei secole”).
     'acum', 'este', 'sunt', 'era', 'erau', 'a', 'au', 'ar', 'va', 'vor', 'o', 'nici', 'încă',
     'într-o', 'într-un', 'dintr-o', 'dintr-un', 'oricum', 'acolo', 'aici', 'atât', 'atâta',
-    'mult', 'foarte', 'prea', 'deja', 'încât', 'fiindcă', 'deși', 'însă', 'ori', 'fie',
-    // Forme uzuale observate cu majusculă falsă la începutul unui fragment care
-    // continuă gramatical replica precedentă. Lista rămâne închisă pentru a proteja numele.
-    'am', 'aș', 'ci', 'primarul', 'șeful', 'm-am', 'm-aș', 'n-am', 'n-aș',
-    'țin', 'ține', 'țineam', 'țineai', 'țineau', 'țineți', 'ținusem', 'ținut',
-    'i-am', 'i-aș', 'i-ar', 'i-au', 'mi-am', 'ți-am', 'ne-am', 's-a', 's-au',
-    'eram', 'erai', 'erau', 'aflu', 'aflăm', 'încep', 'începe', 'înseamnă',
-    // Forme de continuare observate în subtitrări, folosite doar când contextul nu încheie fraza.
-    'încearcă', 'aspirând', 'transformată', 'transformate', 'transformat',
-    // Source English may capitalize these at cue starts (notably “I ...” or title-case roles),
-    // while Romanian syntax requires lowercase after a comma/semicolon or an unfinished clause.
-    'eu', 'cred', 'tai', 'ofițer', 'director', 'agent', 'detectiv', 'șofer', 'căpitan',
-    'manager', 'responsabil', 'lucrez', 'înțeleg', 'știu', 'spun', 'avem', 'așadar', 'deoarece', 'consider'
+    'mult', 'foarte', 'prea', 'deja', 'încât', 'fiindcă', 'deși', 'însă', 'ori', 'fie'
 ]);
 
 // Vocabular de NUME din sursa engleză: cuvinte care apar cu majusculă și niciodată cu literă mică
@@ -8301,88 +8140,49 @@ function buildEnglishNameVocabulary(items) {
     return names;
 }
 
-function isContinuationBlock(prevEnglish, currentEnglish, previousRomanian = '') {
+function isContinuationBlock(prevEnglish, currentEnglish) {
     const cur = String(currentEnglish || '').replace(/<[^>]+>/g, '').trim();
     const prev = String(prevEnglish || '').replace(/<[^>]+>/g, '').trim();
-    const prevRo = String(previousRomanian || '').replace(/<[^>]+>/g, '').trim();
-    if (!cur || !prev || !prevRo) return false;
-
-    // O cratimă explicită la începutul sursei indică un vorbitor nou: nu-i coborâm majuscula.
-    if (/^[-–—]/u.test(cur)) return false;
-
-    const endsSentence = value => /(?<!\.)[.!?]["'’”»)\]]*$/u.test(String(value || '').trim());
-    const currentBody = cur.replace(/^[.…\s"“‘(\[]+/u, '');
-    const sourceStartsLowercase = /^[a-z]/u.test(currentBody);
-    // Un acronim cu puncte, precum „O.I.”, nu trebuie confundat cu sfârșitul
-    // propoziției când următorul cue începe cu literă mică („that Joe was heading up?”).
-    // Activăm excepția doar când sursa următoare confirmă sintactic continuarea.
-    const previousEndsWithDottedAbbreviation = value => {
-        const text = String(value || '').trim();
-        return /\b(?:[A-Z]\.){2,}$/u.test(text) || /\b(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof|Rev|Gen|Capt|Lt|Col|Dept|Inc|Ltd|Co|vs|etc)\.$/iu.test(text);
-    };
-    const abbreviationContinuation = sourceStartsLowercase && previousEndsWithDottedAbbreviation(prev);
-    // Sursa prevalează față de un punct românesc posibil greșit numai dacă are
-    // semn clar de continuare (virgulă/;/:), sau următorul cue englezesc începe
-    // cu literă mică și precedentul nu încheie o propoziție (inclusiv acronimul O.I.).
-    const sourceHasOpenPunctuation = /[,;:][\s"'’”»)]*$/u.test(prev);
-    const sourceClearlyContinues = sourceHasOpenPunctuation ||
-        (sourceStartsLowercase && (!endsSentence(prev) || abbreviationContinuation));
-    if ((endsSentence(prev) && !abbreviationContinuation) || (endsSentence(prevRo) && !sourceClearlyContinues)) return false;
-
-    return /[\p{L}\p{N}]/u.test(currentBody);
+    if (!cur || !prev) return false;
+    if (/^[-–—]/.test(cur)) return false;
+    const body = cur.replace(/^[.…\s"'“‘(\[]+/, '');
+    if (!/^[a-z]/.test(body)) return false;
+    if (/(?<!\.)[.!?]["”')\]]*$/.test(prev)) return false;
+    return true;
 }
 
-function applyContinuationCase(items, translatedById, options = {}) {
+function applyContinuationCase(items, translatedById) {
     let changed = 0;
-    // Păstrăm comportamentul conservator din v13.2.100: când sursa engleză
-    // începe cu literă mică și replica anterioară nu s-a încheiat, este un
-    // semnal puternic că fragmentul continuă. În acest caz folosim vocabularul
-    // de nume din sursă pentru a nu transforma numele proprii în litere mici.
     const englishNames = buildEnglishNameVocabulary(items);
-    const sourceStartsLowercase = value => {
-        const text = String(value || '').replace(/<[^>]+>/g, ' ').trim();
-        if (!text || /^[-–—]/u.test(text)) return false;
-        const body = text.replace(/^[.…\s"“‘(\[]+/u, '');
-        return /^[a-z]/u.test(body);
-    };
-
     for (let i = 1; i < items.length; i++) {
         if (items[i - 1].musicOnly || items[i].musicOnly) continue;
+        if (!isContinuationBlock(items[i - 1].text, items[i].text)) continue;
 
         const id = String(items[i].id);
         const current = String(translatedById[id] || '');
         const previousRo = String(translatedById[String(items[i - 1].id)] || '').trim();
         if (!current.trim() || !previousRo) continue;
+        if (/(?<!\.)[.!?]["”]?$/.test(previousRo)) continue;
+        if (/^\s*[-–—]/.test(current)) continue;
 
-        const previousEnglish = String(items[i - 1].text || '').replace(/<[^>]+>/g, ' ').trim();
-        const currentEnglish = String(items[i].text || '').replace(/<[^>]+>/g, ' ').trim();
-        if (!isContinuationBlock(previousEnglish, currentEnglish, previousRo)) continue;
-        if (/^\s*[-–—]/u.test(current)) continue;
-
-        const match = current.match(/^(\s*[.…"„“'‘(\[]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*(?:-[a-zăâîșț]+)*)/u);
+        const match = current.match(/^(\s*[.…"„“]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*(?:-[a-zăâîșț]+)*)/);
         if (!match) continue;
         const word = match[2] + match[3];
-        const lowerWord = word.toLocaleLowerCase('ro-RO');
-        const sourceConfirmsContinuation = sourceStartsLowercase(currentEnglish);
+        const previousEnglish = String(items[i - 1].text || '').replace(/<[^>]+>/g, ' ').trim();
+        const currentEnglish = String(items[i].text || '').replace(/<[^>]+>/g, ' ').trim();
+        const progressiveContinuation = /\b(?:was|were|is|are)\s*$/i.test(previousEnglish) && /^[a-z]+ing\b/i.test(currentEnglish);
+        const lowerWord = word.toLowerCase();
+        // Sursa începe cu literă mică (continuare), deci primul cuvânt românesc este aproape sigur
+        // un cuvânt obișnuit. Îl păstrăm cu majusculă doar dacă este un nume cunoscut din fișier.
+        if (englishNames.has(nameKey(lowerWord)) && !CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
 
-        if (sourceConfirmsContinuation) {
-            // Reproduce v13.2.100: lowercase the translated initial unless it
-            // matches a proper name identified from the English subtitle corpus.
-            if (englishNames.has(nameKey(lowerWord)) && !CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
-        } else {
-            // When English uses a capital at the start of every subtitle cue,
-            // only change words explicitly approved for a safe continuation.
-            if (!CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
-        }
-
-        translatedById[id] = match[1] + lowerWord + current.slice(match[0].length);
+        translatedById[id] = match[1] + match[2].toLowerCase() + match[3] + current.slice(match[0].length);
         changed++;
     }
-    if (!options.silent) {
-        console.log(`${c.green}✔ [Continuări] ${changed} fragmente continuate au primit literă mică la început.${c.reset}`);
-    }
+    console.log(`${c.green}✔ [Continuări] ${changed} fragmente continuate au primit literă mică la început.${c.reset}`);
     return changed;
 }
+
 
 // ============================================================
 // NORMALIZARE CONSERVATOARE A MAJUSCULELOR ÎN MIJLOCUL FRAZEI
@@ -8393,7 +8193,6 @@ function applyContinuationCase(items, translatedById, options = {}) {
 // ============================================================
 const COMMON_ROMANIAN_MID_SENTENCE_WORDS = new Set((`
     acesta aceasta aceștia acestea acest acea acei acele acelea acela acelora
-    aflu afli află aflăm aflați aflau am aș ci m-am m-aș n-am n-aș i-am i-aș i-ar i-au
     acelasi aceeași aceleași asemenea alt alta alte alți altor altă altul altele
     am ai a are ar as avem aveți aveau avea aveam aveați avut fiind fost este e sunt
     suntem sunteți erau era erai eram erați fi fie fii fiind fusesem fusese
@@ -8499,7 +8298,7 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
         if (!original.trim()) continue;
 
         let localChanges = 0;
-        const normalized = original.replace(/(?<![\p{L}\p{N}_])([A-ZĂÂÎȘȚ][a-zăâîșț]*(?:-[a-zăâîșț]+)*)(?![\p{L}\p{N}_])/gu,
+        const normalized = original.replace(/(?<![\p{L}\p{N}_])([A-ZĂÂÎȘȚ][a-zăâîșț]+)(?![\p{L}\p{N}_])/gu,
             (wholeWord, _first, offset) => {
                 // Nu procesăm atribute sau nume de tag HTML.
                 const beforeRaw = original.slice(0, offset);
@@ -8520,16 +8319,8 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                     return wholeWord;
                 }
 
-                // Protejăm numele compuse, dar nu lăsăm un cuvânt obișnuit de început
-                // („Nu Mă duc”, „Dar Și...”) să blocheze corectarea majusculei următoare.
-                // Cratima dintr-o formă verbală („Așa M-am gândit”) rămâne tratată separat.
-                const previousCapitalizedWord = (before.match(/([A-ZĂÂÎȘȚ][\p{L}'’-]*)$/u) || [])[1] || '';
-                const commonPrecedingWords = new Set([
-                    'nu', 'da', 'bine', 'și', 'dar', 'iar', 'sau', 'deci', 'așadar', 'totuși',
-                    'dacă', 'când', 'unde', 'cum', 'apoi', 'poate', 'atunci', 'în', 'la', 'din', 'cu', 'pe'
-                ]);
-                if (!wholeWord.includes('-') && previousCapitalizedWord &&
-                    !commonPrecedingWords.has(previousCapitalizedWord.toLocaleLowerCase('ro-RO'))) return wholeWord;
+                // Cuvântul precedent are majusculă: este parte dintr-un nume compus („Lumea Nouă”).
+                if (/(?<![\p{L}])[A-ZĂÂÎȘȚ][\p{L}'’-]*$/u.test(before)) return wholeWord;
 
                 localChanges++;
                 return word;
@@ -9115,11 +8906,6 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         console.log(`${c.cyan}[Filtru paranteze/cue-uri] Eliminate ${finalBracketedOrCueSegmentsRemoved} segmente delimitate sau cue-uri sonore din traducerile finale.${c.reset}`);
     }
 
-    // Ultima verificare între blocuri consecutive după filtrarea finală și eventualele
-    // recuperări individuale. Aceste etape pot înlocui o traducere după trecerile inițiale
-    // de capitalizare; repetăm numai corecția contextuală sigură, fără log duplicat.
-    applyContinuationCase(items, translatedById, { silent: true });
-
     // Corectare locală conservatoare a majusculelor după toate reviziile AI și
     // filtrele finale, înainte ca QA și exportul SRT să citească textul rezultat.
     applyMidSentenceCapitalizationFixes(items, translatedById);
@@ -9321,9 +9107,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
 
     let removedMusicSegmentsFromOutput = 0;
     let omittedMusicOnlyCuesFromOutput = 0;
-    let dialogueDashAdjustedCount = 0;
-    let finalLayoutAdjustedCount = 0;
-    const finalLayoutAdjustedIds = [];
+    let restoredDialogueDashCount = 0;
     const output = items
         .flatMap(item => {
             const id = String(item.id);
@@ -9344,19 +9128,8 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
             removedMusicSegmentsFromOutput += cleaned.removedCount;
             if (!cleaned.text.trim()) return [];
 
-            // Last-mile layout safeguard: later cleanup/recovery steps may alter a
-            // previously formatted value. Reapply layout after every final edit,
-            // immediately before serialization to SRT. Keep the original text if
-            // the formatter unexpectedly returns empty, so formatting can never
-            // delete a valid translation.
-            const finalLayoutText = ensureFinalSubtitleLayoutForExport(cleaned.text);
-            if (finalLayoutText !== cleaned.text.trim()) {
-                finalLayoutAdjustedCount++;
-                if (finalLayoutAdjustedIds.length < 12) finalLayoutAdjustedIds.push(String(item.id));
-            }
-
-            const dashAlignedText = alignDialogueDashesToSource(item.text, finalLayoutText);
-            if (dashAlignedText !== finalLayoutText) dialogueDashAdjustedCount++;
+            const dashAlignedText = restoreExplicitSourceDialogueDashes(item.text, cleaned.text);
+            if (dashAlignedText !== cleaned.text) restoredDialogueDashCount++;
             return [`${item.id}\n${item.start} --> ${item.end}\n${dashAlignedText}\n`];
         }).join('\n');
 
@@ -9365,11 +9138,8 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         // pe un traseu alternativ; fluxul normal le elimină deja în parseSrt.
         console.log(`${c.cyan}[Versuri muzicale] Plasă de siguranță la export: eliminate ${removedMusicSegmentsFromOutput} segmente și ${omittedMusicOnlyCuesFromOutput} blocuri exclusiv muzicale.${c.reset}`);
     }
-    if (dialogueDashAdjustedCount) {
-        console.log(`${c.cyan}[Dialog] Aliniate liniuțele la structura explicită a sursei în ${dialogueDashAdjustedCount} blocuri.${c.reset}`);
-    }
-    if (finalLayoutAdjustedCount) {
-        console.log(`${c.cyan}[Layout final] Reformatate chiar înainte de export ${finalLayoutAdjustedCount} subtitrări; ID-uri exemplu: ${finalLayoutAdjustedIds.join(', ')}${finalLayoutAdjustedCount > finalLayoutAdjustedIds.length ? ', ...' : ''}.${c.reset}`);
+    if (restoredDialogueDashCount) {
+        console.log(`${c.cyan}[Dialog] Reparate la export cratimele explicite ale celui de-al doilea vorbitor în ${restoredDialogueDashCount} blocuri.${c.reset}`);
     }
 
     return output.trim() ? output.trim() + '\n' : '';
@@ -10600,97 +10370,8 @@ function normalizeMusicMarkers(text) {
         .replace(/â™©/giu, '♩');
 }
 
-function subtitleTimestampToMilliseconds(value) {
-    const match = String(value || '').match(/^(\d{2}):(\d{2}):(\d{2}),(\d{3})$/u);
-    if (!match) return null;
-    const hours = Number(match[1]);
-    const minutes = Number(match[2]);
-    const seconds = Number(match[3]);
-    const milliseconds = Number(match[4]);
-    if (minutes > 59 || seconds > 59) return null;
-    return (((hours * 60 + minutes) * 60 + seconds) * 1000) + milliseconds;
-}
-
-function millisecondsToSubtitleTimestamp(value) {
-    const total = Math.max(0, Math.floor(Number(value) || 0));
-    const hours = Math.floor(total / 3600000);
-    const minutes = Math.floor((total % 3600000) / 60000);
-    const seconds = Math.floor((total % 60000) / 1000);
-    const milliseconds = total % 1000;
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
-}
-
-function repairInvalidSubtitleTimings(items) {
-    // Inferim un decalaj uzual doar din perechi valide în același fișier. Dacă
-    // sursa folosește un interval regulat (de ex. ~83 ms), îl putem folosi pentru
-    // o singură limită de sfârșit imposibilă, folosind următorul cue ca reper.
-    const gaps = [];
-    for (let i = 0; i < items.length - 1; i++) {
-        const end = subtitleTimestampToMilliseconds(items[i].end);
-        const nextStart = subtitleTimestampToMilliseconds(items[i + 1].start);
-        if (end === null || nextStart === null || nextStart < end) continue;
-        const gap = nextStart - end;
-        if (gap >= 20 && gap <= 250) gaps.push(gap);
-    }
-    gaps.sort((a, b) => a - b);
-    const medianGap = gaps.length >= 3 ? gaps[Math.floor(gaps.length / 2)] : null;
-    const canInferGap = medianGap !== null && medianGap >= 20 && medianGap <= 200;
-    let repaired = 0;
-    const unresolved = [];
-
-    for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        const start = subtitleTimestampToMilliseconds(item.start);
-        const end = subtitleTimestampToMilliseconds(item.end);
-        if (start === null || end === null || end > start) continue;
-
-        let nextIndex = -1;
-        let nextStart = null;
-        for (let j = i + 1; j < items.length; j++) {
-            const candidate = subtitleTimestampToMilliseconds(items[j].start);
-            if (candidate !== null && candidate > start) {
-                nextIndex = j;
-                nextStart = candidate;
-                break;
-            }
-        }
-        const delta = nextStart === null ? null : nextStart - start;
-        if (canInferGap && nextIndex !== -1 && delta >= 300 && delta <= 5000) {
-            const candidateEnd = nextStart - medianGap;
-            if (candidateEnd > start && candidateEnd < nextStart) {
-                const originalEnd = item.end;
-                item.end = millisecondsToSubtitleTimestamp(candidateEnd);
-                repaired++;
-                console.warn(`[SRT Timing] ID ${item.id}: interval invalid (${item.start} --> ${originalEnd}); sfârșitul a fost estimat la ${item.end} pe baza decalajului median de ${medianGap} ms și a următorului cue ID ${items[nextIndex].id}.`);
-                continue;
-            }
-        }
-        unresolved.push(String(item.id));
-        console.warn(`[SRT Timing] ID ${item.id}: sfârșitul ${item.end} nu este după începutul ${item.start}; nu am reparat automat deoarece lipsesc suficiente repere sigure.`);
-    }
-    if (repaired) console.log(`[SRT Timing] Reparat intervalul imposibil pentru ${repaired} cue-uri.`);
-    if (unresolved.length) console.warn(`[SRT Timing] ${unresolved.length} cue-uri au intervale invalide ce necesită verificare manuală (ID: ${unresolved.slice(0, 20).join(', ')}${unresolved.length > 20 ? ', …' : ''}).`);
-    return { repaired, unresolvedIds: unresolved, medianGap };
-}
-
 function parseSrt(srt, stats = null) {
-    const rawNormalized = normalizeMusicMarkers(String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, ''));
-    // SRT exporters sometimes insert a blank line BETWEEN a cue's timing line
-    // and its text. A naive blank-line split turns the timed cue into an empty
-    // block and leaves the actual dialogue orphaned (e.g. “Pe care o conducea Joe?”).
-    // Collapse only that malformed separator; do not merge two properly numbered cues.
-    let malformedCueSeparatorsRepaired = 0;
-    const normalized = rawNormalized.replace(
-        /(^|\n)(\d+)[ \t]*\n(\d{1,2}:\d{2}:\d{2}[,.]\d{3}[ \t]*-->[ \t]*\d{1,2}:\d{2}:\d{2}[,.]\d{3})\n[ \t]*\n+(?=(?![ \t]*\d+[ \t]*\n[ \t]*\d{1,2}:\d{2}:\d{2}[,.]\d{3}[ \t]*-->)[ \t]*\S)/g,
-        (_match, separator, id, timing) => {
-            malformedCueSeparatorsRepaired++;
-            return `${separator}${id}\n${timing}\n`;
-        }
-    );
-    if (stats) stats.malformedCueSeparatorsRepaired = malformedCueSeparatorsRepaired;
-    if (malformedCueSeparatorsRepaired) {
-        console.warn(`[SRT] Reparat ${malformedCueSeparatorsRepaired} separator(e) goale dintre timpi și text; replicile rămân la ID-urile și timpii lor.`);
-    }
+    const normalized = normalizeMusicMarkers(String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, ''));
     const blocks = normalized.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
     const songInteriorBlocks = findOpenSongInteriorBlocks(blocks);
     const result = [];
@@ -10868,9 +10549,6 @@ function parseSrt(srt, stats = null) {
         console.warn(`[SRT] Au fost găsite ${duplicateItems.length} apariții cu ID duplicat; ID-urile ieșirii au fost normalizate pentru a preveni suprascrierea traducerilor.`);
     }
 
-    // Timpurile se copiază din sursă; reparăm numai un interval imposibil când
-    // următorul cue și decalajul median din fișier oferă repere clare. Altfel avertizăm.
-    repairInvalidSubtitleTimings(result);
     return result;
 }
 
