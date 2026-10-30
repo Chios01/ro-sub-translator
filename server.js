@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.129',
+    version: '13.2.130',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2789,7 +2789,6 @@ function stripSpecifiedVocalizations(value) {
         tokenRe.lastIndex = 0;
         if (!matches.length) return line;
 
-        const hadLeadingToken = /^\s*(?:h+m+(?:[-‐‑–—]h+m+)?|m+h+m+(?:[-‐‑–—]h+m+)?|m+m+(?:[-‐‑–—]h+m+)?|uh[-‐‑–—]huh+|îh[îi]+)(?=$|[\s.,!?;:…])/iu.test(body);
         body = body.replace(tokenRe, (token, offset, whole) =>
             isNumericMillimeter(token, offset, whole) ? token : ' '
         );
@@ -2810,7 +2809,8 @@ function stripSpecifiedVocalizations(value) {
             .trim();
 
         if (!body || !/[\p{L}\p{N}]/u.test(body)) return '';
-        if (hadLeadingToken) body = body.replace(/^([a-zăâîșț])/u, ch => ch.toLocaleUpperCase('ro-RO'));
+        // Păstrăm majuscula/minuscula sursei după eliminarea vocalizării.
+        // Contextul dintre cue-uri decide ulterior dacă fragmentul continuă fraza.
         return prefix + body;
     }).filter(Boolean).join('\n');
 }
@@ -3351,7 +3351,7 @@ function formatSubtitleLayout(value) {
             'poate', 'probabil', 'trebuie', 'trebuia', 'trebuiau', 'fac', 'face', 'faci', 'făcea', 'făceau',
             'diagnostică', 'importantă', 'important', 'mai', 'foarte', 'tot', 'toate', 'toți', 'toată',
             'lucrurile', 'acum', 'atunci', 'deja', 'doar', 'încă', 'nici', 'prea', 'aproape', 'bine',
-            'îmi', 'îți', 'îi', 'își', 'ne', 'vă', 'mă', 'te', 'se', 'îl', 'le', 'mi', 'ți'
+            'îmi', 'îți', 'îi', 'își', 'ne', 'vă', 'mă', 'te', 'se', 'îl', 'le', 'mi', 'ți', 'tu'
         ]);
         if (!commonContinuationWords.has(firstWord[1].toLocaleLowerCase('ro-RO'))) return next;
         return next.replace(/^([A-ZĂÂÎȘȚ])/u, ch => ch.toLocaleLowerCase('ro-RO'));
@@ -3929,7 +3929,7 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
     const directiveForSourceLine = line => {
         const found = locateInitial(String(line || ''), true);
         if (!found) return null;
-        const token = found.token.toLocaleLowerCase('en-US');
+        const token = found.token.replace(/[^\p{L}'’-]+$/u, '').toLocaleLowerCase('en-US');
         // Un nume propriu confirmat în interiorul sursei rămâne cu majusculă,
         // chiar dacă propoziția din care face parte continuă între cue-uri.
         if (englishNames.has(nameKey(token))) return 'upper';
@@ -3943,10 +3943,10 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
         if (!directive) return line;
         const found = locateInitial(String(line || ''), true);
         if (!found) return line;
-        const targetToken = found.token.toLocaleLowerCase('ro-RO');
+        const targetToken = found.token.replace(/[^\p{L}'’-]+$/u, '').toLocaleLowerCase('ro-RO');
         // Nu coborâm nume proprii sau acronime care au ajuns la început prin
         // reformularea firească a traducerii.
-        if (directive === 'lower' && (englishNames.has(nameKey(targetToken)) || /^[A-Z]{2,}$/u.test(found.token))) return line;
+        if (directive === 'lower' && (englishNames.has(nameKey(targetToken)) || /^(?:[A-ZĂÂÎȘȚ]{2,}|(?:[A-ZĂÂÎȘȚ]\.){1,}[A-ZĂÂÎȘȚ]?\.?)$/u.test(found.token))) return line;
         const replacement = directive === 'upper'
             ? found.char.toLocaleUpperCase('ro-RO')
             : found.char.toLocaleLowerCase('ro-RO');
@@ -8292,25 +8292,13 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
 
 // ============================================================
 // MAJUSCULE LA FRAGMENTELE CONTINUATE
-// Dacă blocul englez continuă propoziția anterioară (începe cu literă mică, iar
-// blocul precedent nu s-a încheiat cu punct), cuvintele funcționale de la începutul
-// traducerii (Și, Iar, Dar, Să, Mai, De...) trec la literă mică. Folosește o listă
-// închisă de cuvinte, ca să nu atingă niciodată nume proprii.
+// Reguli de continuitate pentru capitalizare. Inițiala se decide din indicii
+// sursei engleze; numele proprii recunoscute au prioritate față de cuvintele comune.
 // ============================================================
 
-const CONTINUATION_FUNCTION_WORDS = new Set([
-    'și', 'iar', 'dar', 'sau', 'să', 'că', 'care', 'ce', 'cine', 'cum', 'când', 'unde', 'cât',
-    'dacă', 'ca', 'de', 'pe', 'la', 'în', 'din', 'cu', 'pentru', 'prin', 'fără', 'despre',
-    'după', 'înainte', 'către', 'între', 'mai', 'apoi', 'atunci', 'doar', 'chiar', 'tot',
-    'totul', 'toți', 'toate', 'ceva', 'așa', 'nu', 'un', 'cea', 'cel', 'cei', 'cele', 'mă', 'te',
-    'se', 'ne', 'vă', 'îmi', 'îți', 'își',
-    // Cuvinte frecvente care apăreau cu majusculă după o frază neîncheiată
-    // („... de când am murit / Acum mai bine de trei secole”).
-    'acum', 'este', 'sunt', 'era', 'erau', 'a', 'au', 'ar', 'va', 'vor', 'o', 'nici', 'încă',
-    'într-o', 'într-un', 'dintr-o', 'dintr-un', 'oricum', 'acolo', 'aici', 'atât', 'atâta',
-    'mult', 'foarte', 'prea', 'deja', 'încât', 'fiindcă', 'deși', 'însă', 'ori', 'fie',
-    'păi', 'director', 'directorul'
-]);
+const CONTINUATION_COMMON_NOUN_NAME_OVERRIDES = new Set(['director', 'directorul']);
+
+
 
 // Vocabular de NUME din sursa engleză: cuvinte care apar cu majusculă și niciodată cu literă mică
 // („Dawn”, „Trantor”) sau cu majusculă în mijlocul frazei. Sursa este mai sigură decât traducerea,
@@ -8391,15 +8379,16 @@ function isContinuationBlock(prevEnglish, currentEnglish) {
     const prev = String(prevEnglish || '').replace(/<[^>]+>/g, '').trim();
     if (!cur || !prev) return false;
     const start = getSourceContinuationStart(cur);
-    const previousSourceIsUnfinished = !endsWithSubtitleSentencePunctuation(prev);
 
     // După o liniuță explicită, coborâm inițiala numai dacă sursa însăși începe
     // cu literă mică după liniuță (eventual după eticheta vorbitorului). O
     // majusculă după liniuță indică un vorbitor/început nou și rămâne neatinsă.
     if (start.hasDialogueDash) return start.beginsLowercase;
 
-    // Pentru cue-urile fără liniuță rămâne regula OR existentă din v118.
-    return start.beginsLowercase || previousSourceIsUnfinished;
+    // Fără liniuță, continuarea este confirmată fie de inițiala mică din sursă,
+    // fie de un marcator gramatical puternic la finalul cue-ului anterior.
+    // Simpla lipsă a punctuației nu este suficientă.
+    return start.beginsLowercase || endsWithStrongSourceContinuationMarker(prev);
 }
 
 function applyContinuationCase(items, translatedById) {
@@ -8412,13 +8401,13 @@ function applyContinuationCase(items, translatedById) {
         const sourceStart = getSourceContinuationStart(items[i].text);
         const id = String(items[i].id);
         const current = String(translatedById[id] || '');
-        const previousRo = String(translatedById[String(items[i - 1].id)] || '').trim();
-        if (!current.trim() || !previousRo) continue;
+        const previousSource = String(items[i - 1].text || '');
+        if (!current.trim()) continue;
 
         // Sursa cu liniuță și inițială mică este un semnal explicit de continuare.
         // Păstrăm liniuța românească și corectăm doar primul cuvânt de după ea.
         if (!sourceStart.hasDialogueDash && /^\s*[-–—]/u.test(current)) continue;
-        if (!sourceStart.hasDialogueDash && endsWithSubtitleSentencePunctuation(previousRo)) continue;
+        if (!sourceStart.hasDialogueDash && endsWithSubtitleSentencePunctuation(previousSource)) continue;
 
         const translationDash = current.match(/^(\s*[-–—]+\s*)/u);
         const translationPrefix = translationDash ? translationDash[0] : '';
@@ -8427,10 +8416,13 @@ function applyContinuationCase(items, translatedById) {
         if (!match) continue;
         const word = match[2] + match[3];
         const lowerWord = word.toLocaleLowerCase('ro-RO');
-        // Pentru nume proprii folosim vocabularul din engleză; termenii de rol
-        // adăugați explicit în lista sigură (director/directorul) sunt substantive
-        // comune și trebuie să rămână cu literă mică într-o continuare.
-        if (englishNames.has(nameKey(lowerWord)) && !CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
+        // Nu coborâm acronimele (NASA, FBI, U.S. etc.) atunci când regexul
+        // de inițială ar potrivi doar prima lor literă.
+        if (/^\s*[A-ZĂÂÎȘȚ][A-ZĂÂÎȘȚ0-9.]{1,}(?=\s|[.,!?;:]|$)/u.test(translationBody)) continue;
+        // Numele proprii recunoscute în sursă au prioritate față de lista
+        // cuvintelor funcționale. Excepțiile sunt doar substantive comune
+        // confirmate, care pot apărea capitalizate în engleză ca început de cue.
+        if (englishNames.has(nameKey(lowerWord)) && !CONTINUATION_COMMON_NOUN_NAME_OVERRIDES.has(lowerWord)) continue;
 
         translatedById[id] = translationPrefix + match[1] + match[2].toLowerCase() + match[3] + translationBody.slice(match[0].length);
         changed++;
@@ -8540,6 +8532,7 @@ function applyStrayCapitalO(items, translatedById) {
 }
 
 function applyMidSentenceCapitalizationFixes(items, translatedById) {
+    const englishNames = buildEnglishNameVocabulary(items);
     const strayO = applyStrayCapitalO(items, translatedById);
     let changedWords = strayO.words;
     let changedSubtitles = strayO.lines;
@@ -8562,6 +8555,9 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                 if (beforeRaw.lastIndexOf('<') > beforeRaw.lastIndexOf('>')) return wholeWord;
 
                 const word = wholeWord.toLocaleLowerCase('ro-RO');
+                // Un cuvânt comun în română poate fi nume propriu în sursa EN
+                // (de ex. Mai). Nu îl coborâm dacă vocabularul sursei îl confirmă.
+                if (englishNames.has(nameKey(word))) return wholeWord;
                 const before = beforeRaw.replace(/<[^>]*>/g, '').trimEnd();
                 const previousToken = (before.match(/([\p{L}]+(?:-[\p{L}]+)*)$/u) || [])[1] || '';
                 // După un verb/clitic legat prin cratimă („i-a”, „mi-a”, „s-a”,
