@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.120',
+    version: '13.2.121',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5949,6 +5949,7 @@ VERIFICĂ ÎN ORDINE
 10. Dacă avertismentul indică un fragment englezesc netradus, o secvență englezească deteriorată sau un text corupt și originalul/contextul permit stabilirea sensului, corectează efectiv fragmentul în română. Nu lăsa secvența deteriorată în text și nu omite corectura doar pentru că restul replicii este românește. Dacă semnalul este un fals pozitiv și formularea românească transmite deja sensul originalului, păstreaz-o.
 11. Dacă avertismentul indică aceeași traducere românească pentru două originale englezești diferite, compară separat sensul fiecărui original cu traducerea lui și folosește contextul ambelor replici. Nu păstra automat traducerea duplicată, dar nici nu schimba o replică doar pentru a evita repetiția. Corectează doar ID-ul/ID-urile pentru care există o nepotrivire demonstrabilă; nu muta textul între ID-uri.
 12. Dacă avertismentul indică o posibilă suprapunere de sens între două subtitrări consecutive, verifică dacă originalul englezesc al primei replici continuă în următorul ID și dacă traducerea română a primei replici a anticipat deja o expresie care aparține semantic următoarei. Dacă prima traducere adaugă sensul următoarei replici, rescrie numai ID-ul pentru care surplusul este demonstrabil, astfel încât fiecare ID să exprime doar conținutul justificat de propriul original și context. Nu elimina o repetiție firească, nu muta text între ID-uri și nu forța diferențe stilistice când ambele traduceri sunt valide.
+13. Dacă avertismentul indică o posibilă suprapunere lexicală la limita dintre două ID-uri consecutive, compară obligatoriu ambele originale englezești cu ambele traduceri românești. Verifică dacă secvența repetată din traducerea primului ID este justificată de originalul lui sau dacă a anticipat conținutul originalului următor. Când originalul unui ID nu justifică expresia repetată, elimină numai surplusul din acel ID și păstrează textul justificat. Nu considera repetarea legitimă doar pentru că aceeași expresie apare în ambele traduceri; justificarea trebuie să existe în fiecare original relevant. Nu muta text între ID-uri și nu rescrie stilistic replicile valide.
 
 REGULĂ DE PRUDENȚĂ
 Nu schimba o replică validă doar ca să sune diferit. Dacă există mai multe variante plauzibile și nu poți demonstra care este necesară, păstrează traducerea. Returnează doar câmpul „text” pentru ID-urile realmente corectate; nu modifica ID-uri și nu atinge contextul.
@@ -8710,13 +8711,64 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         ...semanticQualityItems.map(item => String(item.id))
     ]);
     const intentionallySuppressedIds = getIntentionallySuppressedTranslationIds(keyStates);
+
+    // O suprapunere lexicală la limita dintre două cue-uri trebuie verificată
+    // contextual înainte de export, nu lăsată doar ca diagnostic informativ.
+    // Detectorul întoarce ambele ID-uri ale perechii; le introducem pe amândouă
+    // în Quality Retry și atașăm motivul exact pentru fiecare replică.
+    const boundaryOverlapReviewIssues = findPossibleBoundaryOverlapIssues(items, translatedById);
+    const boundaryOverlapReviewIds = new Set();
+    const boundaryOverlapReviewPairs = new Set();
+    for (const issue of boundaryOverlapReviewIssues) {
+        const id = String(issue.item.id);
+        const pairedId = String(issue.pairedItem?.id ?? '');
+        if (!pairedId || intentionallySuppressedIds.has(id) || intentionallySuppressedIds.has(pairedId)) continue;
+        boundaryOverlapReviewPairs.add(
+            [id, pairedId].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join('/')
+        );
+        for (const candidateId of [id, pairedId]) {
+            boundaryOverlapReviewIds.add(candidateId);
+            targetedQualityIds.add(candidateId);
+            const reason = candidateId === id
+                ? issue.reason
+                : `posibilă suprapunere lexicală cu ID ${id}: compară originalele și traducerile ambelor cue-uri; păstrează numai textul justificat de originalul acestui ID`;
+            targetedReasonById[candidateId] = [targetedReasonById[candidateId], reason]
+                .filter(Boolean).join('; ');
+        }
+    }
+    if (boundaryOverlapReviewPairs.size) {
+        console.log(`${c.cyan}[Suprapuneri] ${boundaryOverlapReviewPairs.size} perechi suspecte trimise la verificarea contextuală: ${[...boundaryOverlapReviewPairs].join(', ')}.${c.reset}`);
+    }
+
     const targetedQualityCandidates = items.filter(item =>
         targetedQualityIds.has(String(item.id)) && !intentionallySuppressedIds.has(String(item.id))
     );
     const MAX_TARGETED_QUALITY_REVIEW_ITEMS = 50;
     let firstQualityReview = { checked: 0, fixed: 0, rejectedQualityReasonsById: Object.create(null) };
     if (targetedQualityCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
-        const reviewItems = targetedQualityCandidates.slice(0, MAX_TARGETED_QUALITY_REVIEW_ITEMS);
+        // Prioritizăm perechile suspecte și le selectăm atomic: limita de 50
+        // candidate nu trebuie să includă primul ID fără perechea lui consecutivă.
+        const itemById = new Map(items.map(item => [String(item.id), item]));
+        const boundaryPriorityItems = [];
+        const selectedBoundaryIds = new Set();
+        for (const issue of boundaryOverlapReviewIssues) {
+            const pairIds = [...new Set([String(issue.item.id), String(issue.pairedItem?.id ?? '')])]
+                .filter(id => id && boundaryOverlapReviewIds.has(id));
+            const additions = pairIds.filter(id => !selectedBoundaryIds.has(id));
+            if (boundaryPriorityItems.length + additions.length > MAX_TARGETED_QUALITY_REVIEW_ITEMS) continue;
+            for (const id of additions) {
+                const item = itemById.get(id);
+                if (item) {
+                    boundaryPriorityItems.push(item);
+                    selectedBoundaryIds.add(id);
+                }
+            }
+        }
+        const otherQualityItems = targetedQualityCandidates.filter(item =>
+            !selectedBoundaryIds.has(String(item.id))
+        );
+        const reviewItems = [...boundaryPriorityItems, ...otherQualityItems]
+            .slice(0, MAX_TARGETED_QUALITY_REVIEW_ITEMS);
         console.log(`${c.cyan}🎯 [Quality Retry] Verificare AI punctuală pentru ${reviewItems.length} replici.${c.reset}`);
         firstQualityReview = await grammarTranslationReview(reviewItems, translatedById, keyStates, {
             mode: 'targeted',
@@ -8749,10 +8801,60 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         if (existing) existing.reasons.push(issue.reason);
         else unresolvedQualityMap.set(id, { item: issue.item, reasons: [issue.reason] });
     }
-    // Suprapunerile lexicale simple nu declanșează a doua rundă AI; sunt raportate
-    // la final ca avertismente, pentru a evita costuri și modificări false-pozitive.
+
+    // După primul Quality Retry, căutăm din nou suprapunerile lexicale. Dacă
+    // perechea încă este suspectă, ambele ID-uri intră în singura reverificare
+    // permisă; nu repetăm cererile la nesfârșit.
+    const remainingBoundaryOverlapIssues = findPossibleBoundaryOverlapIssues(items, translatedById);
+    const remainingBoundaryPairIds = new Set();
+    for (const issue of remainingBoundaryOverlapIssues) {
+        const id = String(issue.item.id);
+        const pairedId = String(issue.pairedItem?.id ?? '');
+        if (!pairedId || getIntentionallySuppressedTranslationIds(keyStates).has(id) ||
+            getIntentionallySuppressedTranslationIds(keyStates).has(pairedId)) continue;
+        remainingBoundaryPairIds.add(id);
+        remainingBoundaryPairIds.add(pairedId);
+        const entries = [
+            { id, item: issue.item, reason: issue.reason },
+            { id: pairedId, item: issue.pairedItem, reason: `posibilă suprapunere lexicală cu ID ${id}: verifică din nou dacă textul acestui cue este justificat de propriul original` }
+        ];
+        for (const entry of entries) {
+            const existing = unresolvedQualityMap.get(entry.id);
+            if (existing) {
+                if (!existing.reasons.includes(entry.reason)) existing.reasons.push(entry.reason);
+            } else {
+                unresolvedQualityMap.set(entry.id, { item: entry.item, reasons: [entry.reason] });
+            }
+        }
+    }
+    const remainingBoundaryPairsForLog = new Set(remainingBoundaryOverlapIssues
+        .filter(issue => issue.pairedItem)
+        .map(issue => [String(issue.item.id), String(issue.pairedItem.id)]
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join('/')));
+    if (remainingBoundaryPairsForLog.size) {
+        console.log(`${c.yellow}[Suprapuneri] ${remainingBoundaryPairsForLog.size} perechi încă suspecte după prima verificare; vor fi reverificate: ${[...remainingBoundaryPairsForLog].join(', ')}.${c.reset}`);
+    } else if (boundaryOverlapReviewPairs.size) {
+        console.log(`${c.green}[Suprapuneri] Perechile semnalate inițial nu mai prezintă suprapunere după prima verificare.${c.reset}`);
+    }
+
     if (unresolvedQualityMap.size && targetedQualityCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
-        const retryCandidates = items.filter(item => unresolvedQualityMap.has(String(item.id))).slice(0, 15);
+        // Selectăm cel mult 15 ID-uri, dar nu despărțim o pereche detectată:
+        // ambele replici trebuie să ajungă împreună la verificarea contextuală.
+        const retryCandidateIds = new Set();
+        for (const item of items) {
+            const id = String(item.id);
+            if (!unresolvedQualityMap.has(id) || retryCandidateIds.has(id)) continue;
+            const pairedIds = remainingBoundaryPairIds.has(id)
+                ? remainingBoundaryOverlapIssues
+                    .filter(issue => String(issue.item.id) === id || String(issue.pairedItem?.id ?? '') === id)
+                    .flatMap(issue => [String(issue.item.id), String(issue.pairedItem?.id ?? '')])
+                    .filter(candidateId => candidateId && unresolvedQualityMap.has(candidateId))
+                : [id];
+            const additions = [...new Set(pairedIds)].filter(candidateId => !retryCandidateIds.has(candidateId));
+            if (retryCandidateIds.size + additions.length > 15) continue;
+            for (const candidateId of additions) retryCandidateIds.add(candidateId);
+        }
+        const retryCandidates = items.filter(item => retryCandidateIds.has(String(item.id)));
         const retryReasonById = Object.fromEntries(retryCandidates.map(item => {
             const id = String(item.id);
             const unresolvedReasons = unresolvedQualityMap.get(id).reasons;
@@ -9026,36 +9128,22 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         }
     }
 
-    // Ultima verificare diagnostică după formatarea finală. O repetiție lexicală
-    // la limita dintre două cue-uri este ambiguă și poate fi legitimă; singură,
-    // nu este suficientă pentru a produce un avertisment QA FINAL. Dacă ID-ul are
-    // deja un alt semnal independent de calitate, atașăm suprapunerea ca informație
-    // suplimentară; altfel păstrăm doar un mesaj diagnostic, fără alarmă QA.
+    // La QA FINAL, o suprapunere lexicală rămasă după verificarea contextuală
+    // nu mai poate fi ascunsă ca simplu diagnostic. O raportăm ca avertisment
+    // (nu ca eroare blocantă), păstrând caracterul conservator al detectorului.
     const finalBoundaryOverlapIssues = findPossibleBoundaryOverlapIssues(items, translatedById);
-    const independentFinalFlagIds = new Set(finalQualityFlags.map(entry => String(entry.item.id)));
-    const boundaryOverlapDiagnostics = [];
+    const finalBoundaryWarningPairs = new Set();
     for (const issue of finalBoundaryOverlapIssues) {
         const id = String(issue.item.id);
         const pairedId = String(issue.pairedItem?.id ?? '');
         if (suppressedFinalOutputIdSet.has(id) || !pairedId || suppressedFinalOutputIdSet.has(pairedId)) continue;
-        const existing = independentFinalFlagIds.has(id)
-            ? finalQualityFlags.find(entry => String(entry.item.id) === id)
-            : null;
-        if (existing) {
-            if (!existing.reasons.includes(issue.reason)) existing.reasons.push(issue.reason);
-        } else if (!independentFinalFlagIds.has(pairedId)) {
-            boundaryOverlapDiagnostics.push(issue);
-        }
-    }
-    const loggedBoundaryPairs = new Set();
-    for (const issue of boundaryOverlapDiagnostics) {
-        const id = String(issue.item.id);
-        const pairedId = String(issue.pairedItem?.id ?? '');
         const pairKey = [id, pairedId].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(':');
-        if (loggedBoundaryPairs.has(pairKey)) continue;
-        loggedBoundaryPairs.add(pairKey);
-        const phrase = issue.reason.match(/„([^”]+)”/)?.[1] || 'expresie repetată';
-        console.log(`${c.cyan}ℹ [QA diagnostic] Posibilă suprapunere lexicală între ID ${id} și ${pairedId} („${phrase}”); fără un indiciu independent, nu este raportată ca avertisment QA FINAL.${c.reset}`);
+        if (finalBoundaryWarningPairs.has(pairKey)) continue;
+        finalBoundaryWarningPairs.add(pairKey);
+        const reason = `${issue.reason}; suprapunerea persistă după verificarea contextuală și necesită verificare manuală`;
+        console.log(`${c.yellow}[QA FINAL Suprapunere lexicală] ID ${id} / ${pairedId}: semnalul persistă după verificările contextuale.${c.reset}`);
+        addFinalReviewWarning(id, reason);
+        addFinalReviewWarning(pairedId, reason);
     }
     const finalSuspicious = items.filter(item => {
         const id = String(item.id);
