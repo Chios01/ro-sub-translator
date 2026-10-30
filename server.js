@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.118',
+    version: '13.2.119',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3834,6 +3834,19 @@ function ensureFinalSubtitleLayoutForExport(value) {
     return String(candidate || '').trim() ? candidate : original;
 }
 
+// Ultima corecție de capitalizare după formatter: acesta capitalizează implicit
+// începutul fiecărei replici cu liniuță. Dacă sursa începe explicit cu liniuță
+// urmată de literă mică, păstrăm liniuța și refacem numai inițiala primului rând.
+function preserveSourceMarkedContinuationCase(sourceText, formattedText) {
+    const sourceStart = getSourceContinuationStart(sourceText);
+    if (!sourceStart.hasDialogueDash || !sourceStart.beginsLowercase) return formattedText;
+    const lines = String(formattedText || '').replace(/\r/g, '').split('\n');
+    if (!lines.length) return formattedText;
+    lines[0] = lines[0].replace(/^(\s*[-–—]+\s*)([A-ZĂÂÎȘȚ])(?=[a-zăâîșț])/u,
+        (_, prefix, initial) => prefix + initial.toLocaleLowerCase('ro-RO'));
+    return lines.join('\n');
+}
+
 // ============================================================
 // MASTER CINEMATIC TRANSLATION PROMPT
 // ============================================================
@@ -3856,7 +3869,7 @@ TRANSLATION AND CONTEXT
 - UNMARKED SONG LYRICS — Some subtitle sources omit music-note markers. When the supplied block sequence and adjacent source lines make it CLEAR that a line is sung lyrics from an ongoing song/chorus, rather than spoken dialogue, return exactly \"__RO_ST_SKIP_SONG_LYRIC__\" as its text. The program will omit that cue; never expose the marker in the final SRT. Be conservative: repetition alone is NOT enough, and do NOT suppress emotional or shouted dialogue (for example, a person repeating \"I loved you!\"). If you are unsure whether it is sung, translate it as dialogue. If a block contains identifiable spoken dialogue as well as lyrics but has no explicit music markers to separate them, translate the spoken dialogue only; do not return the skip marker when any spoken dialogue remains.
 - Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
-- If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun.
+- If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun. If the source block begins with a dialogue dash, evaluate the first word AFTER the dash (and any speaker label): when that word is lowercase in English, preserve the dash but begin the Romanian words after it with lowercase too. A capitalized word after a dash is a new speaker/utterance and must keep its normal capitalization.
 - Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
 - Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
 - Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
@@ -3866,7 +3879,7 @@ TRANSLATION AND CONTEXT
 - Romanian profanity: after an interrogative word use „dracu'” or „naiba” directly („Ce dracu' faci?”, „Despre ce naiba vorbești?”, „Cine dracu' ești?”); NEVER write „ce a dracului” or „cine a dracului”. As an intensifier use „al naibii de”, „la naiba”, „pe naiba”, or put „al naibii/al dracului” after a masculine noun group. Do not append „dracului” to every sentence and do not keep the English word order of “fucking”; often it is better dropped or rendered by a natural interjection. Examples: “What the fuck is in Switzerland?” → „Ce dracu' e în Elveția?”; “No fucking way.” → „Nici gând, la naiba.”; “It's a fucking disaster.” → „E un dezastru al naibii.”; “Shut the fuck up.” → „Taci dracului din gură.”
 - Choose terms of endearment according to the relationship and context; do not translate “babe”, “honey”, or “baby” mechanically every time.
 - Translate “But” as „Dar” when it begins a clause. Do not leave ordinary English dialogue untranslated.
-- Use correct Romanian grammar, spelling, punctuation, and diacritics (ă, â, î, ș, ț). Use complete real Romanian words; never truncate, merge, invent, or corrupt a word. Check pronouns, clitics, prepositions, conjugation, and agreement.
+- Use correct Romanian grammar, spelling, punctuation, and diacritics (ă, â, î, ș, ț). Use complete real Romanian words; never truncate, merge, invent, or corrupt a word. Check pronouns, clitics, prepositions, conjugation, and agreement. Apply Romanian sentence case, not English title case: after a comma, an unfinished phrase, or a continuing cue, ordinary common nouns and conjunctions stay lowercase unless Romanian grammar requires a new sentence or the word is a proper name. For example, write „Sunt Marlo Burns, director de operațiuni”, „Da, păi...” and „...s-o agățe”, not „Director”, „Păi” or „Agățe” in those positions.
 - Convert ordinary imperial measurements to metric where natural and safe: feet to metres, miles to kilometres, pounds to kilograms, Fahrenheit to Celsius. Do not convert plot-critical or idiomatic measurements. Translate “lakh” as 100,000 and “crore” as 10 million when relevant.
 
 ROMANIAN ACCURACY RULES
@@ -8123,7 +8136,8 @@ const CONTINUATION_FUNCTION_WORDS = new Set([
     // („... de când am murit / Acum mai bine de trei secole”).
     'acum', 'este', 'sunt', 'era', 'erau', 'a', 'au', 'ar', 'va', 'vor', 'o', 'nici', 'încă',
     'într-o', 'într-un', 'dintr-o', 'dintr-un', 'oricum', 'acolo', 'aici', 'atât', 'atâta',
-    'mult', 'foarte', 'prea', 'deja', 'încât', 'fiindcă', 'deși', 'însă', 'ori', 'fie'
+    'mult', 'foarte', 'prea', 'deja', 'încât', 'fiindcă', 'deși', 'însă', 'ori', 'fie',
+    'păi', 'director', 'directorul'
 ]);
 
 // Vocabular de NUME din sursa engleză: cuvinte care apar cu majusculă și niciodată cu literă mică
@@ -8160,21 +8174,35 @@ function buildEnglishNameVocabulary(items) {
     return names;
 }
 
+function getSourceContinuationStart(value) {
+    let text = String(value || '').replace(/<[^>]+>/g, '').trim();
+    const dashMatch = text.match(/^([-–—]+\s*)/u);
+    const hasDialogueDash = Boolean(dashMatch);
+    if (dashMatch) text = text.slice(dashMatch[0].length);
+    // Unele surse pun eticheta vorbitorului imediat după liniuță.
+    text = text.replace(/^(?:\[[^\]]+\]\s*)+/u, '');
+    text = text.replace(/^[.…\s"'“‘(\[]+/u, '');
+    return {
+        hasDialogueDash,
+        beginsLowercase: /^\p{Ll}/u.test(text),
+        text
+    };
+}
+
 function isContinuationBlock(prevEnglish, currentEnglish) {
     const cur = String(currentEnglish || '').replace(/<[^>]+>/g, '').trim();
     const prev = String(prevEnglish || '').replace(/<[^>]+>/g, '').trim();
     if (!cur || !prev) return false;
-    // Un marcator explicit indică un vorbitor nou; nu coborâm majuscula după liniuță.
-    if (/^[-–—]/.test(cur)) return false;
-    const body = cur.replace(/^[.…\s"'“‘(\[]+/, '');
-    const currentBeginsLowercase = /^[a-z]/.test(body);
+    const start = getSourceContinuationStart(cur);
     const previousSourceIsUnfinished = !/(?<!\.)[.!?]["”')\]]*$/.test(prev);
 
-    // Regula din prompt este OR, nu AND: continuarea poate fi indicată fie de
-    // inițiala mică a cue-ului curent, fie de lipsa punctuației finale în cue-ul
-    // precedent. Al doilea caz acoperă și începuturi englezești cu „I” sau nume
-    // proprii, deși traducerea română continuă fraza cu un cuvânt obișnuit.
-    return currentBeginsLowercase || previousSourceIsUnfinished;
+    // După o liniuță explicită, coborâm inițiala numai dacă sursa însăși începe
+    // cu literă mică după liniuță (eventual după eticheta vorbitorului). O
+    // majusculă după liniuță indică un vorbitor/început nou și rămâne neatinsă.
+    if (start.hasDialogueDash) return start.beginsLowercase;
+
+    // Pentru cue-urile fără liniuță rămâne regula OR existentă din v118.
+    return start.beginsLowercase || previousSourceIsUnfinished;
 }
 
 function applyContinuationCase(items, translatedById) {
@@ -8184,25 +8212,30 @@ function applyContinuationCase(items, translatedById) {
         if (items[i - 1].musicOnly || items[i].musicOnly) continue;
         if (!isContinuationBlock(items[i - 1].text, items[i].text)) continue;
 
+        const sourceStart = getSourceContinuationStart(items[i].text);
         const id = String(items[i].id);
         const current = String(translatedById[id] || '');
         const previousRo = String(translatedById[String(items[i - 1].id)] || '').trim();
         if (!current.trim() || !previousRo) continue;
-        if (/(?<!\.)[.!?]["”]?$/.test(previousRo)) continue;
-        if (/^\s*[-–—]/.test(current)) continue;
 
-        const match = current.match(/^(\s*[.…"„“]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*(?:-[a-zăâîșț]+)*)/);
+        // Sursa cu liniuță și inițială mică este un semnal explicit de continuare.
+        // Păstrăm liniuța românească și corectăm doar primul cuvânt de după ea.
+        if (!sourceStart.hasDialogueDash && /^\s*[-–—]/u.test(current)) continue;
+        if (!sourceStart.hasDialogueDash && /(?<!\.)[.!?]["”]?$/.test(previousRo)) continue;
+
+        const translationDash = current.match(/^(\s*[-–—]+\s*)/u);
+        const translationPrefix = translationDash ? translationDash[0] : '';
+        const translationBody = current.slice(translationPrefix.length);
+        const match = translationBody.match(/^(\s*[.…"„“]*\s*)([A-ZĂÂÎȘȚ])([a-zăâîșț]*(?:-[a-zăâîșț]+)*)/u);
         if (!match) continue;
         const word = match[2] + match[3];
-        const previousEnglish = String(items[i - 1].text || '').replace(/<[^>]+>/g, ' ').trim();
-        const currentEnglish = String(items[i].text || '').replace(/<[^>]+>/g, ' ').trim();
-        const progressiveContinuation = /\b(?:was|were|is|are)\s*$/i.test(previousEnglish) && /^[a-z]+ing\b/i.test(currentEnglish);
-        const lowerWord = word.toLowerCase();
-        // Sursa începe cu literă mică (continuare), deci primul cuvânt românesc este aproape sigur
-        // un cuvânt obișnuit. Îl păstrăm cu majusculă doar dacă este un nume cunoscut din fișier.
+        const lowerWord = word.toLocaleLowerCase('ro-RO');
+        // Pentru nume proprii folosim vocabularul din engleză; termenii de rol
+        // adăugați explicit în lista sigură (director/directorul) sunt substantive
+        // comune și trebuie să rămână cu literă mică într-o continuare.
         if (englishNames.has(nameKey(lowerWord)) && !CONTINUATION_FUNCTION_WORDS.has(lowerWord)) continue;
 
-        translatedById[id] = match[1] + match[2].toLowerCase() + match[3] + current.slice(match[0].length);
+        translatedById[id] = translationPrefix + match[1] + match[2].toLowerCase() + match[3] + translationBody.slice(match[0].length);
         changed++;
     }
     console.log(`${c.green}✔ [Continuări] ${changed} fragmente continuate au primit literă mică la început.${c.reset}`);
@@ -8276,6 +8309,7 @@ const COMMON_ROMANIAN_MID_SENTENCE_WORDS = new Set((`
     apoi acum aici acolo sus jos înapoi înainte în față în urmă
     nu-i n-am n-ai n-are n-avem n-aveți n-au s-a s-au mi-a ți-a
     ți-am mi-am i-am i-a le-a l-a l-au într-o într-un dintr-o dintr-un
+păi agățe director directorul
 `).trim().split(/\s+/));
 
 // „O” (articolul) scris greșit cu majusculă între două cuvinte cu literă mică. Excludem etichete
@@ -9170,7 +9204,8 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
 
             const dashAlignedText = restoreExplicitSourceDialogueDashes(item.text, finalLayoutText);
             if (dashAlignedText !== finalLayoutText) restoredDialogueDashCount++;
-            return [`${item.id}\n${item.start} --> ${item.end}\n${dashAlignedText}\n`];
+            const finalCapitalizationText = preserveSourceMarkedContinuationCase(item.text, dashAlignedText);
+            return [`${item.id}\n${item.start} --> ${item.end}\n${finalCapitalizationText}\n`];
         }).join('\n');
 
     if (removedMusicSegmentsFromOutput || omittedMusicOnlyCuesFromOutput) {
