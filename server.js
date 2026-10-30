@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.119',
+    version: '13.2.120',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -7633,11 +7633,10 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
             if (batch.length <= FINAL_EMPTY_RECOVERY_BATCH_SIZE && hasIdInResponse &&
                 typeof recoveredValue === 'string' && recoveredValue.trim() === '' &&
                 !markerRetryAttemptedIds.has(id)) {
-                // ID-ul a fost deja gol în traducerea principală, iar Empty Recovery
-                // a întors din nou explicit text gol pentru el. Conform regulii cerute,
-                // îl suprimăm aici și nu îl mai împărțim sau retrimitem individual.
-                markIntentionalSoundCueSuppressed(item, translatedById, keyStates);
-                failedById.delete(id);
+                // Un răspuns gol repetat NU dovedește că sursa este un efect sonor.
+                // Păstrăm ID-ul nerezolvat pentru QA FINAL, dar oprim split/retry
+                // individual ca să nu trimitem aceeași replică în cereri repetate.
+                rememberFailed(item);
                 individualRetryById.delete(id);
                 repeatedEmptyResponseSkips++;
                 continue;
@@ -7674,7 +7673,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
             console.log(`${c.cyan}[${stageLabel}] ${intentionalSongSkips} ID-uri identificate ca versuri cântate fără marcaje și omise intenționat.${c.reset}`);
         }
         if (repeatedEmptyResponseSkips) {
-            console.log(`${c.cyan}[${stageLabel}] ${repeatedEmptyResponseSkips} ID-uri au primit din nou text explicit gol într-un lot mic; suprimate fără split, retry individual sau QA FINAL.${c.reset}`);
+            console.log(`${c.yellow}[${stageLabel}] ${repeatedEmptyResponseSkips} ID-uri au primit din nou text explicit gol; păstrate pentru QA FINAL, fără split sau retry individual.${c.reset}`);
         }
 
         // JSON valid, dar ID-uri absente/inacceptabile: reluăm numai acele ID-uri.
