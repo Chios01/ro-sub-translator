@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.117',
+    version: '13.2.118',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -8164,11 +8164,17 @@ function isContinuationBlock(prevEnglish, currentEnglish) {
     const cur = String(currentEnglish || '').replace(/<[^>]+>/g, '').trim();
     const prev = String(prevEnglish || '').replace(/<[^>]+>/g, '').trim();
     if (!cur || !prev) return false;
+    // Un marcator explicit indică un vorbitor nou; nu coborâm majuscula după liniuță.
     if (/^[-–—]/.test(cur)) return false;
     const body = cur.replace(/^[.…\s"'“‘(\[]+/, '');
-    if (!/^[a-z]/.test(body)) return false;
-    if (/(?<!\.)[.!?]["”')\]]*$/.test(prev)) return false;
-    return true;
+    const currentBeginsLowercase = /^[a-z]/.test(body);
+    const previousSourceIsUnfinished = !/(?<!\.)[.!?]["”')\]]*$/.test(prev);
+
+    // Regula din prompt este OR, nu AND: continuarea poate fi indicată fie de
+    // inițiala mică a cue-ului curent, fie de lipsa punctuației finale în cue-ul
+    // precedent. Al doilea caz acoperă și începuturi englezești cu „I” sau nume
+    // proprii, deși traducerea română continuă fraza cu un cuvânt obișnuit.
+    return currentBeginsLowercase || previousSourceIsUnfinished;
 }
 
 function applyContinuationCase(items, translatedById) {
