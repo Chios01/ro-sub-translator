@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.123',
+    version: '13.2.126',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3852,28 +3852,13 @@ function preserveSourceMarkedContinuationCase(sourceText, formattedText) {
 // folosește cue-ul englezesc corespunzător. Excludem pronumele englezesc „I”,
 // care este întotdeauna majusculă indiferent de poziția sintactică, numerele,
 // etichetele non-dialog și numele proprii recunoscute în sursă.
-function synchronizeSourceCapitalization(sourceText, translatedText, englishNames = new Set()) {
+function synchronizeSourceCapitalization(sourceText, translatedText, englishNames = new Set(), previousSourceText = null) {
     const original = String(translatedText || '');
     if (!original.trim()) return original;
     const source = String(sourceText || '').replace(/\r/g, '');
     if (!source.trim() || /♪|♫/u.test(source.slice(0, 12))) return original;
 
-    const commonEnglishStarts = new Set([
-        'a', 'an', 'and', 'are', 'as', 'at', 'about', 'after', 'all', 'also', 'am',
-        'anyway', 'because', 'before', 'but', 'by', 'can', 'could', 'do', 'does',
-        'doing', 'done', 'down', 'during', 'each', 'either', 'else', 'et', 'even',
-        'ever', 'every', 'few', 'first', 'for', 'from', 'get', 'go', 'going', 'got',
-        'had', 'has', 'have', 'he', 'hello', 'here', 'hey', 'how', 'if', 'in',
-        'into', 'is', 'it', 'just', 'let', 'like', 'look', 'may', 'maybe', 'might',
-        'must', 'near', 'never', 'next', 'no', 'not', 'now', 'of', 'off', 'oh',
-        'on', 'once', 'one', 'only', 'or', 'other', 'our', 'out', 'over', 'pain',
-        'perhaps', 'please', 'put', 'right', 'same', 'say', 'see', 'she', 'should',
-        'since', 'so', 'some', 'still', 'such', 'than', 'that', 'the', 'their',
-        'them', 'then', 'there', 'these', 'they', 'this', 'those', 'though', 'through',
-        'to', 'too', 'under', 'until', 'up', 'us', 'very', 'was', 'we', 'well',
-        'were', 'what', 'when', 'where', 'which', 'while', 'who', 'why', 'will',
-        'with', 'would', 'yes', 'you', 'your', 'blues', 'officer', 'august'
-    ]);
+
 
     const locateInitial = (line, stripSpeakerLabels) => {
         let index = 0;
@@ -3901,10 +3886,12 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
         const found = locateInitial(String(line || ''), true);
         if (!found) return null;
         const token = found.token.toLocaleLowerCase('en-US');
-        // „I” și contracțiile sale sunt scrise cu majusculă obligatorie în engleză.
-        if (found.char === found.char.toLocaleUpperCase('en-US') && /^i(?:['’](?:m|ll|d|ve))?$/u.test(token)) return null;
-        // Numele proprii nu sunt semnale sigure de început de propoziție.
-        if (!commonEnglishStarts.has(token) && englishNames.has(nameKey(token))) return null;
+        // Un nume propriu confirmat în interiorul sursei rămâne cu majusculă,
+        // chiar dacă propoziția din care face parte continuă între cue-uri.
+        if (englishNames.has(nameKey(token))) return 'upper';
+        // „I” și contracțiile sale sunt mereu cu majusculă în engleză. Nu folosim
+        // această literă drept verdict: la cue-urile simple decide contextul anterior.
+        if (/^i(?:['’](?:m|ll|d|ve))?$/u.test(token)) return 'upper';
         return found.char === found.char.toLocaleUpperCase('en-US') ? 'upper' : 'lower';
     };
 
@@ -3948,7 +3935,29 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
     // Cue cu un singur vorbitor: transferăm doar inițiala lexicală. Întregul
     // layout, punctuația, rândurile și liniuța existentă rămân neschimbate.
     const firstSourceLine = sourceLines[0] || '';
-    const directive = directiveForSourceLine(firstSourceLine);
+    let directive = directiveForSourceLine(firstSourceLine);
+
+    // Punctuația finală a cue-ului anterior confirmă o propoziție nouă.
+    // Pentru continuare cerem un indiciu sintactic puternic (virgulă, punct și
+    // virgulă sau un cuvânt funcțional care lasă fraza deschisă); simpla lipsă
+    // a punctului nu este suficientă, fiindcă multe fișiere EN omit punctuația.
+    // Liniuțele explicite de vorbitor rămân tratate separat.
+    const sourceInitial = locateInitial(firstSourceLine, true);
+    const sourceHasExplicitDash = /^\s*[-–—]+\s*\S/u.test(firstSourceLine);
+    if (previousSourceText != null && !sourceHasExplicitDash && sourceInitial) {
+        const previousSource = String(previousSourceText || '').replace(/\r/g, '').trim();
+        if (previousSource) {
+            const token = sourceInitial.token.toLocaleLowerCase('en-US');
+            const isRecognizedName = englishNames.has(nameKey(token));
+            if (endsWithSubtitleSentencePunctuation(previousSource)) {
+                directive = 'upper';
+            } else if (!isRecognizedName && endsWithStrongSourceContinuationMarker(previousSource)) {
+                // Inclusiv „I”/„I'd”: majuscula obligatorie în engleză nu se
+                // transferă automat în română când cue-ul continuă o frază.
+                directive = 'lower';
+            }
+        }
+    }
     if (!directive) return original;
     const firstTargetLineIndex = translatedLines.findIndex(line => locateInitial(line, true));
     if (firstTargetLineIndex < 0) return original;
@@ -8259,30 +8268,21 @@ function nameKey(word) {
 }
 
 function buildEnglishNameVocabulary(items) {
-    const seenLowercase = new Set();
-    const seenCapitalized = new Set();
-    for (const item of items || []) {
-        const text = String((item && item.text) || '').replace(/<[^>]*>/g, ' ');
-        for (const match of text.matchAll(/\p{L}[\p{L}'’-]*/gu)) {
-            const word = match[0];
-            const lower = word.toLocaleLowerCase('en-US');
-            if (/^\p{Ll}/u.test(word)) seenLowercase.add(lower);
-            else if (word.length >= 3) seenCapitalized.add(lower);
-        }
-    }
     const names = new Set();
-    for (const word of seenCapitalized) {
-        if (!seenLowercase.has(word)) names.add(nameKey(word));
-    }
-    // Majusculă în mijlocul frazei (după un cuvânt cu literă mică sau virgulă), chiar dacă același
-    // cuvânt apare și cu literă mică în altă parte, de exemplu „serve the Empire”.
+
+    // Nu deducem că un cuvânt este nume propriu doar fiindcă apare cu majusculă
+    // la începutul unui cue. În subtitrări, începuturile de propoziție sunt
+    // adesea capitalizate automat chiar și când fraza continuă din cue-ul anterior
+    // („Cut”, „Anyhoo” etc.). Recunoaștem numele numai când sursa le capitalizează
+    // în interiorul unei fraze, după un cuvânt obișnuit, virgulă sau punct și virgulă.
     for (const item of items || []) {
         const text = String((item && item.text) || '').replace(/<[^>]*>/g, ' ');
-        for (const match of text.matchAll(/(?<=[\p{Ll},;]\s)(\p{Lu}[\p{L}'’-]{2,})/gu)) names.add(nameKey(match[1]));
+        for (const match of text.matchAll(/(?<=[\p{Ll},;]\s)(\p{Lu}[\p{L}'’-]{2,})/gu)) {
+            names.add(nameKey(match[1]));
+        }
     }
     return names;
 }
-
 function getSourceContinuationStart(value) {
     let text = String(value || '').replace(/<[^>]+>/g, '').trim();
     const dashMatch = text.match(/^([-–—]+\s*)/u);
@@ -8308,6 +8308,28 @@ function endsWithSubtitleSentencePunctuation(value) {
     if (match[1] === '?' || match[1] === '!') return true;
     // Un singur punct este final; punctele din „...” nu închid singure fraza.
     return !text.slice(0, match.index).endsWith('.');
+}
+
+// Recunoaște numai indicii gramaticale puternice că textul sursă continuă
+// în cue-ul următor. Lipsa punctului, singură, NU înseamnă continuare: multe
+// subtitrări omit punctuația la final de replică, iar regula OR producea
+// coborâri greșite ale unor propoziții noi și chiar ale numelor proprii.
+const ENGLISH_STRONG_CONTINUATION_ENDINGS = new Set((`
+    a an the this that these those my your his her its our their
+    and or but nor yet to of for with from in on at by about as than
+    because if which who whom whose when where while though although since
+    unless until into onto over under through between among before after
+    during without within against around behind above below near upon
+    is are was were be been being have has had do does did can could
+    will would should must might may shall
+`).trim().toLowerCase().split(/\s+/));
+
+function endsWithStrongSourceContinuationMarker(value) {
+    const text = String(value || '').replace(/<[^>]+>/g, '').trim();
+    if (!text || endsWithSubtitleSentencePunctuation(text)) return false;
+    if (/[,;]["”')\]]*$/u.test(text)) return true;
+    const lastWord = (text.match(/([\p{L}'’]+)["”')\]]*$/u) || [])[1];
+    return Boolean(lastWord && ENGLISH_STRONG_CONTINUATION_ENDINGS.has(lastWord.toLowerCase()));
 }
 
 function isContinuationBlock(prevEnglish, currentEnglish) {
@@ -8486,13 +8508,19 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                 if (beforeRaw.lastIndexOf('<') > beforeRaw.lastIndexOf('>')) return wholeWord;
 
                 const word = wholeWord.toLocaleLowerCase('ro-RO');
-                if (!COMMON_ROMANIAN_MID_SENTENCE_WORDS.has(word)) return wholeWord;
+                const before = beforeRaw.replace(/<[^>]*>/g, '').trimEnd();
+                const previousToken = (before.match(/([\p{L}]+(?:-[\p{L}]+)*)$/u) || [])[1] || '';
+                // După un verb/clitic legat prin cratimă („i-a”, „mi-a”, „s-a”,
+                // „spune-i”, „dă-le” etc.), următorul cuvânt nu devine nume compus
+                // doar pentru că tokenul anterior începe cu majusculă. Este o regulă
+                // morfologică generală, nu o excepție pentru un cuvânt/episod.
+                const followsRomanianClitic = /^(?:[A-ZĂÂÎȘȚ]?[a-zăâîșț]{0,12})-(?:a|ai|am|au|o|l|i|le|mi|ți|ne|vă|se|și|te|mă|s|n|m|v)$/u.test(previousToken);
+                if (!COMMON_ROMANIAN_MID_SENTENCE_WORDS.has(word) && !followsRomanianClitic) return wholeWord;
 
                 // Face parte dintr-un nume compus („Casa Albă”, „Planul Seldon”, „Marele Consiliu”,
                 // „Lumea Nouă”): dacă următorul cuvânt are tot majusculă, nu schimbăm nimic.
                 if (/^\s+[A-ZĂÂÎȘȚ][a-zăâîșț]/u.test(original.slice(offset + wholeWord.length))) return wholeWord;
 
-                const before = beforeRaw.replace(/<[^>]*>/g, '').trimEnd();
                 // Cuvântul este la începutul replicii/fragmentului, nu în mijlocul frazei.
                 if (!/[\p{L}\p{N}]/u.test(before)) return wholeWord;
                 // Nu schimbăm începuturile de propoziție sau începutul unui citat/paranteze.
@@ -8501,7 +8529,7 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                 }
 
                 // Cuvântul precedent are majusculă: este parte dintr-un nume compus („Lumea Nouă”).
-                if (/(?<![\p{L}])[A-ZĂÂÎȘȚ][\p{L}'’-]*$/u.test(before)) return wholeWord;
+                if (!followsRomanianClitic && /(?<![\p{L}])[A-ZĂÂÎȘȚ][\p{L}]*$/u.test(before)) return wholeWord;
 
                 localChanges++;
                 return word;
@@ -9380,6 +9408,9 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     let finalLayoutAdjustedCount = 0;
     const finalLayoutAdjustedIds = [];
     const sourceEnglishNameVocabulary = buildEnglishNameVocabulary(items);
+    // Contextul de capitalizare urmează ultimul cue vorbit care chiar ajunge în SRT;
+    // versurile, etichetele și cue-urile suprimate nu trebuie să rupă sau să falsifice fraza.
+    let previousExportableSourceText = null;
     const output = items
         .flatMap(item => {
             const id = String(item.id);
@@ -9417,8 +9448,10 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
             const sourceSynchronizedText = synchronizeSourceCapitalization(
                 item.text,
                 finalCapitalizationText,
-                sourceEnglishNameVocabulary
+                sourceEnglishNameVocabulary,
+                previousExportableSourceText
             );
+            previousExportableSourceText = item.text;
             return [`${item.id}\n${item.start} --> ${item.end}\n${sourceSynchronizedText}\n`];
         }).join('\n');
 
