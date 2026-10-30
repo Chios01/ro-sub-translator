@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.126',
+    version: '13.2.127',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1898,7 +1898,7 @@ function isOnlyStandaloneFillerSequence(text) {
 // Cue-urile sonore fără paranteze sunt filtrate separat și numai când formează un cue complet.
 // ============================================================
 
-const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed|ing)?|gurgle(?:s|d|ing)?|knock(?:s|ed|ing)?|bang(?:s|ed|ing)?|pound(?:s|ed|ing)?|thud(?:s|ded|ding)?|thump(?:s|ed|ing)?|ring(?:s|ing)?|beep(?:s|ed|ing)?|buzz(?:es|ed|ing)?|click(?:s|ed|ing)?|clatter(?:s|ed|ing)?|clang(?:s|ed|ing)?|crash(?:es|ed|ing)?|slam(?:s|med|ming)?|creak(?:s|ed|ing)?|cough(?:s|ed|ing)?|clear(?:s|ed|ing)\s+(?:(?:his|her|their|its|my|your)\s+)?throat|throat\s+clearing|sigh(?:s|ed|ing)?|gasp(?:s|ed|ing)?|groan(?:s|ed|ing)?|grunt(?:s|ed|ing)?|snort(?:s|ed|ing)?|sniff(?:s|ed|ing|les|led)?|sneez(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|chuckl(?:e|es|ed|ing)|giggl(?:e|es|ed|ing)|sob(?:s|bed|bing)?|cri(?:es|ed|ying)|scream(?:s|ed|ing)?|yelp(?:s|ed|ing)?|wail(?:s|ed|ing)?|moan(?:s|ed|ing)?|roar(?:s|ed|ing)?|exhale(?:s|d|ing)?|shout(?:s|ed|ing)?|whisper(?:s|ed|ing)?|pant(?:s|ed|ing)?|snor(?:es|ed|ing)|whimper(?:s|ed|ing)?|growl(?:s|ed|ing)?|bark(?:s|ed|ing)?|meow(?:s|ed|ing)?|chirp(?:s|ed|ing)?|howl(?:s|ed|ing)?|rustl(?:e|es|ed|ing)|rattl(?:e|es|ed|ing)|rumbl(?:e|es|ed|ing)|whistl(?:e|es|ed|ing)|clap(?:s|ped|ping)?|applaud(?:s|ed|ing)?|sing(?:s|ing)?|hum(?:s|med|ming)|footsteps?\s+(?:approach|recede|stop|fade|pass)|heavy\s+breathing|breathing\s+heavily|soft\s+breathing|squeak(?:s|ed|ing)?|squeal(?:s|ed|ing)?|scrap(?:e|es|ed|ing)|scratch(?:es|ed|ing)|shuffle(?:s|d|ing)|swallow(?:s|ed|ing)?|gulp(?:s|ed|ing)?|wind\s+howl(?:s|ing)?|birds?\s+chirp(?:s|ing)?|doorbell\s+ring(?:s|ing)?|phone\s+ring(?:s|ing)?|music\s+play(?:s|ing)?|background\s+music|gângur(?:ește|ind|it)|băt(?:aie|ăi|e|ește|ând|ut)|ciocăn(?:it|ește|ind|ituri)?|pocnet(?:e|ul)?|pocnește|bubuit(?:uri)?|bubuie|zgomot(?:e)?|sunet(?:e)?\s+de|sonerie|bip(?:uri|uie)?|țiuit|trosnet(?:e)?|trosnește|trântește|trântit|scârțâi(?:t|ește|ind)|pași|foșnet|foșnește|fâșâit|tușește|tușind|tușit|își\s+drege\s+glasul|dreg(?:e|ându-și)\s+glasul|gâfâie|gâfâind|gâfâit|respiră\s+greu|respirație\s+grea|oftează|oftând|oftat|suspin(?:ă|ând)?|mormăit|mormăie|mormăind|bufnește|bufnet|râde|râzând|râs|chicotește|chicotind|plânge|plângând|plâns|țipă|țipăt|țipând|strigă|strigând|horcăie|sforăie|adulmecă|fornăie|sughiță|șuieră|fluieră|fredonează|face\s+fâ+|cântă\s+încet|bate\s+din\s+palme|aplauze|urale|clopoțel|răpăit|zdrăngănit|vibrează|hârâit|bufnire|bufniri|bufnete|bufnituri|șuierături|fluierături|pufnire|pufniri|râsete|plânsete|gemete|geamăt(?:e)?|suspin(?:e|uri)?|sughițuri|foșnet(?:e|uri)?|fâșâit(?:uri)?)(?![\p{L}\p{N}])/iu;
+const SOUND_CUE_ACTION_RE = /(?<![\p{L}\p{N}])(?:babbl(?:e|es|ed|ing)|coo(?:s|ed|ing)?|gurgle(?:s|d|ing)?|knock(?:s|ed|ing)?|bang(?:s|ed|ing)?|pound(?:s|ed|ing)?|thud(?:s|ded|ding)?|thump(?:s|ed|ing)?|ring(?:s|ing)?|beep(?:s|ed|ing)?|buzz(?:es|ed|ing)?|click(?:s|ed|ing)?|clatter(?:s|ed|ing)?|clang(?:s|ed|ing)?|crash(?:es|ed|ing)?|slam(?:s|med|ming)?|creak(?:s|ed|ing)?|cough(?:s|ed|ing)?|clear(?:s|ed|ing)\s+(?:(?:his|her|their|its|my|your)\s+)?throat|throat\s+clearing|sigh(?:s|ed|ing)?|gasp(?:s|ed|ing)?|groan(?:s|ed|ing)?|grunt(?:s|ed|ing)?|snort(?:s|ed|ing)?|sniff(?:s|ed|ing|les|led)?|sneez(?:e|es|ed|ing)|laugh(?:s|ed|ing)?|chuckl(?:e|es|ed|ing)|giggl(?:e|es|ed|ing)|sob(?:s|bed|bing)?|cri(?:es|ed|ying)|scream(?:s|ed|ing)?|yelp(?:s|ed|ing)?|wail(?:s|ed|ing)?|moan(?:s|ed|ing)?|roar(?:s|ed|ing)?|exhale(?:s|d|ing)?|shout(?:s|ed|ing)?|whisper(?:s|ed|ing)?|pant(?:s|ed|ing)?|snor(?:es|ed|ing)|whimper(?:s|ed|ing)?|growl(?:s|ed|ing)?|bark(?:s|ed|ing)?|meow(?:s|ed|ing)?|chirp(?:s|ed|ing)?|howl(?:s|ed|ing)?|rustl(?:e|es|ed|ing)|rattl(?:e|es|ed|ing)|rumbl(?:e|es|ed|ing)|whistl(?:e|es|ed|ing)|clap(?:s|ped|ping)?|applaud(?:s|ed|ing)?|sing(?:s|ing)?|hum(?:s|med|ming)|footsteps?\s+(?:approach|recede|stop|fade|pass)|heavy\s+breathing|breathing\s+heavily|soft\s+breathing|squeak(?:s|ed|ing)?|squeal(?:s|ed|ing)?|scrap(?:e|es|ed|ing)|scratch(?:es|ed|ing)|shuffle(?:s|d|ing)|swallow(?:s|ed|ing)?|gulp(?:s|ed|ing)?|spit(?:s|ting)?|spat|wind\s+howl(?:s|ing)?|birds?\s+chirp(?:s|ing)?|doorbell\s+ring(?:s|ing)?|phone\s+ring(?:s|ing)?|music\s+play(?:s|ing)?|background\s+music|gângur(?:ește|ind|it)|băt(?:aie|ăi|e|ește|ând|ut)|ciocăn(?:it|ește|ind|ituri)?|pocnet(?:e|ul)?|pocnește|bubuit(?:uri)?|bubuie|zgomot(?:e)?|sunet(?:e)?\s+de|sonerie|bip(?:uri|uie)?|țiuit|trosnet(?:e)?|trosnește|trântește|trântit|scârțâi(?:t|ește|ind)|pași|foșnet|foșnește|fâșâit|tușește|tușind|tușit|își\s+drege\s+glasul|dreg(?:e|ându-și)\s+glasul|gâfâie|gâfâind|gâfâit|respiră\s+greu|respirație\s+grea|oftează|oftând|oftat|suspin(?:ă|ând)?|mormăit|mormăie|mormăind|bufnește|bufnet|râde|râzând|râs|chicotește|chicotind|plânge|plângând|plâns|țipă|țipăt|țipând|strigă|strigând|horcăie|sforăie|adulmecă|fornăie|sughiță|șuieră|fluieră|fredonează|face\s+fâ+|cântă\s+încet|bate\s+din\s+palme|aplauze|urale|clopoțel|răpăit|zdrăngănit|vibrează|hârâit|bufnire|bufniri|bufnete|bufnituri|șuierături|fluierături|pufnire|pufniri|râsete|plânsete|gemete|geamăt(?:e)?|suspin(?:e|uri)?|sughițuri|foșnet(?:e|uri)?|fâșâit(?:uri)?)(?![\p{L}\p{N}])/iu;
 
 // Extensie îngustă pentru etichete SDH frecvente care nu erau acoperite de lista de bază.
 // Sunt expresii închise/descrieri de sunet; nu se aplică în interiorul replicilor obișnuite.
@@ -2036,6 +2036,33 @@ function findBalancedBracketEnd(source, start) {
     return -1;
 }
 
+// Recunoaște creditările muzicale SDH ca etichete complete, indiferent de titlu/artist.
+// Exemplu structural: ["Closer" by Kings of Leon playing]. Nu inspectăm dialogul liber;
+// funcția este apelată numai pentru conținut deja delimitat ca markup/caption.
+function isMusicPerformanceCue(value) {
+    const text = String(value || '')
+        .replace(/<[^>]*>/g, ' ')
+        .normalize('NFC')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!text || text.length > 240 || /[?;]/u.test(text)) return false;
+    return (
+        /^["“][^"”\r\n]{1,120}["”]\s+by\s+[\p{L}\p{N}][\p{L}\p{N} .&’'-]{1,100}\s+(?:playing|plays|performed|performing)(?:\s+(?:in|over)\s+(?:the\s+)?background)?[.!…]*$/iu.test(text) ||
+        /^[\p{L}\p{N}][\p{L}\p{N} .&’'-]{1,100}\s+[-–—:]\s*["“][^"”\r\n]{1,120}["”]\s+(?:playing|plays|performed|performing)[.!…]*$/iu.test(text) ||
+        /^["“][^"”\r\n]{1,120}["”]\s+(?:playing|plays)\s+by\s+[\p{L}\p{N}][\p{L}\p{N} .&’'-]{1,100}[.!…]*$/iu.test(text)
+    );
+}
+
+// Caption-uri românești structurale pentru efecte mecanice/acustice. Păstrăm
+// clasificarea limitată la etichete complete între paranteze, nu la fraze de dialog.
+function isRomanianMechanicalSoundCaption(value) {
+    const text = String(value || '').normalize('NFC').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 140 || /[?;,"“”]/u.test(text)) return false;
+    const hasSource = /\b(?:păcănele(?:le)?|mașin(?:ă|i|ile)|moned(?:ă|e|ele)|vase(?:le)?|tacâmuri(?:le)?|chei(?:le)?|metal(?:ul)?|obiecte(?:le)? metalice|pahare(?:le)?|sticle(?:le)?|uși(?:le)?|ferestre(?:le)?|cutii(?:le)?|piese(?:le)?|aparat(?:ul|e|ele)?|mecanism(?:ul|e|ele)?)\b/iu.test(text);
+    const hasAction = /\b(?:zăngăn(?:ind|esc|e|it|ituri?)|zornă(?:ind|ie|it|ituri?)|clănțăn(?:ind|esc|e|it)|troncăn(?:ind|esc|e|it)|țăcăn(?:ind|esc|e|it)|bâzâ(?:ind|ie|it)|trosn(?:ind|esc|e|it)|foșn(?:ind|esc|e|it)|scârțâ(?:ind|ie|it)|zdrăngăn(?:ind|esc|e|it)|răpăind|huruind|vibrând|pocnind)\b/iu.test(text);
+    return hasSource && hasAction;
+}
+
 function isProtectedBracketText(value) {
     const clean = String(value || '').replace(/<[^>]*>/g, ' ').trim();
     const normalized = clean.replace(/[.!…]+$/u, '').trim().toLocaleLowerCase('en-US');
@@ -2095,7 +2122,8 @@ function isLikelyLeadingSpeakerLabel(inner, prefix, suffix) {
 function isObviousBracketedNonDialogueCue(value, openChar, prefix, suffix) {
     const text = String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     if (!text || text.length > 180) return false;
-    if (isAdditionalSoundCueCaption(text) || isStandaloneNonDialogueSoundCue(text) || isExtendedSoundCueLabel(text) || isCompoundSoundCueLabel(text)) return true;
+    if (/^(?:scuipă|scuipând|scuipat|scuipată|scuipate)[.!…]*$/iu.test(text)) return true;
+    if (isMusicPerformanceCue(text) || isRomanianMechanicalSoundCaption(text) || isAdditionalSoundCueCaption(text) || isStandaloneNonDialogueSoundCue(text) || isExtendedSoundCueLabel(text) || isCompoundSoundCueLabel(text)) return true;
 
     // Indicație vizuală SDH întâlnită în subtitrarea verificată; o eliminăm numai
     // când este delimitată ca etichetă, nu când apare ca text liber de dialog.
@@ -2112,9 +2140,9 @@ function isObviousBracketedNonDialogueCue(value, openChar, prefix, suffix) {
     // trebuie să aibă atât un substantiv/sursă acustică, cât și un verb de eveniment.
     // Excludem propoziții de dialog la persoana I/II și texte cu punctuație de întrebare/citat.
     if (/^(?:i|you|we|they|he|she|it)\b/iu.test(text) || /[?"“”]/u.test(text)) return false;
-    const hasSoundSource = /\b(?:insects?|bugs?|owl|owls|birds?|hawks?|animal|animals|gunshots?|gunfire|shots?|body|bodies|entry bell|bell|doorbell|newscast|dishes|cash register|song|music|vehicle|car|radio|chatter|conversation|door|lock|cell door|brakes?|siren|rap|bed|showers?|alarm|gate|footsteps?|line|phone|speaker|speakers|inmates?|crowd|engine|keys?|glass|thunder|wind|rain|thud|buzz|ringing)\b/iu.test(text);
+    const hasSoundSource = /\b(?:insects?|bugs?|owl|owls|birds?|hawks?|animal|animals|gunshots?|gunfire|shots?|body|bodies|entry bell|bell|doorbell|newscast|dishes|cash register|song|music|vehicle|car|radio|chatter|conversation|door|lock|cell door|brakes?|siren|rap|bed|showers?|alarm|gate|footsteps?|line|phone|speaker|speakers|inmates?|crowd|engine|keys?|glass|thunder|wind|rain|thud|buzz|ringing|(?:slot|gaming|arcade|poker)\s+machines?|machines?|machinery|coins?|cutlery|metal objects?)\b/iu.test(text);
     const hasSoundAction = /\b(?:chirring|chirp(?:s|ed|ing)?|hooting|hoot(?:s|ed|ing)?|thud(?:s|ded|ding)?|grunting|grunt(?:s|ed|ing)?|cracks?|cracking|jingl(?:e|es|ed|ing)|ding(?:s|ed|ing)?|playing|plays|clinking|clink(?:s|ed|ing)|printing|prints|fades?|fading|squeak(?:s|ed|ing)?|hiss(?:es|ed|ing)?|continues?|continuing|chattering|chatter(?:s|ed)?|creak(?:s|ed|ing)?|running|buzz(?:es|ed|ing)?|ring(?:s|ing)|opens?|opening|closes?|closing|decreases?|increases?|clears? throat|stops?|stopping|rumbling|wailing|crashing|clatters?|clattering|shuts? off|shutting off|plays? quietly|departs?|passes?)\b/iu.test(text) || SOUND_CUE_ACTION_RE.test(text) || SOUND_CUE_STRUCTURAL_ACTION_RE.test(text);
-    const hasAcousticNoun = SOUND_CUE_STRUCTURAL_NOUN_RE.test(text) || /\b(?:gunshots?|gunfire|shots?|body|bell|newscast|dishes|cash register|song|vehicle|car|radio|door|lock|cell door|brakes?|siren|rap|bed|showers?|alarm|gate|footsteps?|line|phone|speaker|inmates?|hawks?|insects?|owl|thunder|wind|rain)\b/iu.test(text);
+    const hasAcousticNoun = SOUND_CUE_STRUCTURAL_NOUN_RE.test(text) || /\b(?:gunshots?|gunfire|shots?|body|bell|newscast|dishes|cash register|song|vehicle|car|radio|door|lock|cell door|brakes?|siren|rap|bed|showers?|alarm|gate|footsteps?|line|phone|speaker|inmates?|hawks?|insects?|owl|thunder|wind|rain|(?:slot|gaming|arcade|poker)\s+machines?|machines?|machinery|coins?|cutlery|metal objects?)\b/iu.test(text);
     if (hasSoundSource && hasSoundAction && hasAcousticNoun && text.split(/\s+/u).length <= 12) return true;
 
     // Un cue între paranteze pătrate, singur pe rând, nu este dialog dacă nu e o
@@ -2180,7 +2208,9 @@ function stripLeadingMultilineNonDialogueTags(value) {
             const suffix = text.slice(endIndex + 1);
             const hasMusicNotation = /[♪♫♬♩]/u.test(inner);
             const hasArtistAndQuotedTitle = /^[^.!?]{1,100}:\s*\/?\s*["“][^"”]{1,120}["”]$/u.test(normalized);
-            const isSoundCue = isObviousBracketedNonDialogueCue(normalized, match[3], match[2], suffix) ||
+            const isSoundCue = isMusicPerformanceCue(normalized) ||
+                isRomanianMechanicalSoundCaption(normalized) ||
+                isObviousBracketedNonDialogueCue(normalized, match[3], match[2], suffix) ||
                 isStandaloneNonDialogueSoundCue(normalized) ||
                 SOUND_CUE_EXTENDED_LABEL_PATTERNS.some(pattern => {
                     pattern.lastIndex = 0;
@@ -2295,7 +2325,7 @@ function isStandaloneNonDialogueSoundCue(value) {
     if (/^cheers[.!…]*$/iu.test(text)) return false;
 
     // Imperativele izolate pot fi dialog rostit, nu etichete SDH.
-    if (/^(?:scream|laugh|whistle|sing)[.!…]*$/iu.test(text)) return false;
+    if (/^(?:scream|laugh|whistle|sing|spit)[.!…]*$/iu.test(text)) return false;
 
     // Variante SDH uzuale pentru o bătaie în ușă, inclusiv cue-uri de trei cuvinte.
     if (/^(?:(?:someone|somebody|a person|the man|the woman)\s+)?(?:knocks?|knocking)\s+on\s+(?:the\s+)?door[.!…]*$/iu.test(text)) return true;
@@ -2365,6 +2395,8 @@ function stripLeadingBracketedMarkup(value) {
             const suffix = line.slice(endIndex + 1);
             const hasMusicMarkup = /[♪♫♬♩]/u.test(inner);
             const hasCueSemantics = hasMusicMarkup ||
+                isMusicPerformanceCue(inner) ||
+                isRomanianMechanicalSoundCaption(inner) ||
                 isObviousBracketedNonDialogueCue(inner, openingChar, line.slice(0, openIndex), suffix) ||
                 isStandaloneNonDialogueSoundCue(inner) ||
                 isAdditionalSoundCueCaption(inner) ||
