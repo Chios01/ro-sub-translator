@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.121',
+    version: '13.2.122',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -8189,12 +8189,24 @@ function getSourceContinuationStart(value) {
     };
 }
 
+function endsWithSubtitleSentencePunctuation(value) {
+    const text = String(value || '').replace(/<[^>]+>/g, '').trim();
+    // Recunoaștem și „...?” / „...!” ca încheieri de propoziție. În vechea
+    // expresie, semnul ?/! era ignorat deoarece era precedat de punctul
+    // elipsei; astfel, replica următoare era coborâtă greșit la literă mică.
+    const match = text.match(/([.!?])["”')\]]*$/u);
+    if (!match) return false;
+    if (match[1] === '?' || match[1] === '!') return true;
+    // Un singur punct este final; punctele din „...” nu închid singure fraza.
+    return !text.slice(0, match.index).endsWith('.');
+}
+
 function isContinuationBlock(prevEnglish, currentEnglish) {
     const cur = String(currentEnglish || '').replace(/<[^>]+>/g, '').trim();
     const prev = String(prevEnglish || '').replace(/<[^>]+>/g, '').trim();
     if (!cur || !prev) return false;
     const start = getSourceContinuationStart(cur);
-    const previousSourceIsUnfinished = !/(?<!\.)[.!?]["”')\]]*$/.test(prev);
+    const previousSourceIsUnfinished = !endsWithSubtitleSentencePunctuation(prev);
 
     // După o liniuță explicită, coborâm inițiala numai dacă sursa însăși începe
     // cu literă mică după liniuță (eventual după eticheta vorbitorului). O
@@ -8221,7 +8233,7 @@ function applyContinuationCase(items, translatedById) {
         // Sursa cu liniuță și inițială mică este un semnal explicit de continuare.
         // Păstrăm liniuța românească și corectăm doar primul cuvânt de după ea.
         if (!sourceStart.hasDialogueDash && /^\s*[-–—]/u.test(current)) continue;
-        if (!sourceStart.hasDialogueDash && /(?<!\.)[.!?]["”]?$/.test(previousRo)) continue;
+        if (!sourceStart.hasDialogueDash && endsWithSubtitleSentencePunctuation(previousRo)) continue;
 
         const translationDash = current.match(/^(\s*[-–—]+\s*)/u);
         const translationPrefix = translationDash ? translationDash[0] : '';
