@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.116',
+    version: '13.2.117',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2097,6 +2097,10 @@ function isObviousBracketedNonDialogueCue(value, openChar, prefix, suffix) {
     if (!text || text.length > 180) return false;
     if (isAdditionalSoundCueCaption(text) || isStandaloneNonDialogueSoundCue(text) || isExtendedSoundCueLabel(text) || isCompoundSoundCueLabel(text)) return true;
 
+    // Indicație vizuală SDH întâlnită în subtitrarea verificată; o eliminăm numai
+    // când este delimitată ca etichetă, nu când apare ca text liber de dialog.
+    if (/^winc(?:e|es|ed|ing)[.!…]*$/iu.test(text)) return true;
+
     // Etichete SDH frecvente rămase după testarea subtitrărilor reale.
     // Sunt clasificate doar în interiorul parantezelor, nu ca text liber de dialog.
     if (/^(?:over speakers?|over the speakers?|through speakers?|music volume decreases|music volume increases|volume decreases|volume increases|indistinct (?:police )?radio chatter|indistinct chatter(?: in the distance)?|rap music and chatter continues?|playful chatter|two silenced gunshots?|silenced gunshots?|body thuds?|hawks|no audio|over the P\.?A\.?|(?:[\p{Lu}][\p{L}'’.-]*\s+){0,2}clears? throat|clearing (?:his|her|their|my|your) throat|throat clearing|doors? opening in distance|exhales? sharply)$/iu.test(text)) return true;
@@ -2754,7 +2758,7 @@ function stripSpecifiedVocalizations(value) {
             .replace(/([,;:])\s*([,;:])+/g, '$1')
             .replace(/[,;:]+([.!?…])/g, '$1')
             .replace(/([.!?…])[ \t]*[,;:]+/g, '$1')
-            .replace(/^[ \t,;:!?…]+/g, '')
+            .replace(/^[ \t.,;:!?…]+/g, '')
             .replace(/[ \t,;:]+$/g, '')
             .replace(/[ \t]+([.!?])/g, '$1')
             .replace(/[,;:]+([.!?…])/g, '$1')
