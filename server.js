@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.131',
+    version: '13.2.132',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -9429,6 +9429,29 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         }
     }
 
+    // Raportăm o singură dată eventualele traduceri lipsă la final, fără avertismente
+    // repetate pentru fiecare calup/retry. O problemă reală rămâne vizibilă în log.
+    const unresolvedFinalItems = items.filter(item => {
+        const id = String(item.id);
+        if (suppressedFinalOutputIdSet.has(id)) return false;
+        const source = String(item.text || '').replace(/<[^>]+>/g, '').trim();
+        return Boolean(source) && !String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim();
+    });
+    // Quality Review, spot-check-urile și suprapunerile lexicale sunt semnale utile,
+    // dar nu toate reprezintă erori certe. Numai traducerile relevante efectiv lipsă
+    // blochează livrarea/cache-ul; suspiciunile rămân avertismente.
+    const finalErrorIds = new Set(unresolvedFinalItems.map(item => String(item.id)));
+    const finalReviewWarnings = new Map();
+    const addFinalReviewWarning = (id, reasons) => {
+        const key = String(id);
+        if (suppressedFinalOutputIdSet.has(key) || finalErrorIds.has(key)) return;
+        const normalizedReasons = [...new Set((Array.isArray(reasons) ? reasons : [reasons])
+            .map(reason => String(reason || '').trim()).filter(Boolean))];
+        if (!normalizedReasons.length) return;
+        const existing = finalReviewWarnings.get(key) || [];
+        finalReviewWarnings.set(key, [...new Set([...existing, ...normalizedReasons])]);
+    };
+
     // La QA FINAL, o suprapunere lexicală rămasă după verificarea contextuală
     // nu mai poate fi ascunsă ca simplu diagnostic. O raportăm ca avertisment
     // (nu ca eroare blocantă), păstrând caracterul conservator al detectorului.
@@ -9460,28 +9483,6 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         return hasCorruptedSubtitleText(translated, item.text);
     });
 
-    // Raportăm o singură dată eventualele traduceri lipsă la final, fără avertismente
-    // repetate pentru fiecare calup/retry. O problemă reală rămâne vizibilă în log.
-    const unresolvedFinalItems = items.filter(item => {
-        const id = String(item.id);
-        if (suppressedFinalOutputIdSet.has(id)) return false;
-        const source = String(item.text || '').replace(/<[^>]+>/g, '').trim();
-        return Boolean(source) && !String(translatedById[id] || '').replace(/<[^>]+>/g, '').trim();
-    });
-    // Quality Review, spot-check-urile și suprapunerile lexicale sunt semnale utile,
-    // dar nu toate reprezintă erori certe. Numai traducerile relevante efectiv lipsă
-    // blochează livrarea/cache-ul; suspiciunile rămân avertismente.
-    const finalErrorIds = new Set(unresolvedFinalItems.map(item => String(item.id)));
-    const finalReviewWarnings = new Map();
-    const addFinalReviewWarning = (id, reasons) => {
-        const key = String(id);
-        if (suppressedFinalOutputIdSet.has(key) || finalErrorIds.has(key)) return;
-        const normalizedReasons = [...new Set((Array.isArray(reasons) ? reasons : [reasons])
-            .map(reason => String(reason || '').trim()).filter(Boolean))];
-        if (!normalizedReasons.length) return;
-        const existing = finalReviewWarnings.get(key) || [];
-        finalReviewWarnings.set(key, [...new Set([...existing, ...normalizedReasons])]);
-    };
     for (const flag of finalQualityFlags) {
         // Raportul de lungime este doar un semnal statistic pentru verificarea AI punctuală.
         // Dacă a fost deja verificat și AI nu a schimbat nimic, nu îl mai repetăm în QA FINAL.
