@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.122',
+    version: '13.2.123',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3845,6 +3845,115 @@ function preserveSourceMarkedContinuationCase(sourceText, formattedText) {
     lines[0] = lines[0].replace(/^(\s*[-–—]+\s*)([A-ZĂÂÎȘȚ])(?=[a-zăâîșț])/u,
         (_, prefix, initial) => prefix + initial.toLocaleLowerCase('ro-RO'));
     return lines.join('\n');
+}
+
+// Transferă starea de majusculă/minusculă din sursa EN la începutul fiecărei
+// replici RO, după formatterul final. Nu deduce capitalizarea din cue-ul anterior:
+// folosește cue-ul englezesc corespunzător. Excludem pronumele englezesc „I”,
+// care este întotdeauna majusculă indiferent de poziția sintactică, numerele,
+// etichetele non-dialog și numele proprii recunoscute în sursă.
+function synchronizeSourceCapitalization(sourceText, translatedText, englishNames = new Set()) {
+    const original = String(translatedText || '');
+    if (!original.trim()) return original;
+    const source = String(sourceText || '').replace(/\r/g, '');
+    if (!source.trim() || /♪|♫/u.test(source.slice(0, 12))) return original;
+
+    const commonEnglishStarts = new Set([
+        'a', 'an', 'and', 'are', 'as', 'at', 'about', 'after', 'all', 'also', 'am',
+        'anyway', 'because', 'before', 'but', 'by', 'can', 'could', 'do', 'does',
+        'doing', 'done', 'down', 'during', 'each', 'either', 'else', 'et', 'even',
+        'ever', 'every', 'few', 'first', 'for', 'from', 'get', 'go', 'going', 'got',
+        'had', 'has', 'have', 'he', 'hello', 'here', 'hey', 'how', 'if', 'in',
+        'into', 'is', 'it', 'just', 'let', 'like', 'look', 'may', 'maybe', 'might',
+        'must', 'near', 'never', 'next', 'no', 'not', 'now', 'of', 'off', 'oh',
+        'on', 'once', 'one', 'only', 'or', 'other', 'our', 'out', 'over', 'pain',
+        'perhaps', 'please', 'put', 'right', 'same', 'say', 'see', 'she', 'should',
+        'since', 'so', 'some', 'still', 'such', 'than', 'that', 'the', 'their',
+        'them', 'then', 'there', 'these', 'they', 'this', 'those', 'though', 'through',
+        'to', 'too', 'under', 'until', 'up', 'us', 'very', 'was', 'we', 'well',
+        'were', 'what', 'when', 'where', 'which', 'while', 'who', 'why', 'will',
+        'with', 'would', 'yes', 'you', 'your', 'blues', 'officer', 'august'
+    ]);
+
+    const locateInitial = (line, stripSpeakerLabels) => {
+        let index = 0;
+        while (index < line.length && /\s/u.test(line[index])) index++;
+        if (/^[-–—]+/u.test(line.slice(index))) {
+            while (index < line.length && /[-–—\s]/u.test(line[index])) index++;
+        }
+        if (stripSpeakerLabels) {
+            while (line[index] === '[') {
+                const close = line.indexOf(']', index + 1);
+                if (close < 0) break;
+                index = close + 1;
+                while (index < line.length && /\s/u.test(line[index])) index++;
+            }
+        }
+        while (index < line.length && ` \t.…,;:!?\"“„”‘’'(){}¿¡`.includes(line[index])) index++;
+        while (line[index] === '[' || line[index] === ']') index++;
+        if (index >= line.length || !/\p{L}/u.test(line[index])) return null;
+        const rest = line.slice(index);
+        const tokenMatch = rest.match(/^([\p{L}][\p{L}'’.-]*)/u);
+        return tokenMatch ? { index, char: line[index], token: tokenMatch[1] } : null;
+    };
+
+    const directiveForSourceLine = line => {
+        const found = locateInitial(String(line || ''), true);
+        if (!found) return null;
+        const token = found.token.toLocaleLowerCase('en-US');
+        // „I” și contracțiile sale sunt scrise cu majusculă obligatorie în engleză.
+        if (found.char === found.char.toLocaleUpperCase('en-US') && /^i(?:['’](?:m|ll|d|ve))?$/u.test(token)) return null;
+        // Numele proprii nu sunt semnale sigure de început de propoziție.
+        if (!commonEnglishStarts.has(token) && englishNames.has(nameKey(token))) return null;
+        return found.char === found.char.toLocaleUpperCase('en-US') ? 'upper' : 'lower';
+    };
+
+    const applyDirective = (line, directive) => {
+        if (!directive) return line;
+        const found = locateInitial(String(line || ''), true);
+        if (!found) return line;
+        const targetToken = found.token.toLocaleLowerCase('ro-RO');
+        // Nu coborâm nume proprii sau acronime care au ajuns la început prin
+        // reformularea firească a traducerii.
+        if (directive === 'lower' && (englishNames.has(nameKey(targetToken)) || /^[A-Z]{2,}$/u.test(found.token))) return line;
+        const replacement = directive === 'upper'
+            ? found.char.toLocaleUpperCase('ro-RO')
+            : found.char.toLocaleLowerCase('ro-RO');
+        if (replacement === found.char) return line;
+        return line.slice(0, found.index) + replacement + line.slice(found.index + found.char.length);
+    };
+
+    const sourceLines = source.split('\n').filter(line => line.trim());
+    const translatedLines = original.split('\n');
+    const sourceSpeakerLines = sourceLines.filter(line => /^\s*[-–—]+\s*\S/u.test(line));
+    const translatedSpeakerIndexes = [];
+    translatedLines.forEach((line, index) => {
+        if (/^\s*[-–—]+\s*\S/u.test(line)) translatedSpeakerIndexes.push(index);
+    });
+
+    // Pentru dialog cu doi sau mai mulți vorbitori, aliniem doar liniile marcate
+    // explicit în ambele texte și numai când numărul lor coincide. Nu reordonăm
+    // și nu inventăm liniuțe; dacă structura diferă, lăsăm blocul neatins.
+    if (sourceSpeakerLines.length >= 2) {
+        if (translatedSpeakerIndexes.length !== sourceSpeakerLines.length) return original;
+        const outputLines = translatedLines.slice();
+        for (let i = 0; i < sourceSpeakerLines.length; i++) {
+            const directive = directiveForSourceLine(sourceSpeakerLines[i]);
+            const targetIndex = translatedSpeakerIndexes[i];
+            outputLines[targetIndex] = applyDirective(outputLines[targetIndex], directive);
+        }
+        return outputLines.join('\n');
+    }
+
+    // Cue cu un singur vorbitor: transferăm doar inițiala lexicală. Întregul
+    // layout, punctuația, rândurile și liniuța existentă rămân neschimbate.
+    const firstSourceLine = sourceLines[0] || '';
+    const directive = directiveForSourceLine(firstSourceLine);
+    if (!directive) return original;
+    const firstTargetLineIndex = translatedLines.findIndex(line => locateInitial(line, true));
+    if (firstTargetLineIndex < 0) return original;
+    translatedLines[firstTargetLineIndex] = applyDirective(translatedLines[firstTargetLineIndex], directive);
+    return translatedLines.join('\n');
 }
 
 // ============================================================
@@ -9270,6 +9379,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     let restoredDialogueDashCount = 0;
     let finalLayoutAdjustedCount = 0;
     const finalLayoutAdjustedIds = [];
+    const sourceEnglishNameVocabulary = buildEnglishNameVocabulary(items);
     const output = items
         .flatMap(item => {
             const id = String(item.id);
@@ -9304,7 +9414,12 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
             const dashAlignedText = restoreExplicitSourceDialogueDashes(item.text, finalLayoutText);
             if (dashAlignedText !== finalLayoutText) restoredDialogueDashCount++;
             const finalCapitalizationText = preserveSourceMarkedContinuationCase(item.text, dashAlignedText);
-            return [`${item.id}\n${item.start} --> ${item.end}\n${finalCapitalizationText}\n`];
+            const sourceSynchronizedText = synchronizeSourceCapitalization(
+                item.text,
+                finalCapitalizationText,
+                sourceEnglishNameVocabulary
+            );
+            return [`${item.id}\n${item.start} --> ${item.end}\n${sourceSynchronizedText}\n`];
         }).join('\n');
 
     if (removedMusicSegmentsFromOutput || omittedMusicOnlyCuesFromOutput) {
