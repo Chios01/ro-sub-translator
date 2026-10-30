@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.127',
+    version: '13.2.128',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1880,6 +1880,9 @@ function isOnlyStandaloneFillerSequence(text) {
         .trim();
     if (!normalized) return false;
     const tokens = normalized.split(' ').filter(Boolean);
+    // Râs redat fonetic ca vocalizare autonomă („ha, ha, ha”, „hă, hă, hă”).
+    // Cerem cel puțin două silabe repetate; o întrebare singulară „Hă?” rămâne dialog.
+    if (tokens.length >= 2 && tokens.every(token => /^(?:ha|hă|haha|hăhă|heh|hehe)$/iu.test(token))) return true;
     const meaningful = new Set([
         'yeah', 'yep', 'yup', 'ya', 'nah', 'nope',
         'wow', 'whoa', 'oops', 'ouch',
@@ -2046,10 +2049,19 @@ function isMusicPerformanceCue(value) {
         .replace(/\s+/g, ' ')
         .trim();
     if (!text || text.length > 240 || /[?;]/u.test(text)) return false;
+
+    // Accept straight, English and Romanian quotation marks, including mixed
+    // quote glyphs produced by subtitle translators (e.g. „Alto Calibre").
+    const hasQuotedTitle = /["“„‘][^"“„‘’”\r\n]{1,120}["”’]/u.test(text);
+    const hasMusicAction = /\b(?:playing|plays|performed|performing|is\s+played|being\s+played)\b/iu.test(text) || /se\s+(?:cântă|aude|interpretează)|cântat(?:ă|e)?|interpretat(?:ă|e)?/iu.test(text);
+    const hasMusicContext = /(?:music|song|track|melody|melodia|cântec(?:ul)?|muzica|by)/iu.test(text) || /^(?:["“„]|se\s+(?:cântă|aude|interpretează))/iu.test(text);
+
     return (
-        /^["“][^"”\r\n]{1,120}["”]\s+by\s+[\p{L}\p{N}][\p{L}\p{N} .&’'-]{1,100}\s+(?:playing|plays|performed|performing)(?:\s+(?:in|over)\s+(?:the\s+)?background)?[.!…]*$/iu.test(text) ||
-        /^[\p{L}\p{N}][\p{L}\p{N} .&’'-]{1,100}\s+[-–—:]\s*["“][^"”\r\n]{1,120}["”]\s+(?:playing|plays|performed|performing)[.!…]*$/iu.test(text) ||
-        /^["“][^"”\r\n]{1,120}["”]\s+(?:playing|plays)\s+by\s+[\p{L}\p{N}][\p{L}\p{N} .&’'-]{1,100}[.!…]*$/iu.test(text)
+        /^["“„][^"“„\r\n]{1,120}["”]\s+by\s+[\p{L}\p{N}][\p{L}\p{N} .&’'-]{1,100}\s+(?:playing|plays|performed|performing)(?:\s+(?:in|over)\s+(?:the\s+)?background)?[.!…]*$/iu.test(text) ||
+        /^[\p{L}\p{N}][\p{L}\p{N} .&’'-]{1,100}\s+[-–—:]\s*["“„][^"“„\r\n]{1,120}["”]\s+(?:playing|plays|performed|performing)[.!…]*$/iu.test(text) ||
+        /^["“„][^"“„\r\n]{1,120}["”]\s+(?:playing|plays)\s+by\s+[\p{L}\p{N}][\p{L}\p{N} .&’'-]{1,100}[.!…]*$/iu.test(text) ||
+        // Title plus a music action is enough even when the artist is omitted.
+        (hasQuotedTitle && hasMusicAction && hasMusicContext)
     );
 }
 
@@ -4040,6 +4052,7 @@ ROMANIAN ACCURACY RULES
 - Numerals: use „de” before the counted noun when the number is 20 or more or ends in 00 („20 de dolari”, „100 de ani”, „35 de minute”); omit it for 1–19 („15 dolari”, „3 ani”, „12 minute”).
 - Calques: translate fixed phrases by their function, not word by word — “I mean”, “you know”, “like” (filler), “literally”, “actually”, “come on”, “hang on”, “my bad”, “I'm good”, “you're welcome”, “what's up”, “no way”, “give me a break”, “count me in”, “it's on me”. Do not mirror English passives, “-ing” chains or possessives („Mi-am spălat mâinile” → „M-am spălat pe mâini” when more natural). Tag questions (“right?”, “isn't it?”) become „nu?”, „da?” or „nu-i așa?”.
 - Vocal sounds: never write “Hm”, “Hmm”, “Mm”, “Mmm”, “Mhm”, “Ehm” or “Ăă” as Romanian text; if such a sound appears inside a sentence, leave it out. Never write „Mă?” or „Mă.” (a rude vocative in Romanian). Keep “Huh?” as „Hă?”.
+- Romanian „na”: never use „na” as a generic hesitation, laugh, or automatic translation of “well/now/nah”. Omit it when it is only a meaningless filler. Keep it only when the context clearly gives it lexical meaning such as handing something over („Na, poftim”) or drawing attention to something („Na, uite”). Do not remove those meaningful uses.
 - Agreement: check noun gender and number after every demonstrative or adjective („aceste microorganisme”, not „acești”); neuter nouns take masculine singular and feminine plural forms. Use „mi-e” / „nu mi-e frică”, not „mi-este”.
 - Names and invented terms must have ONE Romanian form in the whole file. If a glossary is provided in the background block, follow it exactly; otherwise keep a nickname or invented term the same in every line and never produce spelling variants of the same name.
 - Spelling: write every word completely and correctly („în”, „a vorbit”, „vorbea”, „s-a dus”); never merge, drop or swap letters.
