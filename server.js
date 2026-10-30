@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.130',
+    version: '13.2.131',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2131,11 +2131,37 @@ function isLikelyLeadingSpeakerLabel(inner, prefix, suffix) {
     return false;
 }
 
+function isClearBracketedAudioDescription(value) {
+    const text = String(value || '').normalize('NFC').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 180 || /[?"“”]/u.test(text)) return false;
+
+    // Descrieri de interpretare instrumentală, nu replici: „guitar playing a soft,
+    // gentle tune”, „piano playing in the background” etc. Se aplică numai
+    // segmentelor deja încadrate între paranteze.
+    const instrumentPerformance = /^(?:(?:a|an|the|soft|gentle|quiet|faint|distant|background|mellow|slow|light|acoustic|electric)\s+)*(?:guitar|piano|violin|cello|viola|keyboard|organ|drums?|trumpet|saxophone|flute|harmonica|banjo|mandolin|ukulele|instrumental music)(?:\s+(?:playing|plays|strumming|plucking|picking|being played|is played))(?:\s+.+)?[.!…]*$/iu;
+    if (instrumentPerformance.test(text)) return true;
+
+    // Anunțuri/voce neinteligibilă transmise printr-un canal audio.
+    const indistinctAnnouncement = /^(?:(?:indistinct|unintelligible|unclear|muffled|faint|distant)\s+)?(?:announcement|announcements|voice|voices|speech|radio chatter)(?:\s+(?:coming|heard|echoing|continues?))?\s+(?:over|through|from)\s+(?:the\s+)?(?:P\.?A\.?|megaphone|loudspeaker|speakers?|intercom)(?:\s+.*)?[.!…]*$/iu;
+    if (indistinctAnnouncement.test(text)) return true;
+
+    // Zgomote metalice descrise acustic, inclusiv localizarea „in the distance”.
+    const metalClatter = /^(?:(?:a|the|some|distant|faint|loud|soft|heavy|metal|metallic)\s+)*(?:clanging|clang(?:s|ed|ing)?|clanking|clanks?|clattering|clatters?|rattling|rattles?|scraping|scrapes?)(?:\s+(?:noises?|sounds?|objects?))?(?:\s+(?:in|from|off)\s+(?:the\s+)?(?:distance|background|room|hallway))?[.!…]*$/iu;
+    if (metalClatter.test(text)) return true;
+
+    // Echivalente românești ale acelorași caption-uri, pentru plasa de siguranță
+    // aplicată după traducere.
+    if (/^(?:chitar[ăe]|pian|vioar[ăa]|violoncel|instrumente?)\s+(?:cântând|cântă|interpretând|interpretează)(?:\s+.+)?[.!…]*$/iu.test(text)) return true;
+    if (/^(?:anunț|anunțuri|voce|voci|vorbire)\s+(?:neclar(?:ă|e)?|neinteligibil(?:ă|e)?|înfundat(?:ă|e)?)\s+(?:prin|la|peste|pe)\s+(?:megafon|difuzoare|stație|interfon)(?:\s+.+)?[.!…]*$/iu.test(text)) return true;
+    if (/^(?:zgomote?|sunete?)\s+metalice?(?:\s+(?:în|din|de la)\s+(?:depărtare|fundal|fundalul|distanță))?[.!…]*$/iu.test(text)) return true;
+    return false;
+}
+
 function isObviousBracketedNonDialogueCue(value, openChar, prefix, suffix) {
     const text = String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     if (!text || text.length > 180) return false;
     if (/^(?:scuipă|scuipând|scuipat|scuipată|scuipate)[.!…]*$/iu.test(text)) return true;
-    if (isMusicPerformanceCue(text) || isRomanianMechanicalSoundCaption(text) || isAdditionalSoundCueCaption(text) || isStandaloneNonDialogueSoundCue(text) || isExtendedSoundCueLabel(text) || isCompoundSoundCueLabel(text)) return true;
+    if (isClearBracketedAudioDescription(text) || isMusicPerformanceCue(text) || isRomanianMechanicalSoundCaption(text) || isAdditionalSoundCueCaption(text) || isStandaloneNonDialogueSoundCue(text) || isExtendedSoundCueLabel(text) || isCompoundSoundCueLabel(text)) return true;
 
     // Indicație vizuală SDH întâlnită în subtitrarea verificată; o eliminăm numai
     // când este delimitată ca etichetă, nu când apare ca text liber de dialog.
@@ -3896,7 +3922,7 @@ function preserveSourceMarkedContinuationCase(sourceText, formattedText) {
 // folosește cue-ul englezesc corespunzător. Excludem pronumele englezesc „I”,
 // care este întotdeauna majusculă indiferent de poziția sintactică, numerele,
 // etichetele non-dialog și numele proprii recunoscute în sursă.
-function synchronizeSourceCapitalization(sourceText, translatedText, englishNames = new Set(), previousSourceText = null) {
+function synchronizeSourceCapitalization(sourceText, translatedText, englishNames = new Set(), previousSourceText = null, previousTranslatedText = null) {
     const original = String(translatedText || '');
     if (!original.trim()) return original;
     const source = String(sourceText || '').replace(/\r/g, '');
@@ -3988,19 +4014,28 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
     // Liniuțele explicite de vorbitor rămân tratate separat.
     const sourceInitial = locateInitial(firstSourceLine, true);
     const sourceHasExplicitDash = /^\s*[-–—]+\s*\S/u.test(firstSourceLine);
+    let previousSourceConfirmsSentenceEnd = false;
     if (previousSourceText != null && !sourceHasExplicitDash && sourceInitial) {
         const previousSource = String(previousSourceText || '').replace(/\r/g, '').trim();
         if (previousSource) {
-            const token = sourceInitial.token.toLocaleLowerCase('en-US');
+            const token = sourceInitial.token.replace(/[^\p{L}'’-]+$/u, '').toLocaleLowerCase('en-US');
             const isRecognizedName = englishNames.has(nameKey(token));
             if (endsWithSubtitleSentencePunctuation(previousSource)) {
                 directive = 'upper';
+                previousSourceConfirmsSentenceEnd = true;
             } else if (!isRecognizedName && endsWithStrongSourceContinuationMarker(previousSource)) {
                 // Inclusiv „I”/„I'd”: majuscula obligatorie în engleză nu se
                 // transferă automat în română când cue-ul continuă o frază.
                 directive = 'lower';
             }
         }
+    }
+    if (!sourceHasExplicitDash && !previousSourceConfirmsSentenceEnd && previousTranslatedText != null &&
+        hasRomanianBoundaryContinuation(previousTranslatedText, original)) {
+        // Contextul românesc al cue-ului anterior poate păstra continuitatea
+        // chiar când engleza obligă la majusculă („I”) sau folosește elipse.
+        // applyDirective protejează în continuare numele și acronimele confirmate.
+        directive = 'lower';
     }
     if (!directive) return original;
     const firstTargetLineIndex = translatedLines.findIndex(line => locateInitial(line, true));
@@ -4040,7 +4075,7 @@ TRANSLATION AND CONTEXT
 - UNMARKED SONG LYRICS — Some subtitle sources omit music-note markers. When the supplied block sequence and adjacent source lines make it CLEAR that a line is sung lyrics from an ongoing song/chorus, rather than spoken dialogue, return exactly \"__RO_ST_SKIP_SONG_LYRIC__\" as its text. The program will omit that cue; never expose the marker in the final SRT. Be conservative: repetition alone is NOT enough, and do NOT suppress emotional or shouted dialogue (for example, a person repeating \"I loved you!\"). If you are unsure whether it is sung, translate it as dialogue. If a block contains identifiable spoken dialogue as well as lyrics but has no explicit music markers to separate them, translate the spoken dialogue only; do not return the skip marker when any spoken dialogue remains.
 - Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
-- If the English block begins with a lowercase letter, or the previous block ends without terminal punctuation, it continues the previous sentence: begin its Romanian text with a lowercase letter unless the first word is a proper noun. If the source block begins with a dialogue dash, evaluate the first word AFTER the dash (and any speaker label): when that word is lowercase in English, preserve the dash but begin the Romanian words after it with lowercase too. A capitalized word after a dash is a new speaker/utterance and must keep its normal capitalization.
+- Decide Romanian sentence case from the sentence across IDs, not from English capitalization alone. A cue is a continuation when its English text begins with a lowercase letter, or the preceding English cue ends with a strong syntactic continuation marker such as a comma, semicolon, colon, conjunction, or preposition that leaves the clause open. The mere absence of terminal punctuation in the preceding cue is NOT sufficient by itself. A leading ellipsis in both adjacent cues, or an unfinished Romanian connective in the preceding fragment (for example, „doar că...”), can also signal that the thought continues. In a Romanian continuation, ordinary words must begin lowercase even when English forces an uppercase „I” at the start of a cue; preserve proper names and acronyms. If the source block begins with an explicit dialogue dash, evaluate the first word AFTER the dash (and any speaker label): when that word is lowercase in English, preserve the dash but begin the Romanian words after it with lowercase too. A capitalized word after a dash normally marks a new speaker/utterance and keeps its normal capitalization.
 - Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
 - Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
 - Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
@@ -8369,9 +8404,59 @@ const ENGLISH_STRONG_CONTINUATION_ENDINGS = new Set((`
 function endsWithStrongSourceContinuationMarker(value) {
     const text = String(value || '').replace(/<[^>]+>/g, '').trim();
     if (!text || endsWithSubtitleSentencePunctuation(text)) return false;
-    if (/[,;]["”')\]]*$/u.test(text)) return true;
+    if (/[,;:]["”')\]]*$/u.test(text)) return true;
     const lastWord = (text.match(/([\p{L}'’]+)["”')\]]*$/u) || [])[1];
     return Boolean(lastWord && ENGLISH_STRONG_CONTINUATION_ENDINGS.has(lastWord.toLowerCase()));
+}
+
+const ROMANIAN_CONTINUATION_INITIAL_WORDS = new Set((`
+    a al ale ai am are ar as avem aveți au avea aveam aveau
+    cred crede crezi credeam credem credeți
+    și dar iar de din în la pe cu pentru prin fără despre către între
+    că ca să dacă fiindcă deoarece deși însă ori până după înainte
+    mă te se ne vă îmi îți îi îl le mi ți nu nici niciun nicio un o una
+    va vor vreau vrei vrea vrem vreți trebuie poate sunt este era erau
+    m-am m-ai m-a mi-am mi-a ți-am ți-a i-am i-a s-a s-au n-am n-ai n-a
+`).trim().split(/\s+/u));
+
+const ROMANIAN_CONTINUATION_TAIL_WORDS = new Set((`
+    că ca și dar iar de din în la pe cu pentru prin fără despre către între
+    care ce dacă fiindcă deoarece deși însă să ori până după înainte
+`).trim().split(/\s+/u));
+
+// După elipsă cerem un indiciu mai strict decât după virgulă. Cuvintele
+// funcționale pot continua sintaxa; verbele de conținut („Sunt gata.”) nu sunt
+// coborâte automat doar fiindcă fragmentul anterior se termină cu trei puncte.
+const ROMANIAN_ELLIPSIS_CONTINUATION_INITIAL_WORDS = new Set((`
+    a al ale ai și dar iar de din în la pe cu pentru prin fără despre către între
+    că ca să dacă fiindcă deoarece deși însă ori până după înainte
+    mă te se ne vă îmi îți îi îl le mi ți nu nici niciun nicio un o una
+`).trim().split(/\s+/u));
+
+function hasRomanianBoundaryContinuation(previousTranslatedText, currentTranslatedText) {
+    const previous = String(previousTranslatedText || '').replace(/<[^>]*>/g, ' ').trim();
+    const current = String(currentTranslatedText || '').replace(/<[^>]*>/g, ' ').trim();
+    if (!previous || !current) return false;
+
+    const currentStart = getSourceContinuationStart(current);
+    const firstWord = (currentStart.text.match(/^([\p{L}]+(?:-[\p{L}]+)*)/u) || [])[1]?.toLocaleLowerCase('ro-RO');
+    // Contextul poate coborî numai inițiale românești uzuale de continuare.
+    // Un cuvânt necunoscut („Reacher”, „Compton”) nu este presupus substantiv comun.
+    if (!firstWord || !ROMANIAN_CONTINUATION_INITIAL_WORDS.has(firstWord)) return false;
+
+    // O virgulă, un punct și virgulă sau două puncte păstrează sintaxa deschisă.
+    if (/[,;:]["'’”»)}\]]*$/u.test(previous)) return true;
+
+    // Elipsa singură este ambiguă. O folosim doar pentru o continuare explicită:
+    // elipsă la începutul următorului cue, conector rămas la final („Doar că...”),
+    // sau un cuvânt funcțional de legătură. „Sunt gata.” rămâne propoziție nouă.
+    if (!/(?:\.{3}|…)["'’”»)}\]]*$/u.test(previous)) return false;
+    if (/^\s*(?:\.{3}|…)/u.test(current)) return true;
+
+    const previousWithoutEllipsis = previous.replace(/(?:\.{3}|…)+["'’”»)}\]]*$/u, '').trim();
+    const previousLastWord = (previousWithoutEllipsis.match(/([\p{L}]+)$/u) || [])[1]?.toLocaleLowerCase('ro-RO');
+    if (previousLastWord && ROMANIAN_CONTINUATION_TAIL_WORDS.has(previousLastWord)) return true;
+    return ROMANIAN_ELLIPSIS_CONTINUATION_INITIAL_WORDS.has(firstWord);
 }
 
 function isContinuationBlock(prevEnglish, currentEnglish) {
@@ -8463,7 +8548,7 @@ const COMMON_ROMANIAN_MID_SENTENCE_WORDS = new Set((`
     în întru din dintre spre către până după înainte peste sub lângă
     fără despre contra între prin pe la cu asupra afară înăuntru
     acesta aici acolo acasă undeva nicăieri oriunde pretutindeni
-    nu da ba oare încă nici niciodată întotdeauna uneori deseori rar
+    nu da ba oare încă nici niciun nicio niciunul niciuna niciuneia niciunuia niciunii niciunele niciunelor niciunora niciodată întotdeauna uneori deseori rar
     apoi astfel asemenea altminteri tocmai măcar măcară poate bineînțeles
     lucru lucruri lucrul lucrurile treabă treaba treburile problema probleme
     problemele persoană persoane omul oameni omului oamenii femeie femeia
@@ -8531,6 +8616,21 @@ function applyStrayCapitalO(items, translatedById) {
     return { words: changed, lines: changedLines };
 }
 
+function normalizeRomanianGenericPhraseCapitalization(value) {
+    let changed = 0;
+    const text = String(value || '').replace(/(?<![\p{L}\p{N}_])(terapie\s+intensivă|cod\s+albastru)(?![\p{L}\p{N}_])/giu,
+        (phrase, _match, offset, whole) => {
+            const before = whole.slice(0, offset).replace(/<[^>]*>/g, ' ').replace(/^\s*[-–—]+\s*/u, '');
+            const sentenceInitial = !/[\p{L}\p{N}]/u.test(before) || /[.!?…]["'’”»)}\]]*\s*$/u.test(before);
+            const parts = phrase.split(/\s+/u);
+            const first = sentenceInitial ? parts[0].slice(0, 1).toLocaleUpperCase('ro-RO') + parts[0].slice(1).toLocaleLowerCase('ro-RO') : parts[0].toLocaleLowerCase('ro-RO');
+            const normalized = `${first} ${parts[1].toLocaleLowerCase('ro-RO')}`;
+            if (normalized !== phrase) changed++;
+            return normalized;
+        });
+    return { text, changed };
+}
+
 function applyMidSentenceCapitalizationFixes(items, translatedById) {
     const englishNames = buildEnglishNameVocabulary(items);
     const strayO = applyStrayCapitalO(items, translatedById);
@@ -8544,8 +8644,10 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
     for (const item of items) {
         if (item.musicOnly) continue;
         const id = String(item.id);
-        const original = String(translatedById[id] || '');
-        if (!original.trim()) continue;
+        const rawOriginal = String(translatedById[id] || '');
+        if (!rawOriginal.trim()) continue;
+        const phraseNormalization = normalizeRomanianGenericPhraseCapitalization(rawOriginal);
+        const original = phraseNormalization.text;
 
         let localChanges = 0;
         const normalized = original.replace(/(?<![\p{L}\p{N}_])([A-ZĂÂÎȘȚ][a-zăâîșț]+)(?![\p{L}\p{N}_])/gu,
@@ -8585,9 +8687,9 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                 return word;
             });
 
-        if (localChanges) {
+        if (localChanges || phraseNormalization.changed) {
             translatedById[id] = normalized;
-            changedWords += localChanges;
+            changedWords += localChanges + phraseNormalization.changed;
             changedSubtitles++;
         }
     }
@@ -9461,6 +9563,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     // Contextul de capitalizare urmează ultimul cue vorbit care chiar ajunge în SRT;
     // versurile, etichetele și cue-urile suprimate nu trebuie să rupă sau să falsifice fraza.
     let previousExportableSourceText = null;
+    let previousExportableTranslatedText = null;
     const output = items
         .flatMap(item => {
             const id = String(item.id);
@@ -9499,9 +9602,11 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
                 item.text,
                 finalCapitalizationText,
                 sourceEnglishNameVocabulary,
-                previousExportableSourceText
+                previousExportableSourceText,
+                previousExportableTranslatedText
             );
             previousExportableSourceText = item.text;
+            previousExportableTranslatedText = sourceSynchronizedText;
             // Eliminăm numai liniuțele de dialog de la începutul rândurilor, în ultima etapă de export.
             const exportText = removeLeadingDialogueDashesForExport(sourceSynchronizedText);
             return [`${item.id}\n${item.start} --> ${item.end}\n${exportText}\n`];
