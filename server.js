@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.128',
+    version: '13.2.129',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4007,6 +4007,15 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
     if (firstTargetLineIndex < 0) return original;
     translatedLines[firstTargetLineIndex] = applyDirective(translatedLines[firstTargetLineIndex], directive);
     return translatedLines.join('\n');
+}
+
+// Elimină exclusiv marcatorii de dialog aflați la începutul rândurilor din SRT-ul exportat.
+// Se aplică după toate regulile de layout, aliniere și capitalizare, astfel încât
+// să nu schimbe împărțirea replicilor sau logica internă de identificare a vorbitorilor.
+// Spațiul după liniuță este obligatoriu: cratimele din cuvinte (ex. „într-o”, „s-a”)
+// și formele cu cratimă la început fără spațiu nu sunt atinse.
+function removeLeadingDialogueDashesForExport(value) {
+    return String(value ?? '').replace(/^[ \t]*[-–—]+[ \t]+(?=\S)/gmu, '');
 }
 
 // ============================================================
@@ -9497,7 +9506,9 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
                 previousExportableSourceText
             );
             previousExportableSourceText = item.text;
-            return [`${item.id}\n${item.start} --> ${item.end}\n${sourceSynchronizedText}\n`];
+            // Eliminăm numai liniuțele de dialog de la începutul rândurilor, în ultima etapă de export.
+            const exportText = removeLeadingDialogueDashesForExport(sourceSynchronizedText);
+            return [`${item.id}\n${item.start} --> ${item.end}\n${exportText}\n`];
         }).join('\n');
 
     if (removedMusicSegmentsFromOutput || omittedMusicOnlyCuesFromOutput) {
