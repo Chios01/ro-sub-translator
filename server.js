@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.135',
+    version: '13.2.136',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2140,9 +2140,24 @@ function isLikelyLeadingSpeakerLabel(inner, prefix, suffix) {
     return false;
 }
 
+function isGeneralBracketedAcousticDescription(text) {
+    const value = String(text || '').normalize('NFC').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!value || value.length > 180 || /[?"“”]/u.test(value)) return false;
+
+    // Se aplică numai conținutului deja delimitat ca markup/caption, niciodată dialogului liber.
+    // Cerem o sursă acustică la început și un eveniment/descriptor sonor recognoscibil.
+    if (/^(?:i|you|we|they|he|she|it|eu|tu|noi|voi|el|ea|ei|ele)\b/iu.test(value)) return false;
+
+    const startsWithAcousticSubject = /^(?:(?:the|a|an|some|soft|loud|quiet|distant|faint|background|heavy|sharp|brief|short|metallic|indistinct|muffled|car|vehicle|door|auto|puternic(?:ă|e)?|slab(?:ă|e)?|neclar(?:ă|e)?|înfundat(?:ă|e)?|ritmic(?:ă|e)?)\s+){0,5}(?:car\s+)?(?:doorbell|door\s+bell|bell|chime|ring(?:tone)?|siren|alarm|horn|shout(?:s|ing)?|scream(?:s|ing)?|yell(?:s|ing)?|cry(?:ing)?|voice(?:s)?|crowd|applause|footsteps?|gunfire|gunshots?|music|noise|sound|soneri(?:e|a|ei|i|ile)|clopoț(?:el|elul|ele|elele)|clopot(?:ul|e|ele)?|strig[ăa]te|țipete|urlete|răcnete|voci|mulțime|aplauze|pași|focuri\s+de\s+armă|zgomote?|sunete?)\b/iu.test(value);
+    if (!startsWithAcousticSubject) return false;
+
+    return /\b(?:rings?|ringing|chimes?|chiming|sounds?|sounding|goes?\s+off|wails?|howls?|overlaps?|overlapping|echoes?|echoing|screams?|screaming|shouts?|shouting|yells?|yelling|roars?|roaring|blare[sd]?|playing|continues?|rhythmically|rhythmic|loudly|loud|indistinct|unclear|muffled|faint|distant|separate|repeated|ritmic(?:ă|e|i)?|sun[ăa]|răsun[ăa]|se\s+aud|se\s+aude|se\s+suprapun|suprapunând|se\s+amestec[ăa]|se\s+întrepătrund|puternic(?:ă|e)?|tare|neclar(?:ă|e)?|neinteligibil(?:ă|e)?|înfundat(?:ă|e)?|în\s+ecou|răsunând|continu[ăa]|continuând|asurzitor(?:are|i|oare)?)\b/iu.test(value);
+}
+
 function isClearBracketedAudioDescription(value) {
     const text = String(value || '').normalize('NFC').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     if (!text || text.length > 180 || /[?"“”]/u.test(text)) return false;
+    if (isGeneralBracketedAcousticDescription(text)) return true;
 
     // Descrieri de interpretare instrumentală, nu replici: „guitar playing a soft,
     // gentle tune”, „piano playing in the background” etc. Se aplică numai
@@ -8266,6 +8281,7 @@ const ENGLISH_STRONG_CONTINUATION_ENDINGS = new Set((`
     because if which who whom whose when where while though although since
     unless until into onto over under through between among before after
     during without within against around behind above below near upon
+    exact same only another other first second third last next additional
     is are was were be been being have has had do does did can could
     will would should must might may shall
 `).trim().toLowerCase().split(/\s+/));
@@ -8284,8 +8300,14 @@ const ROMANIAN_CONTINUATION_INITIAL_WORDS = new Set((`
     și dar iar de din în la pe cu pentru prin fără despre către între
     că ca să dacă fiindcă deoarece deși însă ori până după înainte
     mă te se ne vă îmi îți îi îl le mi ți nu nici niciun nicio un o una
-    va vor vreau vrei vrea vrem vreți trebuie poate sunt este era erau
-    m-am m-ai m-a mi-am mi-a ți-am ți-a i-am i-a s-a s-au n-am n-ai n-a
+    va vor vreau vrei vrea vrem vreți trebuie trebuia trebuiau trebui
+    fac faci face facem faceți făceau făcea făceam făcut făcând
+    sunt ești este suntem sunteți era erau eram erai
+    pot poți poate putem puteți putea puteam puteau
+    n-am n-ai n-a n-ați n-au n-ar n-aveam n-aveai n-avea n-aveați n-aveau
+    m-am m-ai m-a mi-am mi-ai mi-a mi-ați mi-au
+    i-am i-ai i-a i-ați i-au ți-am ți-ai ți-a ți-ați ți-au
+    s-a s-au s-ar s-ar fi
 `).trim().split(/\s+/u));
 
 const ROMANIAN_CONTINUATION_TAIL_WORDS = new Set((`
@@ -8302,6 +8324,23 @@ const ROMANIAN_ELLIPSIS_CONTINUATION_INITIAL_WORDS = new Set((`
     mă te se ne vă îmi îți îi îl le mi ți nu nici niciun nicio un o una
 `).trim().split(/\s+/u));
 
+// Finaluri de grup nominal/adjectival care pot aștepta predicatul din cue-ul următor.
+// Nu folosim regula pentru orice lipsă de punctuație: trebuie să se potrivească și
+// începutul verbal/auxiliar al următoarei replici.
+const ROMANIAN_OPEN_PHRASE_ENDINGS = new Set((`
+    asta ăsta acesta aceasta aceștia acestea acel aceea aceia acelea
+    exact același aceeași aceiași aceleași singur singura singuri singure
+    primul prima primii primele următor următoarea următorii următoarele
+`).trim().split(/\s+/u));
+
+const ROMANIAN_PREDICATE_CONTINUATION_INITIAL_WORDS = new Set((`
+    n-am n-ai n-a n-ați n-au n-ar n-aveam n-aveai n-avea n-aveați n-aveau
+    i-am i-ai i-a i-ați i-au mi-am mi-ai mi-a mi-ați mi-au ți-am ți-ai ți-a ți-ați ți-au
+    trebuie trebuia trebuiau trebui fac faci face facem faceți sunt ești este suntem sunteți
+    era erau eram erai pot poți poate putem puteți putea puteam puteau vreau vrei vrea vrem vreți
+    aș ai am are au va vor vom veți
+`).trim().split(/\s+/u));
+
 function hasRomanianBoundaryContinuation(previousTranslatedText, currentTranslatedText) {
     const previous = String(previousTranslatedText || '').replace(/<[^>]*>/g, ' ').trim();
     const current = String(currentTranslatedText || '').replace(/<[^>]*>/g, ' ').trim();
@@ -8315,6 +8354,16 @@ function hasRomanianBoundaryContinuation(previousTranslatedText, currentTranslat
 
     // O virgulă, un punct și virgulă sau două puncte păstrează sintaxa deschisă.
     if (/[,;:]["'’”»)}\]]*$/u.test(previous)) return true;
+
+    // Unele surse taie expresia după un grup nominal fără semn de punctuație:
+    // „Tu și maimuța asta” / „n-ați putut...”. Coborâm inițiala numai când
+    // finalul anterior este un demonstrativ/modificator deschis, iar cue-ul curent
+    // începe cu un predicat/auxiliar românesc recunoscut. Nu este regula „fără punct = mic”.
+    if (!endsWithSubtitleSentencePunctuation(previous)) {
+        const previousLastWord = (previous.match(/([\p{L}]+)$/u) || [])[1]?.toLocaleLowerCase('ro-RO');
+        if (previousLastWord && ROMANIAN_OPEN_PHRASE_ENDINGS.has(previousLastWord) &&
+            ROMANIAN_PREDICATE_CONTINUATION_INITIAL_WORDS.has(firstWord)) return true;
+    }
 
     // Elipsa singură este ambiguă. O folosim doar pentru o continuare explicită:
     // elipsă la începutul următorului cue, conector rămas la final („Doar că...”),
