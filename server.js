@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.140',
+    version: '13.2.141',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -10515,6 +10515,13 @@ function isMusicOnlyMaskedCue(text, musicSegments) {
         .trim();
     // Rămân doar eventuale marcatoare de vorbitor, slash-uri, spații și punctuație.
     return !/[\p{L}\p{N}]/u.test(visible);
+}
+
+function hasAllProtectedMusicTokens(item, text) {
+    const segments = Array.isArray(item?.musicSegments) ? item.musicSegments : [];
+    if (!segments.length) return true;
+    const value = String(text || '');
+    return segments.every(segment => value.toLocaleUpperCase('en-US').includes(segment.token.toLocaleUpperCase('en-US')));
 }
 
 function normalizeSourceAfterMusicRemoval(value) {
