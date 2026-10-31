@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.143',
+    version: '13.2.144',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3355,10 +3355,108 @@ function splitSubtitleIntoTwoLinesWithinLimits(value, firstMaxChars, secondMaxCh
     return [candidates[0].left, candidates[0].right];
 }
 
+// Pentru subtitrările care nu încap în două rânduri de maximum 48 de caractere,
+// folosim numărul minim de rânduri necesar și echilibrăm lungimea lor. 42 rămâne
+// ținta normală; 48 este limita flexibilă pentru a evita rânduri suplimentare
+// inutile. Nu rupem cuvinte și penalizăm despărțirile după prepoziții/clitice.
+const SUBTITLE_WRAP_WEAK_ENDINGS = new Set((`
+    a al ai ale cu de din în la lângă pe pentru prin să și un o ori că ca
+    îmi îți îi îl le mi ți ne vă care dacă nu nici dar iar până după înainte
+    l-am l-ai l-a l-au i-am i-ai i-a i-au mi-am mi-ai mi-a mi-au ți-am ți-ai
+    ți-a ți-au ne-am v-am te-am m-am s-a s-au s-ar n-am n-ai n-a n-au n-ar
+`).trim().toLocaleLowerCase('ro-RO').split(/\s+/u));
+
+const SUBTITLE_WRAP_WEAK_STARTS = new Set((`
+    a al ai ale cu de din în la lângă pe pentru prin să și un o ori că ca
+    și dar iar nu nici dacă când unde cum care ce să-l să-i să-o
+`).trim().toLocaleLowerCase('ro-RO').split(/\s+/u));
+
+function wrapSubtitleLinesBalanced(value, maxChars = 48, prefixLength = 0) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return [];
+    const words = text.split(' ');
+    if (words.length <= 2) return wrapSubtitleLines(text, maxChars, prefixLength);
+
+    const firstCapacity = Math.max(1, maxChars - prefixLength);
+    const lineCapacity = Math.max(1, maxChars);
+    const minimumRows = Math.max(3, Math.ceil((text.length + prefixLength) / lineCapacity));
+    const lower = word => String(word || '').toLocaleLowerCase('ro-RO').replace(/^["'„“«([{]+|["'’”».,;:!?…)}\]]+$/gu, '');
+
+    const breakPenalty = (leftWord, rightWord, leftText) => {
+        const left = lower(leftWord);
+        const right = lower(rightWord);
+        let penalty = 0;
+        if (SUBTITLE_WRAP_WEAK_ENDINGS.has(left)) penalty += 14;
+        if (SUBTITLE_WRAP_WEAK_STARTS.has(right)) penalty += 6;
+        if (/^(?:[\p{L}]+-)(?:am|ai|a|au|ați|ar|o|l|i|le|mi|ți|ne|vă|se|te|mă)$/iu.test(left)) penalty += 12;
+        if (/[.!?…]["”»')\]]*$/u.test(leftText)) penalty -= 5;
+        else if (/[,;:]["”»')\]]*$/u.test(leftText)) penalty -= 2;
+        // Nu despărțim inutil un nume compus sau un titlu scris în Title Case.
+        if (/^[A-ZĂÂÎȘȚ][\p{L}'’.-]*$/u.test(leftWord) && /^[A-ZĂÂÎȘȚ][\p{L}'’.-]*$/u.test(rightWord) && !/[.!?:;]$/u.test(leftText)) penalty += 8;
+        return penalty;
+    };
+
+    // Căutăm cel mai mic număr de rânduri care încape în limita flexibilă.
+    // Programarea dinamică păstrează ordinea cuvintelor și optimizează echilibrul.
+    for (let rowCount = minimumRows; rowCount <= words.length; rowCount++) {
+        const targetVisibleLength = (text.length + prefixLength) / rowCount;
+        const memo = new Map();
+
+        const solve = (start, row) => {
+            const key = `${start}:${row}`;
+            if (memo.has(key)) return memo.get(key);
+            const rowsLeft = rowCount - row;
+            if (words.length - start < rowsLeft) {
+                memo.set(key, null);
+                return null;
+            }
+
+            const capacity = row === 0 ? firstCapacity : lineCapacity;
+            const isLast = row === rowCount - 1;
+            const maxEnd = isLast ? words.length - 1 : words.length - rowsLeft;
+            let best = null;
+
+            for (let end = start; end <= maxEnd; end++) {
+                const line = words.slice(start, end + 1).join(' ');
+                if (line.length > capacity && end > start) break;
+                if (isLast && end !== words.length - 1) continue;
+                if (!isLast && end === words.length - 1) continue;
+
+                const visibleLength = line.length + (row === 0 ? prefixLength : 0);
+                const balance = Math.pow(visibleLength - targetVisibleLength, 2) * 0.12;
+                const targetOverflow = Math.max(0, visibleLength - 42) * 0.28;
+                let score = balance + targetOverflow;
+                let tail = { score: 0, lines: [] };
+
+                if (!isLast) {
+                    score += breakPenalty(words[end], words[end + 1], line);
+                    const rest = solve(end + 1, row + 1);
+                    if (!rest) continue;
+                    tail = rest;
+                }
+
+                const candidate = { score: score + tail.score, lines: [line, ...tail.lines] };
+                if (!best || candidate.score < best.score) best = candidate;
+            }
+
+            memo.set(key, best);
+            return best;
+        };
+
+        const result = solve(0, 0);
+        if (result && result.lines.length === rowCount) return result.lines;
+    }
+
+    // Fallback extrem de conservator: păstrează toate cuvintele chiar dacă un
+    // singur token depășește limita și nu poate fi împărțit în siguranță.
+    return wrapSubtitleLines(text, maxChars, prefixLength);
+}
+
 // Preferă mai întâi împărțirea strictă la 42. Doar dacă aceasta ar produce
 // un al treilea rând, permite până la 48 de caractere pentru a evita schimbarea
 // inutilă a subtitrărilor care înainte încăpeau în două rânduri. Pentru dialogul
-// cu doi vorbitori, apelantul dezactivează explicit toleranța.
+// cu doi vorbitori, fiecare tură este împachetată separat; toleranța de 48
+// se aplică doar în interiorul turei și nu unește niciodată vorbitori diferiți.
 function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSoftTwoLineWrap = true, firstLineExtra = 0) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     if (!text) return [];
@@ -3379,7 +3477,7 @@ function wrapSubtitleLinesSmart(value, maxChars = 42, prefixLength = 0, allowSof
         );
         if (tolerant.length === 2) return tolerant;
     }
-    return wrapSubtitleLines(text, maxChars, prefixLength);
+    return wrapSubtitleLinesBalanced(text, maxChars + 6, prefixLength);
 }
 
 // Păstrează o ruptură după o propoziție completă atunci când ambele fragmente
@@ -3423,7 +3521,9 @@ const ROMANIAN_CONTINUATION_INITIAL_WORDS = new Set((`
     n-am n-ai n-a n-ați n-au n-ar n-aveam n-aveai n-avea n-aveați n-aveau
     m-am m-ai m-a mi-am mi-ai mi-a mi-ați mi-au
     i-am i-ai i-a i-ați i-au ți-am ți-ai ți-a ți-ați ți-au
-    s-a s-au s-ar s-ar fi
+    s-a s-au s-ar n-am n-ai n-a n-au n-ar n-aveam n-aveai n-avea n-aveați n-aveau
+    mi-am mi-ai mi-a mi-ați mi-au ți-am ți-ai ți-a ți-ați ți-au
+    i-am i-ai i-a i-ați i-au l-am l-ai l-a l-au ne-am te-am v-am le-am m-am
     acest această acești aceste acestea asta astfel
     diagnostică importantă important mai foarte tot toate toți toată
     lucrurile acum atunci deja doar încă prea aproape bine își tu
@@ -3564,13 +3664,13 @@ function formatSubtitleLayout(value) {
     // La dialog dublu fiecare vorbitor își păstrează liniuța; dacă o replică
     // este lungă, continuarea ei trece pe rânduri suplimentare fără a repeta liniuța.
     if (entries.length === 2 && entries.every(entry => entry.dialogue)) {
-        return entries.flatMap(entry => wrapEntry(entry, false)).join('\n') || ' ';
+        return entries.flatMap(entry => wrapEntry(entry)).join('\n') || ' ';
     }
 
     // Pentru intrări mixte păstrăm ordinea și markerii expliciți ai vorbitorilor;
     // formatterul aplică doar word-wrap, nu decide majusculele.
     if (entries.length === 2 && entries.some(entry => entry.dialogue)) {
-        return entries.flatMap(entry => wrapEntry(entry, false)).join('\n') || ' ';
+        return entries.flatMap(entry => wrapEntry(entry)).join('\n') || ' ';
     }
 
     if (entries.length === 2 && entries.every(entry => !entry.dialogue)) {
@@ -4290,7 +4390,8 @@ function applyFinalSubtitleCapitalization(sourceText, translatedText, englishNam
         sourceText, translatedText, englishNames, previousSourceText, previousTranslatedText
     );
     const lineSynchronized = synchronizeInCueLineCapitalization(sourceSynchronized, englishNames);
-    return capitalizeRomanianSentenceStarts(lineSynchronized);
+    const cliticNormalized = lowercaseRomanianMidSentenceClitics(lineSynchronized, englishNames);
+    return capitalizeRomanianSentenceStarts(cliticNormalized);
 }
 
 // ============================================================
@@ -4343,7 +4444,7 @@ ROMANIAN ACCURACY RULES
 - Before returning, re-read each line aloud in your head: if a native speaker would not say it, rewrite it more simply and naturally while keeping the full meaning.
 
 SUBTITLE FORMATTING
-- Keep each visible line at or below 42 characters whenever the wording allows. Use no more than TWO text lines per subtitle block unless needed to preserve more than two explicitly marked source speaker turns; never merge distinct speaker turns just to force two lines.
+- Keep each visible line near 42 characters; allow up to 48 only when this produces a cleaner layout. Prefer at most TWO text lines when the complete cue fits in two lines of up to 48 characters. If it is genuinely longer, preserve every word and use the minimum number of additional lines needed (typically 3 for 97–144 characters when natural word boundaries allow it; otherwise add only the minimum necessary), balanced in length and split at natural phrase boundaries. Never squeeze a very long cue into two overlong lines, drop text, or break words. Never merge distinct speaker turns just to force two lines.
 - Prefer a balanced two-line layout. Avoid leaving only one or two short words on the second line when a natural alternative exists.
 - If two ordinary visual lines fit together within 42 characters, merge them into one line unless a meaningful sentence/dialogue boundary should remain.
 - Split at natural phrase boundaries, not arbitrary points. Avoid separating a Romanian preposition, article, or short function word from the phrase it belongs to; if necessary, rephrase concisely without losing meaning.
@@ -8560,6 +8661,37 @@ function hasRomanianBoundaryContinuation(previousTranslatedText, currentTranslat
     return ROMANIAN_ELLIPSIS_CONTINUATION_INITIAL_WORDS.has(firstWord);
 }
 
+// Forme verbale românești cu pronume/clitic legat prin cratimă. Dacă apar
+// cu majusculă în mijlocul aceleiași propoziții (inclusiv după nume proprii),
+// inițiala se coboară. La început de rând/cue sau după punctuație terminală,
+// capitalizarea este lăsată mecanismului contextual unic.
+const ROMANIAN_MID_SENTENCE_CLITIC_FORMS = new Set((`
+    s-a s-au s-ar s-ar fi n-am n-ai n-a n-au n-ați n-ar n-aveam n-aveai n-avea n-aveați n-aveau
+    mi-am mi-ai mi-a mi-ați mi-au ți-am ți-ai ți-a ți-ați ți-au
+    i-am i-ai i-a i-ați i-au l-am l-ai l-a l-au ne-am te-am v-am le-am m-am
+`).trim().toLocaleLowerCase('ro-RO').split(/\s+/u));
+
+function lowercaseRomanianMidSentenceClitics(value, englishNames = new Set()) {
+    const text = String(value ?? '');
+    if (!text) return text;
+    return text.replace(/(?<![\p{L}\p{N}_])([A-ZĂÂÎȘȚ][a-zăâîșț]*(?:-[a-zăâîșț]+)+)(?![\p{L}\p{N}_])/gu,
+        (match, token, offset, whole) => {
+            const normalized = token.toLocaleLowerCase('ro-RO');
+            if (!ROMANIAN_MID_SENTENCE_CLITIC_FORMS.has(normalized)) return match;
+            if (englishNames.has(nameKey(normalized))) return match;
+            const beforeRaw = whole.slice(0, offset);
+            if (beforeRaw.lastIndexOf('<') > beforeRaw.lastIndexOf('>')) return match;
+            const before = beforeRaw.replace(/<[^>]*>/g, '').trimEnd();
+            if (!/[\p{L}\p{N}]/u.test(before)) return match;
+            if (/[.!?]["”»')\]]*$/u.test(before)) return match;
+            const currentLinePrefix = before.slice(before.lastIndexOf('\n') + 1);
+            // O tură nouă de vorbitor începe cu majusculă chiar dacă rândul
+            // precedent continuă sintactic; nu coborâm după marcatorul de dialog.
+            if (/(?:^|\s)[-–—]\s*$/u.test(currentLinePrefix)) return match;
+            return token[0].toLocaleLowerCase('ro-RO') + token.slice(1);
+        });
+}
+
 // ============================================================
 // NORMALIZARE CONSERVATOARE A MAJUSCULELOR ÎN MIJLOCUL FRAZEI
 // Corectează doar cuvinte românești uzuale dintr-o listă explicită, când apar
@@ -8713,9 +8845,10 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
         const rawOriginal = String(translatedById[id] || '');
         if (!rawOriginal.trim()) continue;
         const phraseNormalization = normalizeRomanianGenericPhraseCapitalization(rawOriginal);
-        const original = phraseNormalization.text;
+        const cliticNormalized = lowercaseRomanianMidSentenceClitics(phraseNormalization.text, englishNames);
+        const original = cliticNormalized;
 
-        let localChanges = 0;
+        let localChanges = cliticNormalized !== phraseNormalization.text ? 1 : 0;
         const normalized = original.replace(/(?<![\p{L}\p{N}_])([A-ZĂÂÎȘȚ][a-zăâîșț]+)(?![\p{L}\p{N}_])/gu,
             (wholeWord, _first, offset) => {
                 // Nu procesăm atribute sau nume de tag HTML.
