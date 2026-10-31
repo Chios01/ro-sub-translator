@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.133',
+    version: '13.2.134',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1962,6 +1962,9 @@ function isCompoundSoundCueLabel(text) {
 // între engleză și română. Sunt expresii complete, nu căutări de cuvinte în dialog.
 // Aceeași clasificare este folosită înainte de Gemini și pentru markup-ul dintre paranteze.
 const SOUND_CUE_ADDITIONAL_CAPTION_PATTERNS = [
+    // Caption SDH compus: muzica și acțiunea continuă. Se aplică numai ca etichetă/cue delimitat,
+    // nu ca filtru de text liber, pentru a nu șterge dialogul care menționează muzica sau acțiunea.
+    /^(?:(?:the\s+)?music\s+and\s+action\s+(?:continues?|continuing|in\s+progress|ongoing)|muzic[ăa]\s+și\s+acțiun(?:e|ea)\s+(?:continuă|în\s+desfășurare|în\s+curs|în\s+derulare))[.!…]*$/iu,
     /^(?:thunder(?:\s+(?:cracks?|roll(?:s|ed|ing)))?|thunderclaps?|rain\s+fall(?:s|ed|ing)?|wind\s+howl(?:s|ed|ing)?|storm\s+(?:rumbles?|roars?)|tunet(?:e|ul)?|fulger(?:e)?|urlete?(?:\s+în\s+depărtare)?|strigăte(?:\s+furioase)?|huiduieli|discuții\s+neclare|conversații\s+neclare|voci\s+neclare|gemete(?:\s+de\s+durere)?(?:\s*,\s*(?:gâfâit(?:uri)?|huiduieli))?)[.!…]*$/iu,
     /^(?:(?:[\p{Lu}][\p{L}\p{M}'’.-]{1,24})\s+)?(?:sighs?|sighing|laughs?|laughing|groans?|groaning|grunts?|grunting|gasps?|gasping|sobs?|sobbing|exhales?|exhaling|inhales?|inhaling|suspina|suspină|suspinând|oftează|ofteaza|râde|râzând|geme|gemând|gâfâie|gâfâind|sforăie|șuieră)(?:\s+(?:deeply|nervously|sharply|softly|heavily|loudly|quietly|deep|nervous|adânc|nervos|nervoasă|puternic|încet|brusc|scurt))?[.!…]*$/iu,
     /^(?:the\s+)?pounding\s+(?:the\s+)?floor\s+with\s+(?:a\s+)?cane[.!…]*$/iu,
