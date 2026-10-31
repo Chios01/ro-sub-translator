@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.137',
+    version: '13.2.138',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1851,7 +1851,7 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const MEANINGFUL_STANDALONE_REACTIONS = new Set((
-    'aw aww awww ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh-oh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr mhm mm mmhmm mm-hmm mmm-hmm yeah yep yup ya nah nope huh'
+    'aw aww awww ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh uh-oh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr mhm mm mmhmm mm-hmm mmm-hmm yeah yep yup ya nah nope huh'
 ).split(/\s+/));
 
 const STANDALONE_SOURCE_FILLERS = new Set((
@@ -2185,6 +2185,9 @@ function isObviousBracketedNonDialogueCue(value, openChar, prefix, suffix) {
     const text = String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     if (!text || text.length > 180) return false;
     if (/^(?:scuipă|scuipând|scuipat|scuipată|scuipate)[.!…]*$/iu.test(text)) return true;
+    // Nota muzicală în interiorul unui tag delimitat marchează cue-ul/versul ca non-dialog.
+    // Verificăm înainte de mascarea tokenurilor muzicale, ca să nu rămână titlul citat.
+    if (/[♪♫♬♩🎵🎶]/u.test(text)) return true;
     if (isClearBracketedAudioDescription(text) || isMusicPerformanceCue(text) || isRomanianMechanicalSoundCaption(text) || isAdditionalSoundCueCaption(text) || isStandaloneNonDialogueSoundCue(text) || isExtendedSoundCueLabel(text) || isCompoundSoundCueLabel(text)) return true;
 
     // Indicație vizuală SDH întâlnită în subtitrarea verificată; o eliminăm numai
@@ -2495,7 +2498,11 @@ function stripLeadingBracketedMarkup(value) {
                 if (closingTag.test(tail)) tail = tail.replace(closingTag, '');
                 else prefix += '<' + match[2] + '>';
             }
-            line = prefix + tail.replace(/^[ \t]+/, '');
+            const cleanedTail = tail.replace(/^[ \t]+/, '');
+            const dialoguePrefix = /^[-–—]$/.test(prefix.trim());
+            line = dialoguePrefix && cleanedTail
+                ? prefix.trimEnd() + ' ' + cleanedTail
+                : prefix + cleanedTail;
             removedCount++;
         }
         return line;
@@ -2541,9 +2548,22 @@ function stripNonDialogueSoundMarkup(value, options = {}) {
             !isDialogueDashLine &&
             /\p{Lu}/u.test(body) &&
             /^\p{Lu}[\p{Lu}\p{N} .,'’!?…-]*$/u.test(body);
-        const spokenCommand = /^(?:scream|laugh|whistle|sing)[.!…]*$/iu.test(body);
+        const spokenCommand = /^(?:scream|laugh|whistle|sing|spit)[.!…]*$/iu.test(body);
+        const bodyWords = body.match(/[\p{L}\p{N}]+/gu) || [];
+        const structuredMultilineCaption = lines.length > 1 &&
+            !isDialogueDashLine &&
+            !/^(?:i|you|we|they)\b/iu.test(body) &&
+            !/[;:?,'“”]/u.test(body) &&
+            bodyWords.length >= 2 &&
+            bodyWords.length <= 7 &&
+            !spokenCommand &&
+            isStandaloneNonDialogueSoundCue(body);
 
-        if (lines.length > 1 && !isDialogueDashLine && !(uppercaseCaption && !spokenCommand)) return line;
+        // O linie marcată explicit ca replică nu este ștearsă de filtrul de cue-uri.
+        // Protejează inclusiv replicile de un singur cuvânt (ex. „- Swallowing?”).
+        if (isDialogueDashLine) return line;
+        if (lines.length > 1 &&
+            !(uppercaseCaption && !spokenCommand) && !structuredMultilineCaption) return line;
         if (!isStandaloneNonDialogueSoundCue(line)) return line;
         removedCount++;
         return '';
@@ -2801,7 +2821,9 @@ function cleanTextForJson(text) {
 
     // Eliminăm replicile alcătuite exclusiv din interjecții, inclusiv secvențe
     // precum „Um... hmm.”. Expresiile cu sens, de ex. „Oh my God”, rămân.
-    let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
+    let lines = clean.split('\n').map(l => l.trim()).filter(Boolean).filter(line => {
+        return !isOnlyStandaloneFillerSequence(line);
+    });
     clean = lines.join('\n');
     clean = applyRomanianOrthographyRepairs(clean);
 
@@ -3007,8 +3029,9 @@ function stripContextualDisposableInterjections(value) {
         let body = marker ? cleanedLine.slice(prefix.length).trim() : cleanedLine;
         if (!body) return '';
 
-        // Vocalizările care ocupă singure rândul sunt eliminate o singură dată
-        // în stripAllInterjections(), după curățarea contextuală.
+        // Restaurăm verificarea v117 pentru un rând alcătuit exclusiv din vocalizări.
+        // Repetarea este intenționată: acest filtru rulează înaintea normalizării contextuale.
+        if (isOnlyStandaloneFillerSequence(body)) return '';
 
         // Începutul: „Um, nu știu.” -> „Nu știu.”
         for (let i = 0; i < 5; i++) {
@@ -4219,7 +4242,7 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
     const sourceIndexById = getTranslationSourceIndexById(allItems);
     // Toate item-urile și contextul provin din parseSrt, unde filtrarea sursei
     // a fost deja executată. Nu refacem filtrele la fiecare construire de prompt.
-    const hideTagsFromAI = value => String(value || '').trim();
+    const hideTagsFromAI = value => stripNonDialogueSoundMarkup(value).text.trim();
     const keysToTranslate = chunk.map(obj => {
         const absoluteIndex = sourceIndexById.get(String(obj.id));
         const previous = Number.isInteger(absoluteIndex) ? allItems[absoluteIndex - 1] : null;
@@ -6185,7 +6208,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
         const batchFixedBefore = fixed;
         // Grammar Review primește aceleași item-uri deja filtrate de parseSrt.
         // Nu reexecutăm filtrele SDH pentru fiecare batch de verificare.
-        const hideTagsFromAI = value => String(value || '').trim();
+        const hideTagsFromAI = value => stripNonDialogueSoundMarkup(value).text.trim();
 
         const payload = batch.map(item => {
             const index = getFastItemIndex(contextItems, item.id);
@@ -10774,6 +10797,24 @@ function parseSrt(srt, stats = null) {
             continue;
         }
 
+        // Eliminăm întâi cue-urile delimitate care conțin note muzicale.
+        // Dacă mascăm întâi „♪ Artist:” ca token, poate rămâne în afara tokenului
+        // sufixul / „Titlu melodie”, care ar ajunge accidental la Gemini.
+        // Filtrul păstrează dialogul din afara parantezelor și tastele protejate precum [Enter].
+        const preMusicMarkup = stripNonDialogueSoundMarkup(rawText, { skipMultilineTags: true });
+        rawText = preMusicMarkup.text;
+        if (stats && preMusicMarkup.removedCount) {
+            stats.nonDialogueSegmentsRemoved += preMusicMarkup.removedCount;
+        }
+        if (!rawText.trim() && preMusicMarkup.removedCount) {
+            if (stats) stats.nonDialogueBlocksFiltered++;
+            continue;
+        }
+        if (isEffectivelyEmptySubtitleText(rawText)) {
+            if (stats) stats.otherBlocksFiltered++;
+            continue;
+        }
+
         // Mascăm mai întâi versurile explicit încadrate de note muzicale, pentru ca
         // filtrele de paranteze/interjecții și curățarea markerelor ♪ să nu le altereze.
         // Replică aflată în interiorul unui cântec deschis cu „♪” și închis mai târziu cu „♪”:
@@ -10802,15 +10843,29 @@ function parseSrt(srt, stats = null) {
             continue;
         }
 
+        // Plasă de siguranță restaurată din v117: vocalizările stabilite explicit
+        // sunt eliminate din SURSA EN înainte de curățarea JSON și înainte de Gemini.
+        // Funcția este idempotentă; cleanTextForJson o mai verifică și ea, fără a
+        // reactiva vocalizări sau a le recupera ulterior.
+        const rawBeforeVocalizationFilter = rawText;
+        rawText = stripSpecifiedVocalizations(rawText);
+        if (rawText !== rawBeforeVocalizationFilter &&
+            (!rawText.trim() || isEffectivelyEmptySubtitleText(rawText) ||
+             !/[\p{L}\p{N}]/u.test(rawText.replace(/<[^>]*>/g, ' ')))) {
+            if (stats) stats.fillerBlocksFiltered++;
+            continue;
+        }
+        if (isEffectivelyEmptySubtitleText(rawText)) {
+            if (stats) stats.otherBlocksFiltered++;
+            continue;
+        }
+
         // Clasificăm pentru statistici înainte de curățare. Eliminarea efectivă a
         // vocalizărilor/interjecțiilor are loc o singură dată în cleanTextForJson.
         const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(rawText);
         let text = cleanTextForJson(rawText);
-        // Replică originală cu doi vorbitori din care a rămas unul singur (celălalt era „Uh...”,
-        // „Oh.” etc.): liniuța de dialog nu mai are rost.
-        if (lines.length > 3 && text && !text.includes('\n') && /^[-–—]\s+\S/.test(text)) {
-            text = text.replace(/^[-–—]\s+/, '');
-        }
+        // Păstrăm liniuțele de dialog existente în sursă, inclusiv când o altă
+        // replică/vocalizare din același cue a fost eliminată de filtre.
 
         if (!text || text === ' ' || isEffectivelyEmptySubtitleText(text)) {
             if (stats) {
@@ -10834,9 +10889,23 @@ function parseSrt(srt, stats = null) {
             }
 
             const lyricsRemoved = removeProtectedMusicTokens(text, { musicSegments: protectedMusic.segments });
+            // Restaurăm curățarea completă din v117 după eliminarea tokenurilor muzicale.
+            // Tokenurile versurilor au fost deja șterse ireversibil; cleanTextForJson
+            // curăță acum doar textul dialogat rămas și vocalizările explicit filtrate.
             text = lyricsRemoved.removedCount
-                ? normalizeSourceAfterMusicRemoval(lyricsRemoved.text)
+                ? cleanTextForJson(lyricsRemoved.text)
                 : lyricsRemoved.text.trim();
+
+            // După eliminarea versurilor, refacem filtrarea SDH asupra textului rămas.
+            // Astfel, un cue sonor lipit de un segment muzical nu poate fi transmis
+            // accidental lui Gemini doar pentru că înainte era într-un bloc mixt.
+            if (lyricsRemoved.removedCount && text) {
+                const postMusicSoundFilter = stripNonDialogueSoundMarkup(text);
+                text = postMusicSoundFilter.text;
+                if (stats && postMusicSoundFilter.removedCount) {
+                    stats.nonDialogueSegmentsRemoved += postMusicSoundFilter.removedCount;
+                }
+            }
 
             // Dacă un bloc mixt conținea numai versuri plus marcatori/separatori
             // de vorbitor, nu păstrăm un cue gol de forma „- / -”.
@@ -10850,8 +10919,12 @@ function parseSrt(srt, stats = null) {
         // Doar textul de dialog rămas poate ajunge la Gemini, Empty Recovery,
         // Grammar Review sau QA; segmentele muzicale au fost deja eliminate.
         const normalizedSoundOnly = isStandaloneNonDialogueSoundCue(text);
-        if (normalizedSoundOnly) {
-            if (stats) stats.nonDialogueBlocksFiltered++;
+        const normalizedFillerOnly = isOnlyStandaloneFillerSequence(text);
+        if (normalizedSoundOnly || normalizedFillerOnly) {
+            if (stats) {
+                if (normalizedSoundOnly) stats.nonDialogueBlocksFiltered++;
+                else stats.fillerBlocksFiltered++;
+            }
             continue;
         }
 
