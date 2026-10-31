@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.144',
+    version: '13.2.145',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3207,6 +3207,18 @@ function deepCleanSubtitleText(text, options = {}) {
     if (applyContentFilters) cleaned = stripAllInterjections(cleaned);
 
     return cleaned;
+}
+
+// Curățare finală pentru traduceri deja validate ca dialog.
+// Filtrele lexicale de vocalizări se aplică pe sursa originală înainte de Gemini,
+// nu pe textul românesc: un cuvânt precum „Uh”, „Mhm” sau „Aha” poate fi o replică
+// rostită legitim și nu trebuie ștearsă după recuperarea traducerii.
+// Păstrăm separat eliminarea etichetelor de vorbitor și normalizarea tehnică.
+function cleanTranslatedSubtitleForFinalOutput(value) {
+    const source = String(value || '');
+    if (!source.trim()) return '';
+    const withoutSpeakerLabels = stripSpeakerNameLabels(source);
+    return String(deepCleanSubtitleText(withoutSpeakerLabels, { applyContentFilters: false }) || '').trim();
 }
 
 function applyDeterministicSemanticFix(original, translation) {
@@ -9473,9 +9485,12 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         console.log(`${c.cyan}[Filtru paranteze/cue-uri] Eliminate ${finalBracketedOrCueSegmentsRemoved} segmente delimitate sau cue-uri sonore din traducerile finale.${c.reset}`);
     }
 
-    // Curățare finală unică a conținutului tradus. Formatările intermediare au
-    // făcut numai normalizare/layout; abia acum, după ultima intervenție AI,
-    // eliminăm vocalizările, interjecțiile și etichetele rămase sau reintroduse.
+    // Curățare tehnică finală pentru traducerile deja validate ca dialog.
+    // Nu reaplicăm pe română filtrele lexicale de vocalizări construite pentru
+    // sursa engleză: acestea puteau șterge replici recuperate precum „Uh...”,
+    // „Mhm.” sau „Aha!” și apoi QA bloca salvarea/cache-ul rezultatului.
+    // Sunetele/versurile sunt eliminate pe baza sursei înainte de Gemini;
+    // aici păstrăm doar normalizarea sigură și eliminarea etichetelor de vorbitor.
     let finalContentFilterChanged = 0;
     let finalContentFilterEmptied = 0;
     for (const item of items) {
@@ -9483,13 +9498,13 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         if (suppressedSourceSoundCueIds.has(id) || item.musicOnly) continue;
         const current = String(translatedById[id] || '');
         if (!current.trim()) continue;
-        const filtered = String(deepCleanSubtitleText(current) || '').trim();
+        const filtered = cleanTranslatedSubtitleForFinalOutput(current);
         if (filtered !== current.trim()) finalContentFilterChanged++;
         translatedById[id] = filtered;
         if (!filtered) finalContentFilterEmptied++;
     }
-    if (finalContentFilterChanged) {
-        console.log(`${c.cyan}[Filtru final conținut] O singură trecere după ultima revizie: ${finalContentFilterChanged} replici modificate${finalContentFilterEmptied ? `, dintre care ${finalContentFilterEmptied} au rămas goale și vor fi raportate de QA` : ''}.${c.reset}`);
+    if (finalContentFilterChanged || finalContentFilterEmptied) {
+        console.log(`${c.cyan}[Curățare finală sigură] ${finalContentFilterChanged} replici normalizate${finalContentFilterEmptied ? `; ${finalContentFilterEmptied} au rămas goale și vor fi raportate de QA` : ''}. Filtrele de vocalizări nu se aplică din nou pe traducerea românească.${c.reset}`);
     }
 
     // Corectare locală conservatoare a majusculelor după toate reviziile AI și
