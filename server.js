@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.142',
+    version: '13.2.143',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4106,9 +4106,17 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
         if (previousSource) {
             const token = sourceInitial.token.replace(/[^\p{L}'’-]+$/u, '').toLocaleLowerCase('en-US');
             const isRecognizedName = englishNames.has(nameKey(token));
+            const previousSourceWithoutClosingMarks = previousSource.replace(/["'’”»)}\]]+$/u, '');
+            const previousSourceEndsWithEllipsis = /(?:\.{3,}|…)$/u.test(previousSourceWithoutClosingMarks);
             if (endsWithSubtitleSentencePunctuation(previousSource)) {
                 directive = 'upper';
                 previousSourceConfirmsSentenceEnd = true;
+            } else if (!isRecognizedName && previousSourceEndsWithEllipsis &&
+                ENGLISH_ELLIPSIS_CONTINUATION_INITIAL_WORDS.has(token)) {
+                // Ex.: „...the mustard stains” / „And these other stains”.
+                // Majuscula obligatorie a conectorului în engleză nu trebuie să
+                // transforme continuarea românească într-o propoziție nouă.
+                directive = 'lower';
             } else if (!isRecognizedName && endsWithStrongSourceContinuationMarker(previousSource)) {
                 // Inclusiv „I”/„I'd”: majuscula obligatorie în engleză nu se
                 // transferă automat în română când cue-ul continuă o frază.
@@ -4183,10 +4191,30 @@ function synchronizeTerminalQuestionExclamation(sourceText, translatedText) {
 // elimină semne de punctuație și nu unește rândurile; normalizează doar spațiile
 // din jurul virgulei, punctului și virgulei, două puncte, ? și !. Punctul nu
 // primește spațiu automat după el, pentru a proteja abrevierile, inițialele și URL-urile.
+// Cuvinte funcționale scurte care pot fi despărțite accidental de Gemini
+// printr-o elipsă în interiorul aceluiași cuvânt („m...ă”). Lista este lexicală,
+// nu legată de episoade; nu unim fragmente necunoscute, pentru a nu inventa text.
+const ROMANIAN_SHORT_WORDS_SPLIT_BY_ELLIPSIS = new Set((`
+    mă să că și de pe la cu în un eu tu el ea ei se ne vă te îl îi le mi ți
+    ai am au nu da ce or
+`).trim().toLocaleLowerCase('ro-RO').split(/\s+/u));
+
 function normalizeRomanianPunctuationSpacing(value) {
     return String(value ?? '').replace(/\r/g, '').split('\n').map(line => {
         let normalized = line
             .replace(/[ \t]+([,;:.!?])/gu, '$1')
+            // Dacă o literă izolată este despărțită de elipsă, unim numai când
+            // rezultatul este un cuvânt funcțional românesc cunoscut („m...ă”).
+            .replace(/(^|[^\p{L}\p{N}_])([\p{L}])((?:\.{3,}|…))([\p{L}])(?=$|[^\p{L}\p{N}_])/gu,
+                (match, prefix, left, ellipsis, right) => {
+                    const joined = (left + right).toLocaleLowerCase('ro-RO');
+                    return ROMANIAN_SHORT_WORDS_SPLIT_BY_ELLIPSIS.has(joined)
+                        ? prefix + left + right
+                        : prefix + left + ellipsis + ' ' + right;
+                })
+            // O elipsă urmată imediat de alt cuvânt trebuie separată prin spațiu.
+            // Păstrăm forma originală a elipsei (… sau ...), inclusiv ghilimelele.
+            .replace(/((?:\.{3,}|…)["”»’']*)(?=[\p{L}\p{N}])/gu, '$1 ')
             .replace(/([,;:!?])(?=[\p{L}])/gu, '$1 ')
             .replace(/[ \t]{2,}/gu, ' ');
         return normalized;
@@ -8446,6 +8474,15 @@ const ENGLISH_STRONG_CONTINUATION_ENDINGS = new Set((`
     exact same only another other first second third last next additional
     is are was were be been being have has had do does did can could
     will would should must might may shall
+`).trim().toLowerCase().split(/\s+/));
+
+// Un cue anterior care se termină cu elipsă poate lăsa fraza deschisă chiar
+// dacă următorul cue începe cu majusculă în engleză. Conectorii de mai jos
+// sunt tratați ca semnal de continuare numai în această situație; nu sunt
+// coborâte automat începuturile de propoziție după punct, ? sau !.
+const ENGLISH_ELLIPSIS_CONTINUATION_INITIAL_WORDS = new Set((`
+    and or but nor yet because if which who whom whose when where while
+    though although since unless until as than that
 `).trim().toLowerCase().split(/\s+/));
 
 function endsWithStrongSourceContinuationMarker(value) {
