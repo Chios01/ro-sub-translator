@@ -3938,18 +3938,37 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
 
     const locateInitial = (line, stripSpeakerLabels) => {
         let index = 0;
-        while (index < line.length && /\s/u.test(line[index])) index++;
+        const skipWhitespace = () => {
+            while (index < line.length && /\s/u.test(line[index])) index++;
+        };
+
+        skipWhitespace();
         if (/^[-–—]+/u.test(line.slice(index))) {
             while (index < line.length && /[-–—\s]/u.test(line[index])) index++;
         }
-        if (stripSpeakerLabels) {
-            while (line[index] === '[') {
+
+        // Etichetele de vorbitor și tagurile HTML de formatare pot fi consecutive
+        // la începutul sursei: „[Reacher] <i>who...”. Le sărim doar pentru
+        // identificarea inițialei; nu modificăm și nu eliminăm markup-ul din text.
+        let skippedLeadingMarkup = true;
+        while (skippedLeadingMarkup) {
+            skippedLeadingMarkup = false;
+            skipWhitespace();
+            if (stripSpeakerLabels && line[index] === '[') {
                 const close = line.indexOf(']', index + 1);
-                if (close < 0) break;
-                index = close + 1;
-                while (index < line.length && /\s/u.test(line[index])) index++;
+                if (close >= 0) {
+                    index = close + 1;
+                    skippedLeadingMarkup = true;
+                    continue;
+                }
+            }
+            const tagMatch = line.slice(index).match(/^<\/?[A-Za-z][^>]*>/u);
+            if (tagMatch) {
+                index += tagMatch[0].length;
+                skippedLeadingMarkup = true;
             }
         }
+
         while (index < line.length && ` \t.…,;:!?\"“„”‘’'(){}¿¡`.includes(line[index])) index++;
         while (line[index] === '[' || line[index] === ']') index++;
         if (index >= line.length || !/\p{L}/u.test(line[index])) return null;
