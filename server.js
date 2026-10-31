@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.134',
+    version: '13.2.135',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1966,7 +1966,7 @@ const SOUND_CUE_ADDITIONAL_CAPTION_PATTERNS = [
     // nu ca filtru de text liber, pentru a nu șterge dialogul care menționează muzica sau acțiunea.
     /^(?:(?:the\s+)?music\s+and\s+action\s+(?:continues?|continuing|in\s+progress|ongoing)|muzic[ăa]\s+și\s+acțiun(?:e|ea)\s+(?:continuă|în\s+desfășurare|în\s+curs|în\s+derulare))[.!…]*$/iu,
     /^(?:thunder(?:\s+(?:cracks?|roll(?:s|ed|ing)))?|thunderclaps?|rain\s+fall(?:s|ed|ing)?|wind\s+howl(?:s|ed|ing)?|storm\s+(?:rumbles?|roars?)|tunet(?:e|ul)?|fulger(?:e)?|urlete?(?:\s+în\s+depărtare)?|strigăte(?:\s+furioase)?|huiduieli|discuții\s+neclare|conversații\s+neclare|voci\s+neclare|gemete(?:\s+de\s+durere)?(?:\s*,\s*(?:gâfâit(?:uri)?|huiduieli))?)[.!…]*$/iu,
-    /^(?:(?:[\p{Lu}][\p{L}\p{M}'’.-]{1,24})\s+)?(?:sighs?|sighing|laughs?|laughing|groans?|groaning|grunts?|grunting|gasps?|gasping|sobs?|sobbing|exhales?|exhaling|inhales?|inhaling|suspina|suspină|suspinând|oftează|ofteaza|râde|râzând|geme|gemând|gâfâie|gâfâind|sforăie|șuieră)(?:\s+(?:deeply|nervously|sharply|softly|heavily|loudly|quietly|deep|nervous|adânc|nervos|nervoasă|puternic|încet|brusc|scurt))?[.!…]*$/iu,
+    /^(?:(?:[\p{Lu}][\p{L}\p{M}'’.-]{1,24})\s+)?(?:sighs?|sighing|laughs?|laughing|chuckles?|chuckling|giggles?|giggling|snickers?|snickering|groans?|groaning|grunts?|grunting|gasps?|gasping|sobs?|sobbing|exhales?|exhaling|inhales?|inhaling|suspina|suspină|suspinând|oftează|ofteaza|râde|râzând|chicotește|chicotind|geme|gemând|gâfâie|gâfâind|sforăie|șuieră)(?:\s+(?:deeply|nervously|sharply|softly|heavily|loudly|quietly|gently|lightly|subtly|deep|nervous|adânc|nervos|nervoasă|puternic|încet|ușor|discret|discretă|înfundat|brusc|scurt))?[.!…]*$/iu,
     /^(?:the\s+)?pounding\s+(?:the\s+)?floor\s+with\s+(?:a\s+)?cane[.!…]*$/iu,
     /^(?:(?:the\s+)?group\s+(?:(?:resumes?|starts?|continues?)\s+)?chanting|chanting(?:\s+(?:continues?|stops?))?|group\s+chanting\s+(?:continues?|stops?))[.!…]*$/iu,
     /^(?:the\s+)?engine\s+purr(?:s|ed|ing)?[.!…]*$/iu,
@@ -2022,7 +2022,7 @@ function isGenericUppercaseSoundCaption(text, words) {
     return hasAcousticNoun || (hasSoundSource && hasSoundVerb) || (hasSoundSource && hasMediaPlayback) || hasSourceEvent;
 }
 
-const SOUND_CUE_LABEL_RE = /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|background|gentle|heavy|slight|small|short|brief|off-screen|în fundal|încet|încetișor|tare|ușor|scurt|scurtă|puternic|puternică|îndepărtat(?:ă|e)?|slab(?:ă|e)?)\s+)*(?:sound(?:s)?(?:\s+of)?|noise(?:s)?(?:\s+of)?|music(?:\s+(?:playing|continues|swells|fades|starts|stops|in background))?|applause|laughter|laugh(?:s|ing)?|footsteps?|knocking|banging|pounding|thudding|thumping|doorbell|ringing|beeping|buzzing|clicking|clattering|crashing|slamming|creaking|cough(?:ing|s)?|sigh(?:ing|s)?|gasp(?:ing|s)?|groan(?:ing|s)?|grunt(?:ing|s)?|snoring|heavy breathing|breathing heavily|breathing|whispering|singing|humming|babbling|murmuring|whimpering|growling|snorting|sniffing|sneezing|screaming|shouting|panting|chirping|howling|rustling|rattling|rumbling|whistling|clapping|shuffling|swallowing|gulping|squeaking|squealing|scraping|scratching|wind howling|birds? chirping|doorbell ringing|phone ringing|background music|bătaie(?:\s+în\s+ușă)?|bătăi(?:\s+în\s+ușă)?|gângurit(?:ul)?|mormăit(?:ul|uri)?|suspin(?:ând|e|uri)?|oftat(?:ul)?|râs(?:ul)?|râde|râzând|râsete|plâns(?:ul)?|plânge|plângând|plânsete|pași|aplauze|urale|tușit(?:ul)?|tușește|tușind|gâfâit(?:ul|uri)?|gâfâie|gâfâind|bufnet(?:ul|e)?|bufnește|bufnire|bufniri|pufnet(?:ul|e)?|pufnește|pufnire|foșnet(?:ul|e|uri)?|foșnește|fâșâit(?:ul|uri)?|fâșâie|trosnet(?:ul|e)?|trosnește|zgomot(?:e)?(?:\s+de\s+[^.!?]{1,60})?|sunet(?:e)?(?:\s+de\s+[^.!?]{1,60})?|șuieră|șuierând|șuierături|fluieră|fluierând|fluierături|geme|gemând|geamăt(?:e)?|gemete|horcăie|horcăit(?:ul|uri)?|sforăie|sforăit|adulmecă|fornăie|sughiță|sughițuri|fredonează|cântă\s+încet|face\s+fâ+|bate\s+din\s+palme|clopoțel|răpăit|zdrăngănit|vibrează|hârâit)(?:\s+(?:in the background|from outside|from inside|în fundal|se aude|continuă|încet|tare|ușor|puternic|loudly|softly))?[.!…]*$/iu;
+const SOUND_CUE_LABEL_RE = /^(?:(?:a|an|the|some|soft|loud|quiet|distant|faint|background|gentle|heavy|slight|small|short|brief|off-screen|în fundal|încet|încetișor|tare|ușor|scurt|scurtă|puternic|puternică|îndepărtat(?:ă|e)?|slab(?:ă|e)?)\s+)*(?:sound(?:s)?(?:\s+of)?|noise(?:s)?(?:\s+of)?|music(?:\s+(?:playing|continues|swells|fades|starts|stops|in background))?|applause|laughter|laugh(?:s|ing)?|chuckle(?:s|ing)?|giggl(?:e|es|ing)|snicker(?:s|ing)?|footsteps?|knocking|banging|pounding|thudding|thumping|doorbell|ringing|beeping|buzzing|clicking|clattering|crashing|slamming|creaking|cough(?:ing|s)?|sigh(?:ing|s)?|gasp(?:ing|s)?|groan(?:ing|s)?|grunt(?:ing|s)?|snoring|heavy breathing|breathing heavily|breathing|whispering|singing|humming|babbling|murmuring|whimpering|growling|snorting|sniffing|sneezing|screaming|shouting|panting|chirping|howling|rustling|rattling|rumbling|whistling|clapping|shuffling|swallowing|gulping|squeaking|squealing|scraping|scratching|wind howling|birds? chirping|doorbell ringing|phone ringing|background music|bătaie(?:\s+în\s+ușă)?|bătăi(?:\s+în\s+ușă)?|gângurit(?:ul)?|mormăit(?:ul|uri)?|suspin(?:ând|e|uri)?|oftat(?:ul)?|râs(?:ul)?|râde|râzând|râsete|plâns(?:ul)?|plânge|plângând|plânsete|pași|aplauze|urale|tușit(?:ul)?|tușește|tușind|gâfâit(?:ul|uri)?|gâfâie|gâfâind|bufnet(?:ul|e)?|bufnește|bufnire|bufniri|pufnet(?:ul|e)?|pufnește|pufnire|foșnet(?:ul|e|uri)?|foșnește|fâșâit(?:ul|uri)?|fâșâie|trosnet(?:ul|e)?|trosnește|zgomot(?:e)?(?:\s+de\s+[^.!?]{1,60})?|sunet(?:e)?(?:\s+de\s+[^.!?]{1,60})?|șuieră|șuierând|șuierături|fluieră|fluierând|fluierături|geme|gemând|geamăt(?:e)?|gemete|horcăie|horcăit(?:ul|uri)?|sforăie|sforăit|adulmecă|fornăie|sughiță|sughițuri|fredonează|cântă\s+încet|face\s+fâ+|bate\s+din\s+palme|clopoțel|răpăit|zdrăngănit|vibrează|hârâit)(?:\s+(?:in the background|from outside|from inside|în fundal|se aude|continuă|încet|tare|ușor|puternic|loudly|softly))?[.!…]*$/iu;
 
 function findBalancedBracketEnd(source, start) {
     const opening = new Map([['(', ')'], ['[', ']'], ['{', '}']]);
@@ -2117,6 +2117,11 @@ function isLikelyLeadingSpeakerLabel(inner, prefix, suffix) {
     if (/^(?:in|speaking in|spoken in|subtitled in|untranslated in)\s+[\p{L}-]+(?:\s+[\p{L}-]+){0,2}$/iu.test(clean)) return true;
     if (/^(?:text message|phone message|radio message|computer voice|voice[- ]over|off[- ]screen|on[- ]screen|on television|on tv|over the radio|telephone|radio|narrator|announcer|speaker|unknown speaker|unidentified voice|(?:man|woman|voice|speaker|announcer|narrator) over (?:the )?(?:P\.?A\.?|speakers?|radio|intercom|phone))$/iu.test(clean)) return true;
     if (/^(?:(?:dr|mr|mrs|ms|miss|prof|capt|captain|lt|sgt|officer|detective|agent|sir|lady)\.?)\s+[\p{L}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}][\p{L}\p{M}'’.-]*){0,2}$/iu.test(clean)) return true;
+
+    // Etichete cu nume de personaj + canal audio/video, inclusiv variantele
+    // traduse automat de sursă („[Duffy on phone]”, „[Duffy la telefon]”).
+    // Sunt eliminate numai la începutul rândului, când urmează replică.
+    if (/^(?:[\p{Lu}][\p{L}\p{M}'’.-]*(?:\s+[\p{Lu}][\p{L}\p{M}'’.-]*){0,2})\s+(?:(?:on|over|through|via|in)\s+(?:(?:the|a)\s+)?(?:phone|telephone|radio|tv|television|intercom|speakers?|speaker|P\.?A\.?|computer|screen|camera|call|line|message|text)|(?:la|pe|prin|în)\s+(?:telefon(?:ul)?|radio|televizor|televiziune|difuzor(?:ul|e|ele)?|interfon|ecran|apel|linie|mesaj|mesaje))$/u.test(clean)) return true;
 
     // Numele pot apărea și cu litere mici în surse SDH (ex. [ocasta]).
     if (/^[\p{L}][\p{L}\p{M}'’.-]{0,24}$/u.test(clean)) return true;
@@ -7005,171 +7010,6 @@ function findRepeatedTranslationIssues(items, translatedById) {
 // cue se termină cu o expresie lungă care reapare la începutul traducerii următorului,
 // deși originalul primului cue este neterminat. Semnalul nu mută și nu șterge text;
 // ambele ID-uri sunt trimise împreună la verificare contextuală.
-function findPossibleBoundaryOverlapIssues(items, translatedById) {
-    const issues = [];
-    const seenPairs = new Set();
-    const lowInformationWords = new Set([
-        'a', 'ai', 'al', 'ale', 'am', 'ar', 'are', 'as', 'au', 'avea', 'avem', 'aveți',
-        'ca', 'că', 'ce', 'cel', 'cea', 'cei', 'cele', 'cu', 'da', 'dar', 'de', 'din',
-        'e', 'ea', 'ei', 'el', 'ele', 'era', 'este', 'eu', 'fi', 'fie', 'la', 'le',
-        'lui', 'lor', 'mai', 'mă', 'mi', 'ne', 'nici', 'nu', 'o', 'pe', 'pentru',
-        'poate', 'pot', 'sa', 'să', 'se', 'și', 'sunt', 'te', 'tu', 'un', 'una', 'în'
-    ]);
-    const clean = value => String(value || '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\|/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-    const words = value => clean(value)
-        .normalize('NFC')
-        .toLocaleLowerCase('ro-RO')
-        .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
-    const sourceIsUnfinished = value => {
-        const text = clean(value);
-        if (!text) return false;
-        // Punctuația finală indică de regulă o propoziție completă; elipsele sau
-        // lipsa punctuației finale indică adesea că sursa continuă în cue-ul următor.
-        const endsWithEllipsis = /(?:\.{3}|…)\s*$/u.test(text);
-        const endsWithSentencePunctuation = /[.!?]["”’')\]]*\s*$/u.test(text);
-        return endsWithEllipsis || !endsWithSentencePunctuation;
-    };
-
-    // Dacă originalul englezesc repetă explicit aceeași secvență la limita
-    // dintre cue-uri, suprapunerea românească este susținută de sursă. Acceptăm
-    // și reluări ezitante înaintea secvenței complete, de tipul „Let's... let's...
-    // let's take a look at today”, nu doar potriviri de la primul cuvânt.
-    const hasSourceBoundaryRepeat = (firstSource, secondSource) => {
-        const sourceWords = value => clean(value)
-            .normalize('NFC')
-            .toLocaleLowerCase('en-US')
-            .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
-        const firstWords = sourceWords(firstSource);
-        const secondWords = sourceWords(secondSource);
-        if (firstWords.length < 3 || secondWords.length < 3) return false;
-
-        const sourceLowInformationWords = new Set([
-            'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'but', 'by',
-            'do', 'does', 'did', 'for', 'from', 'he', 'her', 'hers', 'him', 'his',
-            'i', 'if', 'in', 'is', 'it', "it's", 'its', 'me', 'my', 'of', 'on',
-            'or', 'our', 'she', 'that', 'the', 'their', 'them', 'there', 'these',
-            'they', 'this', 'those', 'to', 'us', 'was', 'we', 'were', 'what',
-            'when', 'where', 'which', 'who', 'will', 'with', 'you', 'your'
-        ]);
-        const maxLength = Math.min(8, firstWords.length, secondWords.length);
-        // Căutăm sufixul primului cue în primele cuvinte ale celui de-al doilea.
-        // Astfel, reluări precum „Let's... let's... let's take...” sunt recunoscute,
-        // fără a trata o expresie îndepărtată din replică drept dovadă de continuitate.
-        for (let length = maxLength; length >= 3; length--) {
-            const suffix = firstWords.slice(-length);
-            // Cel puțin un termen cu conținut trebuie să facă parte din suprapunere;
-            // evităm să suprimăm semnale pe baza unor formule doar gramaticale.
-            const informative = suffix.some(word => word.length >= 4 && !sourceLowInformationWords.has(word));
-            if (!informative) continue;
-
-            const maxStart = Math.min(8, secondWords.length - length);
-            for (let start = 0; start <= maxStart; start++) {
-                if (suffix.every((word, index) => word === secondWords[start + index])) return true;
-            }
-        }
-        return false;
-    };
-
-    // Evită alarmele false când aceeași expresie românească este justificată de
-    // același sens prezent în AMBELE originale consecutive (ex. „vreau să le știu”
-    // pentru „want to know” din ambele cue-uri). Cerem minimum două dovezi lexicale
-    // concordante în ambele originale; detectorul nu face o traducere automată.
-    const sourceGroundingPairs = [
-        { targetWords: ['vreau', 'vrei', 'vrea', 'vrem', 'vreți', 'vreti', 'vor', 'dorești', 'doresti', 'doresc', 'dorește', 'doreste', 'dorea', 'dorit'], source: /\b(?:want|wants|wanted|wish|wishes|wished|desire|desires|desired)\b/iu },
-        { targetWords: ['știu', 'stiu', 'știe', 'stie', 'știi', 'stii', 'știm', 'stim', 'știți', 'stiti', 'știam', 'stiam', 'știa', 'stia', 'știut', 'stiut', 'cunoaște', 'cunoaste', 'cunosc', 'cunoști', 'cunosti'], source: /\b(?:know|knows|knew|known|knowing)\b/iu },
-        { targetWords: ['lucru', 'lucruri', 'lucrurile'], source: /\bthings?\b/iu },
-        { targetWords: ['târziu', 'tarziu'], source: /\b(?:late|later)\b/iu },
-        { targetWords: ['prea'], source: /\btoo\b/iu },
-        { targetWords: ['nu'], source: /\b(?:no|not|never|don['’]?t|doesn['’]?t|didn['’]?t|isn['’]?t|aren['’]?t|wasn['’]?t|weren['’]?t|can['’]?t|cannot|won['’]?t|wouldn['’]?t)\b/iu },
-        { targetWords: ['ochi', 'ochii'], source: /\beyes?\b/iu },
-        { targetWords: ['drum', 'drumul'], source: /\broad\b/iu },
-        { targetWords: ['găsi', 'gasi', 'găsească', 'gaseasca', 'găsești', 'gasesti', 'găsim', 'gasim', 'găsit', 'gasit'], source: /\b(?:find|finds|found|finding)\b/iu },
-        { targetWords: ['lume', 'lumii'], source: /\bworld\b/iu },
-        { targetWords: ['telefon', 'telefonul'], source: /\bphone\b/iu },
-        { targetWords: ['strigi', 'strig', 'strige', 'țipi', 'tipi', 'țip', 'tip'], source: /\b(?:yell|yells|yelled|shout|shouts|shouted|scream|screams|screamed)\b/iu }
-    ];
-    const targetPhraseGroundedInBothSources = (phrase, firstSource, secondSource) => {
-        // `words()` deja tokeniza textul; setul evită limitele `\b` din JavaScript,
-        // care nu recunosc uniform toate literele românești cu diacritice.
-        const targetWords = new Set(words(phrase));
-        const first = clean(firstSource).normalize('NFC');
-        const second = clean(secondSource).normalize('NFC');
-        let groundedMeanings = 0;
-        for (const pair of sourceGroundingPairs) {
-            if (pair.targetWords.some(word => targetWords.has(word)) && pair.source.test(first) && pair.source.test(second)) {
-                groundedMeanings++;
-            }
-        }
-        return groundedMeanings >= 2;
-    };
-
-    for (let i = 0; i < items.length - 1; i++) {
-        const first = items[i];
-        const second = items[i + 1];
-        if (first.musicOnly || second.musicOnly || isJunkOrInterjection(first.text) || isJunkOrInterjection(second.text)) continue;
-
-        const firstId = String(first.id);
-        const secondId = String(second.id);
-        const firstNumericId = Number(first.sourceId ?? first.id);
-        const secondNumericId = Number(second.sourceId ?? second.id);
-        if (!Number.isFinite(firstNumericId) || !Number.isFinite(secondNumericId) ||
-            secondNumericId !== firstNumericId + 1) continue;
-
-        const firstSource = clean(first.text);
-        if (!sourceIsUnfinished(firstSource)) continue;
-
-        const firstTargetWords = words(translatedById[firstId]);
-        const secondTargetWords = words(translatedById[secondId]);
-        // Exigență conservatoare: cel puțin patru cuvinte consecutive la coada primului
-        // cue, regăsite aproape de începutul următorului cue, cu minimum două cuvinte
-        // semnificative. Nu alarmează pe conectori sau expresii foarte scurte.
-        if (firstTargetWords.length < 4 || secondTargetWords.length < 4) continue;
-
-        let match = null;
-        const maxLength = Math.min(8, firstTargetWords.length, secondTargetWords.length);
-        for (let length = maxLength; length >= 4 && !match; length--) {
-            const phrase = firstTargetWords.slice(-length);
-            const meaningful = phrase.filter(word => word.length >= 4 && !lowInformationWords.has(word));
-            if (meaningful.length < 2) continue;
-
-            const lastStart = Math.min(8, secondTargetWords.length - length);
-            for (let start = 0; start <= lastStart; start++) {
-                if (phrase.every((word, index) => word === secondTargetWords[start + index])) {
-                    match = { phrase: phrase.join(' '), length };
-                    break;
-                }
-            }
-        }
-        if (!match) continue;
-
-        // Repetiția este legitimă dacă originalele susțin sensul expresiei.
-        // Două originale cu aceeași secvență la limita dintre cue-uri oferă o
-        // dovadă directă suplimentară și evită alarme de tipul „too soon to”.
-        if (hasSourceBoundaryRepeat(firstSource, clean(second.text)) ||
-            targetPhraseGroundedInBothSources(match.phrase, firstSource, clean(second.text))) continue;
-
-        const pairKey = `${firstId}:${secondId}:${match.phrase}`;
-        if (seenPairs.has(pairKey)) continue;
-        seenPairs.add(pairKey);
-
-        const reason = `posibilă suprapunere lexicală la limită: ultimii ${match.length} termeni („${match.phrase}”) din traducerea ID ${firstId} apar și aproape de începutul traducerii ID ${secondId}, iar originalul ID ${firstId} este neterminat; compară ambele originale și elimină din primul cue textul provenit din al doilea numai dacă sursa nu îl justifică; nu muta text între ID-uri`;
-        issues.push({ item: first, pairedItem: second, reason });
-        issues.push({
-            item: second,
-            pairedItem: first,
-            reason: `posibilă suprapunere lexicală cu ID ${firstId}: expresia „${match.phrase}” apare la coada traducerii precedente și la începutul acestei traduceri; păstrează repetiția numai dacă ambele originale o justifică`
-        });
-    }
-
-    return issues;
-}
-
-// Detectează suprapunerea posibilă a sensului între două subtitrări consecutive.
-// Este strict un semnal pentru QA: nu rescrie automat traducerile.
 function findAdjacentSemanticOverlapIssues(items, translatedById) {
     const issues = [];
     const seenPairs = new Set();
@@ -9042,63 +8882,16 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     ]);
     const intentionallySuppressedIds = getIntentionallySuppressedTranslationIds(keyStates);
 
-    // O suprapunere lexicală la limita dintre două cue-uri trebuie verificată
-    // contextual înainte de export, nu lăsată doar ca diagnostic informativ.
-    // Detectorul întoarce ambele ID-uri ale perechii; le introducem pe amândouă
-    // în Quality Retry și atașăm motivul exact pentru fiecare replică.
-    const boundaryOverlapReviewIssues = findPossibleBoundaryOverlapIssues(items, translatedById);
-    const boundaryOverlapReviewIds = new Set();
-    const boundaryOverlapReviewPairs = new Set();
-    for (const issue of boundaryOverlapReviewIssues) {
-        const id = String(issue.item.id);
-        const pairedId = String(issue.pairedItem?.id ?? '');
-        if (!pairedId || intentionallySuppressedIds.has(id) || intentionallySuppressedIds.has(pairedId)) continue;
-        boundaryOverlapReviewPairs.add(
-            [id, pairedId].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join('/')
-        );
-        for (const candidateId of [id, pairedId]) {
-            boundaryOverlapReviewIds.add(candidateId);
-            targetedQualityIds.add(candidateId);
-            const reason = candidateId === id
-                ? issue.reason
-                : `posibilă suprapunere lexicală cu ID ${id}: compară originalele și traducerile ambelor cue-uri; păstrează numai textul justificat de originalul acestui ID`;
-            targetedReasonById[candidateId] = [targetedReasonById[candidateId], reason]
-                .filter(Boolean).join('; ');
-        }
-    }
-    if (boundaryOverlapReviewPairs.size) {
-        console.log(`${c.cyan}[Suprapuneri] ${boundaryOverlapReviewPairs.size} perechi suspecte trimise la verificarea contextuală: ${[...boundaryOverlapReviewPairs].join(', ')}.${c.reset}`);
-    }
-
+    // Quality Retry se bazează numai pe semnalele locale și semantic-gramaticale.
+    // Nu mai folosim detectorul lexical de suprapunere între cue-uri: a semnalat
+    // repetat perechi valide și declanșa cereri Gemini suplimentare fără dovadă.
     const targetedQualityCandidates = items.filter(item =>
         targetedQualityIds.has(String(item.id)) && !intentionallySuppressedIds.has(String(item.id))
     );
     const MAX_TARGETED_QUALITY_REVIEW_ITEMS = 50;
     let firstQualityReview = { checked: 0, fixed: 0, rejectedQualityReasonsById: Object.create(null) };
     if (targetedQualityCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
-        // Prioritizăm perechile suspecte și le selectăm atomic: limita de 50
-        // candidate nu trebuie să includă primul ID fără perechea lui consecutivă.
-        const itemById = new Map(items.map(item => [String(item.id), item]));
-        const boundaryPriorityItems = [];
-        const selectedBoundaryIds = new Set();
-        for (const issue of boundaryOverlapReviewIssues) {
-            const pairIds = [...new Set([String(issue.item.id), String(issue.pairedItem?.id ?? '')])]
-                .filter(id => id && boundaryOverlapReviewIds.has(id));
-            const additions = pairIds.filter(id => !selectedBoundaryIds.has(id));
-            if (boundaryPriorityItems.length + additions.length > MAX_TARGETED_QUALITY_REVIEW_ITEMS) continue;
-            for (const id of additions) {
-                const item = itemById.get(id);
-                if (item) {
-                    boundaryPriorityItems.push(item);
-                    selectedBoundaryIds.add(id);
-                }
-            }
-        }
-        const otherQualityItems = targetedQualityCandidates.filter(item =>
-            !selectedBoundaryIds.has(String(item.id))
-        );
-        const reviewItems = [...boundaryPriorityItems, ...otherQualityItems]
-            .slice(0, MAX_TARGETED_QUALITY_REVIEW_ITEMS);
+        const reviewItems = targetedQualityCandidates.slice(0, MAX_TARGETED_QUALITY_REVIEW_ITEMS);
         console.log(`${c.cyan}🎯 [Quality Retry] Verificare AI punctuală pentru ${reviewItems.length} replici.${c.reset}`);
         firstQualityReview = await grammarTranslationReview(reviewItems, translatedById, keyStates, {
             mode: 'targeted',
@@ -9132,59 +8925,11 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         else unresolvedQualityMap.set(id, { item: issue.item, reasons: [issue.reason] });
     }
 
-    // După primul Quality Retry, căutăm din nou suprapunerile lexicale. Dacă
-    // perechea încă este suspectă, ambele ID-uri intră în singura reverificare
-    // permisă; nu repetăm cererile la nesfârșit.
-    const remainingBoundaryOverlapIssues = findPossibleBoundaryOverlapIssues(items, translatedById);
-    const remainingBoundaryPairIds = new Set();
-    for (const issue of remainingBoundaryOverlapIssues) {
-        const id = String(issue.item.id);
-        const pairedId = String(issue.pairedItem?.id ?? '');
-        if (!pairedId || getIntentionallySuppressedTranslationIds(keyStates).has(id) ||
-            getIntentionallySuppressedTranslationIds(keyStates).has(pairedId)) continue;
-        remainingBoundaryPairIds.add(id);
-        remainingBoundaryPairIds.add(pairedId);
-        const entries = [
-            { id, item: issue.item, reason: issue.reason },
-            { id: pairedId, item: issue.pairedItem, reason: `posibilă suprapunere lexicală cu ID ${id}: verifică din nou dacă textul acestui cue este justificat de propriul original` }
-        ];
-        for (const entry of entries) {
-            const existing = unresolvedQualityMap.get(entry.id);
-            if (existing) {
-                if (!existing.reasons.includes(entry.reason)) existing.reasons.push(entry.reason);
-            } else {
-                unresolvedQualityMap.set(entry.id, { item: entry.item, reasons: [entry.reason] });
-            }
-        }
-    }
-    const remainingBoundaryPairsForLog = new Set(remainingBoundaryOverlapIssues
-        .filter(issue => issue.pairedItem)
-        .map(issue => [String(issue.item.id), String(issue.pairedItem.id)]
-            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join('/')));
-    if (remainingBoundaryPairsForLog.size) {
-        console.log(`${c.yellow}[Suprapuneri] ${remainingBoundaryPairsForLog.size} perechi încă suspecte după prima verificare; vor fi reverificate: ${[...remainingBoundaryPairsForLog].join(', ')}.${c.reset}`);
-    } else if (boundaryOverlapReviewPairs.size) {
-        console.log(`${c.green}[Suprapuneri] Perechile semnalate inițial nu mai prezintă suprapunere după prima verificare.${c.reset}`);
-    }
-
     if (unresolvedQualityMap.size && targetedQualityCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
-        // Selectăm cel mult 15 ID-uri, dar nu despărțim o pereche detectată:
-        // ambele replici trebuie să ajungă împreună la verificarea contextuală.
-        const retryCandidateIds = new Set();
-        for (const item of items) {
-            const id = String(item.id);
-            if (!unresolvedQualityMap.has(id) || retryCandidateIds.has(id)) continue;
-            const pairedIds = remainingBoundaryPairIds.has(id)
-                ? remainingBoundaryOverlapIssues
-                    .filter(issue => String(issue.item.id) === id || String(issue.pairedItem?.id ?? '') === id)
-                    .flatMap(issue => [String(issue.item.id), String(issue.pairedItem?.id ?? '')])
-                    .filter(candidateId => candidateId && unresolvedQualityMap.has(candidateId))
-                : [id];
-            const additions = [...new Set(pairedIds)].filter(candidateId => !retryCandidateIds.has(candidateId));
-            if (retryCandidateIds.size + additions.length > 15) continue;
-            for (const candidateId of additions) retryCandidateIds.add(candidateId);
-        }
-        const retryCandidates = items.filter(item => retryCandidateIds.has(String(item.id)));
+        // Reverificăm cel mult 15 replici cu probleme locale/gramaticale reale.
+        const retryCandidates = items
+            .filter(item => unresolvedQualityMap.has(String(item.id)))
+            .slice(0, 15);
         const retryReasonById = Object.fromEntries(retryCandidates.map(item => {
             const id = String(item.id);
             const unresolvedReasons = unresolvedQualityMap.get(id).reasons;
@@ -9498,23 +9243,6 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         finalReviewWarnings.set(key, [...new Set([...existing, ...normalizedReasons])]);
     };
 
-    // La QA FINAL, o suprapunere lexicală rămasă după verificarea contextuală
-    // nu mai poate fi ascunsă ca simplu diagnostic. O raportăm ca avertisment
-    // (nu ca eroare blocantă), păstrând caracterul conservator al detectorului.
-    const finalBoundaryOverlapIssues = findPossibleBoundaryOverlapIssues(items, translatedById);
-    const finalBoundaryWarningPairs = new Set();
-    for (const issue of finalBoundaryOverlapIssues) {
-        const id = String(issue.item.id);
-        const pairedId = String(issue.pairedItem?.id ?? '');
-        if (suppressedFinalOutputIdSet.has(id) || !pairedId || suppressedFinalOutputIdSet.has(pairedId)) continue;
-        const pairKey = [id, pairedId].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(':');
-        if (finalBoundaryWarningPairs.has(pairKey)) continue;
-        finalBoundaryWarningPairs.add(pairKey);
-        const reason = `${issue.reason}; suprapunerea persistă după verificarea contextuală și necesită verificare manuală`;
-        console.log(`${c.yellow}[QA FINAL Suprapunere lexicală] ID ${id} / ${pairedId}: semnalul persistă după verificările contextuale.${c.reset}`);
-        addFinalReviewWarning(id, reason);
-        addFinalReviewWarning(pairedId, reason);
-    }
     const finalSuspicious = items.filter(item => {
         const id = String(item.id);
         if (suppressedFinalOutputIdSet.has(id)) return false;
