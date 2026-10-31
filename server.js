@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.141',
+    version: '13.2.142',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4162,6 +4162,37 @@ function capitalizeRomanianSentenceStarts(value) {
         });
 }
 
+// Transferă semnele finale de întrebare/exclamație explicit prezente în sursă.
+// Corectează cazul în care Gemini transformă „?”/„!” în punct sau omite semnul;
+// nu rescrie punctuația internă și păstrează ghilimelele/parantezele de închidere.
+function synchronizeTerminalQuestionExclamation(sourceText, translatedText) {
+    const source = String(sourceText ?? '').replace(/<[^>]*>/g, '').trimEnd();
+    const target = String(translatedText ?? '');
+    const sourceMark = source.match(/([!?]+)(["'’”»)}\]]*)$/u);
+    if (!sourceMark || !target.trim()) return target;
+    const mark = sourceMark[1];
+    const targetMark = target.match(/([.!?…]+)(["'’”»)}\]]*)$/u);
+    if (targetMark) {
+        return target.slice(0, target.length - targetMark[0].length) + mark + targetMark[2];
+    }
+    const closing = target.match(/(["'’”»)}\]]*)$/u)?.[1] || '';
+    return target.slice(0, target.length - closing.length).trimEnd() + mark + closing;
+}
+
+// Corecție strictă de spațiere a punctuației la export. Nu inventează și nu
+// elimină semne de punctuație și nu unește rândurile; normalizează doar spațiile
+// din jurul virgulei, punctului și virgulei, două puncte, ? și !. Punctul nu
+// primește spațiu automat după el, pentru a proteja abrevierile, inițialele și URL-urile.
+function normalizeRomanianPunctuationSpacing(value) {
+    return String(value ?? '').replace(/\r/g, '').split('\n').map(line => {
+        let normalized = line
+            .replace(/[ \t]+([,;:.!?])/gu, '$1')
+            .replace(/([,;:!?])(?=[\p{L}])/gu, '$1 ')
+            .replace(/[ \t]{2,}/gu, ' ');
+        return normalized;
+    }).join('\n');
+}
+
 // Elimină exclusiv marcatorii de dialog aflați la începutul rândurilor din SRT-ul exportat.
 // Se aplică după toate regulile de layout, aliniere și capitalizare, astfel încât
 // să nu schimbe împărțirea replicilor sau logica internă de identificare a vorbitorilor.
@@ -4185,10 +4216,16 @@ function prepareSubtitleForExport(item, translatedText, englishNames = new Set()
     const capitalizedText = applyFinalSubtitleCapitalization(
         item.text, dashAlignedText, englishNames, previousSourceText, previousTranslatedText
     );
-    const exportText = removeLeadingDialogueDashesForExport(capitalizedText, item.text);
+    // Ultima verificare de punctuație este comună tuturor traducerilor și rulează
+    // după reviziile AI/layout, fără să modifice semantica sau limitele dintre rânduri.
+    const terminalPunctuationSynchronizedText = synchronizeTerminalQuestionExclamation(
+        item.text, capitalizedText
+    );
+    const punctuationNormalizedText = normalizeRomanianPunctuationSpacing(terminalPunctuationSynchronizedText);
+    const exportText = removeLeadingDialogueDashesForExport(punctuationNormalizedText, item.text);
     return {
         text: exportText,
-        translatedContext: capitalizedText,
+        translatedContext: punctuationNormalizedText,
         layoutAdjusted: finalLayoutText !== original.trim(),
         dashRestored: preLayoutDashAlignedText !== original || dashAlignedText !== finalLayoutText
     };
@@ -8600,6 +8637,29 @@ function normalizeRomanianGenericPhraseCapitalization(value) {
     return { text, changed };
 }
 
+// În română, un cuvânt imediat după un auxiliar/modal este frecvent verb
+// (ex. „am munci”, „voi merge”, „pot vedea”). Dacă Gemini îi pune accidental
+// majusculă în mijlocul frazei, o coborâm doar când forma este compatibilă cu
+// un infinitiv, nu este nume recunoscut în sursa engleză și nu este acronim.
+// Regula este gramaticală și se aplică tuturor episoadelor, nu unui text/ID.
+const ROMANIAN_AUXILIARIES_BEFORE_VERB = new Set((`
+    am ai a avem aveți au aveam aveați aveau
+    voi vei va vom veți vor
+    pot poți poate putem puteți putea puteam puteau
+    trebuie trebuia trebuiau trebui
+    vreau vrei vrea vrem vreți vor
+    să nu
+`).trim().split(/\s+/u));
+
+function isLikelyRomanianInfinitiveAfterAuxiliary(previousToken, word, englishNames = new Set()) {
+    const previous = String(previousToken || '').toLocaleLowerCase('ro-RO');
+    const candidate = String(word || '').toLocaleLowerCase('ro-RO');
+    if (!ROMANIAN_AUXILIARIES_BEFORE_VERB.has(previous)) return false;
+    if (candidate.length < 4 || englishNames.has(nameKey(candidate))) return false;
+    // Infinitivele românești se termină în mod uzual în -a, -ea, -e, -i sau -î.
+    return /(?:ea|a|e|i|î)$/u.test(candidate);
+}
+
 function applyMidSentenceCapitalizationFixes(items, translatedById) {
     const englishNames = buildEnglishNameVocabulary(items);
     const strayO = applyStrayCapitalO(items, translatedById);
@@ -8636,7 +8696,11 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                 // doar pentru că tokenul anterior începe cu majusculă. Este o regulă
                 // morfologică generală, nu o excepție pentru un cuvânt/episod.
                 const followsRomanianClitic = /^(?:[A-ZĂÂÎȘȚ]?[a-zăâîșț]{0,12})-(?:a|ai|am|au|o|l|i|le|mi|ți|ne|vă|se|și|te|mă|s|n|m|v)$/u.test(previousToken);
-                if (!COMMON_ROMANIAN_MID_SENTENCE_WORDS.has(word) && !followsRomanianClitic) return wholeWord;
+                const followsAuxiliaryVerb = isLikelyRomanianInfinitiveAfterAuxiliary(
+                    previousToken, wholeWord, englishNames
+                );
+                if (!COMMON_ROMANIAN_MID_SENTENCE_WORDS.has(word) &&
+                    !followsRomanianClitic && !followsAuxiliaryVerb) return wholeWord;
 
                 // Face parte dintr-un nume compus („Casa Albă”, „Planul Seldon”, „Marele Consiliu”,
                 // „Lumea Nouă”): dacă următorul cuvânt are tot majusculă, nu schimbăm nimic.
@@ -8650,7 +8714,7 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
                 }
 
                 // Cuvântul precedent are majusculă: este parte dintr-un nume compus („Lumea Nouă”).
-                if (!followsRomanianClitic && /(?<![\p{L}])[A-ZĂÂÎȘȚ][\p{L}]*$/u.test(before)) return wholeWord;
+                if (!followsRomanianClitic && !followsAuxiliaryVerb && /(?<![\p{L}])[A-ZĂÂÎȘȚ][\p{L}]*$/u.test(before)) return wholeWord;
 
                 localChanges++;
                 return word;
