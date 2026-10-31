@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.132',
+    version: '13.2.133',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1850,6 +1850,10 @@ function isEffectivelyEmptySubtitleText(text) {
 // STANDALONE INTERJECTIONS / FILLERS
 // ============================================================
 
+const MEANINGFUL_STANDALONE_REACTIONS = new Set((
+    'aw aww awww ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh-oh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr mhm mm mmhmm mm-hmm mmm-hmm yeah yep yup ya nah nope huh'
+).split(/\s+/));
+
 const STANDALONE_SOURCE_FILLERS = new Set((
     // Eliminăm vocalizările fără conținut când un rând este alcătuit exclusiv din ele.
     // Nu eliminăm interjecții din replici complete; clasificarea contextuală rulează separat.
@@ -1883,14 +1887,11 @@ function isOnlyStandaloneFillerSequence(text) {
     // Râs redat fonetic ca vocalizare autonomă („ha, ha, ha”, „hă, hă, hă”).
     // Cerem cel puțin două silabe repetate; o întrebare singulară „Hă?” rămâne dialog.
     if (tokens.length >= 2 && tokens.every(token => /^(?:ha|hă|haha|hăhă|heh|hehe)$/iu.test(token))) return true;
-    const meaningful = new Set([
-        'yeah', 'yep', 'yup', 'ya', 'nah', 'nope',
-        'wow', 'whoa', 'oops', 'ouch',
-        'a-ha', 'aha', 'ah', 'ahh', 'ahhh', 'no', 'yes'
-    ]);
+    // Folosim aceeași listă canonică precum filtrarea contextuală; nu păstrăm
+    // o listă locală mai scurtă care ar șterge reacții legitime.
     // Unitățile după cifre și răspunsurile scurte nu sunt vocalizări de eliminat.
     if (/^\d+$/.test(tokens[0]) && /^(?:mm|cm|m|km|mg|g|kg|ml|l|ha|acres?)$/.test(tokens[1] || '')) return false;
-    if (tokens.some(token => meaningful.has(token))) return false;
+    if (tokens.some(token => MEANINGFUL_STANDALONE_REACTIONS.has(token))) return false;
     return tokens.length > 0 && tokens.every(token => STANDALONE_SOURCE_FILLERS.has(token));
 }
 
@@ -2464,13 +2465,17 @@ function stripLeadingBracketedMarkup(value) {
 // Filtrare aplicată sursei înainte de Gemini și folosită ca plasă de siguranță în prompt:
 // elimină cue-urile delimitate/izolate și etichetele de la începutul rândului,
 // dar păstrează textul dintre paranteze care pare dialog sau o tastă literală.
-function stripNonDialogueSoundMarkup(value) {
+function stripNonDialogueSoundMarkup(value, options = {}) {
     let clean = String(value || '').normalize('NFC');
     let removedCount = 0;
 
-    const multilineTags = stripLeadingMultilineNonDialogueTags(clean);
-    clean = multilineTags.text;
-    removedCount += multilineTags.removedCount;
+    // parseSrt elimină deja tagurile multi-linie înainte de protejarea muzicii.
+    // În acel traseu, nu repetăm aceeași scanare; apelurile independente păstrează fallback-ul.
+    if (!options.skipMultilineTags) {
+        const multilineTags = stripLeadingMultilineNonDialogueTags(clean);
+        clean = multilineTags.text;
+        removedCount += multilineTags.removedCount;
+    }
 
     // Fallback structural: elimină orice tag non-dialogat rămas la început de rând,
     // chiar dacă forma sa exactă nu există încă în inventarul de sunete.
@@ -2663,7 +2668,7 @@ function applyRomanianOrthographyRepairs(value) {
         `${clitic}-${match === match.toLocaleUpperCase('ro-RO') ? 'AȘ' : 'aș'}`);
 
     // 3. Curăță tokenurile interne ZXQ...QXZ și repară structurile inversate/lipite
-    text = text.replace(/ZXQ[A-Z0-9_]*[\s\S]*?QXZ/g, '');
+    text = text.replace(/ZXQ(?!KEEPSONG\d+PART\d+QXZ)[A-Z0-9_]*[\s\S]*?QXZ/g, '');
     text = text.replace(/(?<![\p{L}\p{N}_])doar-o(?![\p{L}\p{N}_])/giu, match => preserveInitialCase(match, 'doar o'));
     text = text.replace(/(?<![\p{L}\p{N}_])([Dd]espre)[ \t]+(vorbești|vorbește|vorbim|vorbiți|vorbesc)(?![\p{L}\p{N}_])/giu, '$1 ce $2');
     text = text.replace(/(?<![\p{L}\p{N}_])([Uu]nde)-(mi|ți|i)-e(?![\p{L}\p{N}_])/giu, '$1 $2-e');
@@ -2754,9 +2759,7 @@ function cleanTextForJson(text) {
 
     // Eliminăm replicile alcătuite exclusiv din interjecții, inclusiv secvențe
     // precum „Um... hmm.”. Expresiile cu sens, de ex. „Oh my God”, rămân.
-    let lines = clean.split('\n').map(l => l.trim()).filter(Boolean).filter(line => {
-        return !isOnlyStandaloneFillerSequence(line);
-    });
+    let lines = clean.split('\n').map(l => l.trim()).filter(Boolean);
     clean = lines.join('\n');
     clean = applyRomanianOrthographyRepairs(clean);
 
@@ -2770,10 +2773,6 @@ function cleanTextForJson(text) {
 
 const KNOWN_SOURCE_INTERJECTIONS = new Set((
     'aa aaaa aaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh ahhhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hm hmm hmmm hmph hoho hoo huh mh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm mwah oh ohh ohhh oo ooh ooh-la-la oooh oops ops ouch ow oww owww pf pff pfff pffft pfft phew pssh psst sh shh shhh ssh ssshh sst uf uff ugh ughh uh uh-oh uh-huh uhh uhhh uhm uhmm uhu uhuu um umm uu whew whoa whoo whoo-hoo woo-hoo whooo whoooo whoooooo whoop whoops whup wooh woo-hoo-hoo wow yikes yoo yoo-hoo haha hehe'
-).split(/\s+/));
-
-const MEANINGFUL_STANDALONE_REACTIONS = new Set((
-    'a-ha aha aw aww awww ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh-oh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr mhm mm mmhmm mm-hmm mmm-hmm yeah yep yup ya nah nope'
 ).split(/\s+/));
 
 const KNOWN_TRANSLATED_INTERJECTIONS = new Set([
@@ -2795,10 +2794,10 @@ const CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN = [...CONTEXTUAL_STANDALONE_FI
 // Elimină întotdeauna vocalizările cerute explicit, atât ca replici izolate,
 // cât și în interiorul unei fraze. Acestea nu se trimit la Gemini pentru traducere.
 function stripSpecifiedVocalizations(value) {
-    // Vocalizări eliminate obligatoriu: Hm/Hmm, Mm/Mmm, Mhm, Mm-hmm,
+    // Vocalizări eliminate obligatoriu: Aha, Hm/Hmm, Mm/Mmm, Mhm, Mm-hmm,
     // Uh-huh și îhî. Se elimină și din interiorul unei fraze, dar niciodată
     // din interiorul unui cuvânt sau „mm” folosit ca unitate după un număr.
-    const tokenRe = /(?<![\p{L}\p{N}_])(?:h+m+(?:[-‐‑–—]h+m+)?|m+h+m+(?:[-‐‑–—]h+m+)?|m+m+(?:[-‐‑–—]h+m+)?|uh[-‐‑–—]huh+|îh[îi]+)(?![\p{L}\p{N}_])/giu;
+    const tokenRe = /(?<![\p{L}\p{N}_])(?:h+m+(?:[-‐‑–—](?:h+m+|m+))?|m+h+m+(?:[-‐‑–—]h+m+)?|m+m+(?:[-‐‑–—](?:h+m+|m+))?|uh[-‐‑–—]huh+|îh[îi]+|a[-‐‑–—]?ha)(?![\p{L}\p{N}_])/giu;
     const isNumericMillimeter = (token, offset, whole) =>
         /^mm$/iu.test(token) && /\d\s+$/u.test(whole.slice(0, offset));
 
@@ -2966,7 +2965,8 @@ function stripContextualDisposableInterjections(value) {
         let body = marker ? cleanedLine.slice(prefix.length).trim() : cleanedLine;
         if (!body) return '';
 
-        if (isOnlyStandaloneFillerSequence(body)) return '';
+        // Vocalizările care ocupă singure rândul sunt eliminate o singură dată
+        // în stripAllInterjections(), după curățarea contextuală.
 
         // Începutul: „Um, nu știu.” -> „Nu știu.”
         for (let i = 0; i < 5; i++) {
@@ -3001,20 +3001,25 @@ function stripContextualDisposableInterjections(value) {
     }).filter(Boolean).join('\n');
 }
 
-function deepCleanSubtitleText(text) {
+function deepCleanSubtitleText(text, options = {}) {
     if (!text) return text;
     text = String(text).normalize('NFC');
+    const applyContentFilters = options.applyContentFilters !== false;
 
-    // Plasă de siguranță pentru vocalizările care nu trebuie să ajungă în subtitrarea finală.
-    text = stripSpecifiedVocalizations(text);
-    text = stripContextualDisposableInterjections(text);
-    text = stripAllInterjections(text);
+    // Curățarea de conținut rulează o singură dată, după ultima revizie AI.
+    // Apelurile intermediare ale formatterului fac doar normalizare și layout.
+    if (applyContentFilters) {
+        text = stripSpecifiedVocalizations(text);
+        text = stripContextualDisposableInterjections(text);
+    }
     text = normalizeSubtitleDashes(text);
-    text = stripSpeakerNameLabels(text);
+    if (applyContentFilters) text = stripSpeakerNameLabels(text);
     let trimmed = text.trim();
     if (/^(-|\–|\—)(\s*(-|\–|\—))*$/g.test(trimmed)) return '';
 
-    let cleaned = text.replace(/^<[^>]+>\s*(?:uh|uhh|uhhh|uhm|uhmm|um|umm|ehm|erm|err|mwah|ă|ăă|ăăă|uu)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '');
+    let cleaned = applyContentFilters
+        ? text.replace(/^<[^>]+>\s*(?:uh|uhh|uhhh|uhm|uhmm|um|umm|ehm|erm|err|mwah|ă|ăă|ăăă|uu)[!.,?\s-]*\s*<\/[^>]+>$/gmi, '')
+        : text;
     // Repară artefactul tehnic _n înaintea unei noi replici cu liniuță.
     cleaned = cleaned.replace(/_n(?=\s*[-–—])/g, '\n');
     // Elimină bâlbâielile/interjecțiile de ezitare care nu aduc informație.
@@ -3022,33 +3027,33 @@ function deepCleanSubtitleText(text) {
     // nu sunt prinse corect deoarece regex-ul vechi nu considera „.” delimitator.
     // „ă{2,}” prinde și forme precum „ăăă...”, nu doar exact „ăă”.
     // Eliminăm doar ezitări evidente; reacțiile ambigue rămân sub controlul promptului contextual.
-    const hesitationToken = '(?:mwah|ă{1,}|ehm|er+m?|um+m?|uh+m?)';
+    if (applyContentFilters) {
+        const hesitationToken = '(?:mwah|ă{1,}|ehm|er+m?|um+m?|uh+m?)';
 
-    // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
-    // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
-    cleaned = cleaned.replace(
-        new RegExp('[,;:]\\s*' + hesitationToken + '[,;:.!?…]*\\s*$', 'gmi'),
-        '...'
-    );
+        // Dacă ezitarea este la final și a fost precedată de virgulă/„;”/„:”,
+        // eliminăm și punctuația rămasă înaintea ei și păstrăm o elipsă naturală.
+        cleaned = cleaned.replace(
+            new RegExp('[,;:]\\s*' + hesitationToken + '[,;:.!?…]*\\s*$', 'gmi'),
+            '...'
+        );
 
-    cleaned = cleaned.replace(
-        new RegExp('(^|[\\s,;:.!?…])' + hesitationToken + '(?=[\\s,;:.!?…]|$)[,;:.!?…]*', 'gmi'),
-        '$1'
-    ).trim();
+        cleaned = cleaned.replace(
+            new RegExp('(^|[\\s,;:.!?…])' + hesitationToken + '(?=[\\s,;:.!?…]|$)[,;:.!?…]*', 'gmi'),
+            '$1'
+        ).trim();
 
-    // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
-    cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț])-\1(?=[A-Za-zĂÂÎȘȚăâîșț])/gi, '$1');
+        // Elimină bâlbâiala de tip „V-vin”, „M-mă”, „S-sunt” → „Vin”, „Mă”, „Sunt”.
+        cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț])-\1(?=[A-Za-zĂÂÎȘȚăâîșț])/gi, '$1');
 
-    // Varianta foarte scurtă „E-E”, „A-A”, „M-M” etc.
-    // Regex-ul de mai sus nu o prinde deoarece cere încă o literă după al doilea caracter.
-    // Se elimină doar repetarea unei singure litere, nu cuvinte întregi.
-    cleaned = cleaned.replace(
-        /\b([A-Za-zĂÂÎȘȚăâîșț])\s*[-–—]\s*\1\b/gi,
-        '$1'
-    );
+        // Varianta foarte scurtă „E-E”, „A-A”, „M-M” etc.
+        cleaned = cleaned.replace(
+            /\b([A-Za-zĂÂÎȘȚăâîșț])\s*[-–—]\s*\1\b/gi,
+            '$1'
+        );
 
-    // Elimină repetarea imediată a aceluiași cuvânt după o pauză: „o să... o să...” → „o să...”.
-    cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț]+(?:\s+[A-Za-zĂÂÎȘȚăâîșț]+)?)\s*\.{2,}\s*\1\b/gi, '$1...');
+        // Elimină repetarea imediată a aceluiași cuvânt după o pauză: „o să... o să...” → „o să...”.
+        cleaned = cleaned.replace(/\b([A-Za-zĂÂÎȘȚăâîșț]+(?:\s+[A-Za-zĂÂÎȘȚăâîșț]+)?)\s*\.{2,}\s*\1\b/gi, '$1...');
+    }
     // Dacă după colaps rămâne punctul final al replicii, evităm „....”.
     cleaned = cleaned.replace(/\.{4,}/g, '...');
     // Transformă orice „--” sau „...-” rămas în elipsă, inclusiv în interiorul replicilor.
@@ -3105,8 +3110,9 @@ function deepCleanSubtitleText(text) {
 
     cleaned = cleaned.replace(/(?<![\p{L}\p{N}_])distraggă(?![\p{L}\p{N}_])/giu, 'distragă');
     cleaned = applyRomanianOrthographyRepairs(cleaned);
-    // Plasă de siguranță finală pentru vocalizări izolate și interjecții vizate.
-    cleaned = stripAllInterjections(cleaned);
+    // Ultima operație din curățarea de conținut: elimină șușotelile și vocalizările
+    // autonome rămase după normalizare. Este omisă în formatterul intermediar.
+    if (applyContentFilters) cleaned = stripAllInterjections(cleaned);
 
     return cleaned;
 }
@@ -3539,7 +3545,7 @@ function formatSubtitleLayout(value) {
 function formatSubtitleLine(text) {
     if (!text) return ' ';
 
-    text = deepCleanSubtitleText(text);
+    text = deepCleanSubtitleText(text, { applyContentFilters: false });
     if (!text.trim()) return ' ';
 
     // Repară cratimele omise accidental de model ÎNAINTE de regula care extinde „s” în „să”.
@@ -4113,10 +4119,10 @@ SUBTITLE FORMATTING
 - Preserve meaningful text from all source lines in the block. Do not silently drop content when fitting the layout.
 
 INTERJECTIONS AND FILLERS
-- Recognize the extended interjection inventory, including variants such as “a-ha”, “ahem”, “ehhh”, “hmph”, “ooh-la-la”, “pfft”, “uh-huh”, “whoo-hoo”, and Romanian forms such as “ăă”, “îhî”, “ptiu”, and “brr”. Use this list to identify interjections, not as a command to delete every matching word.
+- Recognize the extended interjection inventory, including variants such as “ahem”, “ehhh”, “hmph”, “ooh-la-la”, “pfft”, “uh-huh”, “whoo-hoo”, and Romanian forms such as “ăă”, “îhî”, “ptiu”, and “brr”. The mandatory removal list below takes precedence for its explicitly listed tokens; the remaining inventory is interpreted contextually.
 - Remove standalone filler sounds and meaningless hesitation tokens, including “Um”, “Erm”, “Mwah”, “ă”, and “ăă”, when they function only as hesitation/noise. Remove disposable fillers around a real sentence only when they add no meaning; repair punctuation and capitalization.
 - NEVER preserve the English interjections “Oh” or “Ah” literally in Romanian output, whether they appear alone or at the start of a longer expression. Remove the leading “Oh/Ah” and translate the remaining message naturally: for example, “Oh, no!” → „Nu!” / „Vai, nu!” according to context; “Ah, yes!” → „Da!”; “Oh my God!” → „Doamne!”. The rest of the message must not be discarded.
-- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief, and “Aha” when expressing realization.
+- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief. The mandatory vocalization filter takes precedence for Aha/aha.
 - Use neighboring subtitles and the scene context to decide whether an interjection is noise or meaningful speech. Never automatically delete meaningful reactions, acknowledgments, questions, pain, warnings, relief, or commands just because they occur in the interjection inventory. Translate those naturally into Romanian.
 - Before returning, compare the beginning and end of each translation with its source so that cleaning a filler does not accidentally remove adjacent dialogue.
 - ETICHETE ȘI CUE-URI: elimină etichetele de vorbitor și indicațiile non-dialogate de sunet/muzică dintre paranteze rotunde sau drepte când apar la începutul rândului (eventual după liniuța de dialog sau un tag de formatare); tratează ca un singur tag și etichetele care se întind pe mai multe rânduri. Nu traduce titluri de melodii sau efecte sonore folosite ca etichete. Păstrează textul literal dintre paranteze din mijlocul unei fraze, inclusiv taste/comenzi precum „Press [Enter] to continue” și indicații editoriale precum [sic]. Nu șterge dialogul exterior tagului.
@@ -4150,9 +4156,9 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
     const contextAfter = allItems.slice(chunkEnd, Math.min(allItems.length, chunkEnd + CONTEXT_LINES_AFTER));
 
     const sourceIndexById = getTranslationSourceIndexById(allItems);
-    // Plasă de siguranță: Gemini nu primește etichete/cue-uri non-dialogate rămase
-    // accidental în sursă sau în context. Curățarea păstrează [Enter] când este literal.
-    const hideTagsFromAI = value => stripNonDialogueSoundMarkup(value).text.trim();
+    // Toate item-urile și contextul provin din parseSrt, unde filtrarea sursei
+    // a fost deja executată. Nu refacem filtrele la fiecare construire de prompt.
+    const hideTagsFromAI = value => String(value || '').trim();
     const keysToTranslate = chunk.map(obj => {
         const absoluteIndex = sourceIndexById.get(String(obj.id));
         const previous = Number.isInteger(absoluteIndex) ? allItems[absoluteIndex - 1] : null;
@@ -4191,7 +4197,7 @@ Câmpurile context_anterior și context_urmator sunt DOAR pentru înțelegerea r
 Folosește contextul pentru acord, pronume, continuitate, topică și sens, dar modifică DOAR câmpul text al ID-ului curent.
 Nu reasocia textul unei replici cu alt ID. Șirurile alcătuite doar din cifre și semne de punctuație trebuie copiate exact; nu le înlocui cu traducerea replicii vecine.
 
-EXCLUDEREA VERSURILOR MUZICALE: tokenurile care încep cu ZXQKEEPSONG și se termină cu QXZ reprezintă text încadrat de marcatori muzicali și vor fi eliminate complet din subtitrarea finală. Copiază fiecare token identic, o singură dată și în aceeași poziție relativă. Nu îl traduce, nu îl elimina, nu îl modifica și nu îl despărți. Dacă o replică conține dialog în afara tokenului, traduce numai dialogul din afara tokenului; textul încadrat de marcatorii muzicali nu trebuie să apară în rezultat.
+EXCLUDEREA VERSURILOR MUZICALE: segmentele de versuri detectate au fost eliminate din sursă înainte ca replica să ajungă la Gemini. Nu inventa, nu reconstitui și nu adăuga versuri sau titluri muzicale care nu apar în textul de dialog rămas.
 
 REPLICILE DE TRADUS:
 ${JSON.stringify(keysToTranslate, null, 2)}
@@ -5739,7 +5745,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
                 const cached = formattedTranslationCache.get(cacheKey);
                 if (cached && cached.raw === raw) return cached.formatted;
 
-                if (!raw.replace(/<[^>]+>/g, '').trim()) {
+                if (!raw.replace(/<[^>]+>/g, '').trim() || isOnlyStandaloneFillerSequence(raw)) {
                     formattedTranslationCache.set(cacheKey, { raw, formatted: '' });
                     return '';
                 }
@@ -6116,8 +6122,9 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
             return { success: false, is429: true, halted: true };
         }
         const batchFixedBefore = fixed;
-        // Aceeași protecție ca în buildTranslationPrompt: Grammar Review nu vede cue-uri SDH.
-        const hideTagsFromAI = value => stripNonDialogueSoundMarkup(value).text.trim();
+        // Grammar Review primește aceleași item-uri deja filtrate de parseSrt.
+        // Nu reexecutăm filtrele SDH pentru fiecare batch de verificare.
+        const hideTagsFromAI = value => String(value || '').trim();
 
         const payload = batch.map(item => {
             const index = getFastItemIndex(contextItems, item.id);
@@ -6150,7 +6157,7 @@ VERIFICĂ ÎN ORDINE
 4. Păstrează singularul/pluralul și referentul. De exemplu, “a hat” nu trebuie tradus „căciuli”. Nu adăuga diminutive precum „căciuliță” dacă sursa nu exprimă micime, afecțiune sau diminutiv.
 5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase.
 6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
-7. VERSURI MUZICALE EXCLUSE: textul dintre marcatorii muzicali este înlocuit înaintea verificării cu tokenuri tehnice de forma ZXQKEEPSONG...QXZ și va fi eliminat complet din SRT-ul final. Copiază fiecare token identic, o singură dată, în poziția lui; NU îl traduce, nu îl șterge, nu îl modifica și nu reconstrui versurile ascunse. Dacă replica are și dialog în afara tokenului, corectează numai dialogul și păstrează tokenurile identice. Textul protejat nu trebuie să apară în rezultat.
+7. VERSURI MUZICALE EXCLUSE: segmentele muzicale au fost eliminate înainte de verificare. Nu reconstrui și nu adăuga versurile sau titlurile eliminate; verifică numai dialogul rămas.
 8. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
 9. Dacă avertismentul menționează un conector repetat între două subtitrări consecutive, compară ambele originale și ambele traduceri din context. Păstrează conectorul în fragmentul al cărui original îl conține. Dacă originalul fragmentului curent NU începe/nu se termină cu acel conector, dar traducerea îl adaugă la limită, elimină doar conectorul adăugat inutil din replica curentă; nu șterge conectorul justificat de următorul/precedentul original. Dacă dovezile nu sunt clare, nu rescrie.
 10. Dacă avertismentul indică un fragment englezesc netradus, o secvență englezească deteriorată sau un text corupt și originalul/contextul permit stabilirea sensului, corectează efectiv fragmentul în română. Nu lăsa secvența deteriorată în text și nu omite corectura doar pentru că restul replicii este românește. Dacă semnalul este un fals pozitiv și formularea românească transmite deja sensul originalului, păstreaz-o.
@@ -6214,7 +6221,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                 for (const item of batch) {
                     const id = String(item.id);
                 const candidateRaw = parsedDict[id];
-                if (candidateRaw == null) continue;
+                if (candidateRaw == null || isOnlyStandaloneFillerSequence(String(candidateRaw))) continue;
 
                 const current = formatSubtitleLine(String(translatedById[id] || ''));
                 const candidate = formatSubtitleLine(String(candidateRaw || ''));
@@ -9298,10 +9305,8 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
 
         // Dacă sursa însăși este o descriere sonoră autonomă, o lăsăm goală definitiv.
         if (isStandaloneNonDialogueSoundCue(item.text)) {
-            if (current.trim()) {
-                const sourceCueOutput = stripNonDialogueSoundMarkup(current);
-                if (sourceCueOutput.removedCount) finalBracketedOrCueSegmentsRemoved += sourceCueOutput.removedCount;
-            }
+            // Cue-ul-sursă este suprimat definitiv; nu mai curățăm separat o traducere
+            // care oricum nu poate fi exportată.
             translatedById[id] = '';
             suppressedSourceSoundCueIds.add(id);
             continue;
@@ -9367,6 +9372,25 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     }
     if (finalBracketedOrCueSegmentsRemoved) {
         console.log(`${c.cyan}[Filtru paranteze/cue-uri] Eliminate ${finalBracketedOrCueSegmentsRemoved} segmente delimitate sau cue-uri sonore din traducerile finale.${c.reset}`);
+    }
+
+    // Curățare finală unică a conținutului tradus. Formatările intermediare au
+    // făcut numai normalizare/layout; abia acum, după ultima intervenție AI,
+    // eliminăm vocalizările, interjecțiile și etichetele rămase sau reintroduse.
+    let finalContentFilterChanged = 0;
+    let finalContentFilterEmptied = 0;
+    for (const item of items) {
+        const id = String(item.id);
+        if (suppressedSourceSoundCueIds.has(id) || item.musicOnly) continue;
+        const current = String(translatedById[id] || '');
+        if (!current.trim()) continue;
+        const filtered = String(deepCleanSubtitleText(current) || '').trim();
+        if (filtered !== current.trim()) finalContentFilterChanged++;
+        translatedById[id] = filtered;
+        if (!filtered) finalContentFilterEmptied++;
+    }
+    if (finalContentFilterChanged) {
+        console.log(`${c.cyan}[Filtru final conținut] O singură trecere după ultima revizie: ${finalContentFilterChanged} replici modificate${finalContentFilterEmptied ? `, dintre care ${finalContentFilterEmptied} au rămas goale și vor fi raportate de QA` : ''}.${c.reset}`);
     }
 
     // Corectare locală conservatoare a majusculelor după toate reviziile AI și
@@ -10694,6 +10718,17 @@ function hasAllProtectedMusicTokens(item, text) {
     return segments.every(segment => value.toLocaleUpperCase('en-US').includes(segment.token.toLocaleUpperCase('en-US')));
 }
 
+function normalizeSourceAfterMusicRemoval(value) {
+    return normalizeSubtitleDashes(String(value || '')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/[ \t]+([,;:!?])/g, '$1')
+        .replace(/([,;:])\s*([,;:])+/g, '$1')
+        .replace(/^[ \t]*[,;:][ \t]*/gm, '')
+        .replace(/[ \t]+$/gm, '')
+        .replace(/\n[ \t]*\n+/g, '\n')
+        .trim()).trim();
+}
+
 function removeProtectedMusicTokens(text, item) {
     let output = String(text || '');
     const segments = Array.isArray(item?.musicSegments) ? item.musicSegments : [];
@@ -10935,7 +10970,7 @@ function parseSrt(srt, stats = null) {
 
         // Eliminăm orice segment dintre paranteze rotunde sau drepte. Dacă rămâne text
         // în afara lor, îl păstrăm; segmentele muzicale mascate nu sunt afectate.
-        const soundStripped = stripNonDialogueSoundMarkup(rawText);
+        const soundStripped = stripNonDialogueSoundMarkup(rawText, { skipMultilineTags: true });
         rawText = soundStripped.text;
         if (stats && soundStripped.removedCount) {
             stats.nonDialogueSegmentsRemoved += soundStripped.removedCount;
@@ -10949,21 +10984,8 @@ function parseSrt(srt, stats = null) {
             continue;
         }
 
-        // Eliminăm vocalizările explicit nedorite DIN SURSĂ, înainte de Gemini.
-        // Dacă întregul cue devine gol, nu se creează niciun item, deci nu are ce
-        // să intre în traducere, Empty Recovery, Grammar Review sau QA.
-        const rawBeforeVocalizationFilter = rawText;
-        rawText = stripSpecifiedVocalizations(rawText);
-        if (rawText !== rawBeforeVocalizationFilter &&
-            (!rawText.trim() || isEffectivelyEmptySubtitleText(rawText) || !/[\p{L}\p{N}]/u.test(rawText.replace(/<[^>]*>/g, ' ')))) {
-            if (stats) stats.fillerBlocksFiltered++;
-            continue;
-        }
-        if (isEffectivelyEmptySubtitleText(rawText)) {
-            if (stats) stats.otherBlocksFiltered++;
-            continue;
-        }
-
+        // Clasificăm pentru statistici înainte de curățare. Eliminarea efectivă a
+        // vocalizărilor/interjecțiilor are loc o singură dată în cleanTextForJson.
         const sourceIsFillerOnly = isOnlyStandaloneFillerSequence(rawText);
         let text = cleanTextForJson(rawText);
         // Replică originală cu doi vorbitori din care a rămas unul singur (celălalt era „Uh...”,
@@ -10994,7 +11016,9 @@ function parseSrt(srt, stats = null) {
             }
 
             const lyricsRemoved = removeProtectedMusicTokens(text, { musicSegments: protectedMusic.segments });
-            text = cleanTextForJson(lyricsRemoved.text);
+            text = lyricsRemoved.removedCount
+                ? normalizeSourceAfterMusicRemoval(lyricsRemoved.text)
+                : lyricsRemoved.text.trim();
 
             // Dacă un bloc mixt conținea numai versuri plus marcatori/separatori
             // de vorbitor, nu păstrăm un cue gol de forma „- / -”.
@@ -11008,12 +11032,8 @@ function parseSrt(srt, stats = null) {
         // Doar textul de dialog rămas poate ajunge la Gemini, Empty Recovery,
         // Grammar Review sau QA; segmentele muzicale au fost deja eliminate.
         const normalizedSoundOnly = isStandaloneNonDialogueSoundCue(text);
-        const normalizedFillerOnly = isOnlyStandaloneFillerSequence(text);
-        if (normalizedSoundOnly || normalizedFillerOnly) {
-            if (stats) {
-                if (normalizedSoundOnly) stats.nonDialogueBlocksFiltered++;
-                else if (normalizedFillerOnly) stats.fillerBlocksFiltered++;
-            }
+        if (normalizedSoundOnly) {
+            if (stats) stats.nonDialogueBlocksFiltered++;
             continue;
         }
 
