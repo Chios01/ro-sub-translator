@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.136',
+    version: '13.2.137',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2370,6 +2370,24 @@ function stripBracketedSegments(text) {
     return { text: clean, removedCount };
 }
 
+// Recuperează caption-urile SDH scurte de două cuvinte acceptate în v90,
+// dar numai când structura indică o descriere acustică (sursă + acțiune sau
+// modificator acustic + acțiune). Evită falsa clasificare „difficulty swallowing”.
+function isShortStructuredNonDialogueSoundCue(text, words) {
+    if (words.length !== 2) return false;
+
+    const normalized = String(text || '').replace(/[.!…]+$/u, '').trim();
+    if (!/^[\p{L}\p{M}'’.-]+\s+[\p{L}\p{M}'’.-]+$/u.test(normalized)) return false;
+
+    const hasAcousticAction = SOUND_CUE_ACTION_RE.test(normalized) ||
+        SOUND_CUE_STRUCTURAL_ACTION_RE.test(normalized);
+    if (!hasAcousticAction) return false;
+
+    const hasRecognizedSoundSource = SOUND_CUE_STRUCTURAL_SOURCE_RE.test(normalized);
+    const hasAcousticModifier = /^(?:a|an|the|some|soft|loud|quiet|distant|faint|background|gentle|heavy|slight|small|short|brief|off-screen|sharp|sudden|deep|low|high|rapid|slow|muffled)\s+/iu.test(normalized);
+    return hasRecognizedSoundSource || hasAcousticModifier;
+}
+
 // Detectează și etichetele sonore care apar singure, fără paranteze: „Whistling”,
 // „râsete”, „bufnire” etc. Este un test de linie întreagă, ca să nu șteargă dialog
 // precum „Râde de mine” sau propoziții care doar menționează un sunet.
@@ -2412,10 +2430,11 @@ function isStandaloneNonDialogueSoundCue(value) {
     if (/^(?:i|you|we|they)\b/iu.test(text)) return false;
     if (/[;:?,'"“”]/u.test(text)) return false;
 
-    // Pentru forme neincluse în lista de etichete, acceptăm numai un verb/acțiune
-    // izolat. Nu clasificăm expresii precum "difficulty swallowing" drept sunet
-    // doar pentru că ultimul cuvânt se potrivește cu inventarul acustic.
+    // Păstrăm detectarea formelor izolate și recuperăm caption-urile scurte
+    // de două cuvinte din v90, dar numai când au o structură acustică recognoscibilă.
+    // Nu clasificăm expresii precum "difficulty swallowing" doar după verbul final.
     if (words.length === 1 && SOUND_CUE_ACTION_RE.test(text)) return true;
+    if (isShortStructuredNonDialogueSoundCue(text, words)) return true;
 
     // Acceptăm descriptori de tip closed caption (subiect nominal + acțiune sonoră),
     // dar nu propoziții mai lungi de dialog precum "She laughs at me after work".
