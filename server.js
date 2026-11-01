@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.151',
+    version: '13.2.153',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3023,19 +3023,11 @@ function restoreExplicitSourceDialogueDashes(sourceValue, translatedValue) {
 // Elimină numai liniuța de dialog de la începutul fiecărui rând.
 // Lucrează independent pe rânduri: nu unește, nu sortează și nu reordonează replicile.
 function stripLeadingDialogueDashes(value, sourceValue = null) {
-    const lines = String(value || '').split(/\r?\n/);
-    const sourceSpeakerTurns = sourceValue == null
-        ? null
-        : countExplicitSourceSpeakerTurns(sourceValue);
-    // Sursa originală este autoritatea: dacă marchează cel puțin doi vorbitori,
-    // păstrăm markerii traduşi. Altfel, eliminăm markerii de formatare din ieșire.
-    const preserveSpeakerTurns = sourceSpeakerTurns == null
-        ? lines.filter(line => /^\s*[-–—][ \t]*(?=\S)/u.test(line)).length >= 2
-        : sourceSpeakerTurns >= 2;
-    if (preserveSpeakerTurns) return lines.join('\n');
-    // Un singur vorbitor: eliminăm liniuța de la începutul fiecărui rând,
-    // fără să atingem cratimele din cuvinte sau semnele negative/numerice.
-    return lines.map(line => line.replace(/^(\s*)[-–—]+[ \t]+(?=\S)/u, '$1')).join('\n');
+    // Liniuțele sunt doar markeri vizuali: eliminăm prefixul de pe fiecare rând,
+    // inclusiv când sursa indică doi vorbitori. Rândurile, ordinea și textul rămân intacte.
+    return String(value || '').split(/\r?\n/)
+        .map(line => line.replace(/^(\s*)[-–—]+[ \t]+(?=\S)/u, '$1'))
+        .join('\n');
 }
 
 
@@ -4383,7 +4375,7 @@ function removeLeadingDialogueDashesForExport(value, sourceValue = null) {
 function prepareSubtitleForExport(item, translatedText, englishNames = new Set(), previousSourceText = null, previousTranslatedText = null) {
     const original = String(translatedText ?? '');
     if (!original.trim()) {
-        return { text: '', translatedContext: '', layoutAdjusted: false, dashRestored: false };
+        return { text: '', translatedContext: '', layoutAdjusted: false, speakerTurnsSeparated: false };
     }
     // Aliniem turele explicite înainte de layout, ca formatterul să nu unească
     // accidental două replici scurte în aceeași linie. Verificăm din nou după layout
@@ -4405,7 +4397,7 @@ function prepareSubtitleForExport(item, translatedText, englishNames = new Set()
         text: exportText,
         translatedContext: punctuationNormalizedText,
         layoutAdjusted: finalLayoutText !== original.trim(),
-        dashRestored: preLayoutDashAlignedText !== original || dashAlignedText !== finalLayoutText
+        speakerTurnsSeparated: preLayoutDashAlignedText !== original || dashAlignedText !== finalLayoutText
     };
 }
 
@@ -4588,9 +4580,9 @@ ${JSON.stringify(keysToTranslate, null, 2)}
 `;
 }
 
-// Schema JSON folosește doar elemente acceptate de Gemini Structured Output.
-// Numărul de elemente este fixat la dimensiunea calupului; ID-urile și textele
-// sunt validate suplimentar în cod după parsare.
+// Schema JSON folosește elemente acceptate de Gemini Structured Output.
+// Cardinalitatea, unicitatea și ordinea ID-urilor sunt validate strict după parsare;
+// orice neconcordanță izolează calupul până la ID individual.
 function buildTranslationResponseSchema(chunk) {
     if (!Array.isArray(chunk) || chunk.length === 0) {
         throw new Error('Nu se poate construi schema Gemini pentru un calup gol.');
@@ -6061,6 +6053,73 @@ function normalizeTranslationPayload(parsed) {
     return Object.create(null);
 }
 
+// Validare strictă a asocierii ID→text. Pentru traducerea primară și recuperări,
+// răspunsul trebuie să conțină exact toate ID-urile solicitate, în aceeași ordine.
+// Un rezultat reordonat/incomplet nu este niciodată mapat „după poziție” și livrat.
+function normalizeOrderedTranslationPayload(parsed, expectedItems, label = 'Gemini') {
+    const fail = reason => {
+        const error = new Error(`JSON Parse failed: ${label} — neconcordanță de aliniere ID: ${reason}`);
+        error.isTranslationAlignmentError = true;
+        throw error;
+    };
+    if (!Array.isArray(parsed)) fail('răspunsul nu este un array JSON');
+    if (!Array.isArray(expectedItems)) fail('lista ID-urilor solicitate nu este validă');
+    if (parsed.length !== expectedItems.length) {
+        fail(`au fost returnate ${parsed.length} obiecte pentru ${expectedItems.length} ID-uri solicitate`);
+    }
+
+    const dict = Object.create(null);
+    const seen = new Set();
+    for (let index = 0; index < expectedItems.length; index++) {
+        const expectedId = String(expectedItems[index]?.id ?? '');
+        const entry = parsed[index];
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            fail(`obiect invalid la poziția ${index + 1}`);
+        }
+        if (entry.id === undefined || entry.id === null || !Number.isInteger(Number(entry.id))) {
+            fail(`ID invalid la poziția ${index + 1}`);
+        }
+        const actualId = String(entry.id);
+        if (actualId !== expectedId) {
+            fail(`poziția ${index + 1} trebuia să fie ID ${expectedId}, dar a venit ID ${actualId}`);
+        }
+        if (seen.has(actualId)) fail(`ID duplicat ${actualId}`);
+        if (typeof entry.text !== 'string') fail(`textul pentru ID ${actualId} nu este șir`);
+        seen.add(actualId);
+        dict[actualId] = entry.text;
+    }
+    return dict;
+}
+
+// Grammar Review întoarce numai ID-urile care trebuie corectate. Acceptăm un
+// subset, dar numai dacă ID-urile sunt cunoscute, unice și păstrează ordinea lotului.
+function normalizeOrderedSparseCorrectionPayload(parsed, expectedItems, label = 'Grammar Review') {
+    const fail = reason => {
+        throw new Error(`JSON Parse failed: ${label} — neconcordanță de aliniere ID: ${reason}`);
+    };
+    if (!Array.isArray(parsed)) fail('răspunsul nu este un array JSON');
+    const expectedIndex = new Map(expectedItems.map((item, index) => [String(item.id), index]));
+    const dict = Object.create(null);
+    const seen = new Set();
+    let lastIndex = -1;
+    for (const entry of parsed) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry) ||
+            entry.id === undefined || entry.id === null || !Number.isInteger(Number(entry.id))) {
+            fail('obiect de corectură invalid');
+        }
+        const id = String(entry.id);
+        const index = expectedIndex.get(id);
+        if (index === undefined) fail(`ID neașteptat ${id}`);
+        if (seen.has(id)) fail(`ID duplicat ${id}`);
+        if (index <= lastIndex) fail(`ID-urile corecturilor nu respectă ordinea lotului (ID ${id})`);
+        if (typeof entry.text !== 'string') fail(`textul corecturii pentru ID ${id} nu este șir`);
+        seen.add(id);
+        lastIndex = index;
+        dict[id] = entry.text;
+    }
+    return dict;
+}
+
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, deferred429Retry = false) {
     const requestChunk = chunk.filter(obj => !isNumericVerbatimCue(obj.text) && !obj.musicOnly);
     const prompt = requestChunk.length
@@ -6115,7 +6174,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const requestLabel = `Calup ${globalChunkIndex + 1}/${totalChunks}`;
             const raw = await callGemini(prompt, keyState, { requestLabel, responseSchema: buildTranslationResponseSchema(requestChunk) });
             const parsed = safeJsonParse(raw);
-            const dict = normalizeTranslationPayload(parsed);
+            const dict = normalizeOrderedTranslationPayload(parsed, requestChunk, 'traducerea principală');
 
             // Verificăm rezultatul DUPĂ același formatter care va fi folosit la ieșire.
             // Astfel, un răspuns format doar din ezitări/interjecții eliminate de formatter
@@ -6187,6 +6246,10 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             }
             return results;
         } catch (error) {
+            if (error?.isTranslationAlignmentError === true) {
+                lastError = error;
+                break;
+            }
             lastError = error;
             const is429 = error.isRateLimit429 === true || error.message.includes('429');
             if (is429) {
@@ -6265,6 +6328,33 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             }
             break;
         }
+    }
+
+    if (lastError?.isTranslationAlignmentError === true) {
+        if (chunk.length > 1) {
+            const middle = Math.ceil(chunk.length / 2);
+            const first = chunk.slice(0, middle);
+            const second = chunk.slice(middle);
+            console.log(`${c.yellow}[Aliniere ID] Răspunsul calupului ${globalChunkIndex + 1} nu respectă ordinea ID-urilor; împart în ${first.length}+${second.length} și verific separat.${c.reset}`);
+            const firstResult = await processChunkWithRetry(
+                first, allItems, chunkStart, chunkStart + middle,
+                previousTranslatedContext, keyStates, globalChunkIndex, totalChunks,
+                depth + 1, deferred429Retry
+            );
+            const secondContext = firstResult.slice(-PREVIOUS_TRANSLATION_CONTEXT);
+            const secondResult = await processChunkWithRetry(
+                second, allItems, chunkStart + middle, chunkEnd,
+                secondContext, keyStates, globalChunkIndex, totalChunks,
+                depth + 1, deferred429Retry
+            );
+            return [...firstResult, ...secondResult];
+        }
+        const only = chunk[0];
+        console.error(`${c.red}[Aliniere ID] ID ${only?.id ?? '?'} a primit un răspuns cu ID neconform chiar și la verificarea individuală; păstrez sursa pentru fallback, fără a atașa altă traducere.${c.reset}`);
+        return chunk.map(item => ({
+            id: item.id,
+            text: (isNumericVerbatimCue(item.text) || item.musicOnly) ? String(item.text || '') : ' '
+        }));
     }
 
     if (lastError?.isPermanentQuotaBlock) {
@@ -6356,7 +6446,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
         if (!originalClean || isJunkOrInterjection(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
-        if (isOkOnlySubtitle(translated)) return false;
+        if (isOkOnlySubtitle(translated) && !isAlignmentAudit) return false;
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
         if (!transClean) return true;
 
@@ -6470,6 +6560,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
 
     const contextItems = options.contextItems || items;
     const isTargetedReview = options.mode === 'targeted';
+    const isAlignmentAudit = options.mode === 'alignment';
 
     const candidates = items.filter(item => {
         if (item.musicOnly) return false;
@@ -6477,7 +6568,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
         const translated = String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim();
         if (!original || (!translated && !isTargetedReview)) return false;
         if (isJunkOrInterjection(item.text)) return false;
-        if (isOkOnlySubtitle(translated)) return false;
+        if (isOkOnlySubtitle(translated) && !isAlignmentAudit) return false;
         return true;
     });
 
@@ -6486,7 +6577,9 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
         return { checked: 0, fixed: 0 };
     }
 
-    if (isTargetedReview) {
+    if (isAlignmentAudit) {
+        console.log(`\n${c.cyan}🧭 VERIFICARE DE ALINIERE — ORIGINAL EN ↔ TRADUCERE RO${c.reset}`);
+    } else if (isTargetedReview) {
         console.log(`\n${c.cyan}🎯 VERIFICARE PUNCTUALĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
     } else {
         console.log(`\n${c.cyan}📝 VERIFICARE SUPLIMENTARĂ — GRAMATICĂ + TRADUCERE${c.reset}`);
@@ -6528,10 +6621,20 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
             };
         });
 
+        const alignmentAuditInstructions = isAlignmentAudit
+            ? `MOD DE LUCRU — AUDIT STRICT DE ALINIERE EN–RO (prioritar față de corectura stilistică):
+Verifică FIECARE obiect separat: câmpul „translation” trebuie să redea exact replica din „original” pentru ACELAȘI ID. Fii atent la deplasări de una sau mai multe replici, mai ales când textul românesc este fluent, dar exprimă ce spune originalul unui ID vecin. Contextul anterior/următor ajută la înțelegere, însă NU poate înlocui conținutul replicii curente. Dacă traducerea unui ID corespunde clar altei replici, rescrie numai acel ID traducând din nou originalul lui. NU muta, NU reordona și NU copia traduceri între ID-uri. Păstrează neschimbate traducerile care corespund propriilor originale; nu face îmbunătățiri de stil sau punctuație fără o problemă de fidelitate.
+
+`
+            : '';
+        const reviewScope = isAlignmentAudit
+            ? 'Returnează numai corecțiile necesare pentru nepotriviri clare între originalul și traducerea aceluiași ID. Dacă perechea este corectă semantic, nu o modifica.'
+            : 'Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică.';
         const prompt = `Ești un editor profesionist de subtitrări ENGLEZĂ → ROMÂNĂ. Revizuiești traducerea existentă, nu o retraducești automat.
 
 SCOP
-Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică. Dacă originalul unui ID este gol după filtrarea cue-urilor non-dialogate, nu inventa o corectură pentru acel ID și nu modifica traducerea lui.
+${reviewScope} Dacă originalul unui ID este gol după filtrarea cue-urilor non-dialogate, nu inventa o corectură pentru acel ID și nu modifica traducerea lui.
+${alignmentAuditInstructions}
 
 VERIFICĂ ÎN ORDINE
 1. Compară ORIGINALUL, traducerea și contextul imediat înainte/după. Verifică sensul complet, expresiile idiomatice, cine face acțiunea și cine/ce o primește.
@@ -6597,7 +6700,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     }
                 });
                 const parsed = safeJsonParse(raw);
-                const parsedDict = normalizeTranslationPayload(parsed);
+                const parsedDict = normalizeOrderedSparseCorrectionPayload(parsed, batch, isAlignmentAudit ? 'audit de aliniere' : 'Grammar Review');
 
                 for (const checkedItem of batch) verifiedIds.add(String(checkedItem.id));
 
@@ -7921,7 +8024,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
                     responseSchema: buildTranslationResponseSchema(batch)
                 }
             );
-            recoveryDict = normalizeTranslationPayload(safeJsonParse(raw));
+            recoveryDict = normalizeOrderedTranslationPayload(safeJsonParse(raw), batch, `${stageLabel} recovery`);
             parsedAnyResponse = true;
         } catch (error) {
             if (isRecoverableJsonParseError(error)) {
@@ -7937,7 +8040,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
                                 responseSchema: buildTranslationResponseSchema(batch)
                             }
                         );
-                        recoveryDict = normalizeTranslationPayload(safeJsonParse(retryRaw));
+                        recoveryDict = normalizeOrderedTranslationPayload(safeJsonParse(retryRaw), batch, `${stageLabel} recovery retry`);
                         parsedAnyResponse = true;
                     } catch (retryError) {
                         if (isRecoverableJsonParseError(retryError)) {
@@ -8015,7 +8118,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
                         responseSchema: buildTranslationResponseSchema(markerRejectedItems)
                     }
                 );
-                const forcedDict = normalizeTranslationPayload(safeJsonParse(forcedRaw));
+                const forcedDict = normalizeOrderedTranslationPayload(safeJsonParse(forcedRaw), markerRejectedItems, `${stageLabel} recovery obligatorie`);
                 parsedAnyResponse = true;
                 for (const item of markerRejectedItems) {
                     const id = String(item.id);
@@ -8273,7 +8376,7 @@ async function retryEmptyTranslationIndividually(item, translatedById, keyStates
             responseSchema: buildTranslationResponseSchema([item])
         });
         const retryJson = safeJsonParse(retryRaw);
-        const retryDict = normalizeTranslationPayload(retryJson);
+        const retryDict = normalizeOrderedTranslationPayload(retryJson, [item], `${stageLabel} retry individual`);
         if (isEmptyRecoverySoundCueSkip(retryDict[id]) && isStandaloneNonDialogueSoundCue(item.text)) {
             markIntentionalSoundCueSuppressed(item, translatedById, keyStates);
             console.log(`${c.cyan}[${stageLabel} Retry] ID ${id} marcat ca descriere sonoră; lăsat gol intenționat, fără alte retry-uri.${c.reset}`);
@@ -8369,7 +8472,7 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
                 responseSchema: buildTranslationResponseSchema(batch)
             }
         );
-        return normalizeTranslationPayload(safeJsonParse(raw));
+        return normalizeOrderedTranslationPayload(safeJsonParse(raw), batch, 'Final Empty Recovery');
     };
 
     const splitAndRecover = async (batch, depth, batchLabel, reason) => {
@@ -9313,10 +9416,12 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         }
     }
 
-    // Dovezile lexicale se construiesc după traducerile principale și recuperarea liniilor goale,
+    // Nu rulăm un audit semantic global pe fiecare replică: ar dubla inutil traficul Gemini.
+    // Alinierea structurală ID→text este verificată în răspunsul principal; verificările
+    // semantice rămân punctuale, doar pentru replicile semnalate de verificările locale.
+
+    // Dovezile lexicale se construiesc după auditul de aliniere și recuperarea liniilor goale,
     // înainte ca verificările QA să evalueze fragmentele despărțite prin cratimă.
-
-
     const targetedRetry = await globalPostCheck(items, translatedById, keyStates, 2);
     console.log(`${c.green}[RETRY FINAL] ${targetedRetry.fixed} replici reparate.${c.reset}`);
 
@@ -9804,7 +9909,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         console.log(`${c.green}[QA FINAL] OK: toate replicile relevante au traducere.${c.reset}`);
     }
 
-    let restoredDialogueDashCount = 0;
+    let separatedSpeakerTurnCount = 0;
     let finalLayoutAdjustedCount = 0;
     const finalLayoutAdjustedIds = [];
     const sourceEnglishNameVocabulary = buildEnglishNameVocabulary(items);
@@ -9835,13 +9940,13 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
                 finalLayoutAdjustedCount++;
                 if (finalLayoutAdjustedIds.length < 12) finalLayoutAdjustedIds.push(String(item.id));
             }
-            if (prepared.dashRestored) restoredDialogueDashCount++;
+            if (prepared.speakerTurnsSeparated) separatedSpeakerTurnCount++;
             previousExportableSourceText = item.text;
             previousExportableTranslatedText = sourceFallbackIdSet.has(id) ? null : prepared.translatedContext;
             return [`${item.id}\n${item.start} --> ${item.end}\n${prepared.text}\n`];
         }).join('\n');
-    if (restoredDialogueDashCount) {
-        console.log(`${c.cyan}[Dialog] Reparate la export cratimele explicite ale celui de-al doilea vorbitor în ${restoredDialogueDashCount} blocuri.${c.reset}`);
+    if (separatedSpeakerTurnCount) {
+        console.log(`${c.cyan}[Dialog] Păstrate separat pe rânduri replicile cu schimbare explicită de vorbitor, fără liniuțe, în ${separatedSpeakerTurnCount} blocuri.${c.reset}`);
     }
     if (finalLayoutAdjustedCount) {
         console.log(`${c.cyan}[Layout final] Reformatate chiar înainte de export ${finalLayoutAdjustedCount} subtitrări; ID-uri exemplu: ${finalLayoutAdjustedIds.join(', ')}${finalLayoutAdjustedCount > finalLayoutAdjustedIds.length ? ', ...' : ''}.${c.reset}`);
