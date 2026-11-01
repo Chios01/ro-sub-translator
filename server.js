@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.151',
+    version: '13.2.156',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3695,8 +3695,21 @@ function formatSubtitleLayout(value) {
     // primul rând rezervă întotdeauna spațiul ocupat de liniuța de dialog.
     // Formatterul decide numai structura și liniuțele. Majusculele/minusculele
     // sunt stabilite ulterior de mecanismul unic de capitalizare finală.
-    const wrapEntry = (entry, allowSoftTwoLineWrap = true) => {
-        const lines = wrapSubtitleLinesSmart(entry.text, 42, entry.dialogue ? 2 : 0, allowSoftTwoLineWrap, entry.dialogue ? 1 : 0);
+    const wrapEntry = (entry, allowSoftTwoLineWrap = true, preferSingleLineUpTo48 = false) => {
+        const compactText = String(entry.text || '').replace(/\s+/g, ' ').trim();
+
+        // Într-un cue cu exact doi vorbitori, verificăm mai întâi dacă replica
+        // fiecăruia încape singură pe un rând de maximum 48 de caractere vizibile
+        // (inclusiv „- ”). Astfel evităm un al treilea rând creat doar pentru că
+        // textul replicii depășește cu puțin ținta strictă de 42.
+        // Regula se activează numai pentru cele două ture explicite; nu schimbă
+        // împachetarea dialogului cu un singur vorbitor sau a cue-urilor lungi.
+        let lines;
+        if (preferSingleLineUpTo48 && entry.dialogue && compactText.length + 2 <= 48) {
+            lines = [compactText];
+        } else {
+            lines = wrapSubtitleLinesSmart(compactText, 42, entry.dialogue ? 2 : 0, allowSoftTwoLineWrap, entry.dialogue ? 1 : 0);
+        }
         if (!lines.length) return [];
         if (entry.dialogue) lines[0] = `- ${lines[0]}`;
         return lines;
@@ -3714,7 +3727,7 @@ function formatSubtitleLayout(value) {
     // La dialog dublu fiecare vorbitor își păstrează liniuța; dacă o replică
     // este lungă, continuarea ei trece pe rânduri suplimentare fără a repeta liniuța.
     if (entries.length === 2 && entries.every(entry => entry.dialogue)) {
-        return entries.flatMap(entry => wrapEntry(entry)).join('\n') || ' ';
+        return entries.flatMap(entry => wrapEntry(entry, true, true)).join('\n') || ' ';
     }
 
     // Pentru intrări mixte păstrăm ordinea și markerii expliciți ai vorbitorilor;
