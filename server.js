@@ -274,7 +274,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.148',
+    version: '13.2.149',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -11076,8 +11076,10 @@ function isStandaloneSilencingCue(value) {
     const hasExplicitShushingAction = /\b(?:shush(?:es|ing)?|hush(?:es|ing)?)\b/iu.test(original);
     let clean = original
         .replace(/<[^>]*>/g, ' ')
-        // Etichete de grup/vorbitor precum „OTHERS:” care pot preceda un singur „Shh!”.
-        .replace(/^\s*(?:OTHERS?|ALL|EVERYONE|CROWD|BOTH)\s*:\s*/gimu, ' ')
+        // Etichete de grup/vorbitor sau nume de personaj („OTHERS:”, „Ivan:”, „DR. BAILEY:”) 
+        // pot preceda un cue izolat. Eliminăm eticheta numai pentru clasificare;
+        // dacă după ea rămâne orice dialog, cue-ul nu este filtrat.
+        .replace(/^[ \t]*(?:[-–—][ \t]*)?(?:[\p{Lu}][\p{L}\p{M}'’.-]*(?:[ \t]+[\p{Lu}][\p{L}\p{M}'’.-]*){0,2})[ \t]*:[ \t]*/gmu, ' ')
         .replace(/\[(?:\s*)(?:shush(?:es|ing)?|hush(?:es|ing)?)(?:\s*)\]/giu, ' ')
         .replace(/\((?:\s*)(?:shush(?:es|ing)?|hush(?:es|ing)?)(?:\s*)\)/giu, ' ')
         .replace(/^\s*[-–—]\s*/gmu, ' ')
