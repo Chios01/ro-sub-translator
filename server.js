@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.153',
+    version: '13.2.154',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4581,8 +4581,8 @@ ${JSON.stringify(keysToTranslate, null, 2)}
 }
 
 // Schema JSON folosește elemente acceptate de Gemini Structured Output.
-// Cardinalitatea, unicitatea și ordinea ID-urilor sunt validate strict după parsare;
-// orice neconcordanță izolează calupul până la ID individual.
+// Serverul verifică ID-urile explicite după parsare și nu depinde de ordinea
+// elementelor returnate de Gemini. ID-urile lipsă sunt recuperate separat.
 function buildTranslationResponseSchema(chunk) {
     if (!Array.isArray(chunk) || chunk.length === 0) {
         throw new Error('Nu se poate construi schema Gemini pentru un calup gol.');
@@ -6053,68 +6053,142 @@ function normalizeTranslationPayload(parsed) {
     return Object.create(null);
 }
 
-// Validare strictă a asocierii ID→text. Pentru traducerea primară și recuperări,
-// răspunsul trebuie să conțină exact toate ID-urile solicitate, în aceeași ordine.
-// Un rezultat reordonat/incomplet nu este niciodată mapat „după poziție” și livrat.
-function normalizeOrderedTranslationPayload(parsed, expectedItems, label = 'Gemini') {
+// Validare sigură a asocierii ID→text. Fiecare traducere este asociată exclusiv
+// după ID-ul explicit, nu după poziția din array. Ordinea răspunsului Gemini poate
+// diferi; ID-urile lipsă/duplicate/ambigue rămân pentru recuperare punctuală, fără split.
+function normalizeTranslationPayloadById(parsed, expectedItems, label = 'Gemini') {
     const fail = reason => {
-        const error = new Error(`JSON Parse failed: ${label} — neconcordanță de aliniere ID: ${reason}`);
-        error.isTranslationAlignmentError = true;
-        throw error;
+        // A malformed top-level response is a payload/JSON problem, not proof
+        // that the model reordered IDs. Never split a valid chunk merely because
+        // returned objects appear in a different order.
+        throw new Error(`JSON Parse failed: ${label} — răspuns JSON nevalid: ${reason}`);
     };
-    if (!Array.isArray(parsed)) fail('răspunsul nu este un array JSON');
     if (!Array.isArray(expectedItems)) fail('lista ID-urilor solicitate nu este validă');
-    if (parsed.length !== expectedItems.length) {
-        fail(`au fost returnate ${parsed.length} obiecte pentru ${expectedItems.length} ID-uri solicitate`);
+
+    const normalizeId = value => {
+        if (value === undefined || value === null) return null;
+        const raw = String(value).trim();
+        if (!/^\d+$/.test(raw)) return null;
+        const numeric = Number(raw);
+        return Number.isSafeInteger(numeric) ? String(numeric) : null;
+    };
+
+    const expectedIds = new Map();
+    for (const item of expectedItems) {
+        const id = normalizeId(item?.id);
+        if (id === null) fail('lista solicitată conține un ID invalid');
+        if (expectedIds.has(id)) fail(`lista solicitată conține ID duplicat ${id}`);
+        expectedIds.set(id, true);
+    }
+
+    let entries;
+    if (Array.isArray(parsed)) {
+        entries = parsed;
+    } else if (parsed && typeof parsed === 'object') {
+        const source = parsed.translations && typeof parsed.translations === 'object'
+            ? parsed.translations
+            : parsed;
+        if (Array.isArray(source)) {
+            entries = source;
+        } else if (source && typeof source === 'object') {
+            entries = Object.entries(source).map(([id, value]) => ({
+                id,
+                text: value && typeof value === 'object' && !Array.isArray(value)
+                    ? value.text
+                    : value
+            }));
+        } else {
+            fail('obiectul JSON nu conține traduceri');
+        }
+    } else {
+        fail('răspunsul nu este un array sau un obiect JSON');
     }
 
     const dict = Object.create(null);
     const seen = new Set();
-    for (let index = 0; index < expectedItems.length; index++) {
-        const expectedId = String(expectedItems[index]?.id ?? '');
-        const entry = parsed[index];
+    const ambiguous = new Set();
+    const returnedOrder = [];
+    let invalidEntries = 0;
+    let unexpectedIds = 0;
+    let duplicateIds = 0;
+
+    for (const entry of entries) {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-            fail(`obiect invalid la poziția ${index + 1}`);
+            invalidEntries++;
+            continue;
         }
-        if (entry.id === undefined || entry.id === null || !Number.isInteger(Number(entry.id))) {
-            fail(`ID invalid la poziția ${index + 1}`);
+        const id = normalizeId(entry.id);
+        if (id === null || typeof entry.text !== 'string') {
+            invalidEntries++;
+            continue;
         }
-        const actualId = String(entry.id);
-        if (actualId !== expectedId) {
-            fail(`poziția ${index + 1} trebuia să fie ID ${expectedId}, dar a venit ID ${actualId}`);
+        if (!expectedIds.has(id)) {
+            unexpectedIds++;
+            continue;
         }
-        if (seen.has(actualId)) fail(`ID duplicat ${actualId}`);
-        if (typeof entry.text !== 'string') fail(`textul pentru ID ${actualId} nu este șir`);
-        seen.add(actualId);
-        dict[actualId] = entry.text;
+        if (ambiguous.has(id)) continue;
+        if (seen.has(id)) {
+            // Two different payload rows claim the same cue. Do not guess which
+            // one is correct; leave only this ID for the existing empty recovery.
+            delete dict[id];
+            ambiguous.add(id);
+            duplicateIds++;
+            continue;
+        }
+        seen.add(id);
+        returnedOrder.push(id);
+        dict[id] = entry.text;
     }
+
+    const expectedOrder = [...expectedIds.keys()];
+    const expectedPosition = new Map(expectedOrder.map((id, index) => [id, index]));
+    let previousPosition = -1;
+    let outOfOrder = false;
+    for (const id of returnedOrder) {
+        const position = expectedPosition.get(id);
+        if (position < previousPosition) {
+            outOfOrder = true;
+            break;
+        }
+        previousPosition = position;
+    }
+
+    if (outOfOrder) {
+        console.log(`${c.cyan}[Aliniere ID] Gemini a returnat răspunsurile într-o altă ordine; asocierea s-a făcut după ID-ul explicit, fără split și fără cereri suplimentare.${c.reset}`);
+    }
+
+    const missingCount = expectedOrder.filter(id => !Object.prototype.hasOwnProperty.call(dict, id)).length;
+    if (invalidEntries || unexpectedIds || duplicateIds || missingCount) {
+        console.log(`${c.yellow}[Aliniere ID] ${label}: ${expectedOrder.length - missingCount}/${expectedOrder.length} ID-uri asociate sigur; ${missingCount} de recuperat; intrări invalide ${invalidEntries}, ID-uri neașteptate ${unexpectedIds}, duplicate ambigue ${duplicateIds}. Fără split pentru lipsuri/ordine.${c.reset}`);
+    }
+
     return dict;
 }
 
-// Grammar Review întoarce numai ID-urile care trebuie corectate. Acceptăm un
-// subset, dar numai dacă ID-urile sunt cunoscute, unice și păstrează ordinea lotului.
-function normalizeOrderedSparseCorrectionPayload(parsed, expectedItems, label = 'Grammar Review') {
-    const fail = reason => {
-        throw new Error(`JSON Parse failed: ${label} — neconcordanță de aliniere ID: ${reason}`);
-    };
-    if (!Array.isArray(parsed)) fail('răspunsul nu este un array JSON');
-    const expectedIndex = new Map(expectedItems.map((item, index) => [String(item.id), index]));
+// Grammar Review poate returna numai subsetul care necesită corecturi.
+// Asociem fiecare corectură după ID, indiferent de ordinea răspunsului.
+// ID-urile necunoscute/invalide sunt ignorate, iar duplicatele ambigue nu se aplică.
+function normalizeSparseCorrectionPayloadById(parsed, expectedItems, label = 'Grammar Review') {
+    if (!Array.isArray(parsed)) {
+        throw new Error(`JSON Parse failed: ${label} — răspunsul de corectură nu este un array JSON`);
+    }
+    const expectedIds = new Set(expectedItems.map(item => String(item?.id ?? '')));
     const dict = Object.create(null);
     const seen = new Set();
-    let lastIndex = -1;
+    const ambiguous = new Set();
     for (const entry of parsed) {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry) ||
-            entry.id === undefined || entry.id === null || !Number.isInteger(Number(entry.id))) {
-            fail('obiect de corectură invalid');
+            entry.id === undefined || entry.id === null || typeof entry.text !== 'string') {
+            continue;
         }
         const id = String(entry.id);
-        const index = expectedIndex.get(id);
-        if (index === undefined) fail(`ID neașteptat ${id}`);
-        if (seen.has(id)) fail(`ID duplicat ${id}`);
-        if (index <= lastIndex) fail(`ID-urile corecturilor nu respectă ordinea lotului (ID ${id})`);
-        if (typeof entry.text !== 'string') fail(`textul corecturii pentru ID ${id} nu este șir`);
+        if (!expectedIds.has(id) || ambiguous.has(id)) continue;
+        if (seen.has(id)) {
+            delete dict[id];
+            ambiguous.add(id);
+            continue;
+        }
         seen.add(id);
-        lastIndex = index;
         dict[id] = entry.text;
     }
     return dict;
@@ -6174,7 +6248,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const requestLabel = `Calup ${globalChunkIndex + 1}/${totalChunks}`;
             const raw = await callGemini(prompt, keyState, { requestLabel, responseSchema: buildTranslationResponseSchema(requestChunk) });
             const parsed = safeJsonParse(raw);
-            const dict = normalizeOrderedTranslationPayload(parsed, requestChunk, 'traducerea principală');
+            const dict = normalizeTranslationPayloadById(parsed, requestChunk, 'traducerea principală');
 
             // Verificăm rezultatul DUPĂ același formatter care va fi folosit la ieșire.
             // Astfel, un răspuns format doar din ezitări/interjecții eliminate de formatter
@@ -6246,10 +6320,6 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             }
             return results;
         } catch (error) {
-            if (error?.isTranslationAlignmentError === true) {
-                lastError = error;
-                break;
-            }
             lastError = error;
             const is429 = error.isRateLimit429 === true || error.message.includes('429');
             if (is429) {
@@ -6330,32 +6400,6 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
         }
     }
 
-    if (lastError?.isTranslationAlignmentError === true) {
-        if (chunk.length > 1) {
-            const middle = Math.ceil(chunk.length / 2);
-            const first = chunk.slice(0, middle);
-            const second = chunk.slice(middle);
-            console.log(`${c.yellow}[Aliniere ID] Răspunsul calupului ${globalChunkIndex + 1} nu respectă ordinea ID-urilor; împart în ${first.length}+${second.length} și verific separat.${c.reset}`);
-            const firstResult = await processChunkWithRetry(
-                first, allItems, chunkStart, chunkStart + middle,
-                previousTranslatedContext, keyStates, globalChunkIndex, totalChunks,
-                depth + 1, deferred429Retry
-            );
-            const secondContext = firstResult.slice(-PREVIOUS_TRANSLATION_CONTEXT);
-            const secondResult = await processChunkWithRetry(
-                second, allItems, chunkStart + middle, chunkEnd,
-                secondContext, keyStates, globalChunkIndex, totalChunks,
-                depth + 1, deferred429Retry
-            );
-            return [...firstResult, ...secondResult];
-        }
-        const only = chunk[0];
-        console.error(`${c.red}[Aliniere ID] ID ${only?.id ?? '?'} a primit un răspuns cu ID neconform chiar și la verificarea individuală; păstrez sursa pentru fallback, fără a atașa altă traducere.${c.reset}`);
-        return chunk.map(item => ({
-            id: item.id,
-            text: (isNumericVerbatimCue(item.text) || item.musicOnly) ? String(item.text || '') : ' '
-        }));
-    }
 
     if (lastError?.isPermanentQuotaBlock) {
         throw lastError;
@@ -6446,7 +6490,7 @@ async function globalPostCheck(items, translatedById, keyStates, maxPasses = 1) 
         if (!originalClean || isJunkOrInterjection(item.text)) return false;
 
         const translated = translatedById[String(item.id)];
-        if (isOkOnlySubtitle(translated) && !isAlignmentAudit) return false;
+        if (isOkOnlySubtitle(translated)) return false;
         const transClean = String(translated || '').replace(/<[^>]+>/g, '').trim();
         if (!transClean) return true;
 
@@ -6700,7 +6744,7 @@ Pentru ID-urile fără o greșeală clară, returnează un array gol: [].`;
                     }
                 });
                 const parsed = safeJsonParse(raw);
-                const parsedDict = normalizeOrderedSparseCorrectionPayload(parsed, batch, isAlignmentAudit ? 'audit de aliniere' : 'Grammar Review');
+                const parsedDict = normalizeSparseCorrectionPayloadById(parsed, batch, isAlignmentAudit ? 'audit de aliniere' : 'Grammar Review');
 
                 for (const checkedItem of batch) verifiedIds.add(String(checkedItem.id));
 
@@ -8024,7 +8068,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
                     responseSchema: buildTranslationResponseSchema(batch)
                 }
             );
-            recoveryDict = normalizeOrderedTranslationPayload(safeJsonParse(raw), batch, `${stageLabel} recovery`);
+            recoveryDict = normalizeTranslationPayloadById(safeJsonParse(raw), batch, `${stageLabel} recovery`);
             parsedAnyResponse = true;
         } catch (error) {
             if (isRecoverableJsonParseError(error)) {
@@ -8040,7 +8084,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
                                 responseSchema: buildTranslationResponseSchema(batch)
                             }
                         );
-                        recoveryDict = normalizeOrderedTranslationPayload(safeJsonParse(retryRaw), batch, `${stageLabel} recovery retry`);
+                        recoveryDict = normalizeTranslationPayloadById(safeJsonParse(retryRaw), batch, `${stageLabel} recovery retry`);
                         parsedAnyResponse = true;
                     } catch (retryError) {
                         if (isRecoverableJsonParseError(retryError)) {
@@ -8118,7 +8162,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
                         responseSchema: buildTranslationResponseSchema(markerRejectedItems)
                     }
                 );
-                const forcedDict = normalizeOrderedTranslationPayload(safeJsonParse(forcedRaw), markerRejectedItems, `${stageLabel} recovery obligatorie`);
+                const forcedDict = normalizeTranslationPayloadById(safeJsonParse(forcedRaw), markerRejectedItems, `${stageLabel} recovery obligatorie`);
                 parsedAnyResponse = true;
                 for (const item of markerRejectedItems) {
                     const id = String(item.id);
@@ -8376,7 +8420,7 @@ async function retryEmptyTranslationIndividually(item, translatedById, keyStates
             responseSchema: buildTranslationResponseSchema([item])
         });
         const retryJson = safeJsonParse(retryRaw);
-        const retryDict = normalizeOrderedTranslationPayload(retryJson, [item], `${stageLabel} retry individual`);
+        const retryDict = normalizeTranslationPayloadById(retryJson, [item], `${stageLabel} retry individual`);
         if (isEmptyRecoverySoundCueSkip(retryDict[id]) && isStandaloneNonDialogueSoundCue(item.text)) {
             markIntentionalSoundCueSuppressed(item, translatedById, keyStates);
             console.log(`${c.cyan}[${stageLabel} Retry] ID ${id} marcat ca descriere sonoră; lăsat gol intenționat, fără alte retry-uri.${c.reset}`);
@@ -8472,7 +8516,7 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
                 responseSchema: buildTranslationResponseSchema(batch)
             }
         );
-        return normalizeOrderedTranslationPayload(safeJsonParse(raw), batch, 'Final Empty Recovery');
+        return normalizeTranslationPayloadById(safeJsonParse(raw), batch, 'Final Empty Recovery');
     };
 
     const splitAndRecover = async (batch, depth, batchLabel, reason) => {
