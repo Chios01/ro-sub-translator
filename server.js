@@ -102,31 +102,6 @@ function buildMediaContextText(meta) {
     return parts.join('\n');
 }
 
-// Glosar opțional pe titlu (cheia = ID IMDb de bază). Termenii de aici sunt trimiși modelului ca forme
-// românești FIXE, ca același nume să nu fie tradus diferit în calupuri sau episoade diferite.
-// Editează liber: adaugă un ID nou cu perechi [original, forma în română].
-const MEDIA_GLOSSARIES = {
-    // Foundation (Apple TV+)
-    tt0804484: [
-        ['The Mule', 'Catârul (declinat natural: Catârul, Catârului, pe Catâr)'],
-        ['Brazen Head', 'Capul de Aramă'],
-        ['Luminists / Luminism', 'luminiști / luminism'],
-        ['Inheritors', 'Moștenitori'],
-        ['Remediation', 'Remediere']
-    ]
-};
-
-function getMediaGlossaryText(imdbBaseId) {
-    const entries = MEDIA_GLOSSARIES[String(imdbBaseId || '').toLowerCase()];
-    if (!Array.isArray(entries) || !entries.length) return '';
-    const lines = entries
-        .filter(pair => Array.isArray(pair) && pair[0] && pair[1])
-        .map(([from, to]) => `${String(from).replace(/[<>`]/g, '')} = ${String(to).replace(/[<>`]/g, '')}`);
-    return lines.length
-        ? `Glossary (fixed Romanian forms; use exactly these, inflecting naturally):\n${lines.join('\n')}`
-        : '';
-}
-
 function getMediaContextText(mediaId) {
     const rawId = String(mediaId || '').trim();
     const match = rawId.match(/^(tt\d+)(?::(\d+)(?::(\d+))?)?$/i);
@@ -134,8 +109,7 @@ function getMediaContextText(mediaId) {
     const mediaType = rawId.includes(':') ? 'series' : 'movie';
     const base = mediaContextCache.get(`${mediaType}:${match[1]}`) || '';
     const episode = base && match[2] && match[3] ? `\nEpisode: season ${match[2]}, episode ${match[3]}` : '';
-    const glossary = getMediaGlossaryText(match[1]);
-    return [base + episode, glossary].filter(Boolean).join('\n');
+    return base + episode;
 }
 
 // Rezolvă numele filmului/serialului din Cinemeta pentru antetul de început.
@@ -274,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.149',
+    version: '13.2.150',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1854,14 +1828,14 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const MEANINGFUL_STANDALONE_REACTIONS = new Set((
-    'aw aww awww ah ahh ahhh ahhhh oops ops ouch ow oww owww phew whew uh uh-oh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr mhm mm mmhmm mm-hmm mmm-hmm yeah yep yup ya nah nope huh'
+    'aw aww awww oops ops ouch ow oww owww phew whew uh uh-oh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr mhm mm mmhmm mm-hmm mmm-hmm yeah yep yup ya nah nope huh'
 ).split(/\s+/));
 
 const STANDALONE_SOURCE_FILLERS = new Set((
     // Eliminăm vocalizările fără conținut când un rând este alcătuit exclusiv din ele.
     // Nu eliminăm interjecții din replici complete; clasificarea contextuală rulează separat.
     // Include și variante de șuierat/șș și bâzâit-uri de tip „mm-mm” sau „hmm-mm”.
-    'aaaa aaaaah aaaah aaah aah aargh agh ah a-ha aha ahem ahh ahhh ahhhh argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ăăăă îhî îhîî ptiu hm hmm hmmm hmph mh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm mm-mm hmm-mm sh shh shhh ssh ssshh șș șșș șșșș pff pfff pfft phew pssh psst uf uff ugh ughh uh-oh uh-huh uhu uhuu whew whoa whoo whoo-hoo woo-hoo whooo whoooo whoooooo whoop whoops whup wooh woo-hoo-hoo wow yikes yoo yoo-hoo oops ops ouch ow oww owww yeah yep yup ya nah nope'
+    'aa aaa aaaa aaaaa aaaaaah aaaah aaah aah aahh aahhh ah ahh ahhh ahhhh aargh agh a-ha aha ahem argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ăăăă ăăăăă îhî îhîî ptiu hm hmm hmmm hmph mh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm mm-mm hmm-mm sh shh shhh ssh ssshh șș șșș șșșș pff pfff pfft phew pssh psst uf uff ugh ughh uh-oh uh-huh uhu uhuu whew whoa whoo whoo-hoo woo-hoo whooo whoooo whoooooo whoop whoops whup wooh woo-hoo-hoo wow yikes yoo yoo-hoo oops ops ouch ow oww owww yeah yep yup ya nah nope'
 ).split(/\s+/));
 
 // „Oh” și „Huh?” sunt interjecții vizate: le eliminăm și din expresii mai lungi,
@@ -2874,12 +2848,19 @@ const CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN = [...CONTEXTUAL_STANDALONE_FI
 // Elimină întotdeauna vocalizările cerute explicit, atât ca replici izolate,
 // cât și în interiorul unei fraze. Acestea nu se trimit la Gemini pentru traducere.
 function stripSpecifiedVocalizations(value) {
-    // Vocalizări eliminate obligatoriu: Aha, Hm/Hmm, Mm/Mmm, Mhm, Mm-hmm,
-    // Uh-huh și îhî. Se elimină și din interiorul unei fraze, dar niciodată
-    // din interiorul unui cuvânt sau „mm” folosit ca unitate după un număr.
-    const tokenRe = /(?<![\p{L}\p{N}_])(?:h+m+(?:[-‐‑–—](?:h+m+|m+))?|m+h+m+(?:[-‐‑–—]h+m+)?|m+m+(?:[-‐‑–—](?:h+m+|m+))?|uh[-‐‑–—]huh+|îh[îi]+|a[-‐‑–—]?ha)(?![\p{L}\p{N}_])/giu;
+    // Eliminăm obligatoriu vocalizările fără conținut: Aha, Hm/Hmm, Mm/Mmm,
+    // Mhm, Mm-hmm, Uh-huh, îhî și întreaga familie Aaa/Aa/Ah/Aah/Ăă.
+    // Familia A/Ă este eliminată și din interiorul replicii, indiferent de
+    // majuscule sau de numărul literelor, dar numai ca token separat.
+    // „mm” după o cifră rămâne unitate de măsură.
+    const tokenRe = /(?<![\p{L}\p{N}_])(?:h+m+(?:[-‐‑–—](?:h+m+|m+))?|m+h+m+(?:[-‐‑–—]h+m+)?|m+m+(?:[-‐‑–—](?:h+m+|m+))?|uh[-‐‑–—]huh+|îh[îi]+|a[-‐‑–—]?ha|a(?:[-‐‑–—]a+)+|a{2,}|a+h+|ah+|ă+)(?![\p{L}\p{N}_])/giu;
     const isNumericMillimeter = (token, offset, whole) =>
         /^mm$/iu.test(token) && /\d\s+$/u.test(whole.slice(0, offset));
+    // „AA” cu majuscule înaintea unui substantiv este acronim (ex. „AA batteries”), nu vocalizare.
+    const isLikelyAaAcronym = (token, offset, whole) => {
+        const nextWord = whole.slice(offset + token.length).match(/^\s+([\p{L}]+)/u)?.[1] || '';
+        return token === 'AA' && /[\p{Ll}]/u.test(nextWord);
+    };
 
     return String(value || '').normalize('NFC').split(/\r?\n/).map(line => {
         if (!line.trim()) return '';
@@ -2889,13 +2870,18 @@ function stripSpecifiedVocalizations(value) {
         if (!body.trim()) return '';
 
         const matches = [...body.matchAll(tokenRe)].filter(match =>
-            !isNumericMillimeter(match[0], match.index, body)
+            !isNumericMillimeter(match[0], match.index, body) &&
+            !isLikelyAaAcronym(match[0], match.index, body)
         );
         tokenRe.lastIndex = 0;
         if (!matches.length) return line;
 
+        const firstVisibleIndex = body.search(/\S/u);
+        const leadingRemovedUppercase = matches.some(match =>
+            match.index === firstVisibleIndex && /[A-ZĂÂÎȘȚ]/u.test(match[0][0])
+        );
         body = body.replace(tokenRe, (token, offset, whole) =>
-            isNumericMillimeter(token, offset, whole) ? token : ' '
+            isNumericMillimeter(token, offset, whole) || isLikelyAaAcronym(token, offset, whole) ? token : ' '
         );
         tokenRe.lastIndex = 0;
 
@@ -2914,6 +2900,9 @@ function stripSpecifiedVocalizations(value) {
             .trim();
 
         if (!body || !/[\p{L}\p{N}]/u.test(body)) return '';
+        if (leadingRemovedUppercase) {
+            body = body.replace(/^([\p{Ll}])/u, ch => ch.toLocaleUpperCase('ro-RO'));
+        }
         // Păstrăm majuscula/minuscula sursei după eliminarea vocalizării.
         // Contextul dintre cue-uri decide ulterior dacă fragmentul continuă fraza.
         return prefix + body;
@@ -4478,9 +4467,9 @@ SUBTITLE FORMATTING
 INTERJECTIONS AND FILLERS
 - Recognize the extended interjection inventory, including variants such as “ahem”, “ehhh”, “hmph”, “ooh-la-la”, “pfft”, “uh-huh”, “whoo-hoo”, and Romanian forms such as “ăă”, “îhî”, “ptiu”, and “brr”. The mandatory removal list below takes precedence for its explicitly listed tokens; the remaining inventory is interpreted contextually.
 - Remove standalone filler sounds and meaningless hesitation tokens, including “Um”, “Erm”, “Mwah”, “ă”, and “ăă”, when they function only as hesitation/noise. Remove disposable fillers around a real sentence only when they add no meaning; repair punctuation and capitalization.
-- NEVER preserve the English interjections “Oh” or “Ah” literally in Romanian output, whether they appear alone or at the start of a longer expression. Remove the leading “Oh/Ah” and translate the remaining message naturally: for example, “Oh, no!” → „Nu!” / „Vai, nu!” according to context; “Ah, yes!” → „Da!”; “Oh my God!” → „Doamne!”. The rest of the message must not be discarded.
-- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Woo-hoo” when celebrating, and “Phew” when expressing relief. Omit a standalone “Shh/Shhh/Psst” or an isolated shushing action; preserve a shushing word only when it is part of a substantive spoken phrase with other words. The mandatory vocalization filter takes precedence for Aha/aha.
-- Use neighboring subtitles and the scene context to decide whether an interjection is noise or meaningful speech. Never automatically delete meaningful reactions, acknowledgments, questions, pain, warnings, relief, or commands just because they occur in the interjection inventory. Translate those naturally into Romanian.
+- Before translation, always remove filler vocalizations in the family “A/AA/AAA…”, “AH/AHH/AHHH…”, “AAH/AAHH…” and “Ă/ĂĂ/ĂĂĂ…”, regardless of capitalization or position in the line. Never translate these sounds as exclamations; remove only the vocalization token and preserve the remaining dialogue, repairing punctuation and capitalization.
+- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Woo-hoo” when celebrating, and “Phew” when expressing relief. Omit a standalone “Shh/Shhh/Psst” or an isolated shushing action; preserve a shushing word only when it is part of a substantive spoken phrase with other words. The mandatory vocalization filter takes precedence for Aha/aha and the entire A/AA/AH/Ă family.
+- Use neighboring subtitles and the scene context to decide whether an interjection is noise or meaningful speech. Never automatically delete meaningful reactions, acknowledgments, questions, pain, warnings, relief, or commands just because they occur in the interjection inventory, except for the mandatory A/AA/AH/Ă vocalization family specified above. Translate the other meaningful reactions naturally into Romanian.
 - Before returning, compare the beginning and end of each translation with its source so that cleaning a filler does not accidentally remove adjacent dialogue.
 - ETICHETE ȘI CUE-URI: elimină etichetele de vorbitor și indicațiile non-dialogate de sunet/muzică dintre paranteze rotunde sau drepte când apar la începutul rândului (eventual după liniuța de dialog sau un tag de formatare); tratează ca un singur tag și etichetele care se întind pe mai multe rânduri. Nu traduce titluri de melodii sau efecte sonore folosite ca etichete. Păstrează textul literal dintre paranteze din mijlocul unei fraze, inclusiv taste/comenzi precum „Press [Enter] to continue” și indicații editoriale precum [sic]. Nu șterge dialogul exterior tagului.
 - PENTRU DIALOG NORMAL, returnează traducerea ca text simplu: nu pune replica tradusă între paranteze rotunde sau drepte și nu adăuga paranteze decorative în jurul întregii traduceri. Parantezele/parantezele drepte nu se folosesc ca ambalaj pentru o replică normală.
@@ -9771,7 +9760,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         console.log(`${c.yellow}[QA FINAL] AVERTISMENTE: ${finalReviewWarnings.size} replici au semnale de calitate care merită revizuire; acestea nu blochează livrarea subtitrării. ${warningSamples.join(' | ')}${remaining > 0 ? ` | și încă ${remaining}` : ''}.${c.reset}`);
     }
     if (!unresolvedFinalItems.length && !finalReviewWarnings.size) {
-        console.log(`${c.green}[QA FINAL] OK: toate replicile relevante au traducere și nu au fost detectate probleme de calitate rămase.${c.reset}`);
+        console.log(`${c.green}[QA FINAL] OK: toate replicile relevante au traducere.${c.reset}`);
     }
 
     let restoredDialogueDashCount = 0;
