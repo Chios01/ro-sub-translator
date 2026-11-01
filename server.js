@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.156',
+    version: '13.2.157',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3039,7 +3039,7 @@ function stripLeadingDialogueDashes(value, sourceValue = null) {
 }
 
 
-function stripSpeakerNameLabels(value) {
+function stripSpeakerNameLabels(value, allowExtendedLabels = false) {
     // „Imagine:” este începutul unei propoziții („Imagine: un viitor…”), nu etichetă de vorbitor.
     // Păstrăm și alte forme verbale frecvente care pot apărea înaintea unei explicații.
     const protectedIntroLabels = new Set([
@@ -3050,11 +3050,27 @@ function stripSpeakerNameLabels(value) {
         'attention', 'danger', 'important', 'example', 'question', 'answer', 'reminder', 'rule',
         'truth', 'fact', 'hey', 'hello', 'right', 'anyway'
     ]);
-    const pattern = /(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?([A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,3}):\s*/g;
+    // Etichetele compuse (de ex. „MARIANNE and MR. WILLOUGHBY:”) sunt
+    // recunoscute în trecerea specială de după eliminarea muzicii. Filtrul
+    // obișnuit rămâne neschimbat, ca să nu alterăm contextul trimis la Gemini.
+    const standardPattern = /(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?([A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,3}):\s*/g;
+    const extendedPattern = /(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?([A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,23}\.?)(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,23}\.?|&|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,7}:\s*/g;
+    const pattern = allowExtendedLabels ? extendedPattern : standardPattern;
     return String(value || '').replace(pattern, (full, linePrefix, formattingPrefix, label) => {
         if (protectedIntroLabels.has(String(label || '').trim().toLocaleLowerCase('en-US'))) return full;
         return linePrefix + formattingPrefix;
     });
+}
+
+// A doua trecere este folosită după eliminarea versurilor muzicale: etichetele
+// rămase fără conținut nu trebuie să supraviețuiască drept subtitrări goale.
+function cleanResidualSpeakerLabels(value) {
+    return stripSpeakerNameLabels(String(value || ''), true)
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line && !/^(?:[-–—/\\.,;:!?…]|\s)+$/u.test(line))
+        .join('\n')
+        .trim();
 }
 
 // Curățare contextuală: elimină vocalizările fără sens
@@ -11295,6 +11311,15 @@ function parseSrt(srt, stats = null) {
             text = lyricsRemoved.removedCount
                 ? cleanTextForJson(lyricsRemoved.text)
                 : lyricsRemoved.text.trim();
+
+            // Curățare GENERALĂ după eliminarea versurilor: unele surse pun
+            // eticheta vorbitorilor în afara marcajelor ♪...♪, iar după ștergerea
+            // cântecului poate rămâne singură (ex. „MARIANNE and MR. WILLOUGHBY:”).
+            // Eliminăm etichetele rămase, apoi rândurile care conțin doar separatori.
+            // Dacă blocul nu mai are dialog real, va fi omis mai jos înainte de Gemini.
+            if (lyricsRemoved.removedCount) {
+                text = cleanResidualSpeakerLabels(text);
+            }
 
             // După eliminarea versurilor, refacem filtrarea SDH asupra textului rămas.
             // Astfel, un cue sonor lipit de un segment muzical nu poate fi transmis
