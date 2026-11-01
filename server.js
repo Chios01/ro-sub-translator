@@ -67,6 +67,9 @@ const c = {
 // ============================================================
 
 const memoryCache = new Map();
+// Cheile rezultatelor QA livrate cu fallback rămân protejate de evacuarea LRU.
+// Astfel, cererile repetate pentru aceeași subtitrare nu repornesc Gemini automat.
+const qaFallbackCacheKeys = new Set();
 const secretArchive = [];
 
 // Textul englez sursă, păstrat temporar ca să poată fi descărcat din arhivă (comparație calitate).
@@ -247,7 +250,7 @@ function cleanMemoryCache(protectedKey = null) {
 
     for (const [key, value] of memoryCache) {
         if (memoryCache.size <= 30) break;
-        if (key === protectedKey) continue;
+        if (key === protectedKey || qaFallbackCacheKeys.has(key)) continue;
         if (typeof value === 'string') {
             memoryCache.delete(key);
         }
@@ -271,7 +274,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.146',
+    version: '13.2.148',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -9719,6 +9722,25 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     if (unresolvedFinalItems.length) {
         const ids = unresolvedFinalItems.map(item => item.id).join(', ');
         console.log(`${c.red}[QA FINAL] EROARE: ${unresolvedFinalItems.length} replici fără traducere (ID: ${ids}).${c.reset}`);
+
+        // Nu eliminăm replica din fișier și nu blocăm exportul întregii subtitrări.
+        // Dacă recuperarea AI eșuează, păstrăm textul original pentru acel ID;
+        // QA rămâne marcat ca eroare, iar fallback-ul este explicit în log.
+        const fallbackIds = [];
+        for (const item of unresolvedFinalItems) {
+            const id = String(item.id);
+            const sourceText = String(item.text || '');
+            if (!sourceText.replace(/<[^>]+>/g, '').trim()) continue;
+            translatedById[id] = sourceText;
+            fallbackIds.push(id);
+        }
+        if (qaStatus && typeof qaStatus === 'object' && fallbackIds.length) {
+            qaStatus.hasFallbacks = true;
+            qaStatus.fallbackIds = fallbackIds;
+        }
+        if (fallbackIds.length) {
+            console.log(`${c.yellow}[Fallback SRT] ${fallbackIds.length} replici fără traducere au fost păstrate în engleză, cu timpii și ID-urile originale, pentru ca restul subtitrării să poată fi livrată (ID: ${fallbackIds.join(', ')}).${c.reset}`);
+        }
     }
     // Mesajele specifice sunt afișate numai dacă semnalul este încă prezent
     // după reparare. Perechile care au fost corectate nu mai produc avertismente.
@@ -9756,6 +9778,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     let finalLayoutAdjustedCount = 0;
     const finalLayoutAdjustedIds = [];
     const sourceEnglishNameVocabulary = buildEnglishNameVocabulary(items);
+    const sourceFallbackIdSet = new Set(Array.isArray(qaStatus?.fallbackIds) ? qaStatus.fallbackIds.map(String) : []);
     // Contextul urmează ultimul cue vorbit care chiar ajunge în SRT.
     let previousExportableSourceText = null;
     let previousExportableTranslatedText = null;
@@ -9784,7 +9807,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
             }
             if (prepared.dashRestored) restoredDialogueDashCount++;
             previousExportableSourceText = item.text;
-            previousExportableTranslatedText = prepared.translatedContext;
+            previousExportableTranslatedText = sourceFallbackIdSet.has(id) ? null : prepared.translatedContext;
             return [`${item.id}\n${item.start} --> ${item.end}\n${prepared.text}\n`];
         }).join('\n');
     if (restoredDialogueDashCount) {
@@ -10511,6 +10534,9 @@ app.get('/:configData/translate', async (req, res) => {
     const cachedEntry = getMemoryCacheEntry(cacheKey);
     if (typeof cachedEntry === 'string') {
         res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
+        if (qaFallbackCacheKeys.has(cacheKey)) {
+            console.log(`${c.yellow}[Cache QA] Cerere repetată pentru un rezultat cu ID păstrat în engleză; returnez același SRT fără să pornesc o nouă traducere Gemini.${c.reset}`);
+        }
         return res.send(cachedEntry);
     }
     if (!cachedEntry && getActiveTranslationJobCount() >= MAX_ACTIVE_TRANSLATION_JOBS) {
@@ -10591,6 +10617,14 @@ app.get('/:configData/translate', async (req, res) => {
                     memoryCache.delete(cacheKey);
                     if (!qaStatus.hasErrors && String(translatedSrtString || '').trim()) {
                         memoryCache.set(cacheKey, translatedSrtString);
+                    } else if (qaStatus.hasFallbacks && String(translatedSrtString || '').trim()) {
+                        // Rezultatul parțial este tratat ca rezultat final de cache pentru
+                        // această subtitrare. O nouă cerere GET (inclusiv retry automat al
+                        // clientului/Stremio) primește același SRT și NU pornește Gemini din nou.
+                        // Reîncercarea se face numai după resetarea explicită a cache-ului.
+                        memoryCache.set(cacheKey, translatedSrtString.endsWith('\n') ? translatedSrtString : `${translatedSrtString}\n`);
+                        qaFallbackCacheKeys.add(cacheKey);
+                        console.log(`${c.yellow}[Cache QA] Rezultatul parțial este memorat până la resetarea explicită a serviciului; cererile repetate nu vor porni automat o nouă traducere. ID-uri păstrate în engleză: ${(qaStatus.fallbackIds || qaStatus.unresolvedIds || []).join(', ') || 'necunoscute'}.${c.reset}`);
                     } else {
                         console.log(`${c.yellow}[Cache] Rezultatul nu este memorat: traducerea este goală sau QA FINAL a raportat erori. O cerere ulterioară va putea reîncerca.${c.reset}`);
                     }
@@ -10614,7 +10648,7 @@ app.get('/:configData/translate', async (req, res) => {
 
         const finalSrt = await processPromise;
         
-        if (finalSrt && finalSrt.trim().length > 0 && !qaStatus.hasErrors) {
+        if (finalSrt && finalSrt.trim().length > 0 && (!qaStatus.hasErrors || qaStatus.hasFallbacks)) {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('ro-RO') + ' ' + now.toLocaleDateString('ro-RO');
             
