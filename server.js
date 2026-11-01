@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.157',
+    version: '13.2.158',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3050,15 +3050,27 @@ function stripSpeakerNameLabels(value, allowExtendedLabels = false) {
         'attention', 'danger', 'important', 'example', 'question', 'answer', 'reminder', 'rule',
         'truth', 'fact', 'hey', 'hello', 'right', 'anyway'
     ]);
+    // Unele surse pun indicația SDH chiar între numele vorbitorului și două puncte:
+    // „EDWARD [hushed]:”, „FANNY (șoptit):”, „MRS. JENNINGS [through door]:”.
+    // Eliminăm eticheta compusă dintr-o singură trecere, indiferent de paranteze,
+    // păstrând textul dialogat și, dacă există, liniuța vorbitorului.
+    const inlineDeliveryAnnotation = String.raw`(?:\s*(?:\[[^\]\r\n]{1,80}\]|\([^()\r\n]{1,80}\)))*`;
     // Etichetele compuse (de ex. „MARIANNE and MR. WILLOUGHBY:”) sunt
-    // recunoscute în trecerea specială de după eliminarea muzicii. Filtrul
-    // obișnuit rămâne neschimbat, ca să nu alterăm contextul trimis la Gemini.
-    const standardPattern = /(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?([A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{1,18}(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,18}|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,3}):\s*/g;
-    const extendedPattern = /(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?:(?:Dr|Mr|Mrs|Ms|Miss|Prof|Capt|Lt|Sgt)\.\s+)?([A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,23}\.?)(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’-]{0,23}\.?|&|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,7}:\s*/g;
+    // recunoscute și în trecerea specială de după eliminarea muzicii.
+    const standardPattern = new RegExp(
+        String.raw`(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?:(?:[Dd][Rr]|[Mm][Rr]|[Mm][Rr][Ss]|[Mm][Ss]|[Mm][Ii][Ss][Ss]|[Pp][Rr][Oo][Ff]|[Cc][Aa][Pp][Tt]|[Ll][Tt]|[Ss][Gg][Tt])\.\s+)?([A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’\-]{1,18}(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’\-]{0,18}|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,3})${inlineDeliveryAnnotation}:\s*`,
+        'gu'
+    );
+    const extendedPattern = new RegExp(
+        String.raw`(^|\n)(\s*[-–—]?\s*(?:<[iIbBuU]>\s*)?)(?:(?:[Dd][Rr]|[Mm][Rr]|[Mm][Rr][Ss]|[Mm][Ss]|[Mm][Ii][Ss][Ss]|[Pp][Rr][Oo][Ff]|[Cc][Aa][Pp][Tt]|[Ll][Tt]|[Ss][Gg][Tt])\.\s+)?([A-ZÀ-Ü][A-Za-zÀ-ÖØ-öø-ÿ0-9'’\-]{0,23}\.?)(?:\s+(?:[A-ZÀ-Ü0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9'’\-]{0,23}\.?|&|(?:on|in|at|of|from|over|by|with|to|and|the|a|an|announcer|narrator|voice|speaker|host|man|woman|boy|girl|kid|child|doctor|nurse|officer|cop|guard|driver|pilot|agent|reporter|caller|operator|waiter|waitress|tv|radio|phone|pa)\b)){0,7}${inlineDeliveryAnnotation}:\s*`,
+        'gu'
+    );
     const pattern = allowExtendedLabels ? extendedPattern : standardPattern;
     return String(value || '').replace(pattern, (full, linePrefix, formattingPrefix, label) => {
         if (protectedIntroLabels.has(String(label || '').trim().toLocaleLowerCase('en-US'))) return full;
-        return linePrefix + formattingPrefix;
+        const keptPrefix = linePrefix + formattingPrefix;
+        // Normalizăm distanța după liniuță doar când sursa o lipește de etichetă („-FANNY”).
+        return /[-–—]$/.test(keptPrefix) ? keptPrefix + ' ' : keptPrefix;
     });
 }
 
