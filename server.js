@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.150',
+    version: '13.2.151',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1828,18 +1828,18 @@ function isEffectivelyEmptySubtitleText(text) {
 // ============================================================
 
 const MEANINGFUL_STANDALONE_REACTIONS = new Set((
-    'aw aww awww oops ops ouch ow oww owww phew whew uh uh-oh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr mhm mm mmhmm mm-hmm mmm-hmm yeah yep yup ya nah nope huh'
+    'aw aww awww oops ops ouch ow oww owww phew whew uh-oh wow whoa whoo whoo-hoo woo-hoo yikes psst sh shh shhh ssh ssshh îhî ptiu brr mhm mm mmhmm mm-hmm mmm-hmm yeah yep yup ya nah nope'
 ).split(/\s+/));
 
 const STANDALONE_SOURCE_FILLERS = new Set((
     // Eliminăm vocalizările fără conținut când un rând este alcătuit exclusiv din ele.
     // Nu eliminăm interjecții din replici complete; clasificarea contextuală rulează separat.
     // Include și variante de șuierat/șș și bâzâit-uri de tip „mm-mm” sau „hmm-mm”.
-    'aa aaa aaaa aaaaa aaaaaah aaaah aaah aah aahh aahhh ah ahh ahhh ahhhh aargh agh a-ha aha ahem argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm um umm uu ă ăă ăăă ăăăă ăăăăă îhî îhîî ptiu hm hmm hmmm hmph mh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm mm-mm hmm-mm sh shh shhh ssh ssshh șș șșș șșșș pff pfff pfft phew pssh psst uf uff ugh ughh uh-oh uh-huh uhu uhuu whew whoa whoo whoo-hoo woo-hoo whooo whoooo whoooooo whoop whoops whup wooh woo-hoo-hoo wow yikes yoo yoo-hoo oops ops ouch ow oww owww yeah yep yup ya nah nope'
+    'aa aaa aaaa aaaaa aaaaaah aaaah aaah aah aahh aahhh ah ahh ahhh ahhhh aargh agh a-ha aha ahem argh aw aww awww bleah eh ehh ehhh ehm er erm err errr gah ha hahaha heh hehe mwah uh uhh uhhh uhm uhmm huh huhh huhhh um umm uu ă ăă ăăă ăăăă ăăăăă îhî îhîî ptiu hm hmm hmmm hmph mh mhm mm mmhmm mm-hmm mmm mmmm mmm-hmm mm-mm hmm-mm sh shh shhh ssh ssshh șș șșș șșșș pff pfff pfft phew pssh psst uf uff ugh ughh uh-oh uh-huh uhu uhuu whew whoa whoo whoo-hoo woo-hoo whooo whoooo whoooooo whoop whoops whup wooh woo-hoo-hoo wow yikes yoo yoo-hoo oops ops ouch ow oww owww yeah yep yup ya nah nope'
 ).split(/\s+/));
 
-// „Oh” și „Huh?” sunt interjecții vizate: le eliminăm și din expresii mai lungi,
-// păstrând restul replicii („Oh my God” -> „my God”, „Huh? What?” -> „What?”).
+// „Oh” și „Ah” sunt interjecții vizate: le eliminăm și din expresii mai lungi,
+// păstrând restul replicii („Oh my God” -> „my God”).
 // Marcajele HTML sunt ignorate doar pentru clasificarea unei linii de interjecție izolată.
 function stripLeadingOhAhInterjections(value) {
     return String(value || '').split('\n').map(line => {
@@ -2800,7 +2800,7 @@ function cleanTextForJson(text) {
 
     // Eliminăm vocalizările cerute explicit înainte de a construi cererea Gemini.
     clean = stripSpecifiedVocalizations(clean);
-    // Eliminăm interjecțiile vizate contextual (inclusiv Oh, Huh? și Uh-huh),
+    // Eliminăm interjecțiile vizate contextual rămase după filtrarea obligatorie,
     // fără să ștergem restul replicii sau răspunsurile precum Yeah.
     clean = stripContextualDisposableInterjections(clean);
     clean = stripAllInterjections(clean);
@@ -2849,11 +2849,12 @@ const CONTEXTUAL_DISPOSABLE_INTERJECTIONS_PATTERN = [...CONTEXTUAL_STANDALONE_FI
 // cât și în interiorul unei fraze. Acestea nu se trimit la Gemini pentru traducere.
 function stripSpecifiedVocalizations(value) {
     // Eliminăm obligatoriu vocalizările fără conținut: Aha, Hm/Hmm, Mm/Mmm,
-    // Mhm, Mm-hmm, Uh-huh, îhî și întreaga familie Aaa/Aa/Ah/Aah/Ăă.
+    // Mhm, Uh/uhhh, Huh/huhhh, îhî și întreaga familie Aaa/Aa/Ah/Aah/Ăă.
+    // Păstrăm forma lexicalizată „uh-oh”; „uh-huh” urmează filtrul explicit existent.
     // Familia A/Ă este eliminată și din interiorul replicii, indiferent de
     // majuscule sau de numărul literelor, dar numai ca token separat.
     // „mm” după o cifră rămâne unitate de măsură.
-    const tokenRe = /(?<![\p{L}\p{N}_])(?:h+m+(?:[-‐‑–—](?:h+m+|m+))?|m+h+m+(?:[-‐‑–—]h+m+)?|m+m+(?:[-‐‑–—](?:h+m+|m+))?|uh[-‐‑–—]huh+|îh[îi]+|a[-‐‑–—]?ha|a(?:[-‐‑–—]a+)+|a{2,}|a+h+|ah+|ă+)(?![\p{L}\p{N}_])/giu;
+    const tokenRe = /(?<![\p{L}\p{N}_])(?:h+m+(?:[-‐‑–—](?:h+m+|m+))?|m+h+m+(?:[-‐‑–—]h+m+)?|m+m+(?:[-‐‑–—](?:h+m+|m+))?|uh[-‐‑–—]huh+|uh+(?![-‐‑–—])|huh+|îh[îi]+|a[-‐‑–—]?ha|a(?:[-‐‑–—]a+)+|a{2,}|a+h+|ah+|ă+)(?![\p{L}\p{N}_])/giu;
     const isNumericMillimeter = (token, offset, whole) =>
         /^mm$/iu.test(token) && /\d\s+$/u.test(whole.slice(0, offset));
     // „AA” cu majuscule înaintea unui substantiv este acronim (ex. „AA batteries”), nu vocalizare.
@@ -3208,16 +3209,54 @@ function deepCleanSubtitleText(text, options = {}) {
     return cleaned;
 }
 
+// Elimină exclusiv vocalizările românești fără sens care pot fi regenerate de Gemini.
+// Potrivirea cere token separat; nu atinge cuvinte precum „hai”, „hărți”, „habar”.
+function stripRomanianFillerVocalizations(value) {
+    const tokenRe = /(?<![\p{L}\p{N}_])(?:hă+|ă+|a{2,}|a+h+|a[-‐‑–—]?ha?)(?![\p{L}\p{N}_])/giu;
+
+    return String(value || '').normalize('NFC').split(/\r?\n/).map(line => {
+        if (!line.trim()) return '';
+        const marker = line.match(/^(\s*[-–—]\s*)/u);
+        const prefix = marker ? marker[0] : '';
+        let body = marker ? line.slice(marker[0].length) : line;
+        const matches = [...body.matchAll(tokenRe)];
+        tokenRe.lastIndex = 0;
+        if (!matches.length) return line;
+        const removedLeadingUppercase = matches.some(match =>
+            match.index === body.search(/\S/u) && /[A-ZĂÂÎȘȚ]/u.test(match[0][0])
+        );
+        body = body.replace(tokenRe, ' ');
+        tokenRe.lastIndex = 0;
+        body = body
+            .replace(/[ \t]{2,}/g, ' ')
+            .replace(/\s+([,;:!?])/g, '$1')
+            .replace(/([,;:])\s*([,;:])+/g, '$1')
+            .replace(/[,;:]+[ \t]*([.!?…]+)/g, '$1')
+            .replace(/([.!?])[ \t]+(?:\.{2,}|…+)/g, '$1')
+            .replace(/([.!?…])[ \t]*[,;:]+/g, '$1')
+            .replace(/^[ \t.,;:!?…]+/g, '')
+            .replace(/[ \t,;:]+$/g, '')
+            .replace(/[ \t]+([.!?])/g, '$1')
+            .replace(/[ \t]{2,}/g, ' ')
+            .trim();
+        if (!body || !/[\p{L}\p{N}]/u.test(body)) return '';
+        if (removedLeadingUppercase) {
+            body = body.replace(/^([\p{Ll}])/u, ch => ch.toLocaleUpperCase('ro-RO'));
+        }
+        return prefix + body;
+    }).filter(Boolean).join('\n');
+}
+
 // Curățare finală pentru traduceri deja validate ca dialog.
-// Filtrele lexicale de vocalizări se aplică pe sursa originală înainte de Gemini,
-// nu pe textul românesc: un cuvânt precum „Uh”, „Mhm” sau „Aha” poate fi o replică
-// rostită legitim și nu trebuie ștearsă după recuperarea traducerii.
-// Păstrăm separat eliminarea etichetelor de vorbitor și normalizarea tehnică.
+// Eliminăm numai tokenurile românești explicite de ezitare, după care păstrăm
+// normalizarea tehnică și eliminarea etichetelor de vorbitor. Nu aplicăm listele
+// englezești largi pe traducere, pentru a nu șterge cuvinte sau reacții legitime.
 function cleanTranslatedSubtitleForFinalOutput(value) {
     const source = String(value || '');
     if (!source.trim()) return '';
     const withoutSpeakerLabels = stripSpeakerNameLabels(source);
-    return String(deepCleanSubtitleText(withoutSpeakerLabels, { applyContentFilters: false }) || '').trim();
+    const normalized = String(deepCleanSubtitleText(withoutSpeakerLabels, { applyContentFilters: false }) || '').trim();
+    return stripRomanianFillerVocalizations(normalized).trim();
 }
 
 function applyDeterministicSemanticFix(original, translation) {
@@ -4447,7 +4486,7 @@ ROMANIAN ACCURACY RULES
 - Direct object: use „pe” plus the clitic for people as direct objects („Îl iubesc pe Tom”, „Te văd pe tine”), not for things.
 - Numerals: use „de” before the counted noun when the number is 20 or more or ends in 00 („20 de dolari”, „100 de ani”, „35 de minute”); omit it for 1–19 („15 dolari”, „3 ani”, „12 minute”).
 - Calques: translate fixed phrases by their function, not word by word — “I mean”, “you know”, “like” (filler), “literally”, “actually”, “come on”, “hang on”, “my bad”, “I'm good”, “you're welcome”, “what's up”, “no way”, “give me a break”, “count me in”, “it's on me”. Do not mirror English passives, “-ing” chains or possessives („Mi-am spălat mâinile” → „M-am spălat pe mâini” when more natural). Tag questions (“right?”, “isn't it?”) become „nu?”, „da?” or „nu-i așa?”.
-- Vocal sounds: never write “Hm”, “Hmm”, “Mm”, “Mmm”, “Mhm”, “Ehm” or “Ăă” as Romanian text; if such a sound appears inside a sentence, leave it out. Never write „Mă?” or „Mă.” (a rude vocative in Romanian). Keep “Huh?” as „Hă?”.
+- Vocal sounds: never write “Hm”, “Hmm”, “Mm”, “Mmm”, “Mhm”, “Ehm”, “Uh” or “Huh” as Romanian text; if such a sound appears inside a sentence, leave it out. Never write „Ă”, „Ăă” or „Hă” as filler translations. Never write „Mă?” or „Mă.” (a rude vocative in Romanian).
 - Romanian „na”: never use „na” as a generic hesitation, laugh, or automatic translation of “well/now/nah”. Omit it when it is only a meaningless filler. Keep it only when the context clearly gives it lexical meaning such as handing something over („Na, poftim”) or drawing attention to something („Na, uite”). Do not remove those meaningful uses.
 - Agreement: check noun gender and number after every demonstrative or adjective („aceste microorganisme”, not „acești”); neuter nouns take masculine singular and feminine plural forms. Use „mi-e” / „nu mi-e frică”, not „mi-este”.
 - Names and invented terms must have ONE Romanian form in the whole file. If a glossary is provided in the background block, follow it exactly; otherwise keep a nickname or invented term the same in every line and never produce spelling variants of the same name.
@@ -4467,8 +4506,8 @@ SUBTITLE FORMATTING
 INTERJECTIONS AND FILLERS
 - Recognize the extended interjection inventory, including variants such as “ahem”, “ehhh”, “hmph”, “ooh-la-la”, “pfft”, “uh-huh”, “whoo-hoo”, and Romanian forms such as “ăă”, “îhî”, “ptiu”, and “brr”. The mandatory removal list below takes precedence for its explicitly listed tokens; the remaining inventory is interpreted contextually.
 - Remove standalone filler sounds and meaningless hesitation tokens, including “Um”, “Erm”, “Mwah”, “ă”, and “ăă”, when they function only as hesitation/noise. Remove disposable fillers around a real sentence only when they add no meaning; repair punctuation and capitalization.
-- Before translation, always remove filler vocalizations in the family “A/AA/AAA…”, “AH/AHH/AHHH…”, “AAH/AAHH…” and “Ă/ĂĂ/ĂĂĂ…”, regardless of capitalization or position in the line. Never translate these sounds as exclamations; remove only the vocalization token and preserve the remaining dialogue, repairing punctuation and capitalization.
-- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Woo-hoo” when celebrating, and “Phew” when expressing relief. Omit a standalone “Shh/Shhh/Psst” or an isolated shushing action; preserve a shushing word only when it is part of a substantive spoken phrase with other words. The mandatory vocalization filter takes precedence for Aha/aha and the entire A/AA/AH/Ă family.
+- Before translation, always remove filler vocalizations in the families “A/AA/AAA…”, “AH/AHH/AHHH…”, “AAH/AAHH…”, “Ă/ĂĂ/ĂĂĂ…”, and the hesitation sounds “UH/UHH/UHHH” and “HUH/HUHH/HUHHH”, wherever they occur as standalone tokens (beginning, middle, or end of a line). Never translate these sounds as Romanian „ă”, „ăă” or „hă”; remove only the token and repair punctuation/capitalization. Preserve the lexical reaction “uh-oh” when it signals trouble.
+- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Woo-hoo” when celebrating, and “Phew” when expressing relief. Omit a standalone “Shh/Shhh/Psst” or an isolated shushing action; preserve a shushing word only when it is part of a substantive spoken phrase with other words. The mandatory vocalization filter takes precedence for Aha/aha and the entire A/AA/AH/Ă family.
 - Use neighboring subtitles and the scene context to decide whether an interjection is noise or meaningful speech. Never automatically delete meaningful reactions, acknowledgments, questions, pain, warnings, relief, or commands just because they occur in the interjection inventory, except for the mandatory A/AA/AH/Ă vocalization family specified above. Translate the other meaningful reactions naturally into Romanian.
 - Before returning, compare the beginning and end of each translation with its source so that cleaning a filler does not accidentally remove adjacent dialogue.
 - ETICHETE ȘI CUE-URI: elimină etichetele de vorbitor și indicațiile non-dialogate de sunet/muzică dintre paranteze rotunde sau drepte când apar la începutul rândului (eventual după liniuța de dialog sau un tag de formatare); tratează ca un singur tag și etichetele care se întind pe mai multe rânduri. Nu traduce titluri de melodii sau efecte sonore folosite ca etichete. Păstrează textul literal dintre paranteze din mijlocul unei fraze, inclusiv taste/comenzi precum „Press [Enter] to continue” și indicații editoriale precum [sic]. Nu șterge dialogul exterior tagului.
@@ -9568,13 +9607,12 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     }
 
     // Curățare tehnică finală pentru traducerile deja validate ca dialog.
-    // Nu reaplicăm pe română filtrele lexicale de vocalizări construite pentru
-    // sursa engleză: acestea puteau șterge replici recuperate precum „Uh...”,
-    // „Mhm.” sau „Aha!” și apoi QA bloca salvarea/cache-ul rezultatului.
-    // Sunetele/versurile sunt eliminate pe baza sursei înainte de Gemini;
-    // aici păstrăm doar normalizarea sigură și eliminarea etichetelor de vorbitor.
+    // Pe română aplicăm numai filtrul îngust pentru tokenurile fără sens „ă/ăă/ah/aa/hă”;
+    // nu reaplicăm listele largi construite pentru interjecțiile din sursa engleză.
+    // Sunetele/versurile sunt eliminate pe baza sursei înainte de Gemini.
     let finalContentFilterChanged = 0;
     let finalContentFilterEmptied = 0;
+    const finalTranslatedFillerSuppressedIds = new Set();
     for (const item of items) {
         const id = String(item.id);
         if (suppressedSourceSoundCueIds.has(id) || item.musicOnly) continue;
@@ -9582,11 +9620,14 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         if (!current.trim()) continue;
         const filtered = cleanTranslatedSubtitleForFinalOutput(current);
         if (filtered !== current.trim()) finalContentFilterChanged++;
+        if (current.trim() && !filtered && !stripRomanianFillerVocalizations(current).trim()) {
+            finalTranslatedFillerSuppressedIds.add(id);
+        }
         translatedById[id] = filtered;
         if (!filtered) finalContentFilterEmptied++;
     }
     if (finalContentFilterChanged || finalContentFilterEmptied) {
-        console.log(`${c.cyan}[Curățare finală sigură] ${finalContentFilterChanged} replici normalizate${finalContentFilterEmptied ? `; ${finalContentFilterEmptied} au rămas goale și vor fi raportate de QA` : ''}. Filtrele de vocalizări nu se aplică din nou pe traducerea românească.${c.reset}`);
+        console.log(`${c.cyan}[Curățare finală sigură] ${finalContentFilterChanged} replici normalizate${finalContentFilterEmptied ? `; ${finalContentFilterEmptied} au rămas goale și vor fi raportate de QA` : ''}. Se elimină numai vocalizările românești exacte (ă/ăă/ah/aa/hă).${c.reset}`);
     }
 
     // Corectare locală conservatoare a majusculelor după toate reviziile AI și
@@ -9601,7 +9642,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
             const translated = String(translatedById[id] || '').trim();
             // A source-only reaction/marker must not leak into the output, even if Gemini
             // returned an empty or non-empty paraphrase for it. Also suppress reaction-only translations.
-            return isJunkOrInterjection(item.text) || isOnlyStandaloneFillerSequence(translated);
+            return isJunkOrInterjection(item.text) || isOnlyStandaloneFillerSequence(translated) || finalTranslatedFillerSuppressedIds.has(id);
         })
         .map(item => String(item.id));
     // Versurile marcate sunt eliminate ireversibil în parseSrt, înainte de Gemini.
