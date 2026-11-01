@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.154',
+    version: '13.2.155',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6107,7 +6107,6 @@ function normalizeTranslationPayloadById(parsed, expectedItems, label = 'Gemini'
     const dict = Object.create(null);
     const seen = new Set();
     const ambiguous = new Set();
-    const returnedOrder = [];
     let invalidEntries = 0;
     let unexpectedIds = 0;
     let duplicateIds = 0;
@@ -6136,29 +6135,19 @@ function normalizeTranslationPayloadById(parsed, expectedItems, label = 'Gemini'
             continue;
         }
         seen.add(id);
-        returnedOrder.push(id);
+        // The explicit ID is authoritative. The order returned by Gemini is
+        // intentionally not checked or logged when every requested ID is mapped.
         dict[id] = entry.text;
     }
 
     const expectedOrder = [...expectedIds.keys()];
-    const expectedPosition = new Map(expectedOrder.map((id, index) => [id, index]));
-    let previousPosition = -1;
-    let outOfOrder = false;
-    for (const id of returnedOrder) {
-        const position = expectedPosition.get(id);
-        if (position < previousPosition) {
-            outOfOrder = true;
-            break;
-        }
-        previousPosition = position;
-    }
-
-    if (outOfOrder) {
-        console.log(`${c.cyan}[Aliniere ID] Gemini a returnat răspunsurile într-o altă ordine; asocierea s-a făcut după ID-ul explicit, fără split și fără cereri suplimentare.${c.reset}`);
-    }
-
     const missingCount = expectedOrder.filter(id => !Object.prototype.hasOwnProperty.call(dict, id)).length;
-    if (invalidEntries || unexpectedIds || duplicateIds || missingCount) {
+
+    // Keep the normal log clean: successful batches are already reported by
+    // the caller as "Calup X/Y finalizat". Emit alignment details only when
+    // a requested cue is missing/ambiguous or the payload contains malformed
+    // entries. Extra unknown IDs alone do not affect the requested translations.
+    if (missingCount || duplicateIds || invalidEntries) {
         console.log(`${c.yellow}[Aliniere ID] ${label}: ${expectedOrder.length - missingCount}/${expectedOrder.length} ID-uri asociate sigur; ${missingCount} de recuperat; intrări invalide ${invalidEntries}, ID-uri neașteptate ${unexpectedIds}, duplicate ambigue ${duplicateIds}. Fără split pentru lipsuri/ordine.${c.reset}`);
     }
 
