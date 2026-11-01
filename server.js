@@ -271,7 +271,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.145',
+    version: '13.2.146',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1962,6 +1962,12 @@ function isCompoundSoundCueLabel(text) {
 // între engleză și română. Sunt expresii complete, nu căutări de cuvinte în dialog.
 // Aceeași clasificare este folosită înainte de Gemini și pentru markup-ul dintre paranteze.
 const SOUND_CUE_ADDITIONAL_CAPTION_PATTERNS = [
+    // Indicație muzicală izolată rămasă în sursa Sense and Sensibility: nu este dialog.
+    /^(?:(?:grand|magnificent|dramatic|loud|soft)\s+)?(?:orchestral\s+)?fanfare\s+(?:plays?|playing)(?:\s+(?:in\s+the\s+background|continues?))?[.!…]*$/iu,
+    // Cue-uri cu unul sau mai multe nume de personaje înaintea acțiunii sonore:
+    // [Mrs. Jennings laughing heartily], [Sir John and Mrs. Jennings laughing], etc.
+    /^(?:(?:[\p{Lu}][\p{L}\p{M}'’.-]*\.?)(?:\s+(?:and\s+)?[\p{Lu}][\p{L}\p{M}'’.-]*\.?){0,5}\s+)?(?:laughs?|laughing|chuckles?|chuckling|giggles?|giggling|snickers?|snickering|talks?|talking|speaks?|speaking|breathes?|breathing|sighs?|sighing|gasps?|gasping|groans?|groaning|grunts?|grunting|sobs?|sobbing|shouts?|shouting|yells?|yelling|screams?|screaming|sniffs?|sniffles?|sniffling|sniffing)(?:\s+(?:heartily|indistinctly|heavily|deeply|softly|quietly|loudly|nervously|sharply|gently|lightly|in\s+the\s+distance|in\s+distance))?(?:\s*[,;]\s*(?:laughs?|laughing|chuckles?|chuckling|sniffs?|sniffles?|sniffling|sniffing))?[.!…]*$/iu,
+    /^(?:carriages?\s+approaching(?:\s+in\s+(?:the\s+)?distance)?|birds?\s+chirping(?:,\s*wings?\s+fluttering)?)[.!…]*$/iu,
     // Caption SDH compus: muzica și acțiunea continuă. Se aplică numai ca etichetă/cue delimitat,
     // nu ca filtru de text liber, pentru a nu șterge dialogul care menționează muzica sau acțiunea.
     /^(?:(?:the\s+)?music\s+and\s+action\s+(?:continues?|continuing|in\s+progress|ongoing)|muzic[ăa]\s+și\s+acțiun(?:e|ea)\s+(?:continuă|în\s+desfășurare|în\s+curs|în\s+derulare))[.!…]*$/iu,
@@ -2277,6 +2283,7 @@ function stripLeadingMultilineNonDialogueTags(value) {
                 isRomanianMechanicalSoundCaption(normalized) ||
                 isObviousBracketedNonDialogueCue(normalized, match[3], match[2], suffix) ||
                 isStandaloneNonDialogueSoundCue(normalized) ||
+                isAdditionalSoundCueCaption(normalized) ||
                 SOUND_CUE_EXTENDED_LABEL_PATTERNS.some(pattern => {
                     pattern.lastIndex = 0;
                     return pattern.test(normalized);
@@ -4469,7 +4476,7 @@ INTERJECTIONS AND FILLERS
 - Recognize the extended interjection inventory, including variants such as “ahem”, “ehhh”, “hmph”, “ooh-la-la”, “pfft”, “uh-huh”, “whoo-hoo”, and Romanian forms such as “ăă”, “îhî”, “ptiu”, and “brr”. The mandatory removal list below takes precedence for its explicitly listed tokens; the remaining inventory is interpreted contextually.
 - Remove standalone filler sounds and meaningless hesitation tokens, including “Um”, “Erm”, “Mwah”, “ă”, and “ăă”, when they function only as hesitation/noise. Remove disposable fillers around a real sentence only when they add no meaning; repair punctuation and capitalization.
 - NEVER preserve the English interjections “Oh” or “Ah” literally in Romanian output, whether they appear alone or at the start of a longer expression. Remove the leading “Oh/Ah” and translate the remaining message naturally: for example, “Oh, no!” → „Nu!” / „Vai, nu!” according to context; “Ah, yes!” → „Da!”; “Oh my God!” → „Doamne!”. The rest of the message must not be discarded.
-- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Shh/Psst” when requesting silence/attention, “Woo-hoo” when celebrating, “Phew” when expressing relief. The mandatory vocalization filter takes precedence for Aha/aha.
+- Preserve other meaningful acknowledgments, questions, reactions, or commands. Translate “Okay”, “Huh?” when asking for clarification, “Uh-oh” when signaling trouble, “Wow/Whoa” when expressing surprise or warning, “Oops” when acknowledging a mistake, “Ouch/Ow” when indicating pain, “Woo-hoo” when celebrating, and “Phew” when expressing relief. Omit a standalone “Shh/Shhh/Psst” or an isolated shushing action; preserve a shushing word only when it is part of a substantive spoken phrase with other words. The mandatory vocalization filter takes precedence for Aha/aha.
 - Use neighboring subtitles and the scene context to decide whether an interjection is noise or meaningful speech. Never automatically delete meaningful reactions, acknowledgments, questions, pain, warnings, relief, or commands just because they occur in the interjection inventory. Translate those naturally into Romanian.
 - Before returning, compare the beginning and end of each translation with its source so that cleaning a filler does not accidentally remove adjacent dialogue.
 - ETICHETE ȘI CUE-URI: elimină etichetele de vorbitor și indicațiile non-dialogate de sunet/muzică dintre paranteze rotunde sau drepte când apar la începutul rândului (eventual după liniuța de dialog sau un tag de formatare); tratează ca un singur tag și etichetele care se întind pe mai multe rânduri. Nu traduce titluri de melodii sau efecte sonore folosite ca etichete. Păstrează textul literal dintre paranteze din mijlocul unei fraze, inclusiv taste/comenzi precum „Press [Enter] to continue” și indicații editoriale precum [sic]. Nu șterge dialogul exterior tagului.
@@ -8916,6 +8923,85 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
 }
 
 
+// Retraduce individual, câte un singur ID, vecinătățile în care QA încă detectează
+// o posibilă deplasare a sensului între două cue-uri consecutive. Cu o singură intrare
+// în JSON, modelul nu poate asocia accidental textul unui cue cu ID-ul vecin.
+async function retryAdjacentOverlapNeighborhoodsIndividually(items, translatedById, keyStates) {
+    const issues = findAdjacentSemanticOverlapIssues(items, translatedById);
+    if (!issues.length) return { checked: 0, fixed: 0 };
+    if (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) {
+        console.log(`${c.yellow}[Aliniere ID] Retraducerea individuală a fost omisă: circuitul Gemini este în pauză.${c.reset}`);
+        return { checked: 0, fixed: 0 };
+    }
+
+    const candidateIndexes = new Set();
+    for (const issue of issues) {
+        // Verificăm strict cele două ID-uri ale perechii; buildTranslationPrompt
+        // adaugă deja automat contextul sursă din jur, fără cereri Gemini suplimentare.
+        const firstIndex = getFastItemIndex(items, issue.item.id);
+        const pairedIndex = getFastItemIndex(items, issue.pairedItem?.id);
+        if (firstIndex >= 0) candidateIndexes.add(firstIndex);
+        if (pairedIndex >= 0) candidateIndexes.add(pairedIndex);
+    }
+
+    const candidates = [...candidateIndexes].sort((a, b) => a - b)
+        .map(index => items[index])
+        .filter(item => item && !item.musicOnly &&
+            !isJunkOrInterjection(item.text) &&
+            !getIntentionallySuppressedTranslationIds(keyStates).has(String(item.id)) &&
+            !isNumericVerbatimCue(item.text));
+
+    // Limită de siguranță: această recuperare este destinată numai zonelor semnalate,
+    // nu unei retraduceri extinse a întregului film.
+    const boundedCandidates = candidates.slice(0, 16);
+    if (!boundedCandidates.length) return { checked: 0, fixed: 0 };
+
+    console.log(`${c.cyan}[Aliniere ID] Verific individual ${boundedCandidates.length} cue-uri din zonele cu suprapunere persistentă.${c.reset}`);
+    let checked = 0;
+    let fixed = 0;
+
+    for (const item of boundedCandidates) {
+        if (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) break;
+        const index = getFastItemIndex(items, item.id);
+        if (index < 0) continue;
+        try {
+            const result = await processChunkWithRetry(
+                [item], items, index, index + 1, [], keyStates,
+                checked, boundedCandidates.length, 0, false
+            );
+            checked++;
+            const match = result.find(entry => String(entry.id) === String(item.id));
+            const rawCandidate = match?.text;
+            if (rawCandidate == null || isSongLyricSkip(rawCandidate) ||
+                isEmptyRecoverySoundCueSkip(rawCandidate) ||
+                !String(rawCandidate).replace(/<[^>]+>/g, '').trim() ||
+                isOnlyStandaloneFillerSequence(String(rawCandidate))) continue;
+
+            let candidate = formatSubtitleLine(String(rawCandidate));
+            if (!candidate.trim() || hasCorruptedSubtitleText(candidate, item.text) ||
+                !hasAllProtectedMusicTokens(item, candidate)) continue;
+            candidate = applyDeterministicSemanticFix(item.text, candidate);
+            candidate = applySourceGroundedSemanticFixes(item.text, candidate);
+            candidate = applyLocalGrammarDeterministicFixes(candidate);
+            candidate = formatSubtitleLine(candidate);
+            if (!candidate.trim() || hasCorruptedSubtitleText(candidate, item.text)) continue;
+
+            const id = String(item.id);
+            const current = String(translatedById[id] || '').trim();
+            if (candidate.trim() !== current) {
+                translatedById[id] = candidate;
+                fixed++;
+            }
+        } catch (error) {
+            console.log(`${c.yellow}[Aliniere ID] O verificare individuală nu a putut fi terminată; păstrez traducerea existentă.${c.reset}`);
+            if (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold) break;
+        }
+    }
+
+    console.log(`${c.green}[Aliniere ID] Verificate individual: ${checked}; traduceri actualizate: ${fixed}.${c.reset}`);
+    return { checked, fixed };
+}
+
 // ============================================================
 // MOTORUL PRINCIPAL DE TRADUCERE SRT
 // ============================================================
@@ -9228,9 +9314,8 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     ]);
     const intentionallySuppressedIds = getIntentionallySuppressedTranslationIds(keyStates);
 
-    // Quality Retry se bazează numai pe semnalele locale și semantic-gramaticale.
-    // Nu mai folosim detectorul lexical de suprapunere între cue-uri: a semnalat
-    // repetat perechi valide și declanșa cereri Gemini suplimentare fără dovadă.
+    // Quality Retry se bazează pe semnalele locale și semantic-gramaticale;
+    // suprapunerile persistente sunt incluse punctual, nu declanșează o reverificare globală.
     const targetedQualityCandidates = items.filter(item =>
         targetedQualityIds.has(String(item.id)) && !intentionallySuppressedIds.has(String(item.id))
     );
@@ -9370,8 +9455,8 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         }
         finalRepairReasonById[id] = [finalRepairReasonById[id], issue.reason].filter(Boolean).join('; ');
     }
-    // Suprapunerea lexicală la limită nu declanșează reparare automată: lipsa dovezii
-    // că textul a fost efectiv preluat nu justifică rescrierea cue-urilor.
+    // Nu mutăm text automat între ID-uri pe baza unei potriviri lexicale.
+    // Dacă suprapunerea persistă, etapa următoare retraduce individual cue-urile din acea zonă.
 
     if (finalRepairCandidates.length && !keyStates._primary429CircuitOpen && !keyStates._secondaryRecovery429Hold) {
         const beforeFinalRepair = new Map(finalRepairCandidates.map(item => [
@@ -9401,6 +9486,11 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     } else if (finalRepairCandidates.length && (keyStates._primary429CircuitOpen || keyStates._secondaryRecovery429Hold)) {
         console.log(`${c.yellow}[Final Repair] Omisă pentru ${finalRepairCandidates.length} candidate: circuitul 429 este deschis; nu înlocuim o lipsă de traducere cu cereri Grammar Review.${c.reset}`);
     }
+
+    // Dacă o suprapunere semantică persistă după Grammar Review/Final Repair,
+    // reconfirmăm ID-urile din acea zonă cu cereri individuale, pentru a preveni
+    // deplasarea unei traduceri pe cue-ul vecin.
+    await retryAdjacentOverlapNeighborhoodsIndividually(items, translatedById, keyStates);
 
     // Filtru final: eliminăm etichetele de vorbitor și indicațiile SDH delimitate.
     // Păstrăm textul dintre paranteze dacă face parte din replică (ex. [Enter], [sic]).
@@ -10943,6 +11033,32 @@ function normalizeMusicMarkers(text) {
         .replace(/â™©/giu, '♩');
 }
 
+// Șușotelile/semnalele izolate de tăcere nu sunt replici de tradus.
+// Detectăm strict cue-ul autonom; expresii precum „Shh, listen to me” rămân dialog.
+function isStandaloneSilencingCue(value) {
+    const original = String(value || '').normalize('NFC');
+    if (!original.trim()) return false;
+
+    const hasExplicitShushingAction = /\b(?:shush(?:es|ing)?|hush(?:es|ing)?)\b/iu.test(original);
+    let clean = original
+        .replace(/<[^>]*>/g, ' ')
+        // Etichete de grup/vorbitor precum „OTHERS:” care pot preceda un singur „Shh!”.
+        .replace(/^\s*(?:OTHERS?|ALL|EVERYONE|CROWD|BOTH)\s*:\s*/gimu, ' ')
+        .replace(/\[(?:\s*)(?:shush(?:es|ing)?|hush(?:es|ing)?)(?:\s*)\]/giu, ' ')
+        .replace(/\((?:\s*)(?:shush(?:es|ing)?|hush(?:es|ing)?)(?:\s*)\)/giu, ' ')
+        .replace(/^\s*[-–—]\s*/gmu, ' ')
+        .replace(/[.!?…,:;]+/gu, ' ')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .toLocaleLowerCase('en-US');
+
+    if (hasExplicitShushingAction) {
+        // „Mm. [shushes]” este un semnal de tăcere, nu un răspuns afirmativ.
+        return /^(?:m+|h+m+|m+h+m+)?$/u.test(clean);
+    }
+    return /^(?:s+h+|p+s+t+)$/u.test(clean);
+}
+
 function parseSrt(srt, stats = null) {
     const normalized = normalizeMusicMarkers(String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, ''));
     const blocks = normalized.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
@@ -10983,6 +11099,13 @@ function parseSrt(srt, stats = null) {
         }
 
         let rawText = lines.slice(2).join('\n');
+
+        // Omitere intenționată a șușotelilor izolate (inclusiv „Mm. [shushes]”).
+        // Blocul nu intră în Gemini, Empty Recovery sau QA; contorul este agregat, fără ID-uri în log.
+        if (isStandaloneSilencingCue(rawText)) {
+            if (stats) stats.nonDialogueBlocksFiltered++;
+            continue;
+        }
 
         // Verificăm textul ORIGINAL înainte de curățare. Unele surse folosesc
         // entități HTML pentru spații/caractere invizibile, iar acestea pot părea nenule.
