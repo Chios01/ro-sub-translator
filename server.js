@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.158',
+    version: '13.2.159',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4577,6 +4577,28 @@ function getTranslationSourceIndexById(allItems) {
     return sourceIndexById;
 }
 
+// Durata cue-ului este folosită numai ca reper pentru concizia formulării AI.
+// Nu modifică timestamp-urile, ID-urile sau durata cue-ului în SRT.
+function getSubtitleTimingPromptMetadata(item) {
+    const toMilliseconds = value => {
+        const match = String(value || '').trim().match(/^(\d{2}):(\d{2}):(\d{2}),(\d{3})$/);
+        if (!match) return NaN;
+        return ((Number(match[1]) * 60 + Number(match[2])) * 60 + Number(match[3])) * 1000 + Number(match[4]);
+    };
+
+    const startMs = toMilliseconds(item?.start);
+    const endMs = toMilliseconds(item?.end);
+    const durationMs = endMs - startMs;
+    if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        return { durata_secunde: null, reper_17_CPS_caractere: null };
+    }
+
+    return {
+        durata_secunde: Number((durationMs / 1000).toFixed(3)),
+        reper_17_CPS_caractere: Math.max(1, Math.floor((durationMs * 17) / 1000))
+    };
+}
+
 function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext) {
     const contextBefore = allItems.slice(Math.max(0, chunkStart - CONTEXT_LINES_BEFORE), chunkStart);
     const contextAfter = allItems.slice(chunkEnd, Math.min(allItems.length, chunkEnd + CONTEXT_LINES_AFTER));
@@ -4591,6 +4613,7 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
         return {
             id: obj.id,
             text: hideNonDialogueMarkupFromAI(obj.text),
+            ...getSubtitleTimingPromptMetadata(obj),
             context_anterior: previous ? `[${previous.id}] ${hideNonDialogueMarkupFromAI(previous.text)}` : '(niciunul)',
             context_urmator: next ? `[${next.id}] ${hideNonDialogueMarkupFromAI(next.text)}` : '(niciunul)'
         };
@@ -4621,6 +4644,9 @@ Nu modifica ID-urile, nu omite nicio replică și nu duplica ID-uri.
 Câmpurile context_anterior și context_urmator sunt DOAR pentru înțelegerea replicii curente; NU le traduce și NU le include în răspuns.
 Folosește contextul pentru acord, pronume, continuitate, topică și sens, dar modifică DOAR câmpul text al ID-ului curent.
 Nu reasocia textul unei replici cu alt ID. Șirurile alcătuite doar din cifre și semne de punctuație trebuie copiate exact; nu le înlocui cu traducerea replicii vecine.
+
+DURATA ȘI RITMUL DE CITIRE:
+Fiecare replică de tradus include durata exactă de afișare în câmpul „durata_secunde” și un reper orientativ de aproximativ 17 caractere pe secundă în „reper_17_CPS_caractere” (caracterele includ spațiile și punctuația). Folosește aceste informații pentru a alege o formulare românească mai concisă atunci când timpul este scurt sau textul ar deveni greu de citit. Păstrează sensul complet, informațiile importante, tonul și toate replicile distincte. Reperul de caractere NU este o limită rigidă: nu elimina informații și nu transforma replica într-o formulare nenaturală doar ca să te încadrezi. Când nu încape natural, prioritizează o traducere fidelă și firească. Nu muta cuvinte sau replici între ID-uri, nu combina ID-uri și nu schimba ordinea.
 
 EXCLUDEREA VERSURILOR MUZICALE: segmentele de versuri detectate au fost eliminate din sursă înainte ca replica să ajungă la Gemini. Nu inventa, nu reconstitui și nu adăuga versuri sau titluri muzicale care nu apar în textul de dialog rămas.
 
@@ -7896,6 +7922,8 @@ ${stageLabel.toUpperCase()} — TRADUCERI RĂMASE GOALE.
 
 Tradu în română naturală fiecare replică din lista de mai jos. Aceste blocuri au trecut deja de filtrarea inițială a subtitrărilor. Pentru dialogul obișnuit, fragmente incomplete, replici de un singur cuvânt, întrebări și reacții cu sens, întoarce întotdeauna o traducere română nevidă. Nu lăsa câmpul text gol și nu omite niciun ID. Pentru dialog normal, returnează numai textul tradus, fără paranteze rotunde/drepte adăugate în jurul replicii.
 
+DURATA ȘI RITMUL DE CITIRE: fiecare element include „durata_secunde” și reperul orientativ „reper_17_CPS_caractere”. Folosește durata pentru a prefera, când este posibil, o formulare românească mai scurtă și naturală la replicile cu timp redus. Reperul de 17 caractere/secundă (cu spații și punctuație) este orientativ, nu o limită rigidă. Nu sacrifica sensul, detaliile esențiale, tonul sau replicile distincte pentru a atinge cifra. Nu muta și nu combina text între ID-uri.
+
 Toate elementele de mai jos au trecut deja de filtrul local pentru cue-uri sonore. Tratează fiecare intrare ca pe un fragment scurt de replică/rostire și redă-i sensul în română ca text de dialog, nu ca etichetă de acțiune sau indicație scenică/sonoră. Nu transforma textul în formulări precum „oftează”, „râsete”, „muzică în fundal” sau „suspină” și nu adăuga paranteze pentru a-l prezenta ca indicație. Pentru o sursă foarte scurtă, alege cea mai firească formulare orală pe care o susține textul, fără să inventezi informații. Fiecare ID de dialog trebuie să primească o traducere românească nevidă. Singura excepție este un ID identificat clar, într-un lot cu context suficient, ca vers cântat fără marcaje: pentru acesta este permis markerul tehnic de omitere descris mai jos. Nu inventa alte omisiuni intenționate.
 Nu folosi niciun marker intern, token special sau placeholder în câmpul text. Clasificarea și omiterea cue-urilor sonore sunt responsabilitatea verificării locale, nu a modelului.
 ${(!forceTranslate && !/individual/i.test(stageLabel)) ? 'Dacă un grup conține versuri cântate fără note muzicale, iar contextul din grup arată CLAR că un ID este numai vers muzical (nu replică vorbită), întoarce exact __RO_ST_SKIP_SONG_LYRIC__ în câmpul text pentru acel ID; nu folosi markerul doar pentru că o replică se repetă sau este emoțională. Dacă există dubiu, traduce ca dialog. Markerul va fi omis din SRT.\n' : ''}
@@ -7904,7 +7932,11 @@ Returnează DOAR un array JSON valid, cu exact un obiect per ID, în aceeași or
 ${strictJsonRetry ? '\nRETRY TEHNIC: întoarce numai JSON valid, păstrează exact ID-urile și nu lăsa niciun câmp text gol.' : ''}
 
 REPLICILE DE TRADUS:
-${JSON.stringify(batch.map(item => ({ id: item.id, text: item.text })), null, 2)}
+${JSON.stringify(batch.map(item => ({
+        id: item.id,
+        text: item.text,
+        ...getSubtitleTimingPromptMetadata(item)
+    })), null, 2)}
 `;
 }
 
