@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.171',
+    version: '13.2.172',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -7309,6 +7309,10 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])remodernează(?![\p{L}\p{N}_])/giu, 'remodelează'],
     [/(?<![\p{L}\p{N}_])ca un tobă(?![\p{L}\p{N}_])/giu, 'ca o tobă'],
     [/(?<![\p{L}\p{N}_])1m-au(?![\p{L}\p{N}_])/giu, 'm-au'],
+    // v172: corectează doar cele două forme confirmate cu cifra „1” parazită.
+    // NU șterge global cifrele din cuvinte/coduri (Formula1, R2D2, MP3, EF1).
+    [/(?<![\p{L}\p{N}_])1până(?![\p{L}\p{N}_])/giu, match => match.slice(1)],
+    [/(?<![\p{L}\p{N}_])asupra1(?![\p{L}\p{N}_])/giu, 'asupra'],
     [/(?<![\p{L}\p{N}_])ur-\s*te(?![\p{L}\p{N}_])/giu, 'urcă-te'],
     [/(?<![\p{L}\p{N}_])poate nazi o să(?![\p{L}\p{N}_])/giu, 'poate n-o să'],
     [/(?<![\p{L}\p{N}_])era pe ce a era(?![\p{L}\p{N}_])/giu, 'era cât pe ce'],
