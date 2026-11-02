@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.162',
+    version: '13.2.163',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4711,7 +4711,7 @@ Fiecare replică include durata exactă de afișare („durata_secunde”), o ț
 - Formulează cât mai natural și concis, urmărind ținta de 17 CPS.
 - Când durata este MAI MARE de 1,3 secunde, încearcă să nu depășești „maxim_admis_20_CPS_caractere”. Dacă informația esențială nu încape fără deformarea sensului, păstrează sensul complet și formularea firească; nu elimina informații importante.
 - Când durata este de cel mult 1,3 secunde, alege cea mai scurtă formulare naturală pe care o susține originalul, fără să comprimi artificial sau să omiți replici.
-- Pentru concizie, elimină pronumele personale redundante, înlocuiește perifrazele greoaie cu verbe directe, folosește contracții românești firești („nu e”, „nu-i”) și evită repetarea inutilă a titlurilor de politețe. Evită ocolurile de tip „există vreo modalitate prin care” când „dacă pot ajuta cumva” redă aceeași condiție și același sens; preferă „aș spune la fel” în loc de „aș putea spune același lucru” numai când nu se pierde nicio nuanță. Nu sacrifica informația, tonul sau acordul gramatical pentru scurtare.
+- Pentru concizie, elimină pronumele personale redundante, înlocuiește perifrazele greoaie cu verbe directe, folosește contracții românești firești („nu e”, „nu-i”) și evită repetarea inutilă a titlurilor de politețe.
 Păstrează tonul, nu confunda replici diferite și nu sacrifica identitatea vorbitorilor. Nu muta cuvinte sau replici între ID-uri, nu combina ID-uri și nu schimba ordinea.
 
 EXCLUDEREA VERSURILOR MUZICALE: segmentele de versuri detectate au fost eliminate din sursă înainte ca replica să ajungă la Gemini. Nu inventa, nu reconstitui și nu adăuga versuri sau titluri muzicale care nu apar în textul de dialog rămas.
