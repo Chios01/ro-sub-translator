@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.159',
+    version: '13.2.160',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2502,6 +2502,23 @@ function stripNonDialogueSoundMarkup(value, options = {}) {
     let clean = String(value || '').normalize('NFC');
     let removedCount = 0;
 
+    // Reținem numai cazul structural precis în care sursa avea cel puțin două
+    // rânduri marcate cu liniuță, iar unul dintre ele era exclusiv un cue sonor
+    // între paranteze. După eliminarea acelui cue, liniuța rămasă pe singura
+    // replică vorbită nu mai indică doi vorbitori și poate fi scoasă în siguranță.
+    const originalLines = clean.split(/\r?\n/u);
+    const originalDashLineCount = originalLines.filter(line => /^\s*[-–—]+\s*\S/u.test(line)).length;
+    const hadDashOnlyBracketedSoundCue = originalLines.some(line => {
+        const prefixMatch = line.match(/^([ \t]*[-–—]+[ \t]*)(?:<(?:i|b|u)>[ \t]*)?([\[(])/iu);
+        if (!prefixMatch) return false;
+        const openIndex = prefixMatch[0].length - 1;
+        const endIndex = findBalancedBracketEnd(line, openIndex);
+        if (endIndex < 0 || line.slice(endIndex + 1).trim()) return false;
+        const openChar = line[openIndex];
+        const inner = line.slice(openIndex + 1, endIndex);
+        return shouldRemoveBracketSegment(openChar, inner, prefixMatch[1], '');
+    });
+
     // parseSrt elimină deja tagurile multi-linie înainte de protejarea muzicii.
     // În acel traseu, nu repetăm aceeași scanare; apelurile independente păstrează fallback-ul.
     if (!options.skipMultilineTags) {
@@ -2572,8 +2589,17 @@ function stripNonDialogueSoundMarkup(value, options = {}) {
         removedCount++;
     }
 
-    // Nu eliminăm liniuța de dialog doar fiindcă am șters o etichetă precum [Norton].
-    // Replicile cu vorbitori multipli trebuie să-și păstreze markerul de vorbitor.
+    // Dacă o liniuță marca exclusiv un efect sonor, iar în sursă existau cel puțin
+    // două rânduri cu liniuță, scoatem markerul rămas numai când a supraviețuit
+    // exact un singur rând de dialog marcat. Nu atingem dialogul real cu doi vorbitori.
+    if (hadDashOnlyBracketedSoundCue && originalDashLineCount >= 2) {
+        const remainingDashLines = clean.split('\n').filter(line => /^\s*[-–—]+\s*\S/u.test(line));
+        if (remainingDashLines.length === 1) {
+            clean = clean.replace(/^([ \t]*)[-–—]+[ \t]*/mu, '$1');
+        }
+    }
+
+    // Nu eliminăm liniuțele reale ale dialogului cu doi vorbitori.
     if (removedCount && /^[ \t\r\n\-–—,;:.!?…]+$/.test(clean)) clean = '';
 
     return { text: clean, removedCount };
@@ -4524,6 +4550,7 @@ ROMANIAN ACCURACY RULES
 - Register: use informal „tu/voi” by default (friends, family, peers, partners, children, casual speech). Use „dumneavoastră” only when the source clearly signals formality: “sir/ma'am”, “Mr./Mrs./Dr./Officer/Professor/Your Honor” addressed respectfully, subordinate to superior, official, medical, military or courtroom settings. Once two speakers have a register, keep it for the whole scene (use the context lines to stay consistent). Render “sir/ma'am” as „domnule/doamnă”, “Mr./Mrs./Miss” as „domnul/doamna/domnișoara”, and keep ranks and titles natural („căpitane”, „domnule doctor”, „agent Smith”).
 - Gender and number: English “you”, “I am tired”, “we were” do not show gender or number. Infer the gender and number of the speaker and of the person addressed from the neighboring lines (names, he/she, sir/ma'am, “guys”, “ladies”) and make adjectives, participles, pronouns and verbs agree („sunt obosită” / „sunt obosit”, „ați venit” for several people). If it is truly unknown, use the most common form; never write both forms with a slash.
 - Names: keep names of people, characters, brands, bands and show/film titles as in the source unless an established Romanian form exists („Londra”, „Marea Britanie”). Do not decline or invent endings for foreign names, and spell each name the same way throughout.
+- TITLES AND RANKS: Never substitute one title, profession, honorific or military rank for another. „Colonel” must remain the rank de colonel: use „colonele” in direct vocative address where natural („Come, Colonel” → „Vino, colonele”), „colonelul” in a definite third-person construction, or „domnule colonel” when the register requires it. NEVER translate „Colonel” as „doctor/doctore”. Preserve „Sir” before a knight's given name („Sir John”) and „Lady” before a surname („Lady Middleton”); do not turn these title-plus-name forms into „domnul John” or „doamna Middleton”. When „sir” is an ordinary form of direct address without a name, translate it naturally as „domnule”.
 - Direct object: use „pe” plus the clitic for people as direct objects („Îl iubesc pe Tom”, „Te văd pe tine”), not for things.
 - Numerals: use „de” before the counted noun when the number is 20 or more or ends in 00 („20 de dolari”, „100 de ani”, „35 de minute”); omit it for 1–19 („15 dolari”, „3 ani”, „12 minute”).
 - Calques: translate fixed phrases by their function, not word by word — “I mean”, “you know”, “like” (filler), “literally”, “actually”, “come on”, “hang on”, “my bad”, “I'm good”, “you're welcome”, “what's up”, “no way”, “give me a break”, “count me in”, “it's on me”. Do not mirror English passives, “-ing” chains or possessives („Mi-am spălat mâinile” → „M-am spălat pe mâini” when more natural). Tag questions (“right?”, “isn't it?”) become „nu?”, „da?” or „nu-i așa?”.
@@ -4590,12 +4617,17 @@ function getSubtitleTimingPromptMetadata(item) {
     const endMs = toMilliseconds(item?.end);
     const durationMs = endMs - startMs;
     if (!Number.isFinite(durationMs) || durationMs <= 0) {
-        return { durata_secunde: null, reper_17_CPS_caractere: null };
+        return {
+            durata_secunde: null,
+            reper_17_CPS_caractere: null,
+            maxim_admis_20_CPS_caractere: null
+        };
     }
 
     return {
         durata_secunde: Number((durationMs / 1000).toFixed(3)),
-        reper_17_CPS_caractere: Math.max(1, Math.floor((durationMs * 17) / 1000))
+        reper_17_CPS_caractere: Math.max(1, Math.floor((durationMs * 17) / 1000)),
+        maxim_admis_20_CPS_caractere: Math.max(1, Math.floor((durationMs * 20) / 1000))
     };
 }
 
@@ -4645,8 +4677,13 @@ Câmpurile context_anterior și context_urmator sunt DOAR pentru înțelegerea r
 Folosește contextul pentru acord, pronume, continuitate, topică și sens, dar modifică DOAR câmpul text al ID-ului curent.
 Nu reasocia textul unei replici cu alt ID. Șirurile alcătuite doar din cifre și semne de punctuație trebuie copiate exact; nu le înlocui cu traducerea replicii vecine.
 
-DURATA ȘI RITMUL DE CITIRE:
-Fiecare replică de tradus include durata exactă de afișare în câmpul „durata_secunde” și un reper orientativ de aproximativ 17 caractere pe secundă în „reper_17_CPS_caractere” (caracterele includ spațiile și punctuația). Folosește aceste informații pentru a alege o formulare românească mai concisă atunci când timpul este scurt sau textul ar deveni greu de citit. Păstrează sensul complet, informațiile importante, tonul și toate replicile distincte. Reperul de caractere NU este o limită rigidă: nu elimina informații și nu transforma replica într-o formulare nenaturală doar ca să te încadrezi. Când nu încape natural, prioritizează o traducere fidelă și firească. Nu muta cuvinte sau replici între ID-uri, nu combina ID-uri și nu schimba ordinea.
+DURATA ȘI RITMUL DE CITIRE (PRIORITATE RIDICATĂ):
+Fiecare replică include durata exactă de afișare („durata_secunde”), o țintă orientativă de aproximativ 17 caractere/secundă („reper_17_CPS_caractere”) și un prag superior orientativ de 20 caractere/secundă („maxim_admis_20_CPS_caractere”). Caracterele includ spațiile și punctuația.
+- Formulează cât mai natural și concis, urmărind ținta de 17 CPS.
+- Când durata este MAI MARE de 1,3 secunde, încearcă să nu depășești „maxim_admis_20_CPS_caractere”. Dacă informația esențială nu încape fără deformarea sensului, păstrează sensul complet și formularea firească; nu elimina informații importante.
+- Când durata este de cel mult 1,3 secunde, alege cea mai scurtă formulare naturală pe care o susține originalul, fără să comprimi artificial sau să omiți replici.
+- Pentru concizie, elimină pronumele personale redundante, înlocuiește perifrazele greoaie cu verbe directe, folosește contracții românești firești („nu e”, „nu-i”) și evită repetarea inutilă a titlurilor de politețe.
+Păstrează tonul, nu confunda replici diferite și nu sacrifica identitatea vorbitorilor. Nu muta cuvinte sau replici între ID-uri, nu combina ID-uri și nu schimba ordinea.
 
 EXCLUDEREA VERSURILOR MUZICALE: segmentele de versuri detectate au fost eliminate din sursă înainte ca replica să ajungă la Gemini. Nu inventa, nu reconstitui și nu adăuga versuri sau titluri muzicale care nu apar în textul de dialog rămas.
 
@@ -5938,6 +5975,22 @@ function hasCorruptedSubtitleText(text, originalText) {
     // este de obicei text corupt (de ex. „Gtt”). Acronimele majuscule sunt exceptate.
     const bareWord = s.replace(/[.!?…]+$/u, '').trim();
     if (/^\p{Lu}[\p{Ll}]{2,5}$/u.test(bareWord) && !/[aeiouyăâî]/iu.test(bareWord)) return true;
+
+    // Litere latine izolate, improbabile ca token românesc în interiorul unei
+    // propoziții cu diacritice (ex. „w aste săptămâni”). Potrivim doar litere mici
+    // pentru a nu respinge inițiale/nume abreviate scrise cu majusculă.
+    if (/(?<![\p{L}\p{N}])[wqkyx](?![\p{L}\p{N}])/u.test(s) && /[ăâîșț]/iu.test(s)) return true;
+
+    // Hibrizi engleză-română cu „ph” păstrat accidental într-un cuvânt flexionat românește.
+    if (/(?<![\p{L}\p{N}_])[\p{L}]*ph[\p{L}]*[ăâîșț][\p{L}]*(?![\p{L}\p{N}_])/iu.test(s)) return true;
+
+    // Coruperi/typo-uri observate în traduceri. Le marcăm pentru revizuire contextuală;
+    // nu facem înlocuiri automate, deoarece forma corectă depinde uneori de sursă.
+    if (/(?<![\p{L}\p{N}_])(?:ja\s+deja|n\s+n-am|nioată|temteam|educția|nespre|rebuie|deât|parți)(?![\p{L}\p{N}_])/iu.test(s)) return true;
+    // „E-e-eu” poate fi o bâlbâială legitimă. O marcăm numai dacă originalul nu
+    // conține la rândul lui o repetare/stâlcire explicită de tip I-I-I.
+    const sourceHasStutter = /\b([\p{L}]{1,2})(?:[-–—]\1){1,3}\b/iu.test(String(originalText || ''));
+    if (/\be-e-eu\b/iu.test(s) && !sourceHasStutter) return true;
 
     return false;
 }
@@ -7922,7 +7975,7 @@ ${stageLabel.toUpperCase()} — TRADUCERI RĂMASE GOALE.
 
 Tradu în română naturală fiecare replică din lista de mai jos. Aceste blocuri au trecut deja de filtrarea inițială a subtitrărilor. Pentru dialogul obișnuit, fragmente incomplete, replici de un singur cuvânt, întrebări și reacții cu sens, întoarce întotdeauna o traducere română nevidă. Nu lăsa câmpul text gol și nu omite niciun ID. Pentru dialog normal, returnează numai textul tradus, fără paranteze rotunde/drepte adăugate în jurul replicii.
 
-DURATA ȘI RITMUL DE CITIRE: fiecare element include „durata_secunde” și reperul orientativ „reper_17_CPS_caractere”. Folosește durata pentru a prefera, când este posibil, o formulare românească mai scurtă și naturală la replicile cu timp redus. Reperul de 17 caractere/secundă (cu spații și punctuație) este orientativ, nu o limită rigidă. Nu sacrifica sensul, detaliile esențiale, tonul sau replicile distincte pentru a atinge cifra. Nu muta și nu combina text între ID-uri.
+DURATA ȘI RITMUL DE CITIRE (PRIORITATE RIDICATĂ): fiecare element include „durata_secunde”, ținta orientativă „reper_17_CPS_caractere” și pragul superior „maxim_admis_20_CPS_caractere” (cu spații și punctuație). Urmărește formulări naturale cât mai aproape de 17 CPS și, când durata depășește 1,3 secunde, încearcă să nu depășești pragul de 20 CPS. Scurtează prin eliminarea pronumelor redundante și a perifrazelor greoaie, nu prin omiterea sensului, a detaliilor esențiale sau a unei replici. Pentru durate de cel mult 1,3 secunde, alege cea mai concisă formulare naturală pe care o susține originalul. Nu muta și nu combina text între ID-uri.
 
 Toate elementele de mai jos au trecut deja de filtrul local pentru cue-uri sonore. Tratează fiecare intrare ca pe un fragment scurt de replică/rostire și redă-i sensul în română ca text de dialog, nu ca etichetă de acțiune sau indicație scenică/sonoră. Nu transforma textul în formulări precum „oftează”, „râsete”, „muzică în fundal” sau „suspină” și nu adăuga paranteze pentru a-l prezenta ca indicație. Pentru o sursă foarte scurtă, alege cea mai firească formulare orală pe care o susține textul, fără să inventezi informații. Fiecare ID de dialog trebuie să primească o traducere românească nevidă. Singura excepție este un ID identificat clar, într-un lot cu context suficient, ca vers cântat fără marcaje: pentru acesta este permis markerul tehnic de omitere descris mai jos. Nu inventa alte omisiuni intenționate.
 Nu folosi niciun marker intern, token special sau placeholder în câmpul text. Clasificarea și omiterea cue-urilor sonore sunt responsabilitatea verificării locale, nu a modelului.
@@ -8726,9 +8779,8 @@ const ROMANIAN_CONTINUATION_TAIL_WORDS = new Set((`
 // funcționale pot continua sintaxa; verbele de conținut („Sunt gata.”) nu sunt
 // coborâte automat doar fiindcă fragmentul anterior se termină cu trei puncte.
 const ROMANIAN_ELLIPSIS_CONTINUATION_INITIAL_WORDS = new Set((`
-    a al ale ai și dar iar de din în la pe cu pentru prin fără despre către între
+    și dar iar de din în la pe cu pentru prin fără despre către între
     că ca să dacă fiindcă deoarece deși însă ori până după înainte
-    mă te se ne vă îmi îți îi îl le mi ți nu nici niciun nicio un o una
 `).trim().split(/\s+/u));
 
 // Finaluri de grup nominal/adjectival care pot aștepta predicatul din cue-ul următor.
