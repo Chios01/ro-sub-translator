@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.169',
+    version: '13.2.170',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -11101,7 +11101,16 @@ function protectMusicalLyricSegments(text, cueSequence) {
                     .replace(/<[^>]*>/g, ' ')
                     .replace(/&(?:nbsp|amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, ' ')
                     .trim();
-                if (/[\p{L}\p{N}]/u.test(prefixBeforeReaction)) {
+                // v170: într-un vers marcat explicit cu ♪, „..., yeah...” lipit
+                // de aceeași frază (fără slash/liniuță de dialog) este continuarea
+                // cântecului, NU o replică separată. Exemplu real: S04E08, ID 773.
+                // Restrângem excepția la „yeah” după virgulă, singur până la
+                // sfârșitul cue-ului (sunt permise numai punctuația și taguri
+                // HTML închise). Alte reacții și separatori expliciți rămân intacte.
+                const suffixAfterReaction = tail.slice(reactionBoundary.index);
+                const sungTrailingYeah = /,\s*$/u.test(prefixBeforeReaction) &&
+                    /^\s+yeah(?:[.!…]+)?\s*(?:<\/(?:i|b|em|font)>\s*)*$/iu.test(suffixAfterReaction);
+                if (/[\p{L}\p{N}]/u.test(prefixBeforeReaction) && !sungTrailingYeah) {
                     candidates.push({ index: reactionBoundary.index, priority: 3 });
                 }
             }
