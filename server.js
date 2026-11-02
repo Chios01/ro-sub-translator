@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.165',
+    version: '13.2.166',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3301,16 +3301,62 @@ function stripRomanianFillerVocalizations(value) {
     }).filter(Boolean).join('\n');
 }
 
+// Normalizează numai bâlbâielile scrise evident în interiorul unui cuvânt.
+// Rulează EXCLUSIV pe traducerea română finală, nu pe sursa EN sau pe ID-uri.
+// Nu recunoaște cratime cu spații: acelea pot marca interlocutori sau pauze.
+const COMMON_REPEATED_STUTTER_WORDS = new Set([
+    'eu', 'tu', 'el', 'ea', 'noi', 'voi', 'ei', 'ele', 'și', 'si', 'ai', 'am', 'ar',
+    'asta', 'ăsta', 'nu', 'da', 'ce', 'că', 'ca', 'de', 'să', 'sa', 'e', 'este',
+    'mă', 'ma', 'te', 'îmi', 'imi', 'îți', 'iti', 'un', 'o', 'dar', 'sunt'
+]);
+
+function collapseObviousWrittenStutters(value, originalSource = '') {
+    // Un termen cu cratimă prezent deja în sursă poate fi o denumire validă
+    // (ex. «D-dimer»), nu o bâlbâială introdusă de traducere.
+    const originalHyphenTerms = new Set((String(originalSource || '').match(
+        /(?<![\p{L}\p{N}_])[\p{L}\p{M}]+(?:[-–—][\p{L}\p{M}]+)+(?![\p{L}\p{N}_])/gu
+    ) || []).map(w => w.toLocaleLowerCase('ro-RO')));
+    return String(value || '').replace(
+        /(?<![\p{L}\p{N}_\-–—])([\p{L}\p{M}]+(?:[-–—][\p{L}\p{M}]+){1,4})(?![-–—\p{L}\p{N}_])/gu,
+        (original) => {
+            if (originalHyphenTerms.has(original.toLocaleLowerCase('ro-RO'))) return original;
+            const parts = original.split(/[-–—]/u);
+            const finalWord = parts[parts.length - 1];
+            if ([...finalWord].length < 2) return original;
+            const target = finalWord.toLocaleLowerCase('ro-RO');
+            const fragments = parts.slice(0, -1).map(p => p.toLocaleLowerCase('ro-RO'));
+            if (!fragments.every(fragment =>
+                target.startsWith(fragment) &&
+                (fragment === target || [...fragment].length <= 2))) return original;
+
+            // Repetarea cuvântului întreg poate fi un compus real: „can-can”,
+            // „bye-bye”, nume proprii precum „Baden-Baden”. Aici acceptăm
+            // numai cuvinte funcționale românești; prefixele rupte sunt generale.
+            if (fragments.every(fragment => fragment === target) &&
+                !COMMON_REPEATED_STUTTER_WORDS.has(target)) return original;
+
+            const first = parts[0];
+            if (first === first.toLocaleUpperCase('ro-RO') && [...first].length > 1 &&
+                first === finalWord.toLocaleUpperCase('ro-RO')) {
+                return finalWord.toLocaleUpperCase('ro-RO');
+            }
+            return /^\p{Lu}/u.test(first)
+                ? finalWord[0].toLocaleUpperCase('ro-RO') + finalWord.slice(1)
+                : finalWord;
+        }
+    );
+}
+
 // Curățare finală pentru traduceri deja validate ca dialog.
 // Eliminăm numai tokenurile românești explicite de ezitare, după care păstrăm
 // normalizarea tehnică și eliminarea etichetelor de vorbitor. Nu aplicăm listele
 // englezești largi pe traducere, pentru a nu șterge cuvinte sau reacții legitime.
-function cleanTranslatedSubtitleForFinalOutput(value) {
+function cleanTranslatedSubtitleForFinalOutput(value, originalSource = '') {
     const source = String(value || '');
     if (!source.trim()) return '';
     const withoutSpeakerLabels = stripSpeakerNameLabels(source);
     const normalized = String(deepCleanSubtitleText(withoutSpeakerLabels, { applyContentFilters: false }) || '').trim();
-    return stripRomanianFillerVocalizations(normalized).trim();
+    return collapseObviousWrittenStutters(stripRomanianFillerVocalizations(normalized).trim(), originalSource);
 }
 
 function applyDeterministicSemanticFix(original, translation) {
@@ -9790,7 +9836,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         if (suppressedSourceSoundCueIds.has(id) || item.musicOnly) continue;
         const current = String(translatedById[id] || '');
         if (!current.trim()) continue;
-        const filtered = cleanTranslatedSubtitleForFinalOutput(current);
+        const filtered = cleanTranslatedSubtitleForFinalOutput(current, item.text);
         if (filtered !== current.trim()) finalContentFilterChanged++;
         if (current.trim() && !filtered && !stripRomanianFillerVocalizations(current).trim()) {
             finalTranslatedFillerSuppressedIds.add(id);
@@ -9799,7 +9845,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         if (!filtered) finalContentFilterEmptied++;
     }
     if (finalContentFilterChanged || finalContentFilterEmptied) {
-        console.log(`${c.cyan}[Curățare finală sigură] ${finalContentFilterChanged} replici normalizate${finalContentFilterEmptied ? `; ${finalContentFilterEmptied} au rămas goale și vor fi raportate de QA` : ''}. Se elimină numai vocalizările românești exacte (ă/ăă/ah/aa/hă).${c.reset}`);
+        console.log(`${c.cyan}[Curățare finală sigură] ${finalContentFilterChanged} replici normalizate${finalContentFilterEmptied ? `; ${finalContentFilterEmptied} au rămas goale și vor fi raportate de QA` : ''}. Se elimină numai vocalizările românești exacte (ă/ăă/ah/aa/hă) și bâlbâielile scrise evidente.${c.reset}`);
     }
 
     // Corectare locală conservatoare a majusculelor după toate reviziile AI și
