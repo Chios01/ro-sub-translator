@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.166',
+    version: '13.2.168',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3018,7 +3018,11 @@ function extractExplicitSourceSpeakerTurns(sourceValue) {
     const turns = [];
     for (const rawLine of sourceLines) {
         if (!rawLine.trim()) continue;
-        const parsed = parseExplicitSpeakerLine(rawLine);
+        // Unele SRT-uri marchează al doilea vorbitor ca <i>- Replica</i>.
+        // Ignorăm tagurile de stil DOAR la detectarea markerului inițial,
+        // fără să rescriem sursa, să schimbăm formatterul sau să inventăm dialog.
+        const detectionLine = rawLine.replace(/^(\s*)(?:(?:<[ibu]>|<\/[ibu]>)[ \t]*)+/giu, '$1');
+        const parsed = parseExplicitSpeakerLine(detectionLine);
         if (parsed.hasLeadingDash || parsed.segments.length > 1) turns.push(...parsed.segments);
     }
     return turns;
@@ -7238,6 +7242,26 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])nu\s+v-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu v-a păsat'],
     [/(?<![\p{L}\p{N}_])nu\s+vă-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu v-a păsat'],
     [/(?<![\p{L}\p{N}_])nu\s+le-a\s+pasat(?=$|[.!?…,:;]|\s+(?:de\b|deloc\b))/giu, 'nu le-a păsat'],
+    // v167: numai forme clar agramaticale/greșeli de tastare, fără review AI nou.
+    // Potrivire pe secvențe precise, nu pe sufixe sau cuvinte uzuale.
+    [/(?<![\p{L}\p{N}_])rev\s+imediat(?![\p{L}\p{N}_])/giu, 'revin imediat'],
+    [/(?<![\p{L}\p{N}_])suntem\s+terminat(?![\p{L}\p{N}_])/giu, 'suntem terminați'],
+    [/(?<![\p{L}\p{N}_])te\s+va\s+doare(?![\p{L}\p{N}_])/giu, 'te va durea'],
+    [/(?<![\p{L}\p{N}_])mi-vei\s+spune(?![\p{L}\p{N}_])/giu, 'îmi vei spune'],
+    [/(?<![\p{L}\p{N}_])vau\s+doar\s+să\s+ies(?![\p{L}\p{N}_])/giu, 'vreau doar să ies'],
+    [/(?<![\p{L}\p{N}_])ce-vă\s+trebuie(?![\p{L}\p{N}_])/giu, 'ce vă trebuie'],
+    [/(?<![\p{L}\p{N}_])eti\s+e\s+singurul(?![\p{L}\p{N}_])/giu, 'ești singurul'],
+    [/(?<![\p{L}\p{N}_])pămuiește(?![\p{L}\p{N}_])/giu, 'pălmuiește'],
+    [/(?<![\p{L}\p{N}_])fuțteai(?![\p{L}\p{N}_])/giu, 'futeai'],
+
+    // v168: „favor” calchiat în dialog -> „favoare”.
+    // Exclusiv sintagme cu articol (și „mic”); nu atingem singur „favor”,
+    // nume proprii („Un Favor”), „favorit”, „favorabil”, „favoruri” sau alte forme.
+    // Spații orizontale: nu unim accidental două rânduri de subtitrare.
+    [/(?<![\p{L}\p{N}_])(?:un|Un|UN|o|O)[ \t]+(?:mic|MIC)[ \t]+(?:favor|FAVOR)(?![\p{L}\p{N}_-])/gu, 'o mică favoare'],
+    [/(?<![\p{L}\p{N}_])(?:un|Un|UN|o|O)[ \t]+(?:favor|FAVOR)[ \t]+(?:mic|MIC)(?![\p{L}\p{N}_-])/gu, 'o favoare mică'],
+    [/(?<![\p{L}\p{N}_])(?:un|Un|UN|o|O)[ \t]+(?:favor|FAVOR)(?![\p{L}\p{N}_-])(?![ \t]*\r?\n[ \t]*(?:mic|Mic|MIC)(?![\p{L}\p{N}_]))/gu, 'o favoare'],
+
     // Corecturi generale cu încredere ridicată, adăugate după verificare.
     [/(?<![\p{L}\p{N}_])lucurile(?![\p{L}\p{N}_])/giu, 'lucrurile'],
     [/(?<![\p{L}\p{N}_])lucuri(?![\p{L}\p{N}_])/giu, 'lucruri'],
