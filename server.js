@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.161',
+    version: '13.2.162',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4329,10 +4329,17 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
                 directive = 'upper';
                 previousSourceConfirmsSentenceEnd = true;
             } else if (!isRecognizedName && previousSourceEndsWithEllipsis &&
-                ENGLISH_ELLIPSIS_CONTINUATION_INITIAL_WORDS.has(token)) {
-                // Ex.: „...the mustard stains” / „And these other stains”.
-                // Majuscula obligatorie a conectorului în engleză nu trebuie să
-                // transforme continuarea românească într-o propoziție nouă.
+                ENGLISH_ELLIPSIS_CONTINUATION_INITIAL_WORDS.has(token) &&
+                // Elipsa nu dovedește singură că o propoziție continuă.
+                // Cerem ca textul EN dinainte de elipsă să lase sintaxa deschisă;
+                // o întrebare independentă după elipsă începe cu majusculă.
+                (endsWithStrongSourceContinuationMarker(
+                    previousSourceWithoutClosingMarks.replace(/(?:\.{3,}|…)+$/u, '').trim()
+                ) || /^(?:and|but|or|so|because|if)\s*,?\s*(?:uh|um|erm|er)$/iu.test(
+                    previousSourceWithoutClosingMarks.replace(/(?:\.{3,}|…)+$/u, '').trim()
+                )) && !/[?!]["'’”»)}\]]*$/u.test(source.trim())) {
+                // „And, uh...” + „And last night...” rămâne o continuare
+                // după ezitare, fără să coborâm automat întrebări/propoziții noi.
                 directive = 'lower';
             } else if (!isRecognizedName && endsWithStrongSourceContinuationMarker(previousSource)) {
                 // Inclusiv „I”/„I'd”: majuscula obligatorie în engleză nu se
@@ -4364,6 +4371,25 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
     if (firstTargetLineIndex < 0) return original;
     translatedLines[firstTargetLineIndex] = applyDirective(translatedLines[firstTargetLineIndex], directive);
     return translatedLines.join('\n');
+}
+
+// Protejează un caz morfologic verificabil din sursă: nume feminin EN
+// terminat în -a, la posesiv (Anna's / Maria's), tradus la genitiv românesc
+// în -ei (Annei / Mariei). Nu capitalizăm cuvinte doar după asemănare:
+// cerem numele confirmat în vocabularul EN și posesivul în ACELAȘI ID.
+function capitalizeSourceBackedRomanianPossessiveNames(sourceText, translatedText, englishNames = new Set()) {
+    const source = String(sourceText || '');
+    let target = String(translatedText || '');
+    for (const match of source.matchAll(/(?<![\p{L}])([A-Z][a-z]{1,}a)['’]s\b/gu)) {
+        const name = match[1];
+        if (!englishNames.has(nameKey(name))) continue;
+        const inflected = name.slice(0, -1) + 'ei';
+        const wordPattern = new RegExp(`(?<![\\p{L}])${inflected}(?![\\p{L}])`, 'giu');
+        target = target.replace(wordPattern, found =>
+            found[0].toLocaleUpperCase('ro-RO') + found.slice(1)
+        );
+    }
+    return target;
 }
 
 // Corectează începuturile de propoziție din interiorul aceleiași subtitrări.
@@ -4508,7 +4534,10 @@ function applyFinalSubtitleCapitalization(sourceText, translatedText, englishNam
     );
     const lineSynchronized = synchronizeInCueLineCapitalization(sourceSynchronized, englishNames);
     const cliticNormalized = lowercaseRomanianMidSentenceClitics(lineSynchronized, englishNames);
-    return capitalizeRomanianSentenceStarts(cliticNormalized);
+    const sentenceCapitalized = capitalizeRomanianSentenceStarts(cliticNormalized);
+    return capitalizeSourceBackedRomanianPossessiveNames(
+        sourceText, sentenceCapitalized, englishNames
+    );
 }
 
 // ============================================================
@@ -4533,7 +4562,7 @@ TRANSLATION AND CONTEXT
 - UNMARKED SONG LYRICS — Some subtitle sources omit music-note markers. When the supplied block sequence and adjacent source lines make it CLEAR that a line is sung lyrics from an ongoing song/chorus, rather than spoken dialogue, return exactly \"__RO_ST_SKIP_SONG_LYRIC__\" as its text. The program will omit that cue; never expose the marker in the final SRT. Be conservative: repetition alone is NOT enough, and do NOT suppress emotional or shouted dialogue (for example, a person repeating \"I loved you!\"). If you are unsure whether it is sung, translate it as dialogue. If a block contains identifiable spoken dialogue as well as lyrics but has no explicit music markers to separate them, translate the spoken dialogue only; do not return the skip marker when any spoken dialogue remains.
 - Use neighboring English subtitles and the supplied Romanian context only to understand the scene, speaker, references, grammar, jokes, and continuity. Translate only the text belonging to the current ID.
 - If a sentence continues across IDs, understand the whole sentence but keep each fragment under its original ID. Never move words between subtitle IDs.
-- Decide Romanian sentence case from the sentence across IDs, not from English capitalization alone. A cue is a continuation when its English text begins with a lowercase letter, or the preceding English cue ends with a strong syntactic continuation marker such as a comma, semicolon, colon, conjunction, or preposition that leaves the clause open. The mere absence of terminal punctuation in the preceding cue is NOT sufficient by itself. A leading ellipsis in both adjacent cues, or an unfinished Romanian connective in the preceding fragment (for example, „doar că...”), can also signal that the thought continues. In a Romanian continuation, ordinary words must begin lowercase even when English forces an uppercase „I” at the start of a cue; preserve proper names and acronyms. If the source block begins with an explicit dialogue dash, evaluate the first word AFTER the dash (and any speaker label): when that word is lowercase in English, preserve the dash but begin the Romanian words after it with lowercase too. A capitalized word after a dash normally marks a new speaker/utterance and keeps its normal capitalization.
+- Decide Romanian sentence case from the sentence across IDs, not from English capitalization alone. A cue is a continuation when its English text begins with a lowercase letter, or the preceding English cue ends with a strong syntactic continuation marker such as a comma, semicolon, colon, conjunction, or preposition that leaves the clause open. The mere absence of terminal punctuation in the preceding cue is NOT sufficient by itself. A leading ellipsis in both adjacent cues, or an unfinished Romanian connective in the preceding fragment (for example, „doar că...”), can also signal that the thought continues. An ellipsis alone does NOT prove continuation: an independent question or new statement after it should start uppercase. In a Romanian continuation, ordinary words must begin lowercase even when English forces an uppercase „I” at the start of a cue; preserve proper names and acronyms, including their inflected Romanian forms (Anna → Annei). If the source block begins with an explicit dialogue dash, evaluate the first word AFTER the dash (and any speaker label): when that word is lowercase in English, preserve the dash but begin the Romanian words after it with lowercase too. A capitalized word after a dash normally marks a new speaker/utterance and keeps its normal capitalization.
 - Preserve the complete meaning: who performs the action, who or what receives it, location versus direct object, possession, negation, tense, person, gender, number, relationships, humor, and emotional intent.
 - Use contemporary, idiomatic, spoken Romanian. Avoid literal calques, awkward English syntax, stiff or overly formal phrasing, and childish or timid wording that does not match the character.
 - Preserve the original level of directness, intimacy, vulgarity, sarcasm, hostility, and informality. Do not censor or soften explicit dialogue, but do not make it more vulgar than the source.
@@ -4682,7 +4711,7 @@ Fiecare replică include durata exactă de afișare („durata_secunde”), o ț
 - Formulează cât mai natural și concis, urmărind ținta de 17 CPS.
 - Când durata este MAI MARE de 1,3 secunde, încearcă să nu depășești „maxim_admis_20_CPS_caractere”. Dacă informația esențială nu încape fără deformarea sensului, păstrează sensul complet și formularea firească; nu elimina informații importante.
 - Când durata este de cel mult 1,3 secunde, alege cea mai scurtă formulare naturală pe care o susține originalul, fără să comprimi artificial sau să omiți replici.
-- Pentru concizie, elimină pronumele personale redundante, înlocuiește perifrazele greoaie cu verbe directe, folosește contracții românești firești („nu e”, „nu-i”) și evită repetarea inutilă a titlurilor de politețe.
+- Pentru concizie, elimină pronumele personale redundante, înlocuiește perifrazele greoaie cu verbe directe, folosește contracții românești firești („nu e”, „nu-i”) și evită repetarea inutilă a titlurilor de politețe. Evită ocolurile de tip „există vreo modalitate prin care” când „dacă pot ajuta cumva” redă aceeași condiție și același sens; preferă „aș spune la fel” în loc de „aș putea spune același lucru” numai când nu se pierde nicio nuanță. Nu sacrifica informația, tonul sau acordul gramatical pentru scurtare.
 Păstrează tonul, nu confunda replici diferite și nu sacrifica identitatea vorbitorilor. Nu muta cuvinte sau replici între ID-uri, nu combina ID-uri și nu schimba ordinea.
 
 EXCLUDEREA VERSURILOR MUZICALE: segmentele de versuri detectate au fost eliminate din sursă înainte ca replica să ajungă la Gemini. Nu inventa, nu reconstitui și nu adăuga versuri sau titluri muzicale care nu apar în textul de dialog rămas.
