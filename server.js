@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.160',
+    version: '13.2.161',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6638,6 +6638,7 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
                 id: item.id,
                 original: hideNonDialogueMarkupFromAI(item.text),
                 translation: translatedById[String(item.id)],
+                ...getSubtitleTimingPromptMetadata(item),
                 context_anterior_en: previous ? `[${previous.id}] ${hideNonDialogueMarkupFromAI(previous.text)}` : '(niciunul)',
                 context_urmator_en: next ? `[${next.id}] ${hideNonDialogueMarkupFromAI(next.text)}` : '(niciunul)',
                 context_anterior_ro: previous ? `[${previous.id}] ${translatedById[String(previous.id)] || ''}` : '(niciunul)',
@@ -6652,6 +6653,9 @@ async function grammarTranslationReview(items, translatedById, keyStates, option
 
 SCOP
 Returnează numai corecțiile pentru greșeli clare și demonstrabile de sens, gramatică, vocabular, ortografie sau naturalețe românească. Dacă traducerea este deja corectă și suficient de naturală, nu o modifica. Nu face rescrieri doar din preferință stilistică. Dacă originalul unui ID este gol după filtrarea cue-urilor non-dialogate, nu inventa o corectură pentru acel ID și nu modifica traducerea lui.
+
+RITM DE CITIRE — NUMAI CÂND FACI O CORECTURĂ JUSTIFICATĂ
+Fiecare obiect include durata_secunde, reper_17_CPS_caractere și maxim_admis_20_CPS_caractere. Folosește-le ca reper pentru a păstra corectura concisă: urmărește aproximativ 17 caractere/secundă și, pentru durate peste 1,3 secunde, încearcă să rămâi sub 20 caractere/secundă. Nu rescrie o traducere corectă doar pentru a atinge un număr CPS. Când corectezi o greșeală, nu lungi inutil formularea; preferă o variantă românească mai scurtă dacă păstrează integral sensul. Nu elimina informații, nu simplifica excesiv și nu sacrifica naturalețea pentru a atinge pragul. Dacă varianta fidelă trebuie să depășească reperul, păstreaz-o.
 
 VERIFICĂ ÎN ORDINE
 1. Compară ORIGINALUL, traducerea și contextul imediat înainte/după. Verifică sensul complet, expresiile idiomatice, cine face acțiunea și cine/ce o primește.
