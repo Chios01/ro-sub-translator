@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.168',
+    version: '13.2.169',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2167,6 +2167,12 @@ function isClearBracketedAudioDescription(value) {
 function isObviousBracketedNonDialogueCue(value, openChar, prefix, suffix) {
     const text = String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     if (!text || text.length > 180) return false;
+    // v169: numai caption-uri SDH COMPLETE, deja încadrate în paranteze.
+    // Nu căutăm aceste cuvinte în replicile vorbite și nu adăugăm avertizări.
+    // „[explosion]”, „[purrs, meows]” și „[Jacob continues indistinctly]”
+    // au trecut nefiltrate în episodul S04E08.
+    if (/^(?:explosions?|purrs?[ \t]*,[ \t]*meows?)[.!…]*$/iu.test(text)) return true;
+    if (/^[\p{Lu}][\p{L}\p{M}'’.-]{0,32}(?:[ \t]+[\p{Lu}][\p{L}\p{M}'’.-]{0,32})?[ \t]+continues?[ \t]+indistinctly[.!…]*$/u.test(text)) return true;
     if (/^(?:scuipă|scuipând|scuipat|scuipată|scuipate)[.!…]*$/iu.test(text)) return true;
     // Nota muzicală în interiorul unui tag delimitat marchează cue-ul/versul ca non-dialog.
     // Verificăm înainte de mascarea tokenurilor muzicale, ca să nu rămână titlul citat.
@@ -7261,6 +7267,18 @@ const LOCAL_GRAMMAR_FIXES = [
     [/(?<![\p{L}\p{N}_])(?:un|Un|UN|o|O)[ \t]+(?:mic|MIC)[ \t]+(?:favor|FAVOR)(?![\p{L}\p{N}_-])/gu, 'o mică favoare'],
     [/(?<![\p{L}\p{N}_])(?:un|Un|UN|o|O)[ \t]+(?:favor|FAVOR)[ \t]+(?:mic|MIC)(?![\p{L}\p{N}_-])/gu, 'o favoare mică'],
     [/(?<![\p{L}\p{N}_])(?:un|Un|UN|o|O)[ \t]+(?:favor|FAVOR)(?![\p{L}\p{N}_-])(?![ \t]*\r?\n[ \t]*(?:mic|Mic|MIC)(?![\p{L}\p{N}_]))/gu, 'o favoare'],
+
+    // v169: greșeli locale certe observate în S04E08. Nu inventăm sens
+    // și nu atingem majusculele/diacriticele în afara acestor construcții.
+    [/(?<![\p{L}\p{N}_])m[ \t]+ocup[ \t]+eu[ \t]+de[ \t]+aici(?![\p{L}\p{N}_])/giu, 'mă ocup eu de aici'],
+    [/(?<![\p{L}\p{N}_])ț-am[ \t]+adus(?![\p{L}\p{N}_])/giu, 'ți-am adus'],
+    [/(?<![\p{L}\p{N}_])fedii[ \t]+și[ \t]+poliția[ \t]+locală(?![\p{L}\p{N}_])/giu, 'federalii și poliția locală'],
+    [/(?<![\p{L}\p{N}_])ne[ \t]+vor[ \t]+da[ \t]+vina[ \t]+pe[ \t]+noi(?![\p{L}\p{N}_])/giu, 'vor da vina pe noi'],
+    [/(?<![\p{L}\p{N}_])pană[ \t]+de[ \t]+curent[ \t]+aduce(?![\p{L}\p{N}_])/giu, 'o pană de curent aduce'],
+    [/(?<![\p{L}\p{N}_])asta[ \t]+ne[ \t]+e[ \t]+șansa(?![\p{L}\p{N}_])/giu, 'asta ne e șansa'],
+    // Corectăm numai combinații românești complet deformate, validate cu EN.
+    [/(?<![\p{L}\p{N}_])ursalmat[ \t]+viața(?![\p{L}\p{N}_])/giu, 'ți-a salvat viața'],
+    [/(?<![\p{L}\p{N}_])mă[ \t]+su(?:r)?prinzi[ \t]+că[ \t]+mă[ \t]+vezi(?![\p{L}\p{N}_])/giu, 'te surprinde să mă vezi'],
 
     // Corecturi generale cu încredere ridicată, adăugate după verificare.
     [/(?<![\p{L}\p{N}_])lucurile(?![\p{L}\p{N}_])/giu, 'lucrurile'],
