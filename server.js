@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.163',
+    version: '13.2.165',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1943,7 +1943,7 @@ const SOUND_CUE_ADDITIONAL_CAPTION_PATTERNS = [
     /^(?:(?:grand|magnificent|dramatic|loud|soft)\s+)?(?:orchestral\s+)?fanfare\s+(?:plays?|playing)(?:\s+(?:in\s+the\s+background|continues?))?[.!…]*$/iu,
     // Cue-uri cu unul sau mai multe nume de personaje înaintea acțiunii sonore:
     // [Mrs. Jennings laughing heartily], [Sir John and Mrs. Jennings laughing], etc.
-    /^(?:(?:[\p{Lu}][\p{L}\p{M}'’.-]*\.?)(?:\s+(?:and\s+)?[\p{Lu}][\p{L}\p{M}'’.-]*\.?){0,5}\s+)?(?:laughs?|laughing|chuckles?|chuckling|giggles?|giggling|snickers?|snickering|talks?|talking|speaks?|speaking|breathes?|breathing|sighs?|sighing|gasps?|gasping|groans?|groaning|grunts?|grunting|sobs?|sobbing|shouts?|shouting|yells?|yelling|screams?|screaming|sniffs?|sniffles?|sniffling|sniffing)(?:\s+(?:heartily|indistinctly|heavily|deeply|softly|quietly|loudly|nervously|sharply|gently|lightly|in\s+the\s+distance|in\s+distance))?(?:\s*[,;]\s*(?:laughs?|laughing|chuckles?|chuckling|sniffs?|sniffles?|sniffling|sniffing))?[.!…]*$/iu,
+    /^(?:(?:[\p{Lu}][\p{L}\p{M}'’.-]*\.?)(?:\s+(?:and\s+)?[\p{Lu}][\p{L}\p{M}'’.-]*\.?){0,5}\s+)?(?:continues\s+)?(?:laughs?|laughing|chuckles?|chuckling|giggles?|giggling|snickers?|snickering|talks?|talking|speaks?|speaking|breathes?|breathing|sighs?|sighing|gasps?|gasping|groans?|groaning|grunts?|grunting|sobs?|sobbing|shouts?|shouting|yells?|yelling|screams?|screaming|sniffs?|sniffles?|sniffling|sniffing)(?:\s+(?:heartily|indistinctly|heavily|deeply|softly|quietly|loudly|nervously|sharply|gently|lightly|in\s+the\s+distance|in\s+distance))?(?:\s*[,;]\s*(?:laughs?|laughing|chuckles?|chuckling|sniffs?|sniffles?|sniffling|sniffing))?[.!…]*$/u,
     /^(?:carriages?\s+approaching(?:\s+in\s+(?:the\s+)?distance)?|birds?\s+chirping(?:,\s*wings?\s+fluttering)?)[.!…]*$/iu,
     // Caption SDH compus: muzica și acțiunea continuă. Se aplică numai ca etichetă/cue delimitat,
     // nu ca filtru de text liber, pentru a nu șterge dialogul care menționează muzica sau acțiunea.
@@ -7064,6 +7064,20 @@ Returnează DOAR textul final al replicii românești, fără JSON, fără markd
 // ============================================================
 
 const LOCAL_GRAMMAR_FIXES = [
+    // „in” -> „în” numai când prepoziția este un token separat și cuvintele
+    // imediat vecine indică limpede româna prin diacritice. Nu atingem titluri,
+    // citate englezești ori cazurile ambigue (acestea rămân semnalate de QA).
+    [/(?<![\p{L}\p{N}_])(?:in|In|IN)(?=\s+\p{Ll})(?![\p{L}\p{N}_])/gu, (match, offset, whole) => {
+        const start = whole.lastIndexOf('\n', offset - 1) + 1;
+        const nextEnd = whole.indexOf('\n', offset + match.length);
+        const end = nextEnd === -1 ? whole.length : nextEnd;
+        const before = whole.slice(start, offset).split(/[.!?;:"“”„«»()]/u).pop() || '';
+        const after = (whole.slice(offset + match.length, end).split(/[.!?;:"“”„«»()]/u)[0] || '');
+        const previousWord = (before.match(/[\p{L}]+\s*$/u) || [])[0] || '';
+        const nextWord = (after.match(/^\s*[\p{L}]+/u) || [])[0] || '';
+        if (!/[ăâîșț]/iu.test(previousWord) && !/[ăâîșț]/iu.test(nextWord)) return match;
+        return match === 'IN' ? 'ÎN' : match === 'In' ? 'În' : 'în';
+    }],
     [/(?<![\p{L}\p{N}_])vânător de (?:onoruri|arierate)(?![\p{L}\p{N}_])/giu, 'vânător de recompense'],
     [/(?<![\p{L}\p{N}_])mățineau(?![\p{L}\p{N}_])/giu, 'mă țineau'],
     [/(?<![\p{L}\p{N}_])sesimte(?![\p{L}\p{N}_])/giu, 'se simte'],
@@ -9874,8 +9888,14 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     for (const flag of finalQualityFlags) {
         // Raportul de lungime este doar un semnal statistic pentru verificarea AI punctuală.
         // Dacă a fost deja verificat și AI nu a schimbat nimic, nu îl mai repetăm în QA FINAL.
-        const reportableReasons = (flag.reasons || []).filter(reason =>
-            !/^traducerea este mult mai (?:scurtă|lungă) decât originalul/.test(String(reason)));
+        // „in” fără diacritică este un indiciu ambiguu: verificarea AI îl poate
+        // corecta în continuare, dar nu îl afișăm singur ca avertisment QA FINAL.
+        // Celelalte semnale de calitate rămân raportate normal.
+        const reportableReasons = (flag.reasons || []).filter(reason => {
+            const message = String(reason);
+            return !/^traducerea este mult mai (?:scurtă|lungă) decât originalul/.test(message) &&
+                message !== 'cuvântul „in” este probabil „în” scris fără diacritică (sau engleză rămasă)';
+        });
         if (reportableReasons.length) addFinalReviewWarning(flag.item.id, reportableReasons);
     }
 
