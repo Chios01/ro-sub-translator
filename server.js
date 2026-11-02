@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.170',
+    version: '13.2.171',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2174,6 +2174,8 @@ function isObviousBracketedNonDialogueCue(value, openChar, prefix, suffix) {
     if (/^(?:explosions?|purrs?[ \t]*,[ \t]*meows?)[.!…]*$/iu.test(text)) return true;
     if (/^[\p{Lu}][\p{L}\p{M}'’.-]{0,32}(?:[ \t]+[\p{Lu}][\p{L}\p{M}'’.-]{0,32})?[ \t]+continues?[ \t]+indistinctly[.!…]*$/u.test(text)) return true;
     if (/^(?:scuipă|scuipând|scuipat|scuipată|scuipate)[.!…]*$/iu.test(text)) return true;
+    // v171: etichetă SDH tradusă care nu trebuie să rămână printre replici.
+    if (/^(?:bâlbâind(?:u-se)?|balbaind(?:u-se)?|bâlbâindu-se|balbaindu-se)[.!…]*$/iu.test(text)) return true;
     // Nota muzicală în interiorul unui tag delimitat marchează cue-ul/versul ca non-dialog.
     // Verificăm înainte de mascarea tokenurilor muzicale, ca să nu rămână titlul citat.
     if (/[♪♫♬♩🎵🎶]/u.test(text)) return true;
@@ -2581,6 +2583,8 @@ function stripNonDialogueSoundMarkup(value, options = {}) {
         .replace(/^([ \t]*[-–—][ \t]*)[-–—][ \t]+/gm, '$1')
         .replace(/^[ \t]*[-–—][ \t]*$/gm, '')
         .replace(/[ \t]+[-–—][ \t]*$/gm, '')
+        // Dacă [chuckles]: a fost eliminat după liniuță, nu lăsăm '-:'.
+        .replace(removedCount ? /^([ \t]*[-–—][ \t]*):[ \t]*/gm : /(?!)^/g, '$1')
         .replace(/^([ \t]*)[:,;][ \t]*/gm, '$1')
         .replace(/[ \t]+([,;:!?])/g, '$1')
         .replace(/[,;:][ \t]*([.!?])/g, '$1')
@@ -4730,6 +4734,7 @@ function buildTranslationPrompt(chunk, allItems, chunkStart, chunkEnd, previousT
         return {
             id: obj.id,
             text: hideNonDialogueMarkupFromAI(obj.text),
+            ...(obj.spokenQuotedText ? { tip_rostire: "citat/poezie recitată de personaj; se traduce obligatoriu, nu este vers cântat" } : {}),
             ...getSubtitleTimingPromptMetadata(obj),
             context_anterior: previous ? `[${previous.id}] ${hideNonDialogueMarkupFromAI(previous.text)}` : '(niciunul)',
             context_urmator: next ? `[${next.id}] ${hideNonDialogueMarkupFromAI(next.text)}` : '(niciunul)'
@@ -4770,7 +4775,7 @@ Fiecare replică include durata exactă de afișare („durata_secunde”), o ț
 - Pentru concizie, elimină pronumele personale redundante, înlocuiește perifrazele greoaie cu verbe directe, folosește contracții românești firești („nu e”, „nu-i”) și evită repetarea inutilă a titlurilor de politețe.
 Păstrează tonul, nu confunda replici diferite și nu sacrifica identitatea vorbitorilor. Nu muta cuvinte sau replici între ID-uri, nu combina ID-uri și nu schimba ordinea.
 
-EXCLUDEREA VERSURILOR MUZICALE: segmentele de versuri detectate au fost eliminate din sursă înainte ca replica să ajungă la Gemini. Nu inventa, nu reconstitui și nu adăuga versuri sau titluri muzicale care nu apar în textul de dialog rămas.
+EXCLUDEREA VERSURILOR MUZICALE: segmentele de versuri detectate au fost eliminate din sursă înainte ca replica să ajungă la Gemini. Nu inventa, nu reconstitui și nu adăuga versuri sau titluri muzicale care nu apar în textul de dialog rămas. Orice ID cu tip_rostire indicând poezie/citat RECITAT trebuie tradus ca vorbire reală, inclusiv când fraza continuă în ID-ul următor; markerul de omitere muzicală este interzis pentru el.
 
 REPLICILE DE TRADUS:
 ${JSON.stringify(keysToTranslate, null, 2)}
@@ -6268,6 +6273,7 @@ function normalizeTranslationPayload(parsed) {
 
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, deferred429Retry = false) {
     const requestChunk = chunk.filter(obj => !isNumericVerbatimCue(obj.text) && !obj.musicOnly);
+    const protectedSpokenIds = new Set(requestChunk.filter(obj => obj.spokenQuotedText).map(obj => String(obj.id)));
     const prompt = requestChunk.length
         ? buildTranslationPrompt(requestChunk, allItems, chunkStart, chunkEnd, previousTranslatedContext)
         : '';
@@ -6330,6 +6336,8 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const getUsableFormattedTranslation = (id, value) => {
                 if (value === undefined || value === null) return '';
                 const raw = String(value);
+                // Poezie explicit recitată: un marker muzical nu este traducere utilizabilă.
+                if (protectedSpokenIds.has(String(id)) && isSongLyricSkip(raw)) return '';
                 const cacheKey = String(id);
                 const cached = formattedTranslationCache.get(cacheKey);
                 if (cached && cached.raw === raw) return cached.formatted;
@@ -6361,6 +6369,10 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const results = chunk.map(obj => {
                 if (isNumericVerbatimCue(obj.text) || obj.musicOnly) {
                     return { id: obj.id, text: String(obj.text || '') };
+                }
+                if (isSongLyricSkip(dict[String(obj.id)]) && obj.spokenQuotedText) {
+                    // Nu o omitem: intră în Empty Recovery existent, fără cereri AI preventive.
+                    return { id: obj.id, text: ' ' };
                 }
                 if (isSongLyricSkip(dict[String(obj.id)]) && !/individual/i.test(requestLabel)) {
                     getIntentionallySuppressedTranslationIds(keyStates).add(String(obj.id));
@@ -7279,6 +7291,12 @@ const LOCAL_GRAMMAR_FIXES = [
     // Corectăm numai combinații românești complet deformate, validate cu EN.
     [/(?<![\p{L}\p{N}_])ursalmat[ \t]+viața(?![\p{L}\p{N}_])/giu, 'ți-a salvat viața'],
     [/(?<![\p{L}\p{N}_])mă[ \t]+su(?:r)?prinzi[ \t]+că[ \t]+mă[ \t]+vezi(?![\p{L}\p{N}_])/giu, 'te surprinde să mă vezi'],
+
+    // v171: forme imposibile/imperativ negativ exact, observate în 5 SRT-uri.
+    // Fără schimbări de sens automate sau înlocuire a anglicismului ambiguu „refill”.
+    [/(?<![\p{L}\p{N}_])panicanțăm(?![\p{L}\p{N}_])/giu, 'panicăm'],
+    [/(?<![\p{L}\p{N}_])iarasi(?![\p{L}\p{N}_])/giu, 'iarăși'],
+    [/(?<![\p{L}\p{N}_])nu[ \t]+fii[ \t]+deznădăjduită(?![\p{L}\p{N}_])/giu, 'nu fi deznădăjduită'],
 
     // Corecturi generale cu încredere ridicată, adăugate după verificare.
     [/(?<![\p{L}\p{N}_])lucurile(?![\p{L}\p{N}_])/giu, 'lucrurile'],
@@ -8302,7 +8320,7 @@ async function recoverEmptyTranslationsBatched(items, translatedById, keyStates,
 
         for (const item of batch) {
             const id = String(item.id);
-            if (isSongLyricSkip(recoveryDict[id]) && !markerRetryAttemptedIds.has(id) && !/individual/i.test(stageLabel)) {
+            if (isSongLyricSkip(recoveryDict[id]) && !item.spokenQuotedText && !markerRetryAttemptedIds.has(id) && !/individual/i.test(stageLabel)) {
                 getIntentionallySuppressedTranslationIds(keyStates).add(id);
                 translatedById[id] = '';
                 failedById.delete(id);
@@ -8741,7 +8759,7 @@ async function recoverEmptyTranslationsFinal(items, translatedById, keyStates) {
 
         for (const item of batch) {
             const id = String(item.id);
-            if (isSongLyricSkip(recoveryDict[id]) && !markerRetryAttemptedIds.has(id)) {
+            if (isSongLyricSkip(recoveryDict[id]) && !item.spokenQuotedText && !markerRetryAttemptedIds.has(id)) {
                 getIntentionallySuppressedTranslationIds(keyStates).add(id);
                 translatedById[id] = '';
                 intentionalSongSkips++;
@@ -11361,6 +11379,44 @@ function findOpenSongInteriorBlocks(blocks) {
     return interior;
 }
 
+// v171: recitări explicite atribuite unui vorbitor, pe mai multe cue-uri citate.
+// Nu declarăm drept „cântec fără note” o poezie citită/rostită de un personaj.
+// Condiții înguste: etichetă de vorbitor + citat deschis, minimum patru
+// cue-uri citate succesive, fără nicio notă muzicală și cu închidere de citat.
+// Metadatele NU schimbă textul sau timpii și nu creează cereri API.
+function findExplicitSpokenQuotationBlocks(blocks) {
+    const out = new Set();
+    const parsed = blocks.map(block => {
+        const lines = String(block || '').split('\n');
+        const valid = lines.length >= 3 && /^\d+$/u.test(lines[0].trim()) && /-->/.test(lines[1]);
+        return valid ? lines.slice(2).join('\n').replace(/<[^>]*>/gu, '').trim() : '';
+    });
+    const music = /[♪♫♬♩🎵🎶]/u;
+    for (let i = 0; i < parsed.length; i++) {
+        const opening = parsed[i];
+        if (!opening || music.test(opening)) continue;
+        // Vorbitor explicit în același cue cu prima strofă citată.
+        if (!/^[\p{Lu}][\p{L}\p{M} .’'\-]{1,54}:\s*["“„]\s*\p{L}/u.test(opening)) continue;
+        const indices = [i];
+        let closed = false;
+        for (let j = i + 1; j < parsed.length && j <= i + 23; j++) {
+            const current = parsed[j];
+            if (!current || music.test(current)) break;
+            const startsQuoted = /^["“„]\s*\p{L}/u.test(current);
+            const endsQuoted = /[.!?;:,]?\s*["”]\s*$/u.test(current);
+            // Ultima replică poate doar închide citatul deschis în primul cue.
+            if (!startsQuoted && !(indices.length >= 4 && endsQuoted)) break;
+            indices.push(j);
+            if (endsQuoted) { closed = true; break; }
+        }
+        if (closed && indices.length >= 4) {
+            indices.forEach(index => out.add(index));
+            i = indices[indices.length - 1];
+        }
+    }
+    return out;
+}
+
 // Normalizează notele muzicale afectate de mojibake înaintea detectării cântecelor.
 // Exemple: ♩ -> â™©, ♬ -> â™¬, ♫ -> â™«, ♪ -> â™ª când UTF-8 este decodat greșit.
 // Normalizarea trebuie să se întâmple înainte de findOpenSongInteriorBlocks și de filtrarea cue-urilor.
@@ -11404,6 +11460,7 @@ function parseSrt(srt, stats = null) {
     const normalized = normalizeMusicMarkers(String(srt || '').replace(/\r/g, '').replace(/^\uFEFF/, ''));
     const blocks = normalized.split(/\n[ \t]*\n(?:[ \t]*\n)*/);
     const songInteriorBlocks = findOpenSongInteriorBlocks(blocks);
+    const spokenQuotationBlocks = findExplicitSpokenQuotationBlocks(blocks);
     const result = [];
     let musicTokenCueSequence = 0;
     if (stats) {
@@ -11605,7 +11662,8 @@ function parseSrt(srt, stats = null) {
             end: match[2],
             text,
             musicSegments: [],
-            musicOnly: false
+            musicOnly: false,
+            spokenQuotedText: spokenQuotationBlocks.has(blockIndex)
         });
     }
 
