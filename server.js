@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.176',
+    version: '13.2.177',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2386,6 +2386,27 @@ function isShortStructuredNonDialogueSoundCue(text, words) {
 // Detectează și etichetele sonore care apar singure, fără paranteze: „Whistling”,
 // „râsete”, „bufnire” etc. Este un test de linie întreagă, ca să nu șteargă dialog
 // precum „Râde de mine” sau propoziții care doar menționează un sunet.
+// v177: propoziția scurtă „Agent Finley speaking.” poate fi o prezentare
+// telefonică rostită, nu o indicație sonoră. Fără delimitatori SDH, un nume
+// urmat de „speaking” este ambiguu: protejăm dialogul, nu îl eliminăm.
+// Menținem ca sunete formele generice („Man speaking”) și descrierile cu
+// marcatori acustici („speaking indistinctly/softly”), iar marcajele dintre
+// paranteze continuă să fie gestionate de filtrul SDH separat.
+function isUnmarkedSpokenSelfIdentification(value) {
+    const text = String(value || '').normalize('NFC')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 110 || /[\[\]{}:?"“”\n\r]/u.test(text)) return false;
+    const m = text.match(/^([\p{Lu}][\p{L}\p{M}'’.-]*(?:\s+[\p{Lu}][\p{L}\p{M}'’.-]*){0,5})\s+speaking[.!…]*$/u);
+    if (!m) return false;
+    const words = m[1].split(/\s+/u);
+    // „Man speaking” / „Officer speaking” sunt etichete descriptive,
+    // nu prezentări personale. Un nume („Finley speaking”) sau un titlu
+    // + nume („Agent Finley speaking”) poate fi dialog.
+    if (words.length === 1 && /^(?:man|woman|person|someone|somebody|child|baby|boy|girl|people|crowd|audience|officer|agent|dispatcher|announcer|reporter|speaker|narrator|voice|voices|radio|telephone|operator|doctor|captain|sergeant|detective|inspector|professor|sir|madam|mr|mrs|ms|dr|prof|lt|sgt)$/iu.test(words[0])) return false;
+    return true;
+}
+
 function isStandaloneNonDialogueSoundCue(value) {
     const text = String(value || '').normalize('NFC')
         .replace(/<[^>]*>/g, ' ')
@@ -2394,6 +2415,10 @@ function isStandaloneNonDialogueSoundCue(value) {
         .replace(/\s+/g, ' ')
         .trim();
     if (!text || text.length > 180) return false;
+
+    // Prioritate dialogului când un nume se prezintă vorbind la telefon:
+    // „Agent Finley speaking.” nu trebuie confundat cu „[Agent Finley speaking]”.
+    if (isUnmarkedSpokenSelfIdentification(text)) return false;
 
     // „Cheers.” este frecvent o replică de dialog (de ex. salut/încheiere),
     // nu o descriere de public care aplaudă. O păstrăm ca text dialogat.
