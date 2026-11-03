@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.175',
+    version: '13.2.176',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -9248,8 +9248,56 @@ function isLikelyRomanianInfinitiveAfterAuxiliary(previousToken, word, englishNa
     return /(?:ea|a|e|i|î)$/u.test(candidate);
 }
 
+// v176: evidență lexicală din ACEEAȘI traducere, nu o listă de substantive și
+// nici regula nesigură „orice majusculă după virgulă devine minusculă”.
+// Un cuvânt este candidat numai dacă în alte replici apare explicit cu
+// inițială mică. Verificăm apoi dacă este o continuare clară și nu un nume.
+function buildRomanianLowercaseWordEvidence(items, translatedById) {
+    const knownLowercase = new Set();
+    for (const item of items || []) {
+        if (item.musicOnly) continue;
+        const value = String(translatedById[String(item.id)] || '').replace(/<[^>]*>/g, ' ');
+        for (const match of value.matchAll(/(?<![\p{L}\p{N}_])([a-zăâîșț]{3,}(?:-[a-zăâîșț]+)?)(?![\p{L}\p{N}_])/gu)) {
+            knownLowercase.add(match[1]);
+        }
+    }
+    return knownLowercase;
+}
+
+// „vă rog, / Lăsați-mă...” -> „vă rog, / lăsați-mă...”, dacă aceeași
+// traducere conține și „lăsați-mă”, ori „Acum, Poliția o are” -> „poliția”
+// dacă în același fișier există „poliția” (cu literă mică).
+// Protejăm nume confirmate EN, vocative, titluri/organizații cu alte cuvinte
+// capitalizate și marcajele de vorbitor. Fără AI și fără schimbări de layout.
+function lowercaseSameFilmEvidencedCommaContinuations(value, lowerEvidence, englishNames = new Set()) {
+    const original = String(value ?? '');
+    if (!original || !/[,;]/u.test(original)) return { text: original, changed: 0 };
+    let changed = 0;
+    const text = original.replace(
+        /([,;])([ \t]*(?:\n[ \t]*)?)([A-ZĂÂÎȘȚ][a-zăâîșț]{2,}(?:-[a-zăâîșț]+)?)(?=\s+[a-zăâîșț])/gu,
+        (match, punctuation, spacing, word, offset, whole) => {
+            const lower = word.toLocaleLowerCase('ro-RO');
+            if (!lowerEvidence.has(lower) || englishNames.has(nameKey(word))) return match;
+            // HTML/SSML și etichetele tehnice nu sunt text de dialog.
+            const preceding = whole.slice(0, offset);
+            if (preceding.lastIndexOf('<') > preceding.lastIndexOf('>')) return match;
+            // Nu traversăm un schimb de vorbitori (ex. „... ,\n- Nume”).
+            if (/[-–—]\s*$/u.test(spacing)) return match;
+            // Organizații/titluri și nume compuse (ex. „Biroul din New York”,
+            // „Controlul Daunelor”). O majusculă în următoarele 3 tokenuri
+            // face cazul ambiguu; preferăm să nu schimbăm nimic.
+            const following = whole.slice(offset + match.length);
+            if (/^\s+[a-zăâîșț]+(?:\s+[a-zăâîșț]+){0,2}\s+[A-ZĂÂÎȘȚ][a-zăâîșț]{2,}/u.test(following)) return match;
+            changed++;
+            return punctuation + spacing + word[0].toLocaleLowerCase('ro-RO') + word.slice(1);
+        }
+    );
+    return { text, changed };
+}
+
 function applyMidSentenceCapitalizationFixes(items, translatedById) {
     const englishNames = buildEnglishNameVocabulary(items);
+    const lowercaseEvidence = buildRomanianLowercaseWordEvidence(items, translatedById);
     const strayO = applyStrayCapitalO(items, translatedById);
     let changedWords = strayO.words;
     let changedSubtitles = strayO.lines;
@@ -9263,11 +9311,12 @@ function applyMidSentenceCapitalizationFixes(items, translatedById) {
         const id = String(item.id);
         const rawOriginal = String(translatedById[id] || '');
         if (!rawOriginal.trim()) continue;
-        const phraseNormalization = normalizeRomanianGenericPhraseCapitalization(rawOriginal);
+        const evidencedCase = lowercaseSameFilmEvidencedCommaContinuations(rawOriginal, lowercaseEvidence, englishNames);
+        const phraseNormalization = normalizeRomanianGenericPhraseCapitalization(evidencedCase.text);
         const cliticNormalized = lowercaseRomanianMidSentenceClitics(phraseNormalization.text, englishNames);
         const original = cliticNormalized;
 
-        let localChanges = cliticNormalized !== phraseNormalization.text ? 1 : 0;
+        let localChanges = evidencedCase.changed + (cliticNormalized !== phraseNormalization.text ? 1 : 0);
         const normalized = original.replace(/(?<![\p{L}\p{N}_])([A-ZĂÂÎȘȚ][a-zăâîșț]+)(?![\p{L}\p{N}_])/gu,
             (wholeWord, _first, offset) => {
                 // Nu procesăm atribute sau nume de tag HTML.
