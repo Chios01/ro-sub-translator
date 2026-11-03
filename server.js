@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.172',
+    version: '13.2.173',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -11310,6 +11310,55 @@ const SUBTITLE_AD_EDGE_PATTERNS = [
     /(?<![\p{L}\d@.-])[a-z0-9-]{3,}\.(?:com|org|net|tv|info)\b/i
 ];
 
+// v173: marcaje publicitare independente de poziția în fișier.
+// Sunt acceptate doar blocuri dedicate reclamelor: adresă web decorată ori
+// invitație explicită la subtitrări/creditare. Nu eliminăm URL-uri din dialog.
+function isClearlyStandaloneSubtitleAdCue(value) {
+    const text = String(value || '')
+        .replace(/\{\\(?:an\d+|pos\([^)]*\))\}/giu, ' ')
+        .replace(/<\/?(?:i|b|u|font|span)\b[^>]*>/giu, ' ')
+        .replace(/&(?:nbsp|amp);/giu, ' ')
+        .replace(/\r/g, '')
+        .trim();
+    if (!text || text.length > 220) return false;
+
+    const lines = text.split(/\n+/u).map(line => line.trim()).filter(Boolean);
+    if (!lines.length || lines.length > 3) return false;
+
+    // Domeniu, subdomenii, URL sau adresă cu www. Nu identificăm numere IP
+    // ori coduri de tip A1/B2, care ar putea apărea legitim în dialog.
+    const domainPattern = /(?<![\p{L}\p{N}@])(?:https?:\/\/)?(?:www\.)?(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)+[a-z]{2,24}(?::\d{2,5})?(?:\/[a-z\d_~%!$&'()*+,;=:@./?#-]*)?/giu;
+    const subtitlePromotion = /^(?:for\s+(?:more|free|better)\s+(?:subtitles?|captions?|subs?)\b|(?:download|get|find)\s+(?:(?:more|free|english|romanian)\s+)?(?:subtitles?|captions?)\b|(?:subtitles?|captions?)\s+(?:(?:are|available)\s+)?(?:available|download|at|from)\b|visit\s+\S+\s+for\s+(?:more|free)\s+(?:subtitles?|captions?)\b|support\s+(?:our|the)\s+(?:subtitles?|subtitling)\b|(?:desc[aă]rca(?:ți)?|vizitați)\s+(?:subtitr(?:ări|ari|are)|legendas)\b)/iu;
+    const subtitleCredit = /^(?:[\s:=*#|~<>\[\]{}()\-–—]*)(?:subtitles?|captions?|subtitr(?:are|ări|ari|at))\s+(?:provided|created|prepared|translated|synchronized|synced|timed|edited|corrected|made|brought|sponsored|realizate|traduse|f[aă]cute|sincronizate)\s+(?:by|to\s+you\s+by|de)\b/iu;
+
+    let recognized = 0;
+    for (const line of lines) {
+        // Marcaj izol(at) de tip „:::: www.site.com ::::”, „[[site.net]]”,
+        // „<<< https://site.org >>>”. Textul din jur trebuie să fie EXCLUSIV decor.
+        const matches = [...line.matchAll(domainPattern)];
+        if (matches.length === 1) {
+            const remaining = line.replace(domainPattern, '');
+            if (/^[\s:;|*_#=~+<>\[\]{}()!.,\/\\\-–—«»]+$/u.test(remaining)) {
+                const visiblyFramed = /(?:[:=*#_~|]{2,}|[-–—]{3,}|[<>]{2,}|[«»]|\[{2,}\s*(?:https?:\/\/|www\.|[\p{L}\d-]+\.)[^\]]+\]{2,})/iu.test(line);
+                if (visiblyFramed) { recognized++; continue; }
+            }
+        }
+        // Text promoțional explicit însoțit de adresă web, nu conversații
+        // despre o adresă (de ex. „Open google.com” sau „Visit example.com”).
+        if (matches.length === 1 && subtitlePromotion.test(line.replace(/^[\s:;|*_#=~+<>\[\]{}()!.,\-–—]+/u, ''))) {
+            recognized++;
+            continue;
+        }
+        // Credite explicite de subtitrare, separate de replicile filmului.
+        if (subtitleCredit.test(line)) {
+            recognized++;
+            continue;
+        }
+        return false; // un rând de dialog => nu ștergem întregul bloc
+    }
+    return recognized === lines.length;
+}
+
 function isSubtitleAdOrCreditCue(text, nearFileEdge) {
     const clean = String(text || '')
         .replace(/<[^>]*>/g, ' ')
@@ -11317,6 +11366,7 @@ function isSubtitleAdOrCreditCue(text, nearFileEdge) {
         .replace(/\s+/g, ' ')
         .trim();
     if (!clean || clean.length > 220) return false;
+    if (isClearlyStandaloneSubtitleAdCue(text)) return true;
     if (SUBTITLE_AD_STRONG_PATTERNS.some(pattern => pattern.test(clean))) return true;
     return Boolean(nearFileEdge) && SUBTITLE_AD_EDGE_PATTERNS.some(pattern => pattern.test(clean));
 }
