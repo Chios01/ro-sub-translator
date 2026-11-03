@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.174',
+    version: '13.2.175',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4576,15 +4576,59 @@ function removeLeadingDialogueDashesForExport(value, sourceValue = null) {
     return stripLeadingDialogueDashes(value, sourceValue);
 }
 
+// v175: repară două clase GENERALE de corupere OCR/AI în română, la export.
+// Regula este intenționat conservatoare: nu schimbă nume proprii, CamelCase,
+// acronime, expresii tehnice sau majuscule de la începutul unui dialog.
+const ROMANIAN_JOINED_FUNCTION_WORD_FOLLOWERS = new Set((
+    'cât câți câte câțiva câteva câtva câtorva puțin puțină puțini puține ' +
+    'mulți multe mult multă fiecare oricare orice alt alți alte altă ' +
+    'toți toții toate tot toată un una unul unui unei unor o doi două trei patru cinci ' +
+    'șase șapte opt nouă zece acești aceste această acesta acel acea acele ' +
+    'aici acolo atunci acum înainte înapoi afară jos sus mai prea foarte ' +
+    'câteodată nimic cineva ceva câte unul următorii următoarele următoarea'
+).split(/\s+/u));
+
+function repairRomanianMixedCaseWordBoundaries(value) {
+    let text = String(value ?? '');
+    if (!text || !/[A-ZĂÂÎȘȚ]/u.test(text)) return text;
+
+    // "înCâțiva" / "dupăCâteva" / "cuToții": un separator omis înaintea
+    // unui cuvânt funcțional românesc cunoscut. Nu atingem "înBucurești",
+    // "DeLorean", "iPhone", nume, coduri sau formele cu majuscule multiple.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])(în|În|din|Din|de|De|la|La|pe|Pe|cu|Cu|prin|Prin|spre|Spre|după|După|fără|Fără|pentru|Pentru)([\p{Lu}][\p{Ll}]{2,})(?![\p{L}\p{N}_])/gu,
+        (match, prep, nextWord) => ROMANIAN_JOINED_FUNCTION_WORD_FOLLOWERS.has(nextWord.toLocaleLowerCase('ro-RO'))
+            ? `${prep} ${nextWord.toLocaleLowerCase('ro-RO')}` : match
+    );
+
+    // "vă rog,\nDAȚI-mi" -> "vă rog,\ndați-mi": grup de litere majuscule
+    // urmat de clitic minuscul. Scădem majusculele doar după o virgulă / ";"
+    // dintr-o continuare cu litere mici; nu schimbăm "DAȚI-mi!" izolat,
+    // strigăte complete cu majuscule sau începuturi de intervenții noi.
+    text = text.replace(
+        /(?<![\p{L}\p{N}_])([\p{Lu}]{2,})-(mi|mă|te|ți|ne|vă|le|l|o|i)(?![\p{L}\p{N}_])/gu,
+        (match, stem, clitic, offset, whole) => {
+            const before = whole.slice(0, offset).trimEnd();
+            if (!/[,;]$/u.test(before) || !/\p{Ll}/u.test(before)) return match;
+            const lastLine = before.split('\n').pop() || '';
+            const previousLine = before.split('\n').slice(-2, -1)[0] || '';
+            if (!/\p{Ll}/u.test(lastLine) && !/\p{Ll}/u.test(previousLine)) return match;
+            return `${stem.toLocaleLowerCase('ro-RO')}-${clitic}`;
+        }
+    );
+    return text;
+}
+
 function prepareSubtitleForExport(item, translatedText, englishNames = new Set(), previousSourceText = null, previousTranslatedText = null) {
     const original = String(translatedText ?? '');
     if (!original.trim()) {
         return { text: '', translatedContext: '', layoutAdjusted: false, dashRestored: false };
     }
+    const orthographySafeText = repairRomanianMixedCaseWordBoundaries(original);
     // Aliniem turele explicite înainte de layout, ca formatterul să nu unească
     // accidental două replici scurte în aceeași linie. Verificăm din nou după layout
     // numai dacă structura a rămas aliniabilă la numărul de ture din sursă.
-    const preLayoutDashAlignedText = restoreExplicitSourceDialogueDashes(item.text, original);
+    const preLayoutDashAlignedText = restoreExplicitSourceDialogueDashes(item.text, orthographySafeText);
     const finalLayoutText = ensureFinalSubtitleLayoutForExport(preLayoutDashAlignedText);
     const dashAlignedText = restoreExplicitSourceDialogueDashes(item.text, finalLayoutText);
     const capitalizedText = applyFinalSubtitleCapitalization(
@@ -4600,8 +4644,8 @@ function prepareSubtitleForExport(item, translatedText, englishNames = new Set()
     return {
         text: exportText,
         translatedContext: punctuationNormalizedText,
-        layoutAdjusted: finalLayoutText !== original.trim(),
-        dashRestored: preLayoutDashAlignedText !== original || dashAlignedText !== finalLayoutText
+        layoutAdjusted: finalLayoutText !== orthographySafeText.trim(),
+        dashRestored: preLayoutDashAlignedText !== orthographySafeText || dashAlignedText !== finalLayoutText
     };
 }
 
