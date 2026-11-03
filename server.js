@@ -248,7 +248,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.173',
+    version: '13.2.174',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4316,12 +4316,25 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
     };
 
     const directiveForSourceLine = line => {
-        const found = locateInitial(String(line || ''), true);
+        const sourceLine = String(line || '');
+        const found = locateInitial(sourceLine, true);
         if (!found) return null;
         const token = found.token.replace(/[^\p{L}'’-]+$/u, '').toLocaleLowerCase('en-US');
-        // Un nume propriu confirmat în interiorul sursei rămâne cu majusculă,
-        // chiar dacă propoziția din care face parte continuă între cue-uri.
-        if (englishNames.has(nameKey(token))) return 'upper';
+        // În SRT-uri OCR, un „I”/„It”/„In” la începutul intervenției este uneori
+        // citit ca „l”/„lt”/„ln”. Corectăm DOAR interpretarea inițialei, nu textul
+        // sursei și nu cuvintele în interiorul replicii. „ln” este limitat la
+        // expresii de început bine cunoscute, pentru a proteja notația matematică.
+        const ocrLowercaseI = found.char === 'l' && (
+            /^l(?:['’](?:m|ll|d|ve))?$/u.test(token) ||
+            /^lt(?:['’](?:s|ll|d|ve))?$/u.test(token) ||
+            (token === 'ln' && /\bln\s+(?:all|the|a|an|this|that|my|your|his|her|our|their|fact|case|short|other|addition)\b/iu.test(sourceLine.slice(found.index)))
+        );
+        if (ocrLowercaseI) return 'upper';
+        // O potrivire de vocabular nu poate transforma un cuvânt EN scris
+        // explicit cu minusculă în nume propriu. De ex. „for” apare și în
+        // vocabularul numelor, dar continuarea „for the both of you” rămâne mică.
+        if (found.char === found.char.toLocaleUpperCase('en-US') &&
+            englishNames.has(nameKey(token))) return 'upper';
         // „I” și contracțiile sale sunt mereu cu majusculă în engleză. Nu folosim
         // această literă drept verdict: la cue-urile simple decide contextul anterior.
         if (/^i(?:['’](?:m|ll|d|ve))?$/u.test(token)) return 'upper';
@@ -4412,8 +4425,38 @@ function synchronizeSourceCapitalization(sourceText, translatedText, englishName
         ? sourceInitial.token.replace(/[^\p{L}'’-]+$/u, '').toLocaleLowerCase('en-US')
         : '';
     const englishInitialIsForcedUpperI = /^i(?:['’](?:m|ll|d|ve))?$/u.test(sourceInitialToken);
+    const sourceOcrLowercaseI = sourceInitial && sourceInitial.char === 'l' && (
+        /^l(?:['’](?:m|ll|d|ve))?$/u.test(sourceInitialToken) ||
+        /^lt(?:['’](?:s|ll|d|ve))?$/u.test(sourceInitialToken) ||
+        (sourceInitialToken === 'ln' && /\bln\s+(?:all|the|a|an|this|that|my|your|his|her|our|their|fact|case|short|other|addition)\b/iu.test(firstSourceLine.slice(sourceInitial.index)))
+    );
+    if (sourceOcrLowercaseI && !sourceHasExplicitDash && previousSourceText != null) {
+        const previousSource = String(previousSourceText || '').replace(/<[^>]*>/g, '').trim();
+        const previousRomanian = String(previousTranslatedText || '').trim();
+        if (previousSource && !endsWithSubtitleSentencePunctuation(previousSource)) {
+            // După o virgulă în română, forma OCR „l'll” poate continua fraza:
+            // „Dacă tot o ții așa,” / „te târăsc...”.
+            if (/[,;:]["'’”»)}\]]*$/u.test(previousRomanian)) directive = 'lower';
+            // Dacă nu avem dovezi că începe o propoziție nouă, păstrăm inițiala
+            // existentă din traducere. Nu riscăm să stricăm continuările fără punct.
+            else if (!/(?:\.{3,}|…|--|—)["'’”»)}\]]*$/u.test(previousSource)) directive = null;
+        }
+    }
     const translatedFirstLine = translatedLines.find(line => locateInitial(line, true)) || '';
     const translatedHasSpeakerDash = /^\s*[-–—]+\s+\S/u.test(translatedFirstLine);
+    // În continuările certe după virgulă, un TITLU englezesc urmat de un
+    // posesiv („Agent Mulder's ...”) nu este, singur, motiv să capitalizăm
+    // substantivul românesc cu care începe reformularea („preocuparea ...”).
+    // Cerem în același timp: virgulă în EN și RO anterioare, structură de
+    // titlu+posesiv în EN și un început RO diferit de un nume propriu cunoscut.
+    if (!sourceHasExplicitDash && previousSourceText != null && previousTranslatedText != null &&
+        /[,;:]["'’”»)}\]]*$/u.test(String(previousSourceText).trim()) &&
+        /[,;:]["'’”»)}\]]*$/u.test(String(previousTranslatedText).trim()) &&
+        /^(?:Agent|Officer|Captain|Doctor|Professor|Sergeant|Lieutenant|General|Colonel|Mr\.?|Mrs\.?|Ms\.?|Dr\.?)\s+[A-Z][a-z]+['’]s\s+[a-z]/u.test(firstSourceLine.trim())) {
+        const targetInitial = locateInitial(translatedFirstLine, true);
+        if (targetInitial && !englishNames.has(nameKey(targetInitial.token)) &&
+            nameKey(targetInitial.token) !== nameKey(sourceInitialToken)) directive = 'lower';
+    }
     const sourceCaseIsDecisive = directive === 'lower' || (directive === 'upper' && !englishInitialIsForcedUpperI);
 
     if (!sourceHasExplicitDash && !previousSourceConfirmsSentenceEnd && !sourceCaseIsDecisive &&
