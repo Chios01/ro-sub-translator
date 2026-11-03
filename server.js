@@ -30,9 +30,18 @@ const BROWSER_USER_AGENT =
 
 const CHUNK_SIZE = 165;
 const CONCURRENCY_LIMIT = 3;
+// v180: trei cereri per configurare de chei (utilizator), maximum 9 în total.
+// Pauzele 429 si 5xx Gemini se aplica numai grupului de chei afectat.
+// Nu identificăm conturi Stremio: aceeași configurare de chei înseamnă același grup.
+// Pe Render poate fi redus la 6 sau 3 prin GEMINI_GLOBAL_MAX_CONCURRENCY,
+// fără a atinge limita de 3 calupuri a fiecărei traduceri.
+const configuredGeminiGlobalLimit = Number(process.env.GEMINI_GLOBAL_MAX_CONCURRENCY);
+const GEMINI_MAX_GLOBAL_CONCURRENT = [3, 6, 9].includes(configuredGeminiGlobalLimit)
+    ? configuredGeminiGlobalLimit : 9;
+const GEMINI_GLOBAL_START_GAP_MS = 250;
 
-// După orice răspuns HTTP 429, nu pornim alte cereri Gemini timp de 5 secunde.
-// Pauzele Retry-After/cooldown ale proiectului rămân separate și pot fi mai lungi.
+// După 429, nu pornim cereri noi din ACEEAȘI configurare timp de 5 secunde.
+// Alte configurări își păstrează sloturile; cooldown-ul pe proiect poate fi mai lung.
 const GEMINI_429_INTER_REQUEST_PAUSE_MS = 5000;
 
 // După calupul 12, spațiem pornirile cererilor aferente calupurilor 13+ la 2 secunde.
@@ -248,7 +257,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.177',
+    version: '13.2.180',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4927,12 +4936,12 @@ function buildTranslationResponseSchema(chunk) {
 // API KEY STATE & MANAGEMENT
 // ============================================================
 
-// Un singur controler pentru toate cererile Gemini ale acestui proces Node.
-// Astfel, două subtitrări procesate simultan nu își ignoră reciproc pauza de 429.
+// Controler general de siguranță (Render) + controlere independente pe grup de chei.
+// Trei configurații diferite pot avea fiecare câte 3 cereri active (maximum 9).
 const geminiRequestControl = {
     active: 0,
-    maxConcurrent: CONCURRENCY_LIMIT,
-    targetConcurrent: CONCURRENCY_LIMIT,
+    maxConcurrent: GEMINI_MAX_GLOBAL_CONCURRENT,
+    targetConcurrent: GEMINI_MAX_GLOBAL_CONCURRENT,
     cooldownUntil: 0,
     nextStartAt: 0,
     lastStartAt: 0,
@@ -4940,15 +4949,56 @@ const geminiRequestControl = {
     consecutive429: 0,
     consecutive5xx: 0,
     successesSinceThrottle: 0,
-    // Pauza globală se activează numai pentru o limită comună indicată explicit
-    // de răspunsul Google. Erorile per-proiect folosesc cooldown separat pe proiect;
-    // dacă întregul pool intră în cooldown, recuperarea este serializată la o probă.
+    // 429 și 5xx Gemini nu reduc limitele tuturor utilizatorilor; fallback-ul
+    // de compatibilitate rămâne inactiv. Plafonul global de 9 este doar de capacitate.
     recent429Projects: new Map(),
     global429PauseUntil: 0,
     global429LastTriggerAt: 0,
     global429LastWaveAt: 0,
     global429WaveCount: 0
 };
+
+// Identitatea nu este un cont declarat de client, ci hash-ul configurării de chei.
+// Același utilizator care traduce două titluri cu aceleași chei împarte 3 sloturi,
+// iar cheile nu apar în loguri și nici ca proprietăți ale cererilor HTTP.
+const geminiOwnerControls = new Map();
+const GEMINI_OWNER_CONTROL_IDLE_MS = 30 * 60 * 1000;
+
+function getGeminiOwnerControl(keyStates) {
+    if (!Array.isArray(keyStates) || !keyStates.length) return null;
+    if (keyStates._geminiOwnerControl) return keyStates._geminiOwnerControl;
+    const fingerprint = crypto.createHash('sha256')
+        .update([...new Set(keyStates.map(state => String(state.key || '')))].sort().join('\0'))
+        .digest('hex');
+    let owner = geminiOwnerControls.get(fingerprint);
+    if (!owner) {
+        owner = {
+            fingerprint, active: 0, waiting: 0,
+            maxConcurrent: CONCURRENCY_LIMIT, targetConcurrent: CONCURRENCY_LIMIT,
+            nextStartAt: 0, lastStartAt: 0,
+            cooldownUntil: 0, consecutive5xx: 0,
+            successesSinceThrottle: 0, lastTouchedAt: Date.now()
+        };
+        geminiOwnerControls.set(fingerprint, owner);
+    }
+    owner.lastTouchedAt = Date.now();
+    keyStates._geminiOwnerControl = owner;
+    if (geminiOwnerControls.size > 256) {
+        for (const [id, entry] of geminiOwnerControls) {
+            if (geminiOwnerControls.size <= 192) break;
+            if (entry.active === 0 && entry.waiting === 0 &&
+                entry.nextStartAt <= Date.now() &&
+                Date.now() - entry.lastTouchedAt > GEMINI_OWNER_CONTROL_IDLE_MS) {
+                geminiOwnerControls.delete(id);
+            }
+        }
+    }
+    return owner;
+}
+
+function getGeminiOwnerControlForKey(keyState) {
+    return getGeminiOwnerControl(keyState?._keyPool);
+}
 
 function notifyGeminiRequestWaiters() {
     for (const wake of Array.from(geminiRequestControl.waiters)) wake();
@@ -4970,42 +5020,67 @@ function waitForGeminiRequestChange(timeoutMs = 250) {
     });
 }
 
-async function acquireGeminiRequestSlot(requestStartIntervalMs = GEMINI_DEFAULT_REQUEST_START_INTERVAL_MS) {
+async function acquireGeminiRequestSlot(requestStartIntervalMs = GEMINI_DEFAULT_REQUEST_START_INTERVAL_MS, keyState = null) {
+    const owner = getGeminiOwnerControlForKey(keyState);
+    if (!owner) throw new Error('Nu s-a identificat grupul de chei pentru cererea Gemini.');
     const requiredIntervalMs = Math.max(
         GEMINI_DEFAULT_REQUEST_START_INTERVAL_MS,
         Number(requestStartIntervalMs) || GEMINI_DEFAULT_REQUEST_START_INTERVAL_MS
     );
-    while (true) {
-        const now = Date.now();
-        const cooldownMs = Math.max(0, geminiRequestControl.cooldownUntil - now);
-        const lastStartAt = Number(geminiRequestControl.lastStartAt || 0);
-        // Intervalul cerut de apelul curent este respectat și față de ultima pornire,
-        // chiar dacă cererea anterioară avea intervalul normal de 1200 ms.
-        const requestSpecificPacingMs = lastStartAt > 0
-            ? Math.max(0, lastStartAt + requiredIntervalMs - now)
-            : 0;
-        const pacingMs = Math.max(0, geminiRequestControl.nextStartAt - now, requestSpecificPacingMs);
-
-        if (cooldownMs <= 0 && pacingMs <= 0 && geminiRequestControl.active < geminiRequestControl.maxConcurrent) {
-            geminiRequestControl.active++;
-            const requestStartedAt = Date.now();
-            geminiRequestControl.lastStartAt = requestStartedAt;
-            geminiRequestControl.nextStartAt = requestStartedAt + requiredIntervalMs;
-            let released = false;
-            return () => {
-                if (released) return;
-                released = true;
-                geminiRequestControl.active = Math.max(0, geminiRequestControl.active - 1);
-                notifyGeminiRequestWaiters();
-            };
+    owner.waiting++;
+    const keyLane = getLaneForKeyState(keyState);
+    try {
+        while (true) {
+            const now = Date.now();
+            const cooldownMs = Math.max(0,
+                geminiRequestControl.cooldownUntil - now,
+                Number(owner.cooldownUntil || 0) - now
+            );
+            const ownerPacingMs = Math.max(0,
+                owner.nextStartAt - now,
+                owner.lastStartAt > 0 ? owner.lastStartAt + requiredIntervalMs - now : 0
+            );
+            const globalPacingMs = Math.max(0,
+                geminiRequestControl.nextStartAt - now,
+                geminiRequestControl.lastStartAt > 0
+                    ? geminiRequestControl.lastStartAt + GEMINI_GLOBAL_START_GAP_MS - now
+                    : 0
+            );
+            if (cooldownMs <= 0 && ownerPacingMs <= 0 && globalPacingMs <= 0 &&
+                owner.active < owner.maxConcurrent &&
+                // Nu permitem aceleiași chei să ocupe peste 3 sloturi în grupuri
+                // diferite (de exemplu, configurații de chei care se suprapun).
+                Number(keyLane?.slotActive || 0) < CONCURRENCY_LIMIT &&
+                geminiRequestControl.active < geminiRequestControl.maxConcurrent) {
+                owner.active++;
+                if (keyLane) keyLane.slotActive = Number(keyLane.slotActive || 0) + 1;
+                geminiRequestControl.active++;
+                const startedAt = Date.now();
+                owner.lastStartAt = startedAt;
+                owner.nextStartAt = startedAt + requiredIntervalMs;
+                owner.lastTouchedAt = startedAt;
+                geminiRequestControl.lastStartAt = startedAt;
+                geminiRequestControl.nextStartAt = startedAt + GEMINI_GLOBAL_START_GAP_MS;
+                let released = false;
+                return () => {
+                    if (released) return;
+                    released = true;
+                    owner.active = Math.max(0, owner.active - 1);
+                    if (keyLane) keyLane.slotActive = Math.max(0, Number(keyLane.slotActive || 0) - 1);
+                    owner.lastTouchedAt = Date.now();
+                    geminiRequestControl.active = Math.max(0, geminiRequestControl.active - 1);
+                    notifyGeminiRequestWaiters();
+                };
+            }
+            const waitMs = cooldownMs > 0
+                ? Math.min(cooldownMs, 1000)
+                : ownerPacingMs > 0 || globalPacingMs > 0
+                    ? Math.min(Math.max(ownerPacingMs, globalPacingMs), 1000)
+                    : 1000;
+            await waitForGeminiRequestChange(waitMs);
         }
-
-        const waitMs = cooldownMs > 0
-            ? Math.min(cooldownMs, 1000)
-            : pacingMs > 0 && geminiRequestControl.active < geminiRequestControl.maxConcurrent
-                ? Math.min(pacingMs, 1000)
-                : 1000;
-        await waitForGeminiRequestChange(waitMs);
+    } finally {
+        owner.waiting = Math.max(0, owner.waiting - 1);
     }
 }
 
@@ -5023,6 +5098,20 @@ function noteGeminiRequestSuccess(keyState = null) {
         poolGateCleared = previousPoolGate > now && Number(pool?._global429Until || 0) <= now;
     }
     if (poolGateCleared) notifyGeminiRequestWaiters();
+    const owner = getGeminiOwnerControlForKey(keyState);
+    if (owner && now >= Number(owner.cooldownUntil || 0)) {
+        if (owner.maxConcurrent < owner.targetConcurrent) {
+            owner.successesSinceThrottle++;
+            if (owner.successesSinceThrottle >= 3) {
+                owner.maxConcurrent = Math.min(owner.targetConcurrent, owner.maxConcurrent + 1);
+                owner.successesSinceThrottle = 0;
+                if (owner.maxConcurrent >= owner.targetConcurrent) owner.consecutive5xx = 0;
+                notifyGeminiRequestWaiters();
+            }
+        } else {
+            owner.consecutive5xx = 0;
+        }
+    }
     if (now < geminiRequestControl.cooldownUntil) return;
 
     if (geminiRequestControl.maxConcurrent < geminiRequestControl.targetConcurrent) {
@@ -5105,14 +5194,15 @@ function updateGlobal429GateIfPoolExhausted(keyStates, options = {}) {
         const resumeAt = Math.min(...snapshot.temporarilyPaused.map(entry => entry.pausedUntil));
         const previous = Number(keyStates._global429Until || 0);
         keyStates._global429Until = resumeAt;
-        const previousLimit = geminiRequestControl.maxConcurrent;
-        if (geminiRequestControl.maxConcurrent > 1) {
-            geminiRequestControl.maxConcurrent = 1;
-            geminiRequestControl.successesSinceThrottle = 0;
+        const owner = getGeminiOwnerControl(keyStates);
+        const previousLimit = owner ? owner.maxConcurrent : CONCURRENCY_LIMIT;
+        if (owner && owner.maxConcurrent > 1) {
+            owner.maxConcurrent = 1;
+            owner.successesSinceThrottle = 0;
         }
         if (options.log && (Math.abs(previous - resumeAt) > 1000 || !keyStates._global429LoggedUntil || previousLimit > 1)) {
             keyStates._global429LoggedUntil = resumeAt;
-            console.log(`${c.yellow}⏸ [Gemini Control] Toate proiectele din pool sunt temporar indisponibile; următoarea probă după ce primul proiect devine disponibil (aprox. ${Math.max(1, Math.ceil((resumeAt - now) / 1000))}s). Concurența ${previousLimit}→${geminiRequestControl.maxConcurrent}/${geminiRequestControl.targetConcurrent}; crește după 3 succese.${c.reset}`);
+            console.log(`${c.yellow}⏸ [Gemini Control] Toate proiectele din pool sunt temporar indisponibile; următoarea probă după ce primul proiect devine disponibil (aprox. ${Math.max(1, Math.ceil((resumeAt - now) / 1000))}s). Concurența grupului ${previousLimit}→${owner?.maxConcurrent || 1}/${CONCURRENCY_LIMIT}; crește după 3 succese.${c.reset}`);
         }
         notifyGeminiRequestWaiters();
         return { allBlocked: true, resumeAt, available: 0 };
@@ -5121,75 +5211,23 @@ function updateGlobal429GateIfPoolExhausted(keyStates, options = {}) {
     return { allBlocked: true, available: 0 };
 }
 
-function detectAndApplyGlobal429Wave(lane, quotaKind = 'unknown', requestStartedAt = 0, now = Date.now(), projectPoolSize = 10, cooldownMs = 0) {
-    // Cotele zilnice se rezolvă la resetare, nu printr-o pauză comună temporară.
-    if (!lane || quotaKind === 'daily') return { triggered: false, reason: 'not-transient' };
-
-    const control = geminiRequestControl;
-    const previousTriggerAt = Number(control.global429LastTriggerAt || 0);
-    const explicitSharedLimit = quotaKind === 'shared';
-
-    // Păstrăm numai o fereastră de diagnostic pentru erorile per-proiect.
-    // Chiar dacă multe proiecte răspund 429 aproape simultan, NU aplicăm automat
-    // o pauză globală: fiecare proiect are cooldown-ul său, iar când toate sunt
-    // indisponibile, poarta pool-ului așteaptă până la primul proiect eligibil.
-    const events = control.recent429Projects;
-    for (const [fingerprint, timestamp] of events) {
-        if (now - timestamp >= 5000) events.delete(fingerprint);
-    }
-    events.set(lane.fingerprint, now);
-    if (!explicitSharedLimit) {
-        return {
-            triggered: false,
-            reason: 'project-level-cooldown',
-            distinctProjects: events.size,
-            requiredProjects: Math.max(1, Number(projectPoolSize) || 1)
-        };
-    }
-
-    // O limită comună se aplică global numai dacă mesajul/detaliile Google o indică
-    // explicit. Ignorăm răspunsurile întârziate ale cererilor începute înaintea
-    // ultimului val, ca să nu repornim/escaladăm cooldown-ul artificial.
-    if (now < Number(control.global429PauseUntil || 0)) {
-        return { triggered: false, reason: 'pause-active' };
-    }
-    if (previousTriggerAt && Number(requestStartedAt || 0) > 0 && Number(requestStartedAt) <= previousTriggerAt) {
-        return { triggered: false, reason: 'request-started-before-last-wave' };
-    }
-
-    // După 10 minute fără o nouă limită comună, pornim din nou de la treapta inițială.
-    if (control.global429LastWaveAt && now - control.global429LastWaveAt >= 10 * 60 * 1000) {
-        control.global429WaveCount = 0;
-    }
-
-    const waveNumber = Number(control.global429WaveCount || 0) + 1;
-    const baseCooldownMs = Math.max(1000, Number(cooldownMs) || 15000);
-    // Respectăm Retry-After/RetryInfo cel puțin; dacă aceeași limită comună se repetă,
-    // creștem exponențial intervalul până la 60s, cu jitter pentru a evita rafale sincronizate.
-    const pauseMs = Math.min(60000, baseCooldownMs * Math.pow(2, Math.min(6, waveNumber - 1)))
-        + Math.floor(Math.random() * 501);
-    const previousLimit = control.maxConcurrent;
-    const pauseUntil = now + pauseMs;
-    control.global429WaveCount = waveNumber;
-    control.global429LastWaveAt = now;
-    control.global429LastTriggerAt = now;
-    control.global429PauseUntil = pauseUntil;
-    control.cooldownUntil = Math.max(Number(control.cooldownUntil || 0), pauseUntil);
-    control.maxConcurrent = 1;
-    control.successesSinceThrottle = 0;
-    control.recent429Projects.clear();
-
-    notifyGeminiRequestWaiters();
-    return { triggered: true, waveNumber, pauseMs, pauseUntil, previousLimit, currentLimit: control.maxConcurrent, explicitSharedLimit };
+// O cotă Google de billing/account poate fi comună MAI MULTOR proiecte ale
+// aceluiași cont, dar cheia API nu dezvăluie ce alți utilizatori împart acel cont.
+// Nu putem deduce că TOATE configurările de chei din proces sunt afectate.
+// 429 se aplică numai proiectului/pool-ului care a primit efectiv eroarea.
+// Dacă un alt utilizator are aceeași cotă, Google îi va raporta propriul 429.
+function detectAndApplyGlobal429Wave(_lane, _quotaKind = 'unknown') {
+    return { triggered: false, reason: 'per-key-or-pool-isolation' };
 }
 
 function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = null, requestStartedAt = 0) {
     const now = Date.now();
     const pauseMs = Math.max(1000, Number(cooldownMs) || 15000);
-    geminiRequestControl.nextStartAt = Math.max(
-        Number(geminiRequestControl.nextStartAt || 0),
-        now + GEMINI_429_INTER_REQUEST_PAUSE_MS
-    );
+    const owner = getGeminiOwnerControlForKey(keyState);
+    if (owner) {
+        owner.nextStartAt = Math.max(Number(owner.nextStartAt || 0),
+            now + GEMINI_429_INTER_REQUEST_PAUSE_MS);
+    }
     const lane = getLaneForKeyState(keyState);
     geminiRequestControl.consecutive429++;
     geminiRequestControl.consecutive5xx = 0;
@@ -5221,8 +5259,8 @@ function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = n
     const activeProjectCount = Array.isArray(pool)
         ? pool.filter(state => !state.disabled && !getLaneForKeyState(state)?.disabled).length
         : 1;
-    // Un proiect limitat nu blochează celelalte proiecte. Pauza comună este
-    // rezervată unei limite comune identificate explicit în răspunsul Google.
+    // Un proiect limitat nu blochează celelalte proiecte sau alte configurații.
+    // Chiar și o limită de billing nu justifică pauza întregului proces Render.
     const globalWave = detectAndApplyGlobal429Wave(lane, quotaKind, requestStartedAt, now, activeProjectCount, pauseMs);
     const poolStatus = updateGlobal429GateIfPoolExhausted(pool, { log: false });
     const projectIndex = Array.isArray(pool) ? pool.indexOf(keyState) : -1;
@@ -5244,17 +5282,23 @@ function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = n
     return { poolStatus, globalWave, projectLabel, waveExhausted, pauseMs };
 }
 
-function registerGlobalGemini5xx(status) {
+// 500–599 returnate de Gemini afectează DOAR configurația de chei a
+// apelului eșuat. Nu reducem limita globală de 9, care protejează Render Free.
+// Dacă Google are o indisponibilitate reală comună, fiecare pool va primi
+// propriul backoff; nu putem face serviciul extern să devină independent.
+function registerGeminiOwner5xx(status, keyState = null) {
+    const owner = getGeminiOwnerControlForKey(keyState);
+    if (!owner) return;
     const now = Date.now();
-    geminiRequestControl.consecutive5xx++;
-    geminiRequestControl.consecutive429 = 0;
-    geminiRequestControl.maxConcurrent = Math.max(1, geminiRequestControl.maxConcurrent - 1);
-    geminiRequestControl.successesSinceThrottle = 0;
-    const backoffBaseMs = Math.min(30000, 2000 * Math.pow(2, geminiRequestControl.consecutive5xx - 1));
+    owner.consecutive5xx = Number(owner.consecutive5xx || 0) + 1;
+    owner.maxConcurrent = Math.max(1, owner.maxConcurrent - 1);
+    owner.successesSinceThrottle = 0;
+    const backoffBaseMs = Math.min(30000, 2000 * Math.pow(2, Math.min(5, owner.consecutive5xx - 1)));
     const jitterMs = Math.floor(Math.random() * Math.min(1500, Math.max(250, backoffBaseMs * 0.25)));
     const pauseMs = backoffBaseMs + jitterMs;
-    geminiRequestControl.cooldownUntil = Math.max(geminiRequestControl.cooldownUntil, now + pauseMs);
-    console.log(`${c.yellow}⚠ Gemini ${status} | Pauză ${Math.ceil(pauseMs / 1000)}s | Concurență ${geminiRequestControl.maxConcurrent}/${geminiRequestControl.targetConcurrent}${c.reset}`);
+    owner.cooldownUntil = Math.max(Number(owner.cooldownUntil || 0), now + pauseMs);
+    owner.lastTouchedAt = now;
+    console.log(`${c.yellow}⚠ Gemini ${status} | Pauză grup chei ${Math.ceil(pauseMs / 1000)}s | Concurență grup ${owner.maxConcurrent}/${owner.targetConcurrent}; celelalte grupuri continuă.${c.reset}`);
     notifyGeminiRequestWaiters();
 }
 
@@ -5687,9 +5731,8 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
             if (is5xx) {
                 fiveXxAttempts++;
                 if (fiveXxAttempts < maxTransientAttempts && attempt < maxKeyAttempts) {
-                    // callGemini a înregistrat backoff-ul global. Eliberăm rotația
-                    // locală: 503 este o problemă de serviciu, nu dovada că proiectul
-                    // API curent are o cotă diferită de celelalte.
+                    // callGemini a înregistrat backoff-ul grupului de chei.
+                    // Un 503 nu înseamnă că alte grupuri de chei trebuie puse în pauză.
                     attemptedKeyStates.clear();
                     console.log(`${c.yellow}↻ Recovery ${status || message.match(/5\d\d/)?.[0] || '5xx'} | Retry ${fiveXxAttempts}/${maxTransientAttempts} | Backoff activ${c.reset}`);
                     continue;
@@ -5786,7 +5829,7 @@ async function callGemini(prompt, keyState, options = {}) {
         generationConfig.thinkingConfig = { thinkingLevel };
     }
 
-    // Permisul este la nivelul procesului, nu al unei singure subtitrări.
+    // Permisul este atât pe configurare de chei, cât și la nivelul procesului.
     // Fiecare cheie are și o bandă globală de proiect: active, rezervări,
     // frecvență recentă și pauză după 429. Cheia nu este logată sau păstrată
     // ca identificator în selector.
@@ -5801,7 +5844,7 @@ async function callGemini(prompt, keyState, options = {}) {
         if (Date.now() < Number(geminiRequestControl.global429PauseUntil || 0)) {
             throw createGlobal429DeferralError();
         }
-        releaseGeminiSlot = await acquireGeminiRequestSlot(getRequestStartIntervalMs(options.requestLabel));
+        releaseGeminiSlot = await acquireGeminiRequestSlot(getRequestStartIntervalMs(options.requestLabel), keyState);
         // Un val poate începe cât timp cererea așteaptă un slot. În acel caz nu trimitem
         // apelul preselectat după cooldown; lăsăm coada să facă o singură probă controlată.
         if (Number(geminiRequestControl.global429LastTriggerAt || 0) > global429WaveAtCallStart) {
@@ -5907,8 +5950,8 @@ async function callGemini(prompt, keyState, options = {}) {
                     : poolStatus.available > 0
                         ? ` Alte proiecte eligibile: ${poolStatus.available}.`
                         : '';
-            const sharedNote = registration?.globalWave?.triggered
-                ? ` Limită comună confirmată; pauză globală ${Math.ceil(registration.globalWave.pauseMs / 1000)}s.`
+            const sharedNote = quotaInfo.kind === 'shared'
+                ? ' Limită de cont/billing raportată de Google; pauză numai pe cheile afectate.'
                 : '';
             const providerNote = providerMessage ? ` Detaliu Google: ${providerMessage}` : ' Detaliul exact al cotei nu a fost furnizat de Google.';
             const details = providerMessage ? ` Detaliu Google: ${providerMessage}` : '';
@@ -5924,7 +5967,7 @@ async function callGemini(prompt, keyState, options = {}) {
             throw retryError;
         }
         if (Number.isInteger(status) && status >= 500 && status <= 599) {
-            registerGlobalGemini5xx(status);
+            registerGeminiOwner5xx(status, keyState);
         }
         throw error;
     } finally {
