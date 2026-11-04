@@ -257,7 +257,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.180',
+    version: '13.2.181',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3927,6 +3927,54 @@ function formatSubtitleLayout(value) {
     return entries.flatMap(entry => wrapEntry(entry)).join('\n') || ' ';
 }
 
+// v181: normalizează EXCLUSIV forma colocvială „dracu'” / „dracu’”.
+// Nu suprimă înjurăturile și nu modifică apostrofurile altor cuvinte, nume
+// proprii sau dialoguri. Când sensul depinde de EN, decide promptul, nu un regex.
+function normalizeRomanianProfanityForms(value) {
+    let text = String(value ?? '');
+    if (!/dracu['’ʼ]|dracului['’ʼ]/iu.test(text)) return text;
+    const preserveCase = (source, replacement) => {
+        if (/^[\p{Lu}]+['’ʼ]$/u.test(source)) return replacement.toLocaleUpperCase('ro-RO');
+        if (/^\p{Lu}/u.test(source)) {
+            return replacement.charAt(0).toLocaleUpperCase('ro-RO') + replacement.slice(1);
+        }
+        return replacement;
+    };
+    // „Ce dracu'...?” / „Cine dracu'...?” → forma completă corectă.
+    text = text.replace(/(?<![\p{L}\p{N}_])(ce|cine|unde|cum|când|cât|care|de ce)\s+(dracu['’ʼ])(?![\p{L}\p{N}_])/giu,
+        (_, question, word) => question + ' ' + preserveCase(word, 'dracului'));
+    // „Eram al dracu' de speriați” / „e pe dracu' de greu” → intensificator natural.
+    text = text.replace(/(?<![\p{L}\p{N}_])(al|pe)\s+dracu['’ʼ]\s+de(?![\p{L}\p{N}_])/giu,
+        (_, head) => /^\p{Lu}/u.test(head) ? 'Al naibii de' : 'al naibii de');
+    // Expresiile consacrate nu folosesc forma „pe/ la dracul”.
+    text = text.replace(/(?<![\p{L}\p{N}_])(pe|la)\s+(dracu['’ʼ])(?![\p{L}\p{N}_])/giu,
+        (_, prep, word) => prep + ' ' + preserveCase(word, 'naiba'));
+    // Atribut genitival: „al dracu'” → „al dracului”.
+    text = text.replace(/(?<![\p{L}\p{N}_])(al|a|ai|ale)\s+(dracu['’ʼ])(?![\p{L}\p{N}_])/giu,
+        (_, article, word) => article + ' ' + preserveCase(word, 'dracului'));
+    // Imperative: „Du-te dracu'!”, „Dă-l dracu'!”, „Lasă-mă dracu'!”.
+    text = text.replace(/(?<![\p{L}\p{N}_])(du-te|dă-te|duceți-vă|du-vă|dă-l|dă-o|dă-i|dă-le|lasă-mă|lăsați-mă|dispari|taci)\s+(dracu['’ʼ])(?![\p{L}\p{N}_])/giu,
+        (_, verb, word) => verb + ' ' + preserveCase(word, 'dracului'));
+    // Interjecția izolată „Dracu'!” / „Dracu', ...” nu devine „Dracul!”
+    // (care ar suna forțat); folosim exclamația „La naiba!”. Nu atingem
+    // „S-o ia dracu'!” deoarece acolo „dracul” este subiect gramatical.
+    text = text.replace(/(?<![\p{L}\p{N}_])(dracu['’ʼ])(?=\s*(?:[.!?,;:]|$))/giu,
+        (match, word, offset, whole) => {
+            const prefix = whole.slice(0, offset).trimEnd();
+            if (!prefix || /(?:[.!?;:]|\n|[-–—])\s*$/u.test(prefix)) {
+                return preserveCase(word, 'la naiba');
+            }
+            return word;
+        });
+    // În rest, completăm forma de nominativ „dracul” (ex. „Să-l ia dracul!”),
+    // nu inserăm mecanic „dracului” după orice substantiv/verb.
+    text = text.replace(/(?<![\p{L}\p{N}_])(dracu['’ʼ])(?![\p{L}\p{N}_])/giu,
+        (_, word) => preserveCase(word, 'dracul'));
+    // Corectăm și eroarea ortografică „dracului'” când provine de la AI.
+    text = text.replace(/(?<![\p{L}\p{N}_])(dracului)['’ʼ](?![\p{L}\p{N}_])/giu, '$1');
+    return text;
+}
+
 function formatSubtitleLine(text) {
     if (!text) return ' ';
 
@@ -4246,7 +4294,7 @@ function formatSubtitleLine(text) {
 
         // „fucking” calchiat: „Ce a dracului…” nu există în română.
         [/(?<![A-Za-zĂÂÎȘȚăâîșț])(ce|cine|unde|cum|când|cât|care) a (dracului|naibii)(?![A-Za-zĂÂÎȘȚăâîșț])/gi,
-            (m, w, k) => w + ' ' + (k.toLowerCase() === 'dracului' ? "dracu'" : 'naiba')],
+            (m, w, k) => w + ' ' + (k.toLowerCase() === 'dracului' ? 'dracului' : 'naiba')],
         // „nici o/un” → „nicio/niciun” (nu se atinge „nici un singur” și structurile „nici… nici…”).
         [/(?<![A-Za-zĂÂÎȘȚăâîșț])nici (o|un)(?![A-Za-zĂÂÎȘȚăâîșț])(?!\s+singur)/gi,
             (m, a, offset, whole) => {
@@ -4282,6 +4330,8 @@ function formatSubtitleLine(text) {
         text = text.replace(dictionar[i][0], dictionar[i][1]);
     }
 
+    // Nu schimbăm tonalitatea: eliminăm doar apostroful din formele „dracu'”.
+    text = normalizeRomanianProfanityForms(text);
     return formatSubtitleLayout(text);
 }
 
@@ -4658,7 +4708,7 @@ function prepareSubtitleForExport(item, translatedText, englishNames = new Set()
     if (!original.trim()) {
         return { text: '', translatedContext: '', layoutAdjusted: false, dashRestored: false };
     }
-    const orthographySafeText = repairRomanianMixedCaseWordBoundaries(original);
+    const orthographySafeText = normalizeRomanianProfanityForms(repairRomanianMixedCaseWordBoundaries(original));
     // Aliniem turele explicite înainte de layout, ca formatterul să nu unească
     // accidental două replici scurte în aceeași linie. Verificăm din nou după layout
     // numai dacă structura a rămas aliniabilă la numărul de ture din sursă.
@@ -4750,7 +4800,7 @@ TRANSLATION AND CONTEXT
 - When the source explicitly names an anatomical or sexual term, use an accurate Romanian equivalent. Do not replace it with vague euphemisms such as „jos” or „acolo”. Preserve the grammatical relationship too: for example, “the sound that dries my vagina” means „sunetul care-mi usucă vaginul”, not „sunetul care mă usucă în vagin”.
 - Preserve singular/plural, gender, and the identity of the object. A singular source noun such as “a hat” must not become plural „căciuli”. Do not add diminutives such as „căciuliță” unless smallness, affection, or a diminutive is actually expressed by the source.
 - Translate idioms and profanity by their function in context, not by mechanically matching each English word. For example, “fucking” may be an intensifier, an insult, or a literal verb; choose the Romanian equivalent for that function.
-- Romanian profanity: after an interrogative word use „dracu'” or „naiba” directly („Ce dracu' faci?”, „Despre ce naiba vorbești?”, „Cine dracu' ești?”); NEVER write „ce a dracului” or „cine a dracului”. As an intensifier use „al naibii de”, „la naiba”, „pe naiba”, or put „al naibii/al dracului” after a masculine noun group. Do not append „dracului” to every sentence and do not keep the English word order of “fucking”; often it is better dropped or rendered by a natural interjection. Examples: “What the fuck is in Switzerland?” → „Ce dracu' e în Elveția?”; “No fucking way.” → „Nici gând, la naiba.”; “It's a fucking disaster.” → „E un dezastru al naibii.”; “Shut the fuck up.” → „Taci dracului din gură.”
+- Romanian profanity must sound like real spoken Romanian, not a word-for-word substitution. Preserve the source's actual intensity and intention: threats, insults, emphatic frustration, and literal sexual acts are different. Do not censor explicit language with asterisks, but NEVER invent an insult or swear word when the English source does not justify it. Do not automatically translate every “fuck/fucking/freaking/goddamn” as “dracului”, and never attach a stranded “dracului” to the end of a Romanian noun phrase or sentence (wrong: „E tatăl ei dracului, Ian”, „stai cu dracului Katie”, „faci doar ce-ți spun dracului”). Reformulate the WHOLE Romanian clause naturally while keeping its meaning and force. In questions, forms such as „Ce dracului faci?”, „Cine naiba ești?” and „Despre ce naiba vorbești?” are natural. For imperatives, „Du-te dracului!”, „Taci dracului!” and „Fă dracului ce-ți spun!” can be natural IF the source is that forceful. For modifiers, use constructions such as „un dezastru al naibii”, „afurisitul ăsta de...”, or a different idiomatic rendering that fits the speaker; do not follow English word order. “Shut your mouth.” → „Taci din gură.” (no invented swear); “You have tattoos to piss off your dad.” → „Ai tatuaje ca să-ți scoți tatăl din sărite.” (do not turn “piss off” into a sexual act); “Did freakin' Chestnut kick you in the head?” → „Te-a lovit afurisitul ăsta de Chestnut în cap?” (keep who hits whom). Use FULL Romanian forms without an apostrophe: „dracului”, „dracul”, „naiba”, „naibii”; do NOT output „dracu'”, „dracu’” or „dracului'”. The form depends on grammar: „Ce dracului...?”, „Du-te dracului!”, „Să-l ia dracul!”.
 - Choose terms of endearment according to the relationship and context; do not translate “babe”, “honey”, or “baby” mechanically every time.
 - Translate “But” as „Dar” when it begins a clause. Do not leave ordinary English dialogue untranslated.
 - Use correct Romanian grammar, spelling, punctuation, and diacritics (ă, â, î, ș, ț). Use complete real Romanian words; never truncate, merge, invent, or corrupt a word. Check pronouns, clitics, prepositions, conjugation, and agreement. Apply Romanian sentence case, not English title case: after a comma, an unfinished phrase, or a continuing cue, ordinary common nouns and conjunctions stay lowercase unless Romanian grammar requires a new sentence or the word is a proper name. For example, write „Sunt Marlo Burns, director de operațiuni”, „Da, păi...” and „...s-o agățe”, not „Director”, „Păi” or „Agățe” in those positions.
@@ -6915,7 +6965,7 @@ VERIFICĂ ÎN ORDINE
 3. Păstrează termenii expliciți și sensul direct când sursa îi folosește. Nu îi înlocui cu eufemisme și nu transforma intensificatorii/înjurăturile în obiecte, acțiuni sau insulte diferite.
 4. Păstrează singularul/pluralul și referentul. De exemplu, “a hat” nu trebuie tradus „căciuli”. Nu adăuga diminutive precum „căciuliță” dacă sursa nu exprimă micime, afecțiune sau diminutiv.
 5. Repară româna nenaturală sau calchiată numai dacă poți stabili din original și context ce înseamnă sursa și poți produce o variantă clar mai corectă. Verifică și cuvinte tăiate, forme inexistente, clitice greșite, diacritice, acorduri și fragmente englezești rămase.
-6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul.
+6. Păstrează tonul personajului, inclusiv vulgaritatea, sarcasmul și colocvialismul. Nu infantiliza și nu formaliza dialogul. Pentru înjurături, compară expresia cu originalul EN: nu adăuga vulgaritate care lipsește, nu interpreta „piss off” ca act sexual, nu traduce „fucking/freaking” mecanic printr-un „dracului” agățat de substantiv/verb. Dacă expresia este evident nenaturală, corectează întreaga construcție românească; dacă este deja potrivită, păstreaz-o. Preferă forme complete fără apostrof: „Ce dracului...?”, „Du-te dracului!”, „Să-l ia dracul!”, „la naiba”, nu „dracu'”.
 7. VERSURI MUZICALE EXCLUSE: segmentele muzicale au fost eliminate înainte de verificare. Nu reconstrui și nu adăuga versurile sau titlurile eliminate; verifică numai dialogul rămas.
 8. Dacă obiectul conține „avertisment_semantic”, verifică explicit problema indicată. Nu considera problema rezolvată doar fiindcă un anumit cuvânt apare în traducere; verifică și relația de sens.
 9. Dacă avertismentul menționează un conector repetat între două subtitrări consecutive, compară ambele originale și ambele traduceri din context. Păstrează conectorul în fragmentul al cărui original îl conține. Dacă originalul fragmentului curent NU începe/nu se termină cu acel conector, dar traducerea îl adaugă la limită, elimină doar conectorul adăugat inutil din replica curentă; nu șterge conectorul justificat de următorul/precedentul original. Dacă dovezile nu sunt clare, nu rescrie.
