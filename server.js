@@ -6,6 +6,7 @@ const fs = require('fs');
 const dns = require('dns').promises;
 const net = require('net');
 const zlib = require('zlib');
+const { AsyncLocalStorage } = require('async_hooks');
 
 const app = express();
 
@@ -56,6 +57,69 @@ const PREVIOUS_TRANSLATION_CONTEXT = 8;
 const MODEL_NAME =
     process.env.GEMINI_MODEL ||
     'gemini-3.5-flash-lite';
+
+// v184: limita este pe o traducere, NU globală. Nu influențează ceilalți utilizatori.
+const TRANSLATION_MAX_DURATION_MS = 15 * 60 * 1000;
+const TRANSLATION_FAILURE_CACHE_MS = 60 * 1000;
+const translationJobScope = new AsyncLocalStorage();
+const translationFailureCache = new Map();
+
+function translationTimeoutError() {
+    const error = new Error('Limita de 15 minute pentru traducere a fost atinsă.');
+    error.isTranslationTimedOut = true;
+    error.isSubtitleGenerationFailure = true;
+    return error;
+}
+
+function subtitleGenerationFailure(message, reason = 'general') {
+    const error = new Error(message);
+    error.isSubtitleGenerationFailure = true;
+    error.translationFailureReason = reason;
+    return error;
+}
+
+function throwIfTranslationTimedOut() {
+    const job = translationJobScope.getStore();
+    if (job?.controller.signal.aborted) throw translationTimeoutError();
+}
+
+// Nu este o alertă din interfața Stremio: este un fișier SRT valid, vizibil cât
+// utilizatorul păstrează activă pista. Este emis NUMAI la eșec real, niciodată
+// la un 503 temporar, la avertismente QA sau la corecturi locale.
+function buildTranslationFailureSrt(error) {
+    const googleUnavailable = error?.translationFailureReason === 'gemini-unavailable';
+    const timedOut = error?.isTranslationTimedOut === true;
+    const lines = timedOut
+        ? ['Traducerea nu a putut fi finalizată în 15 minute.', 'Încearcă din nou puțin mai târziu.']
+        : googleUnavailable
+            ? ['Traducerea nu este disponibilă momentan.', 'Google Gemini nu a răspuns. Încearcă mai târziu.']
+            : ['Subtitrarea nu a putut fi tradusă momentan.', 'Te rugăm să încerci din nou mai târziu.'];
+    // Un singur mesaj, nu sute de replici EN; intervalul lung îl face vizibil
+    // și dacă utilizatorul se află mai departe în film când vine răspunsul.
+    return `1\n00:00:00,000 --> 06:00:00,000\n${lines.join('\n')}\n`;
+}
+
+function runTranslationWithDeadline(worker) {
+    const job = { controller: new AbortController() };
+    let timeoutHandle;
+    const deadline = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+            job.controller.abort(translationTimeoutError());
+            reject(translationTimeoutError());
+        }, TRANSLATION_MAX_DURATION_MS);
+    });
+    // Contextul rămâne propriu jobului inclusiv pentru cele 3 calupuri paralele.
+    const work = translationJobScope.run(job, () => Promise.resolve().then(worker));
+    return Promise.race([work, deadline])
+        .catch(error => {
+            // La eșec definitiv anulăm și eventualele calupuri surori încă active.
+            // Controllerul este exclusiv jobului; ceilalți utilizatori continuă.
+            if (!job.controller.signal.aborted) job.controller.abort(error);
+            throw error;
+        })
+        .finally(() => clearTimeout(timeoutHandle));
+}
+
 
 // ============================================================
 // CONSOLE COLORS
@@ -216,6 +280,28 @@ function rememberOriginalSource(key, text) {
 }
 
 // Returnează o intrare și o mută la finalul Map-ului pentru o ordine LRU simplă.
+function getFailureCacheEntry(key) {
+    const entry = translationFailureCache.get(key);
+    if (!entry) return null;
+    if (Date.now() >= entry.expiresAt) {
+        translationFailureCache.delete(key);
+        return null;
+    }
+    return entry.srt;
+}
+
+function rememberTranslationFailure(key, srt) {
+    // Temporar, nu cât cache-ul de QA parțial din v183. O nouă cerere după
+    // un minut poate relansa Gemini fără restart Render.
+    translationFailureCache.set(key, { srt, expiresAt: Date.now() + TRANSLATION_FAILURE_CACHE_MS });
+    if (translationFailureCache.size > 40) {
+        for (const [cacheKey, entry] of translationFailureCache) {
+            if (entry.expiresAt <= Date.now() || translationFailureCache.size > 30)
+                translationFailureCache.delete(cacheKey);
+        }
+    }
+}
+
 function getMemoryCacheEntry(key) {
     if (!memoryCache.has(key)) return undefined;
     const value = memoryCache.get(key);
@@ -257,7 +343,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.183',
+    version: '13.2.184',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5175,6 +5261,8 @@ function notifyGeminiRequestWaiters() {
 }
 
 function waitForGeminiRequestChange(timeoutMs = 250) {
+    const signal = translationJobScope.getStore()?.controller.signal;
+    if (signal?.aborted) return Promise.reject(translationTimeoutError());
     return new Promise(resolve => {
         let settled = false;
         let timer;
@@ -5183,9 +5271,11 @@ function waitForGeminiRequestChange(timeoutMs = 250) {
             settled = true;
             if (timer) clearTimeout(timer);
             geminiRequestControl.waiters.delete(finish);
+            if (signal) signal.removeEventListener('abort', finish);
             resolve();
         };
         geminiRequestControl.waiters.add(finish);
+        if (signal) signal.addEventListener('abort', finish, { once: true });
         timer = setTimeout(finish, Math.max(10, timeoutMs));
     });
 }
@@ -5201,6 +5291,7 @@ async function acquireGeminiRequestSlot(requestStartIntervalMs = GEMINI_DEFAULT_
     const keyLane = getLaneForKeyState(keyState);
     try {
         while (true) {
+            throwIfTranslationTimedOut();
             const now = Date.now();
             const cooldownMs = Math.max(0,
                 geminiRequestControl.cooldownUntil - now,
@@ -5721,6 +5812,7 @@ async function getAvailableKey(keyStates, options = {}) {
     // excludeStates împiedică aceeași cerere să reîncerce același proiect în rotația curentă.
     const failFastIfNoAvailable = options.failFastIfNoAvailable === true;
     while (true) {
+        throwIfTranslationTimedOut();
         // În rotația 429, nu așteptăm ca un proiect deja limitat să redevină
         // eligibil înainte să încercăm proiectele disponibile. Pentru o probă
         // amânată, apelantul poate permite așteptarea primei chei eliberate.
@@ -5822,6 +5914,7 @@ async function getAvailableKey(keyStates, options = {}) {
 }
 
 async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}) {
+    throwIfTranslationTimedOut();
     // Recuperările auxiliare (replici lipsă, corecturi punctuale) au o rotație
     // limitată prin proiectele eligibile. Retry-ul extins după cooldown aparține
     // cozii coordonate a calupurilor, ca să nu multiplicăm fiecare cerere auxiliară.
@@ -5860,6 +5953,7 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
+        throwIfTranslationTimedOut();
         let keyState = null;
         try {
             if (keyStates._secondaryRecovery429Hold && !finalRecoveryProbe) {
@@ -5879,6 +5973,7 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
             return await callGemini(prompt, keyState, options);
         } catch (error) {
             lastError = error;
+            throwIfTranslationTimedOut();
             if (error?.isGlobalWaveDeferral === true) throw error;
 
             const message = String(error?.message || error);
@@ -5932,6 +6027,7 @@ async function callGeminiWithKeyRotation(prompt, keyStates, options = {}) {
     keyStates._auxiliaryRecoveryQueue = queued;
     await previous.catch(() => {});
     try {
+        throwIfTranslationTimedOut();
         return await callGeminiWithKeyRotationUnlocked(prompt, keyStates, options);
     } finally {
         releaseQueue();
@@ -5962,6 +6058,7 @@ function getRequestStartIntervalMs(requestLabel) {
 }
 
 async function callGemini(prompt, keyState, options = {}) {
+    throwIfTranslationTimedOut();
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
     const timeout = Number.isInteger(options.timeout) ? options.timeout : 120000;
     const responseSchema = options.responseSchema || {
@@ -6015,6 +6112,7 @@ async function callGemini(prompt, keyState, options = {}) {
             throw createGlobal429DeferralError();
         }
         releaseGeminiSlot = await acquireGeminiRequestSlot(getRequestStartIntervalMs(options.requestLabel), keyState);
+        throwIfTranslationTimedOut();
         // Un val poate începe cât timp cererea așteaptă un slot. În acel caz nu trimitem
         // apelul preselectat după cooldown; lăsăm coada să facă o singură probă controlată.
         if (Number(geminiRequestControl.global429LastTriggerAt || 0) > global429WaveAtCallStart) {
@@ -6060,6 +6158,7 @@ async function callGemini(prompt, keyState, options = {}) {
             },
             {
                 timeout,
+                signal: translationJobScope.getStore()?.controller.signal,
                 headers: {
                     'Content-Type': 'application/json',
                     'x-goog-api-key': keyState.key
@@ -6073,6 +6172,7 @@ async function callGemini(prompt, keyState, options = {}) {
         noteGeminiRequestSuccess(keyState);
         return raw;
     } catch (error) {
+        throwIfTranslationTimedOut();
         const status = error.response?.status;
         if (status === 401 || status === 403) {
             keyState.disabled = true;
@@ -6137,6 +6237,8 @@ async function callGemini(prompt, keyState, options = {}) {
             throw retryError;
         }
         if (Number.isInteger(status) && status >= 500 && status <= 599) {
+            const pool = keyState?._keyPool;
+            if (pool) pool._geminiServerErrorCount = Number(pool._geminiServerErrorCount || 0) + 1;
             registerGeminiOwner5xx(status, keyState);
         }
         throw error;
@@ -6597,6 +6699,7 @@ function normalizeTranslationPayload(parsed) {
 }
 
 async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, previousTranslatedContext, keyStates, globalChunkIndex, totalChunks, depth = 0, deferred429Retry = false) {
+    throwIfTranslationTimedOut();
     const requestChunk = chunk.filter(obj => !isNumericVerbatimCue(obj.text) && !obj.musicOnly);
     const protectedSpokenIds = new Set(requestChunk.filter(obj => obj.spokenQuotedText).map(obj => String(obj.id)));
     const prompt = requestChunk.length
@@ -6636,6 +6739,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
     let attempt = 0; // numărul de apeluri API reale; selectarea/așteptarea nu consumă bugetul
     let transientAttempts = 0;
     while (attempt < maxAttemptsThisPass) {
+        throwIfTranslationTimedOut();
         let keyState = null;
         try {
             keyState = await getAvailableKey(keyStates, {
@@ -6729,6 +6833,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             }
             return results;
         } catch (error) {
+            throwIfTranslationTimedOut();
             lastError = error;
             const is429 = error.isRateLimit429 === true || error.message.includes('429');
             if (is429) {
@@ -9694,6 +9799,7 @@ async function retryAdjacentOverlapNeighborhoodsIndividually(items, translatedBy
 // ============================================================
 
 async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaContext = '') {
+    throwIfTranslationTimedOut();
     const sourceBlockCount = (String(srtText || '').match(/-->/g) || []).length;
     const parseStats = { fillerBlocksFiltered: 0, otherBlocksFiltered: 0, invalidBlocksSkipped: 0, duplicateIdsRenumbered: 0 };
     const items = parseSrt(srtText, parseStats);
@@ -9736,6 +9842,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     let previousTranslatedContext = [];
 
     for (let batchStart = 0; batchStart < chunks.length; batchStart += CONCURRENCY_LIMIT) {
+        throwIfTranslationTimedOut();
         const batch = chunks.slice(batchStart, batchStart + CONCURRENCY_LIMIT);
 
         const promises = batch.map(async (chunk, localIndex) => {
@@ -9754,6 +9861,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         });
 
         const results = await Promise.all(promises);
+        throwIfTranslationTimedOut();
         results.sort((a, b) => a.globalIndex - b.globalIndex);
 
         for (const batchResult of results) {
@@ -9883,6 +9991,17 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         String(translatedById[String(item.id)] || '').replace(/<[^>]+>/g, '').trim()
     ).length;
     console.log(`${c.green}[Gemini] Calupuri procesate: ${chunks.length}/${chunks.length}; traduceri utilizabile ${populatedMainCount}/${eligibleMainItems.length}.${c.reset}`);
+    // Nu pornim sute de apeluri Empty Recovery / Grammar Review dacă au eșuat
+    // masiv calupurile prin 503 repetate. Un singur 503 temporar nu activează
+    // acest circuit; traducerile cu câteva goluri merg mai departe normal.
+    const missingMainCount = eligibleMainItems.length - populatedMainCount;
+    if (eligibleMainItems.length >= 30 &&
+        missingMainCount >= Math.max(10, Math.ceil(eligibleMainItems.length * 0.35)) &&
+        Number(keyStates._geminiServerErrorCount || 0) >= 8) {
+        console.log(`${c.red}[Gemini Indisponibil] ${missingMainCount}/${eligibleMainItems.length} replici lipsesc după erori 5xx repetate. Omit recuperările AI masive; livrez numai mesajul de eșec.${c.reset}`);
+        throw subtitleGenerationFailure('Serviciul Gemini nu a putut genera majoritatea traducerii.', 'gemini-unavailable');
+    }
+    throwIfTranslationTimedOut();
 
     let sourceGroundedCorrections = 0;
     for (const item of items) {
@@ -10410,6 +10529,16 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         qaStatus.unresolvedIds = [...finalErrorIds];
         qaStatus.hasWarnings = finalReviewWarnings.size > 0;
         qaStatus.warningIds = [...finalReviewWarnings.keys()];
+    }
+    // Un SRT predominant englezesc nu este o traducere realizată. Nu-l mai
+    // servim ca rezultat/cache și nu declanșăm mesajul pentru erori QA minore.
+    const relevantTotal = items.filter(item => !suppressedFinalOutputIdSet.has(String(item.id)) &&
+        !item.musicOnly && String(item.text || '').replace(/<[^>]+>/g, '').trim()).length;
+    if (unresolvedFinalItems.length >= Math.max(10, Math.ceil(relevantTotal * 0.15))) {
+        console.log(`${c.red}[QA FINAL] Traducerea este incompletă: ${unresolvedFinalItems.length}/${relevantTotal} replici rămase fără traducere. Nu livrez SRT mixt EN/RO.${c.reset}`);
+        const reason = Number(keyStates._geminiServerErrorCount || 0) >= 2
+            ? 'gemini-unavailable' : 'general';
+        throw subtitleGenerationFailure('Prea multe replici nu au putut fi traduse.', reason);
     }
     if (unresolvedFinalItems.length) {
         const ids = unresolvedFinalItems.map(item => item.id).join(', ');
@@ -11223,6 +11352,12 @@ app.get('/:configData/translate', async (req, res) => {
         cacheKey = JSON.stringify(['external', validatedTarget.url, normalizedMediaId]);
     }
 
+    const cachedFailureSrt = getFailureCacheEntry(cacheKey);
+    if (cachedFailureSrt) {
+        res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        return res.send(cachedFailureSrt);
+    }
     const cachedEntry = getMemoryCacheEntry(cacheKey);
     if (typeof cachedEntry === 'string') {
         res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
@@ -11238,7 +11373,8 @@ app.get('/:configData/translate', async (req, res) => {
 
     res.writeHead(200, {
         'Content-Type': 'application/x-subrip; charset=utf-8',
-        'Transfer-Encoding': 'chunked'
+        'Transfer-Encoding': 'chunked',
+        'Cache-Control': 'no-store'
     });
     res.flushHeaders();
 
@@ -11264,7 +11400,7 @@ app.get('/:configData/translate', async (req, res) => {
             let effectiveSubtitleName = String(req.query.subtitleName || '').slice(0, 300);
             let effectiveVersionTag = String(req.query.v || '');
             
-            processPromise = (async () => {
+            processPromise = runTranslationWithDeadline(async () => {
                 const [srtRes, mediaTitle] = await Promise.all([
                     isInternalSubdl
                         ? getSubdlSubtitleText(configData, subdlRef, subdlFilename).then(data => ({ data })).catch(async subdlError => {
@@ -11295,7 +11431,7 @@ app.get('/:configData/translate', async (req, res) => {
                 });
 
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys, qaStatus, getMediaContextText(imdbId));
-            })();
+            });
             // Attach the shared QA state before publishing the promise to the cache.
             processPromise.qaStatus = qaStatus;
             
@@ -11360,12 +11496,19 @@ app.get('/:configData/translate', async (req, res) => {
 
     } catch (error) {
         clearInterval(keepAlive);
-        console.error('Translation error:', error.message);
+        // Aici ajung NUMAI eșecurile efective ale generării subtitrării.
+        // Validările 400/503 de la intrarea în rută se întorc separat, înainte
+        // de stream; niciun avertisment QA normal nu ajunge în acest catch.
+        const reason = error?.isTranslationTimedOut ? '15-minute-timeout'
+            : error?.translationFailureReason || 'general';
+        console.log(`${c.red}[TRADUCERE EȘUATĂ] ${normalizedMediaId || 'ID'} | ${reason} | ${String(error?.message || error).slice(0, 190)}${c.reset}`);
+        const failureSrt = buildTranslationFailureSrt(error);
+        rememberTranslationFailure(cacheKey, failureSrt);
         if (!res.headersSent) {
-            res.status(500).send('Translation failed: ' + error.message);
-        } else {
-            res.end();
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
         }
+        if (!res.writableEnded && !res.destroyed) res.end(failureSrt);
     }
 });
 
@@ -12123,7 +12266,22 @@ function parseSrt(srt, stats = null) {
 // ============================================================
 
 function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    const signal = translationJobScope.getStore()?.controller.signal;
+    if (signal?.aborted) return Promise.reject(translationTimeoutError());
+    if (!signal) return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve, reject) => {
+        let timer;
+        const cancel = () => {
+            clearTimeout(timer);
+            signal.removeEventListener('abort', cancel);
+            reject(translationTimeoutError());
+        };
+        timer = setTimeout(() => {
+            signal.removeEventListener('abort', cancel);
+            resolve();
+        }, ms);
+        signal.addEventListener('abort', cancel, { once: true });
+    });
 }
 
 app.get('/health', (req, res) => {
