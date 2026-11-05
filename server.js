@@ -257,7 +257,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.182',
+    version: '13.2.183',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4831,6 +4831,50 @@ function synchronizeInCueLineCapitalization(value, englishNames = new Set()) {
     return lines.join('\n');
 }
 
+const ENGLISH_STANDALONE_QUESTION_STARTERS = new Set(
+    'what where when who whom whose why how which is are was were do does did can could would should will have has had may am must'.split(' ')
+);
+
+// Corecție finală bazată NUMAI pe două indicii foarte clare din EN.
+// Nu deducem continuarea din simpla lipsă a punctului și nu schimbăm nume,
+// acronime, liniuțe sau alte rânduri din cue. Păstrăm timpii/ID-urile implicit.
+function enforceStrongSourceBoundaryCapitalization(sourceText, targetText, previousSourceText = null, englishNames = new Set()) {
+    const source = String(sourceText || '').replace(/<[^>]*>/gu, '').trim();
+    let target = String(targetText || '');
+    if (!source || !target.trim()) return target;
+
+    // „I believe...” + „..Dr Kendrick...” -> „..că dr. Kendrick...”.
+    // Trebuie să avem puncte de continuare EXPLICITE la începutul ambelor
+    // versiuni, elipsă în EN anterior și un cuvânt funcțional românesc sigur.
+    const previous = String(previousSourceText || '').replace(/<[^>]*>/gu, '').trim();
+    const explicitSourceContinuation = /^\.{2,}\s*\p{L}/u.test(source);
+    const previousOpenEllipsis = /(?:\.{3,}|…)\s*$/u.test(previous) &&
+        !/[?!]\s*(?:\.{3,}|…)\s*$/u.test(previous);
+    if (explicitSourceContinuation && previousOpenEllipsis) {
+        const match = target.match(/^(\s*(?:<[^>\n]*>\s*)*\.{2,}\s*)([A-ZĂÂÎȘȚ][a-zăâîșț]+(?:-[a-zăâîșț]+)?)/u);
+        if (match) {
+            const first = match[2];
+            const lower = first.toLocaleLowerCase('ro-RO');
+            if (ROMANIAN_CONTINUATION_INITIAL_WORDS.has(lower) &&
+                !englishNames.has(nameKey(lower))) {
+                target = match[1] + first[0].toLocaleLowerCase('ro-RO') + first.slice(1) + target.slice(match[0].length);
+            }
+        }
+        return target;
+    }
+
+    // O întrebare EN independentă, fără indicator de continuare și fără
+    // marcator de vorbitor, trebuie să înceapă cu majusculă în română.
+    // Ex.: „Where are you going?” -> „Unde te duci?”. Nu atingem „where”
+    // început după elipsă, nume proprii sau pronume din interiorul dialogului.
+    if (/^\.{2,}|^…/u.test(source) || !/\?\s*$/u.test(source)) return target;
+    const sourceStart = source.match(/^(?:["“„«(]\s*)?([A-Z][a-z]{1,})\b/u);
+    if (!sourceStart || !ENGLISH_STANDALONE_QUESTION_STARTERS.has(sourceStart[1].toLowerCase())) return target;
+    const match = target.match(/^(\s*(?:<[^>\n]*>\s*)*(?:["“„«(]\s*)?)([a-zăâîșț])/u);
+    if (!match) return target;
+    return match[1] + match[2].toLocaleUpperCase('ro-RO') + target.slice(match[0].length);
+}
+
 // Un singur punct de intrare pentru capitalizarea finală. Nicio etapă de layout
 // sau curățare nu decide majusculele: aici se combină sursa, contextul între cue-uri
 // și limitele propozițiilor/rândurilor din cue-ul curent.
@@ -4841,9 +4885,10 @@ function applyFinalSubtitleCapitalization(sourceText, translatedText, englishNam
     const lineSynchronized = synchronizeInCueLineCapitalization(sourceSynchronized, englishNames);
     const cliticNormalized = lowercaseRomanianMidSentenceClitics(lineSynchronized, englishNames);
     const sentenceCapitalized = capitalizeRomanianSentenceStarts(cliticNormalized);
-    return capitalizeSourceBackedRomanianPossessiveNames(
+    const nameSafe = capitalizeSourceBackedRomanianPossessiveNames(
         sourceText, sentenceCapitalized, englishNames
     );
+    return enforceStrongSourceBoundaryCapitalization(sourceText, nameSafe, previousSourceText, englishNames);
 }
 
 // ============================================================
