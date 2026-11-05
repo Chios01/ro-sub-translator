@@ -334,13 +334,42 @@ function cleanMemoryCache(protectedKey = null) {
 
 // Limităm numai joburile distincte în curs; cererile identice se alătură promisiunii
 // deja existentе și nu consumă încă un slot. Rezultatele finalizate rămân în cache-ul LRU.
-const MAX_ACTIVE_TRANSLATION_JOBS = 12;
-function getActiveTranslationJobCount() {
+// Limita totală protejează memoria Render; limita pe configurare împiedică
+// un singur grup de chei să ocupe toate locurile cu variante ale aceluiași episod.
+const MAX_ACTIVE_TRANSLATION_JOBS = 24;
+const MAX_ACTIVE_TRANSLATION_JOBS_PER_OWNER = 3;
+
+// Folosim aceeași identitate cu schedulerul Gemini: setul de chei normalizate,
+// fără a afișa sau a păstra cheile în identificatorul de job/cache.
+function getGeminiKeysFingerprint(keys) {
+    const normalizedKeys = [...new Set((Array.isArray(keys) ? keys : [])
+        .map(key => String(key || '')))].sort();
+    return crypto.createHash('sha256').update(normalizedKeys.join('\0')).digest('hex');
+}
+
+function getActiveTranslationJobCount(ownerFingerprint = null) {
     let count = 0;
     for (const value of memoryCache.values()) {
-        if (value && typeof value !== 'string' && typeof value.then === 'function') count++;
+        if (!value || typeof value === 'string' || typeof value.then !== 'function') continue;
+        if (ownerFingerprint && value.translationOwnerFingerprint !== ownerFingerprint) continue;
+        count++;
     }
     return count;
+}
+
+// Pentru același film/episod și același set de chei, o variantă de subtitrare
+// se traduce la un moment dat. Cererile identice se alătură jobului existent.
+// Alte titluri pot traduce în paralel, în limita celor 3 joburi/configurație.
+function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
+    if (!normalizedMediaId) return false;
+    for (const value of memoryCache.values()) {
+        if (value && typeof value.then === 'function' &&
+            value.translationOwnerFingerprint === ownerFingerprint &&
+            value.translationMediaId === normalizedMediaId) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // ============================================================
@@ -349,7 +378,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.187',
+    version: '13.2.188',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5229,9 +5258,7 @@ const GEMINI_OWNER_CONTROL_IDLE_MS = 30 * 60 * 1000;
 function getGeminiOwnerControl(keyStates) {
     if (!Array.isArray(keyStates) || !keyStates.length) return null;
     if (keyStates._geminiOwnerControl) return keyStates._geminiOwnerControl;
-    const fingerprint = crypto.createHash('sha256')
-        .update([...new Set(keyStates.map(state => String(state.key || '')))].sort().join('\0'))
-        .digest('hex');
+    const fingerprint = getGeminiKeysFingerprint(keyStates.map(state => state.key));
     let owner = geminiOwnerControls.get(fingerprint);
     if (!owner) {
         owner = {
@@ -11334,6 +11361,7 @@ app.get('/:configData/translate', async (req, res) => {
     if (isInternalSubdl && !decodedConfig.subdlKey) {
         return res.status(400).send('SubDL nu este configurat pentru această instalare.');
     }
+    const ownerFingerprint = getGeminiKeysFingerprint(userKeys);
 
     // Verificare sintactică imediat; verificarea DNS/SSRF se face doar dacă fallback-ul este folosit.
     if (fallbackTargetUrl && (fallbackTargetUrl.length > 4096 || !isValidSubtitleSourceUrl(fallbackTargetUrl))) {
@@ -11355,7 +11383,9 @@ app.get('/:configData/translate', async (req, res) => {
             console.log(`${c.red}✖ EROARE: URL sursă respins: ${error.message}${c.reset}`);
             return res.status(400).send(error.message);
         }
-        cacheKey = JSON.stringify(['external', validatedTarget.url, normalizedMediaId]);
+        // Subtitrările externe au și ele cache izolat pe grup de chei;
+        // altfel două instalări diferite ar fi putut împărți jobul și rezultatul.
+        cacheKey = JSON.stringify(['external', ownerFingerprint, validatedTarget.url, normalizedMediaId]);
     }
 
     const cachedFailureSrt = getFailureCacheEntry(cacheKey);
@@ -11371,6 +11401,19 @@ app.get('/:configData/translate', async (req, res) => {
             console.log(`${c.yellow}[Cache QA] Cerere repetată pentru un rezultat cu ID păstrat în engleză; returnez același SRT fără să pornesc o nouă traducere Gemini.${c.reset}`);
         }
         return res.send(cachedEntry);
+    }
+    // Cererile identice se alătură în continuare aceluiași job fără slot nou.
+    // Dacă un utilizator selectează în grabă cinci variante ale aceluiași episod,
+    // numai prima traducere distinctă pornește; celelalte pot fi încercate după
+    // finalizarea primeia, fără să ocupe sloturi sau cote Gemini suplimentare.
+    if (!cachedEntry && hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId)) {
+        res.setHeader('Retry-After', '15');
+        return res.status(429).send('Se traduce deja altă variantă a acestui titlu cu aceleași chei. Încearcă după finalizarea ei.');
+    }
+    // Cel mult 3 joburi pentru titluri diferite per set de chei.
+    if (!cachedEntry && getActiveTranslationJobCount(ownerFingerprint) >= MAX_ACTIVE_TRANSLATION_JOBS_PER_OWNER) {
+        res.setHeader('Retry-After', '15');
+        return res.status(503).send('Configurația ta procesează deja 3 subtitrări. Reîncearcă după finalizarea uneia.');
     }
     if (!cachedEntry && getActiveTranslationJobCount() >= MAX_ACTIVE_TRANSLATION_JOBS) {
         res.setHeader('Retry-After', '15');
@@ -11438,9 +11481,12 @@ app.get('/:configData/translate', async (req, res) => {
 
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys, qaStatus, getMediaContextText(imdbId));
             });
-            // Attach the shared QA state before publishing the promise to the cache.
+            // Atașăm proprietarul și QA înainte de publicarea promisiunii.
+            // Ambele sunt comune cererilor identice care așteaptă acest job.
             processPromise.qaStatus = qaStatus;
-            
+            processPromise.translationOwnerFingerprint = ownerFingerprint;
+            processPromise.translationMediaId = normalizedMediaId;
+
             memoryCache.set(cacheKey, processPromise);
             cleanMemoryCache(cacheKey);
             
