@@ -63,6 +63,9 @@ const TRANSLATION_MAX_DURATION_MS = 15 * 60 * 1000;
 const TRANSLATION_FAILURE_CACHE_MS = 60 * 1000;
 const translationJobScope = new AsyncLocalStorage();
 const translationFailureCache = new Map();
+// Un job poate avea mai mulți ascultători HTTP; raportăm eșecul o singură dată
+// per promisiune partajată, nu la fiecare cerere Stremio care așteaptă rezultatul.
+const loggedTranslationFailureJobs = new WeakSet();
 
 function translationTimeoutError() {
     const error = new Error('Limita de 15 minute pentru traducere a fost atinsă.');
@@ -346,7 +349,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.186',
+    version: '13.2.187',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -11388,8 +11391,8 @@ app.get('/:configData/translate', async (req, res) => {
     res.on('close', stopKeepAlive);
     res.on('finish', stopKeepAlive);
 
+    let processPromise;
     try {
-        let processPromise;
         // QA status belongs to the shared translation promise, not only to the
         // request that created it. This keeps concurrent requests in the same scope.
         let qaStatus = { hasErrors: false, hasWarnings: false, unresolvedIds: [], warningIds: [] };
@@ -11470,7 +11473,8 @@ app.get('/:configData/translate', async (req, res) => {
                 console.log(`\x1b[${doneColor}m[${doneLabel}] ${imdbId} | 🕒 ${timeFormatted}\x1b[0m\n`);
                 
             }).catch((err) => {
-                console.log(`${c.red}✖ EROARE PROCESARE PENTRU: ${imdbId} - ${err.message}${c.reset}`);
+                // Mesajul final este raportat o singură dată în catch-ul rutei,
+                // chiar dacă mai multe cereri HTTP așteaptă aceeași promisiune.
                 if (memoryCache.get(cacheKey) === processPromise) {
                     memoryCache.delete(cacheKey);
                 }
@@ -11504,7 +11508,12 @@ app.get('/:configData/translate', async (req, res) => {
         // de stream; niciun avertisment QA normal nu ajunge în acest catch.
         const reason = error?.isTranslationTimedOut ? '15-minute-timeout'
             : error?.translationFailureReason || 'general';
-        console.log(`${c.red}[TRADUCERE EȘUATĂ] ${normalizedMediaId || 'ID'} | ${reason} | ${String(error?.message || error).slice(0, 190)}${c.reset}`);
+        // O singură linie de log pentru jobul comun, nu câte una pentru fiecare
+        // cerere Stremio. Un job nou va fi raportat separat, chiar pentru același titlu.
+        if (!processPromise || !loggedTranslationFailureJobs.has(processPromise)) {
+            if (processPromise) loggedTranslationFailureJobs.add(processPromise);
+            console.log(`${c.red}[TRADUCERE EȘUATĂ] ${normalizedMediaId || 'ID'} | ${reason} | ${String(error?.message || error).slice(0, 190)}${c.reset}`);
+        }
         const failureSrt = buildTranslationFailureSrt(error);
         rememberTranslationFailure(cacheKey, failureSrt);
         if (!res.headersSent) {
