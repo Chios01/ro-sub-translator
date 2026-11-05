@@ -94,9 +94,12 @@ function buildTranslationFailureSrt(error) {
         : googleUnavailable
             ? ['Traducerea nu este disponibilă momentan.', 'Google Gemini nu a răspuns. Încearcă mai târziu.']
             : ['Subtitrarea nu a putut fi tradusă momentan.', 'Te rugăm să încerci din nou mai târziu.'];
-    // Un singur mesaj, nu sute de replici EN; intervalul lung îl face vizibil
-    // și dacă utilizatorul se află mai departe în film când vine răspunsul.
-    return `1\n00:00:00,000 --> 06:00:00,000\n${lines.join('\n')}\n`;
+    // Mesajul este vizibil doar în primul minut al cronologiei video.
+    // Un al doilea cue invizibil încearcă să înlocuiască textul afișat
+    // după minutul 1, inclusiv pentru playere care păstrează ultimul cue.
+    // U+200B este invizibil; un cue cu text complet gol poate fi ignorat.
+    // Acestea sunt timpi VIDEO, nu un cronometru de la primirea răspunsului.
+    return `1\n00:00:00,000 --> 00:01:00,000\n${lines.join('\n')}\n\n2\n00:01:00,000 --> 06:00:00,000\n\u200B\n`;
 }
 
 function runTranslationWithDeadline(worker) {
@@ -343,7 +346,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.184',
+    version: '13.2.186',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
