@@ -94,9 +94,9 @@ function buildTranslationFailureSrt(error) {
         : googleUnavailable
             ? ['Traducerea nu este disponibilă momentan.', 'Google Gemini nu a răspuns. Încearcă mai târziu.']
             : ['Subtitrarea nu a putut fi tradusă momentan.', 'Te rugăm să încerci din nou mai târziu.'];
-    // Un singur mesaj 60 de secunde pe cronologia filmului, nu din momentul
-    // erorii. Dupa 00:01:00 pista nu mai afiseaza acest mesaj.
-    return `1\n00:00:00,000 --> 00:01:00,000\n${lines.join('\n')}\n`;
+    // Un singur mesaj, nu sute de replici EN; intervalul lung îl face vizibil
+    // și dacă utilizatorul se află mai departe în film când vine răspunsul.
+    return `1\n00:00:00,000 --> 06:00:00,000\n${lines.join('\n')}\n`;
 }
 
 function runTranslationWithDeadline(worker) {
@@ -343,7 +343,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.185',
+    version: '13.2.184',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
