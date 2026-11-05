@@ -56,7 +56,7 @@ const PREVIOUS_TRANSLATION_CONTEXT = 8;
 
 const MODEL_NAME =
     process.env.GEMINI_MODEL ||
-    'gemini-3.5-flash-lite';
+    'gemini-3.1-flash-lite';
 
 // v184: limita este pe o traducere, NU globală. Nu influențează ceilalți utilizatori.
 const TRANSLATION_MAX_DURATION_MS = 15 * 60 * 1000;
