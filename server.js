@@ -257,7 +257,7 @@ function getActiveTranslationJobCount() {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.181',
+    version: '13.2.182',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -3349,6 +3349,70 @@ function stripRomanianFillerVocalizations(value) {
     }).filter(Boolean).join('\n');
 }
 
+// Extensie îngustă pentru vocalizările pe care Gemini le poate regenera în ROMÂNĂ.
+// NU reutilizăm stripSpecifiedVocalizations(): acela este un filtru larg pentru EN
+// și poate șterge acronime precum „HM Government”, „MM” ori citate legitime.
+// Aici eliminăm numai tokenuri evidente de ezitare, separate prin punctuație,
+// sau rânduri compuse exclusiv dintr-o asemenea vocalizare.
+function stripSafeRomanianFinalHesitations(value) {
+    const tokenRe = /(?<![\p{L}\p{N}_])(?:m{2,}[-‐‑–—]h+m+|m+h+m+|h+m+|m{2,}|uh[-‐‑–—]huh+|îh[îi]+)(?![\p{L}\p{N}_])/giu;
+    return String(value || '').normalize('NFC').split(/\r?\n/u).map(line => {
+        if (!line.trim()) return '';
+        const marker = line.match(/^(\s*[-–—]\s*)/u);
+        const prefix = marker ? marker[0] : '';
+        const body = marker ? line.slice(prefix.length) : line;
+        const plain = text => text.replace(/<\/?(?:i|b|u)>/giu, '').trim();
+        const matches = [...body.matchAll(tokenRe)];
+        tokenRe.lastIndex = 0;
+        if (!matches.length) return line;
+        const selected = matches.filter(match => {
+            const token = match[0];
+            const letters = token.replace(/[^\p{L}]/gu, '');
+            // Acronimele scrise integral cu majuscule sunt protejate.
+            if (letters.length >= 2 && letters === letters.toLocaleUpperCase('ro-RO')) return false;
+            const beforeRaw = body.slice(0, match.index);
+            const afterRaw = body.slice(match.index + token.length);
+            const before = plain(beforeRaw);
+            const after = plain(afterRaw);
+            // „5 mm”, „25 mm.” etc. = măsurători, nu vocalizări.
+            if (/^mm$/iu.test(token) && /\d\s*$/u.test(before)) return false;
+            // O vocalizare citată sau menționată ca termen nu se elimină.
+            if (/["'„«“]\s*$/u.test(beforeRaw) || /^\s*["'”»“]/u.test(afterRaw)) return false;
+            const standalone = !plain((before + after).replace(/[.,;:!?…\s]/gu, ''));
+            const leading = !before && /^[\s,;:.!?…]+/u.test(afterRaw);
+            const trailing = !after.replace(/^[.,;:!?…\s]*/u, '') && /[,;:]\s*$/u.test(before);
+            const between = /[,;:]\s*$/u.test(before) && /^\s*[,;:!?…]/u.test(afterRaw);
+            return standalone || leading || trailing || between;
+        });
+        if (!selected.length) return line;
+        let result = '';
+        let pos = 0;
+        for (const match of selected) {
+            result += body.slice(pos, match.index) + ' ';
+            pos = match.index + match[0].length;
+        }
+        result += body.slice(pos);
+        result = result
+            .replace(/[ \t]{2,}/gu, ' ')
+            .replace(/\s+([,;:!?])/gu, '$1')
+            .replace(/([,;:])\s*([,;:])+/gu, '$1')
+            .replace(/[,;:]+\s*([.!?…]+)/gu, '$1')
+            .replace(/([.!?…])\s*[,;:]+/gu, '$1')
+            .replace(/^[ \t.,;:!?…]+/u, '')
+            .replace(/[ \t,;:]+$/u, '')
+            .replace(/[ \t]+([.!?])/gu, '$1')
+            .trim();
+        // Un rând rămas numai cu semne de punctuație sau tag-uri devine gol.
+        if (!/[\p{L}\p{N}]/u.test(plain(result))) return '';
+        // Păstrăm comportamentul de capitalizare al filtrului românesc existent.
+        if (selected.some(match => !plain(body.slice(0, match.index)) && /^[A-ZĂÂÎȘȚ]/u.test(match[0]))) {
+            result = result.replace(/^(<\/?(?:i|b|u)>)*(\p{Ll})/u,
+                (_all, tags = '', letter) => (tags || '') + letter.toLocaleUpperCase('ro-RO'));
+        }
+        return prefix + result;
+    }).filter(Boolean).join('\n');
+}
+
 // Normalizează numai bâlbâielile scrise evident în interiorul unui cuvânt.
 // Rulează EXCLUSIV pe traducerea română finală, nu pe sursa EN sau pe ID-uri.
 // Nu recunoaște cratime cu spații: acelea pot marca interlocutori sau pauze.
@@ -3404,7 +3468,18 @@ function cleanTranslatedSubtitleForFinalOutput(value, originalSource = '') {
     if (!source.trim()) return '';
     const withoutSpeakerLabels = stripSpeakerNameLabels(source);
     const normalized = String(deepCleanSubtitleText(withoutSpeakerLabels, { applyContentFilters: false }) || '').trim();
-    return collapseObviousWrittenStutters(stripRomanianFillerVocalizations(normalized).trim(), originalSource);
+    const withoutHesitations = stripSafeRomanianFinalHesitations(normalized);
+    // Nu pierdem dialog real: dacă Gemini a tradus „Yes.” doar prin „Mhm.”,
+    // preferăm să păstrăm răspunsul decât să golim întregul ID. La fel când
+    // o vocalizare este unica replică a unui al doilea vorbitor explicit.
+    const originalHasSpeech = Boolean(String(originalSource || '').trim()) &&
+        Boolean(stripSafeRomanianFinalHesitations(originalSource).trim());
+    const speakerCount = text => (String(text || '').match(/(?:^|\n)\s*[-–—]\s*\S/gu) || []).length;
+    const wouldDropSpeaker = speakerCount(normalized) >= 2 &&
+        speakerCount(withoutHesitations) < speakerCount(normalized);
+    const protectedHesitations = originalHasSpeech && (!withoutHesitations.trim() || wouldDropSpeaker)
+        ? normalized : withoutHesitations;
+    return collapseObviousWrittenStutters(stripRomanianFillerVocalizations(protectedHesitations).trim(), originalSource);
 }
 
 function applyDeterministicSemanticFix(original, translation) {
@@ -10143,7 +10218,7 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     }
 
     // Curățare tehnică finală pentru traducerile deja validate ca dialog.
-    // Pe română aplicăm numai filtrul îngust pentru tokenurile fără sens „ă/ăă/ah/aa/hă”;
+    // Pe română aplicăm filtre înguste pentru „ă/ăă/ah/aa/hă” și „Hm/Mm/Mhm”;
     // nu reaplicăm listele largi construite pentru interjecțiile din sursa engleză.
     // Sunetele/versurile sunt eliminate pe baza sursei înainte de Gemini.
     let finalContentFilterChanged = 0;
@@ -10156,14 +10231,14 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
         if (!current.trim()) continue;
         const filtered = cleanTranslatedSubtitleForFinalOutput(current, item.text);
         if (filtered !== current.trim()) finalContentFilterChanged++;
-        if (current.trim() && !filtered && !stripRomanianFillerVocalizations(current).trim()) {
+        if (current.trim() && !filtered && (isOnlyStandaloneFillerSequence(current) || !stripRomanianFillerVocalizations(current).trim() || !stripSafeRomanianFinalHesitations(current).trim())) {
             finalTranslatedFillerSuppressedIds.add(id);
         }
         translatedById[id] = filtered;
         if (!filtered) finalContentFilterEmptied++;
     }
     if (finalContentFilterChanged || finalContentFilterEmptied) {
-        console.log(`${c.cyan}[Curățare finală sigură] ${finalContentFilterChanged} replici normalizate${finalContentFilterEmptied ? `; ${finalContentFilterEmptied} au rămas goale și vor fi raportate de QA` : ''}. Se elimină numai vocalizările românești exacte (ă/ăă/ah/aa/hă) și bâlbâielile scrise evidente.${c.reset}`);
+        console.log(`${c.cyan}[Curățare finală sigură] ${finalContentFilterChanged} replici normalizate${finalContentFilterEmptied ? `; ${finalContentFilterEmptied} au rămas goale și vor fi raportate de QA` : ''}. Se elimină numai vocalizările românești vizate (ă/ăă/ah/aa/hă/Hm/Mm/Mhm/îhî) și bâlbâielile scrise evidente.${c.reset}`);
     }
 
     // Corectare locală conservatoare a majusculelor după toate reviziile AI și
