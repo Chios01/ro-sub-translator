@@ -463,7 +463,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.193',
+    version: '13.2.194',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1812,6 +1812,30 @@ async function handleSubtitles(req, res) {
     }
 }
 
+// Diagnostic pasiv, activ numai când SubDL livrează bytes fără subtitrare validă.
+// Nu afișăm conținutul, URL-urile, tokenurile, cheile sau antetele serverului.
+function classifyInvalidSubdlContent(bytes) {
+    const buffer = Buffer.from(bytes || []);
+    if (buffer.length >= 4 && buffer.readUInt32LE(0) === 0x04034b50) return 'ZIP';
+    const prefix = buffer.toString('utf8', 0, Math.min(buffer.length, 256)).replace(/^\uFEFF/, '').trimStart();
+    if (/^(?:<!doctype\s+html\b|<html\b|<head\b|<body\b)/i.test(prefix)) return 'HTML';
+    if (/^(?:\[Script Info\]|\[V4\+? Styles\]|\[Events\])/i.test(prefix)) return 'ASS/SSA';
+    if (/^[{[]/.test(prefix)) return 'JSON/array';
+    if (/^WEBVTT\b/i.test(prefix)) return 'VTT';
+    if (/^\d{1,6}\s*\n\s*\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->/i.test(prefix) ||
+        /^\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->/i.test(prefix)) return 'SRT-like';
+    return 'alt-format';
+}
+
+function classifyInvalidSubdlReason(error) {
+    const message = String(error?.message || '');
+    if (message === 'arhiva ZIP nu are director central valid' || message === 'arhivă ZIP prea scurtă' ||
+        message === 'arhivă ZIP goală sau cu structură neacceptată') return 'structura-zip';
+    if (message === 'arhiva nu conține un fișier SRT/VTT/ASS valid') return 'zip-fara-subtitrare-valida';
+    if (message === 'fișierul descărcat nu conține subtitrare SRT/VTT/ASS recunoscută') return 'format-srt-nerecunoscut';
+    return 'validare-esuata';
+}
+
 async function getSubdlSubtitleText(configId, reference, requestedFilename = '') {
     const isApiReference = reference.startsWith('api_');
     const isDirectUrlRef = reference.startsWith('url_');
@@ -1978,6 +2002,7 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
             // Un HTTP 200 cu HTML/ZIP/SRT invalid nu este eroare de rețea.
             // Nu relansăm cereri; păstrăm fallback-ul OpenSubtitles.
             contentError.subdlContentValidationFailed = true;
+            console.log(`[SubDL] Diagnostic conținut invalid: tip=${classifyInvalidSubdlContent(bytes)}; bytes=${Buffer.byteLength(bytes)}; cauză=${classifyInvalidSubdlReason(contentError)}. Fără text sau chei.`);
             throw contentError;
         }
     } catch (error) {
