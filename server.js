@@ -463,7 +463,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.194',
+    version: '13.2.195',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -11186,6 +11186,13 @@ function normalizeDownloadedSubtitle(bytes, sourceUrl, preferredVideoFilename = 
     let pathExtension = '';
     try { pathExtension = new URL(sourceUrl).pathname; } catch (_) {}
     const decoded = decodeSubtitleBytes(buffer);
+    // SubDL can serve raw ASS/SSA under extensionless /subtitle/ URLs.
+    // Detect only the recognized ASS/SSA headers and use the existing
+    // validated ASS -> SRT converter; invalid payloads still fail closed.
+    // This does not trigger any additional provider requests or affect Gemini.
+    if (/^(?:\[Script Info\]|\[V4\+? Styles\]|\[Events\])/i.test(decoded.trimStart())) {
+        return normalizeSubtitleText(decoded, 'subtitle.ass');
+    }
     try {
         return normalizeSubtitleText(decoded, pathExtension || 'subtitle.srt');
     } catch (firstError) {
