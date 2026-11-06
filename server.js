@@ -54,9 +54,23 @@ const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
 const PREVIOUS_TRANSLATION_CONTEXT = 8;
 
+// v190: model principal pentru toate cererile; fallback strict după două HTTP 503
+// la același calup/cerere auxiliară. Nu se schimbă cheile, cotele sau bugetul de retry.
 const MODEL_NAME =
     process.env.GEMINI_MODEL ||
-    'gemini-3.1-flash-lite';
+    'gemini-3.5-flash-lite';
+const GEMINI_503_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
+const GEMINI_503_FALLBACK_THRESHOLD = 2;
+
+function chooseGemini503Model(numberOf503Failures) {
+    return MODEL_NAME === 'gemini-3.5-flash-lite' &&
+        numberOf503Failures >= GEMINI_503_FALLBACK_THRESHOLD
+        ? GEMINI_503_FALLBACK_MODEL : MODEL_NAME;
+}
+function isExactGemini503(error) {
+    return Number(error?.response?.status || 0) === 503 ||
+        /(?:status code|HTTP|Gemini)\s*[:=]?\s*503\b/i.test(String(error?.message || ''));
+}
 
 // v184: limita este pe o traducere, NU globală. Nu influențează ceilalți utilizatori.
 const TRANSLATION_MAX_DURATION_MS = 15 * 60 * 1000;
@@ -449,7 +463,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.189',
+    version: '13.2.190',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6054,6 +6068,7 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
     const attemptedKeyStates = new Set();
     let rateLimitAttempts = 0;
     let fiveXxAttempts = 0;
+    let gemini503Failures = 0;
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxKeyAttempts; attempt++) {
@@ -6074,7 +6089,10 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
                 failFastIfNoAvailable: true
             });
             attemptedKeyStates.add(keyState);
-            return await callGemini(prompt, keyState, options);
+            return await callGemini(prompt, keyState, {
+                ...options,
+                modelName: chooseGemini503Model(gemini503Failures)
+            });
         } catch (error) {
             lastError = error;
             throwIfTranslationTimedOut();
@@ -6099,6 +6117,14 @@ async function callGeminiWithKeyRotationUnlocked(prompt, keyStates, options = {}
 
             if (is5xx) {
                 fiveXxAttempts++;
+                if (isExactGemini503(error)) {
+                    gemini503Failures++;
+                    if (gemini503Failures === GEMINI_503_FALLBACK_THRESHOLD &&
+                        MODEL_NAME === 'gemini-3.5-flash-lite' &&
+                        fiveXxAttempts < maxTransientAttempts && attempt < maxKeyAttempts) {
+                        console.log(`${c.yellow}↪ [Gemini Recovery] 2 erori 503 cu ${MODEL_NAME}; următoarea probă folosește ${GEMINI_503_FALLBACK_MODEL}, fără resetarea încercărilor.${c.reset}`);
+                    }
+                }
                 if (fiveXxAttempts < maxTransientAttempts && attempt < maxKeyAttempts) {
                     // callGemini a înregistrat backoff-ul grupului de chei.
                     // Un 503 nu înseamnă că alte grupuri de chei trebuie puse în pauză.
@@ -6163,7 +6189,8 @@ function getRequestStartIntervalMs(requestLabel) {
 
 async function callGemini(prompt, keyState, options = {}) {
     throwIfTranslationTimedOut();
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent`;
+    const modelName = options.modelName || MODEL_NAME;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
     const timeout = Number.isInteger(options.timeout) ? options.timeout : 120000;
     const responseSchema = options.responseSchema || {
         type: 'ARRAY',
@@ -6196,7 +6223,7 @@ async function callGemini(prompt, keyState, options = {}) {
     const thinkingLevel = Object.prototype.hasOwnProperty.call(options, 'thinkingLevel')
         ? options.thinkingLevel
         : 'MEDIUM';
-    if (/^gemini-3(?:\.|-)/i.test(String(MODEL_NAME)) && typeof thinkingLevel === 'string' && thinkingLevel) {
+    if (/^gemini-3(?:\.|-)/i.test(String(modelName)) && typeof thinkingLevel === 'string' && thinkingLevel) {
         generationConfig.thinkingConfig = { thinkingLevel };
     }
 
@@ -6842,6 +6869,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
     let attempt = 0; // numărul de apeluri API reale; selectarea/așteptarea nu consumă bugetul
     let transientAttempts = 0;
+    let gemini503Failures = 0; // doar HTTP 503, per calup; 429 nu schimbă modelul
     while (attempt < maxAttemptsThisPass) {
         throwIfTranslationTimedOut();
         let keyState = null;
@@ -6857,7 +6885,11 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
 
             console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks}...${c.reset}`);
             const requestLabel = `Calup ${globalChunkIndex + 1}/${totalChunks}`;
-            const raw = await callGemini(prompt, keyState, { requestLabel, responseSchema: buildTranslationResponseSchema(requestChunk) });
+            const raw = await callGemini(prompt, keyState, {
+                requestLabel,
+                responseSchema: buildTranslationResponseSchema(requestChunk),
+                modelName: chooseGemini503Model(gemini503Failures)
+            });
             const parsed = safeJsonParse(raw);
             const dict = normalizeTranslationPayload(parsed);
 
@@ -7007,6 +7039,13 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             }
             if (is5xx) {
                 transientAttempts++;
+                if (isExactGemini503(error)) {
+                    gemini503Failures++;
+                    if (gemini503Failures === GEMINI_503_FALLBACK_THRESHOLD &&
+                        MODEL_NAME === 'gemini-3.5-flash-lite' && transientAttempts < maxTransientAttempts) {
+                        console.log(`${c.yellow}↪ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: 2 erori 503 cu ${MODEL_NAME}; următoarea încercare folosește ${GEMINI_503_FALLBACK_MODEL} (același buget total de 8 încercări 5xx).${c.reset}`);
+                    }
+                }
                 attemptedKeyStates.clear(); // 503/5xx este o problemă de serviciu, nu un motiv de a epuiza proiectele
                 if (transientAttempts < maxTransientAttempts && attempt < maxAttemptsThisPass) {
                     console.log(`${c.yellow}↻ Retry ${transientAttempts}/${maxTransientAttempts} | Backoff activ${c.reset}`);
@@ -12422,5 +12461,5 @@ app.get('/health', (req, res) => {
 const PORT = Number(process.env.PORT) || 7000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
-    console.log(`${c.cyan}🧠 Model Gemini activ: ${MODEL_NAME}${c.reset}`);
+    console.log(`${c.cyan}🧠 Model Gemini principal: ${MODEL_NAME}; fallback 503: ${chooseGemini503Model(2)} după două erori 503, fără resetarea retry-urilor.${c.reset}`);
 });
