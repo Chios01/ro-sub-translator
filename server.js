@@ -463,7 +463,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.192',
+    version: '13.2.191',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -891,78 +891,6 @@ function parseMediaIdentity(type, rawId) {
     };
 }
 
-// v192 (baza originală v191): ignorăm numai formatele ASS/SSA confirmate de SubDL.
-// Un ZIP nu este exclus după extensia arhivei: poate conține un fișier SRT.
-// Nu facem download-uri în plus pentru listare. Dacă o variantă fără metadate de
-// format se dovedește ASS/SSA la descărcare, nu o mai afișăm în cereri ulterioare
-// pe aceeași instanță Render. Păstrăm numai identificatori hash, nu URL-uri/tokenuri.
-const SUBDL_ASS_SSA_SKIP_TTL_MS = 6 * 60 * 60 * 1000;
-const SUBDL_ASS_SSA_SKIP_CACHE_MAX = 256;
-const subdlAssSsaSkipCache = new Map();
-
-function subdlAssSsaSkipKey(reference) {
-    const ref = String(reference || '');
-    let identity = '';
-    if (ref.startsWith('url_')) {
-        try {
-            const direct = subdlDirectDownloadUrl(Buffer.from(ref.slice(4), 'base64url').toString('utf8'));
-            if (direct) {
-                const url = new URL(direct);
-                identity = `url:${url.hostname}${url.pathname}`;
-            }
-        } catch (_) {}
-    } else if (ref.startsWith('api_')) {
-        const decoded = decodeSubdlApiReference(ref);
-        if (decoded?.directUrl) {
-            try {
-                const direct = subdlDirectDownloadUrl(decoded.directUrl);
-                if (direct) {
-                    const url = new URL(direct);
-                    identity = `url:${url.hostname}${url.pathname}`;
-                }
-            } catch (_) {}
-        }
-        if (!identity && decoded?.nId) identity = `api:${decoded.nId}:${decoded.fileNId || ''}`;
-    } else if (/^[A-Za-z0-9_-]{1,128}$/.test(ref)) {
-        identity = `api:${ref}:`;
-    }
-    return identity ? crypto.createHash('sha256').update(identity).digest('hex') : '';
-}
-
-function subdlAssSsaWasSkipped(reference) {
-    const key = subdlAssSsaSkipKey(reference);
-    if (!key) return false;
-    const expiresAt = subdlAssSsaSkipCache.get(key);
-    if (!expiresAt) return false;
-    if (expiresAt <= Date.now()) { subdlAssSsaSkipCache.delete(key); return false; }
-    return true;
-}
-
-function rememberSubdlAssSsaSkip(reference) {
-    const key = subdlAssSsaSkipKey(reference);
-    if (!key) return;
-    if (subdlAssSsaSkipCache.size >= SUBDL_ASS_SSA_SKIP_CACHE_MAX) {
-        subdlAssSsaSkipCache.delete(subdlAssSsaSkipCache.keys().next().value);
-    }
-    subdlAssSsaSkipCache.set(key, Date.now() + SUBDL_ASS_SSA_SKIP_TTL_MS);
-}
-
-function subdlRowIsAssSsa(row) {
-    const formatFields = [row?.format, row?.file_format, row?.fileFormat,
-        row?.subtitle_format, row?.subtitleFormat, row?.extension, row?.ext];
-    if (formatFields.some(value => /^(?:\.?(?:ass|ssa)|ass\/ssa|ssa\/ass)$/i.test(String(value || '').trim()))) return true;
-    const fileNames = [row?.filename, row?.file_name, row?.fileName,
-        row?.subtitle_filename, row?.subtitleFilename, row?.original_name,
-        row?.originalName, row?.name];
-    if (fileNames.some(value => /\.(?:ass|ssa)$/i.test(String(value || '').trim()))) return true;
-    const direct = row?.url ?? row?.download_url ?? row?.downloadUrl ?? row?.direct_url;
-    if (direct) {
-        try { return /\.(?:ass|ssa)$/i.test(new URL(String(direct), 'https://dl.subdl.com').pathname); }
-        catch (_) { return false; }
-    }
-    return false;
-}
-
 function subdlEnglishLanguage(row) {
     const value = String(row?.lang || row?.language || row?.language_name || row?.lang_name || '').toLowerCase().trim();
     if (!value) return true; // the API request itself is restricted to English
@@ -1201,7 +1129,7 @@ function subdlCandidateRows(rows, identity, expectedTitle = '', options = {}) {
     const seen = new Set();
     const candidates = [];
     expandSubdlSubtitleRows(rows).forEach((row, sourceOrder) => {
-        if (!row || !subdlEnglishLanguage(row) || subdlRowIsAssSsa(row)) return;
+        if (!row || !subdlEnglishLanguage(row)) return;
         const explicitNId = String(
             row.n_id ?? row.nId ?? row.nid ?? row.subtitle_n_id ?? row.subtitleNId ??
             row.subtitle_id ?? row.subtitleId ?? row.id ?? ''
@@ -1254,7 +1182,6 @@ function subdlCandidateRows(rows, identity, expectedTitle = '', options = {}) {
             nId = `url_${Buffer.from(directUrl, 'utf8').toString('base64url')}`;
         }
 
-        if (subdlAssSsaWasSkipped(nId)) return;
         if (!nId || (nId.startsWith('url_')
             ? !/^url_[A-Za-z0-9_-]{8,2048}$/.test(nId)
             : nId.startsWith('api_')
@@ -2044,15 +1971,11 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
         return normalizeDownloadedSubtitle(
             bytes,
             directDownloadUrl || `https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(plainNId)}/download`,
-            String(requestedFilename || '').slice(0, 500),
-            true // Restricția ASS/SSA este exclusiv pentru SubDL.
+            String(requestedFilename || '').slice(0, 500)
         );
     } catch (error) {
         const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
-        if (error?.subdlAssSsaSkipped) rememberSubdlAssSsaSkip(reference);
-        if (!error?.subdlAssSsaSkipped) {
-            console.log(`[SubDL] Descărcare nereușită (${isApiReference ? 'ID derivat din URL' : isDirectUrlRef ? 'URL direct' : 'nId'}; ${status || 'eroare de rețea'}); nu se expune cheia.`);
-        }
+        console.log(`[SubDL] Descărcare nereușită (${isApiReference ? 'ID derivat din URL' : isDirectUrlRef ? 'URL direct' : 'nId'}; ${status || 'eroare de rețea'}); nu se expune cheia.`);
         error.statusCode = error.statusCode || 502;
         throw error;
     }
@@ -11159,30 +11082,15 @@ async function fetchSubdlDirectWithFallback(url, apiKey) {
 }
 
 
-function subdlAssSsaSkipError() {
-    const error = new Error('SubDL: format ASS/SSA omis (sunt acceptate SRT/VTT).');
-    error.subdlAssSsaSkipped = true;
-    return error;
-}
-
-function isAssSsaSubtitlePayload(text) {
-    const sample = String(text || '').replace(/^\uFEFF/, '').slice(0, 16384);
-    return /^\s*\[Script Info\]\s*$/im.test(sample) &&
-        (/^\s*\[Events\]\s*$/im.test(sample) || /^\s*ScriptType\s*:/im.test(sample));
-}
-
-function normalizeDownloadedSubtitle(bytes, sourceUrl, preferredVideoFilename = '', skipAssSsa = false) {
+function normalizeDownloadedSubtitle(bytes, sourceUrl, preferredVideoFilename = '') {
     const buffer = Buffer.from(bytes || []);
     if (buffer.length >= 4 && buffer.readUInt32LE(0) === 0x04034b50) {
-        return extractSubtitleFromZip(buffer, preferredVideoFilename, skipAssSsa);
+        return extractSubtitleFromZip(buffer, preferredVideoFilename);
     }
 
     let pathExtension = '';
     try { pathExtension = new URL(sourceUrl).pathname; } catch (_) {}
     const decoded = decodeSubtitleBytes(buffer);
-    if (skipAssSsa && (/\.(?:ass|ssa)$/i.test(pathExtension) || isAssSsaSubtitlePayload(decoded))) {
-        throw subdlAssSsaSkipError();
-    }
     try {
         return normalizeSubtitleText(decoded, pathExtension || 'subtitle.srt');
     } catch (firstError) {
@@ -11408,7 +11316,7 @@ function scoreSubtitleArchiveFilename(subtitleFilename, videoFilename) {
     return score;
 }
 
-function extractSubtitleFromZip(buffer, preferredVideoFilename = '', skipAssSsa = false) {
+function extractSubtitleFromZip(buffer, preferredVideoFilename = '') {
     const bytes = Buffer.from(buffer);
     if (bytes.length < 22) throw new Error('arhivă ZIP prea scurtă');
     const minEocd = Math.max(0, bytes.length - 22 - 0xFFFF);
@@ -11423,7 +11331,6 @@ function extractSubtitleFromZip(buffer, preferredVideoFilename = '', skipAssSsa 
     if (!entryCount || entryCount > 300 || centralOffset >= bytes.length) throw new Error('arhivă ZIP goală sau cu structură neacceptată');
 
     const files = [];
-    let omittedAssSsa = false;
     const MAX_TOTAL_UNCOMPRESSED_SUBTITLE_BYTES = 32 * 1024 * 1024;
     let totalUncompressedSubtitleBytes = 0;
     let offset = centralOffset;
@@ -11442,7 +11349,6 @@ function extractSubtitleFromZip(buffer, preferredVideoFilename = '', skipAssSsa 
 
         if ((flags & 1) !== 0 || /(^|\/)__MACOSX\//i.test(filename) || /(^|\/)\._/.test(filename) || /\/$/.test(filename)) continue;
         if (!/\.(srt|vtt|ass|ssa)$/i.test(filename)) continue;
-        if (skipAssSsa && /\.(?:ass|ssa)$/i.test(filename)) { omittedAssSsa = true; continue; }
         if (compressedSize > bytes.length || uncompressedSize > 16 * 1024 * 1024 || localOffset + 30 > bytes.length) continue;
         if (bytes.readUInt32LE(localOffset) !== 0x04034b50) continue;
         const localNameLength = bytes.readUInt16LE(localOffset + 26);
@@ -11472,16 +11378,8 @@ function extractSubtitleFromZip(buffer, preferredVideoFilename = '', skipAssSsa 
 
     files.sort((a, b) => (b.matchScore - a.matchScore) || (a.priority - b.priority));
     for (const file of files) {
-        try {
-            const decoded = decodeSubtitleBytes(file.content);
-            if (skipAssSsa && isAssSsaSubtitlePayload(decoded)) {
-                omittedAssSsa = true;
-                continue;
-            }
-            return normalizeSubtitleText(decoded, file.filename);
-        } catch (_) {}
+        try { return normalizeSubtitleText(decodeSubtitleBytes(file.content), file.filename); } catch (_) {}
     }
-    if (skipAssSsa && omittedAssSsa) throw subdlAssSsaSkipError();
     throw new Error('arhiva nu conține un fișier SRT/VTT/ASS valid');
 }
 
@@ -11675,11 +11573,7 @@ app.get('/:configData/translate', async (req, res) => {
                                 throw subdlError;
                             }
                             const status = Number(subdlError?.response?.status || subdlError?.subdlDownloadMeta?.status || 0);
-                            if (subdlError?.subdlAssSsaSkipped) {
-                                console.log('[SubDL] Format ASS/SSA omis; folosesc OpenSubtitles.');
-                            } else {
-                                console.log(`${c.yellow}[SubDL] Descărcarea a eșuat (${status || 'rețea'}); încerc fallback OpenSubtitles.${c.reset}`);
-                            }
+                            console.log(`${c.yellow}[SubDL] Descărcarea a eșuat (${status || 'rețea'}); încerc fallback OpenSubtitles.${c.reset}`);
                             const fallbackResponse = await fetchValidatedSubtitleUrl(validatedFallbackTarget.url);
                             effectiveSubtitleSource = 'OpenSubtitles (fallback după SubDL)';
                             effectiveSubtitleName = fallbackSubtitleName || 'OpenSubtitles fallback';
