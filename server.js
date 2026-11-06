@@ -54,7 +54,7 @@ const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
 const PREVIOUS_TRANSLATION_CONTEXT = 8;
 
-// v192: traducerea principală folosește HIGH; cererile auxiliare păstrează MEDIUM.
+// v191: model principal cu fallback 503; logăm modelul fiecărei încercări și rezultatul calupului.
 // la același calup/cerere auxiliară. Nu se schimbă cheile, cotele sau bugetul de retry.
 const MODEL_NAME =
     process.env.GEMINI_MODEL ||
@@ -463,7 +463,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.192',
+    version: '13.2.191',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6206,7 +6206,7 @@ async function callGemini(prompt, keyState, options = {}) {
         }
     };
 
-    // MEDIUM rămâne implicit pentru cererile auxiliare; traducerea principală cere HIGH.
+    // RO Sub Translator folosește nivelul de gândire MEDIUM pentru traduceri mai atente.
     // Gemini 3.5 Flash-Lite îl suportă; parametrul temperature este omis deoarece
     // documentația Gemini 3.5 îl marchează drept depreciat/ignorat pentru aceste modele.
     // Fallback-ul plainText este folosit numai când Grammar Review returnează
@@ -6218,7 +6218,7 @@ async function callGemini(prompt, keyState, options = {}) {
             responseMimeType: 'application/json',
             responseSchema
         };
-    // Nivelul implicit este MEDIUM pentru verificările și recuperările auxiliare.
+    // Nivelul implicit este MEDIUM pentru traducere și verificările auxiliare.
     // O etapă poate supraregla nivelul prin options.thinkingLevel când este necesar.
     const thinkingLevel = Object.prototype.hasOwnProperty.call(options, 'thinkingLevel')
         ? options.thinkingLevel
@@ -6889,8 +6889,7 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             const raw = await callGemini(prompt, keyState, {
                 requestLabel,
                 responseSchema: buildTranslationResponseSchema(requestChunk),
-                modelName: modelUsedForAttempt,
-                thinkingLevel: 'HIGH' // Se aplică și modelului fallback ales pentru acest calup.
+                modelName: modelUsedForAttempt
             });
             const parsed = safeJsonParse(raw);
             const dict = normalizeTranslationPayload(parsed);
@@ -12463,5 +12462,5 @@ app.get('/health', (req, res) => {
 const PORT = Number(process.env.PORT) || 7000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`${c.green}🚀 RO Sub Translator v${manifest.version} pornit${c.reset}`);
-    console.log(`${c.cyan}🧠 Model Gemini principal: ${MODEL_NAME}; fallback 503: ${chooseGemini503Model(2)} după două erori 503, fără resetarea retry-urilor; gândire: HIGH traducere / MEDIUM verificări.${c.reset}`);
+    console.log(`${c.cyan}🧠 Model Gemini principal: ${MODEL_NAME}; fallback 503: ${chooseGemini503Model(2)} după două erori 503, fără resetarea retry-urilor.${c.reset}`);
 });
