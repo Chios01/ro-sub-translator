@@ -31,14 +31,14 @@ const BROWSER_USER_AGENT =
 
 const CHUNK_SIZE = 165;
 const CONCURRENCY_LIMIT = 3;
-// v180: trei cereri per configurare de chei (utilizator), maximum 9 în total.
+// v189: trei cereri per configurare de chei, maximum 15 în total.
 // Pauzele 429 si 5xx Gemini se aplica numai grupului de chei afectat.
 // Nu identificăm conturi Stremio: aceeași configurare de chei înseamnă același grup.
-// Pe Render poate fi redus la 6 sau 3 prin GEMINI_GLOBAL_MAX_CONCURRENCY,
+// Pe Render poate fi redus prin GEMINI_GLOBAL_MAX_CONCURRENCY,
 // fără a atinge limita de 3 calupuri a fiecărei traduceri.
 const configuredGeminiGlobalLimit = Number(process.env.GEMINI_GLOBAL_MAX_CONCURRENCY);
-const GEMINI_MAX_GLOBAL_CONCURRENT = [3, 6, 9].includes(configuredGeminiGlobalLimit)
-    ? configuredGeminiGlobalLimit : 9;
+const GEMINI_MAX_GLOBAL_CONCURRENT = [3, 6, 9, 12, 15].includes(configuredGeminiGlobalLimit)
+    ? configuredGeminiGlobalLimit : 15;
 const GEMINI_GLOBAL_START_GAP_MS = 250;
 
 // După 429, nu pornim cereri noi din ACEEAȘI configurare timp de 5 secunde.
@@ -105,8 +105,8 @@ function buildTranslationFailureSrt(error) {
     return `1\n00:00:00,000 --> 00:01:00,000\n${lines.join('\n')}\n\n2\n00:01:00,000 --> 06:00:00,000\n\u200B\n`;
 }
 
-function runTranslationWithDeadline(worker) {
-    const job = { controller: new AbortController() };
+function runTranslationWithDeadline(worker, logIdentity = null) {
+    const job = { controller: new AbortController(), logIdentity };
     let timeoutHandle;
     const deadline = new Promise((_, reject) => {
         timeoutHandle = setTimeout(() => {
@@ -140,6 +140,77 @@ const c = {
     magenta: '\x1b[35m',
     cyan: '\x1b[36m'
 };
+
+// v189: etichetă stabilă pentru fiecare traducere, inclusiv toate calupurile,
+// erorile Gemini, QA și mesajul final. U = configurare DISTINCTĂ de chei, nu
+// cont Stremio; T = operațiune de traducere, diferită și în același grup.
+// Emoji-urile rămân colorate și dacă Render nu interpretează secvențele ANSI.
+const TRANSLATION_LOG_OWNER_COLORS = ['🟦', '🟪', '🟩', '🟨', '🟥'];
+const translationLogOwners = new Map();
+let nextTranslationLogOwner = 1;
+let nextTranslationLogJob = 1;
+
+function createTranslationLogIdentity(fingerprint) {
+    let owner = translationLogOwners.get(fingerprint);
+    if (!owner) {
+        const number = nextTranslationLogOwner++;
+        owner = {
+            number,
+            color: TRANSLATION_LOG_OWNER_COLORS[(number - 1) % TRANSLATION_LOG_OWNER_COLORS.length],
+            lastSeenAt: Date.now()
+        };
+        translationLogOwners.set(fingerprint, owner);
+    }
+    owner.lastSeenAt = Date.now();
+    // Curățăm numai identități vechi când sunt numeroase. ID-urile sunt monotone
+    // pe durata procesului, deci nu identificăm greșit o traducere cu alta.
+    if (translationLogOwners.size > 300) {
+        const activeFingerprints = new Set();
+        for (const entry of memoryCache.values()) {
+            if (entry && typeof entry.then === 'function' && entry.translationOwnerFingerprint) {
+                activeFingerprints.add(entry.translationOwnerFingerprint);
+            }
+        }
+        for (const [id, record] of translationLogOwners) {
+            if (translationLogOwners.size <= 240) break;
+            if (id !== fingerprint && !activeFingerprints.has(id) &&
+                Date.now() - record.lastSeenAt > 30 * 60 * 1000) {
+                translationLogOwners.delete(id);
+            }
+        }
+    }
+    const jobNumber = nextTranslationLogJob++;
+    return {
+        ownerNumber: owner.number,
+        jobNumber,
+        prefix: `${owner.color} [U${String(owner.number).padStart(2, '0')} T${String(jobNumber).padStart(5, '0')}]`
+    };
+}
+
+// Contextul AsyncLocalStorage este creat O SINGURĂ DATĂ pentru job, nu pe calup.
+// Prefixăm doar mesajele emise din acel context; mesajele Render/HTTP fără job
+// rămân nemodificate. Culorile existente pentru warnings/QA se păstrează.
+const originalTranslationConsole = {
+    log: console.log.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console)
+};
+function prefixTranslationConsoleArgs(args) {
+    const identity = translationJobScope.getStore()?.logIdentity;
+    if (!identity) return args;
+    if (!args.length) return [identity.prefix];
+    if (typeof args[0] !== 'string') return [identity.prefix, ...args];
+    return [identity.prefix + ' ' + args[0].replace(/\n(?=[^\r\n])/g, '\n' + identity.prefix + ' '), ...args.slice(1)];
+}
+for (const method of ['log', 'warn', 'error']) {
+    console[method] = (...args) => originalTranslationConsole[method](...prefixTranslationConsoleArgs(args));
+}
+// Anumite mesaje sunt emise după finalizarea promise-ului, în ruta HTTP.
+// Le raportăm cu aceeași identitate a traducerii; nu schimbăm răspunsul SRT.
+function logTranslationResult(identity, message) {
+    if (!identity) return console.log(message);
+    return translationJobScope.run({ logIdentity: identity }, () => console.log(message));
+}
 
 // ============================================================
 // MEMORY CACHE & SECRET ARCHIVE (MAX 30 ELEMENTE)
@@ -378,7 +449,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.188',
+    version: '13.2.189',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -5228,7 +5299,7 @@ function buildTranslationResponseSchema(chunk) {
 // ============================================================
 
 // Controler general de siguranță (Render) + controlere independente pe grup de chei.
-// Trei configurații diferite pot avea fiecare câte 3 cereri active (maximum 9).
+// Cinci configurații diferite pot avea fiecare câte 3 cereri active (maximum 15).
 const geminiRequestControl = {
     active: 0,
     maxConcurrent: GEMINI_MAX_GLOBAL_CONCURRENT,
@@ -5241,7 +5312,7 @@ const geminiRequestControl = {
     consecutive5xx: 0,
     successesSinceThrottle: 0,
     // 429 și 5xx Gemini nu reduc limitele tuturor utilizatorilor; fallback-ul
-    // de compatibilitate rămâne inactiv. Plafonul global de 9 este doar de capacitate.
+    // de compatibilitate rămâne inactiv. Plafonul global de 15 este doar de capacitate.
     recent429Projects: new Map(),
     global429PauseUntil: 0,
     global429LastTriggerAt: 0,
@@ -5577,7 +5648,7 @@ function registerGlobalGemini429(cooldownMs, quotaKind = 'unknown', keyState = n
 }
 
 // 500–599 returnate de Gemini afectează DOAR configurația de chei a
-// apelului eșuat. Nu reducem limita globală de 9, care protejează Render Free.
+// apelului eșuat. Nu reducem limita globală de 15, care protejează capacitatea Render.
 // Dacă Google are o indisponibilitate reală comună, fiecare pool va primi
 // propriul backoff; nu putem face serviciul extern să devină independent.
 function registerGeminiOwner5xx(status, keyState = null) {
@@ -11445,6 +11516,7 @@ app.get('/:configData/translate', async (req, res) => {
             qaStatus = processPromise.qaStatus || qaStatus;
         } else {
             const startTime = Date.now();
+            const translationLogIdentity = createTranslationLogIdentity(ownerFingerprint);
             let effectiveSubtitleSource = String(req.query.source || '');
             let effectiveSubtitleName = String(req.query.subtitleName || '').slice(0, 300);
             let effectiveVersionTag = String(req.query.v || '');
@@ -11480,11 +11552,12 @@ app.get('/:configData/translate', async (req, res) => {
                 });
 
                 return await translateSrtWithGemini(String(srtRes.data || ''), userKeys, qaStatus, getMediaContextText(imdbId));
-            });
+            }, translationLogIdentity);
             // Atașăm proprietarul și QA înainte de publicarea promisiunii.
             // Ambele sunt comune cererilor identice care așteaptă acest job.
             processPromise.qaStatus = qaStatus;
             processPromise.translationOwnerFingerprint = ownerFingerprint;
+            processPromise.translationLogIdentity = translationLogIdentity;
             processPromise.translationMediaId = normalizedMediaId;
 
             memoryCache.set(cacheKey, processPromise);
@@ -11504,9 +11577,9 @@ app.get('/:configData/translate', async (req, res) => {
                         // Reîncercarea se face numai după resetarea explicită a cache-ului.
                         memoryCache.set(cacheKey, translatedSrtString.endsWith('\n') ? translatedSrtString : `${translatedSrtString}\n`);
                         qaFallbackCacheKeys.add(cacheKey);
-                        console.log(`${c.yellow}[Cache QA] Rezultatul parțial este memorat până la resetarea explicită a serviciului; cererile repetate nu vor porni automat o nouă traducere. ID-uri păstrate în engleză: ${(qaStatus.fallbackIds || qaStatus.unresolvedIds || []).join(', ') || 'necunoscute'}.${c.reset}`);
+                        logTranslationResult(translationLogIdentity, `${c.yellow}[Cache QA] Rezultatul parțial este memorat până la resetarea explicită a serviciului; cererile repetate nu vor porni automat o nouă traducere. ID-uri păstrate în engleză: ${(qaStatus.fallbackIds || qaStatus.unresolvedIds || []).join(', ') || 'necunoscute'}.${c.reset}`);
                     } else {
-                        console.log(`${c.yellow}[Cache] Rezultatul nu este memorat: traducerea este goală sau QA FINAL a raportat erori. O cerere ulterioară va putea reîncerca.${c.reset}`);
+                        logTranslationResult(translationLogIdentity, `${c.yellow}[Cache] Rezultatul nu este memorat: traducerea este goală sau QA FINAL a raportat erori. O cerere ulterioară va putea reîncerca.${c.reset}`);
                     }
                 }
                 cleanMemoryCache(cacheKey); 
@@ -11516,7 +11589,7 @@ app.get('/:configData/translate', async (req, res) => {
                 
                 const doneLabel = qaStatus.hasErrors ? 'DONE CU ERORI QA' : qaStatus.hasWarnings ? 'DONE CU AVERTISMENTE QA' : 'DONE';
                 const doneColor = qaStatus.hasErrors ? '31' : qaStatus.hasWarnings ? '33' : '96';
-                console.log(`\x1b[${doneColor}m[${doneLabel}] ${imdbId} | 🕒 ${timeFormatted}\x1b[0m\n`);
+                logTranslationResult(translationLogIdentity, `\x1b[${doneColor}m[${doneLabel}] ${imdbId} | 🕒 ${timeFormatted}\x1b[0m\n`);
                 
             }).catch((err) => {
                 // Mesajul final este raportat o singură dată în catch-ul rutei,
@@ -11558,7 +11631,7 @@ app.get('/:configData/translate', async (req, res) => {
         // cerere Stremio. Un job nou va fi raportat separat, chiar pentru același titlu.
         if (!processPromise || !loggedTranslationFailureJobs.has(processPromise)) {
             if (processPromise) loggedTranslationFailureJobs.add(processPromise);
-            console.log(`${c.red}[TRADUCERE EȘUATĂ] ${normalizedMediaId || 'ID'} | ${reason} | ${String(error?.message || error).slice(0, 190)}${c.reset}`);
+            logTranslationResult(processPromise?.translationLogIdentity, `${c.red}[TRADUCERE EȘUATĂ] ${normalizedMediaId || 'ID'} | ${reason} | ${String(error?.message || error).slice(0, 190)}${c.reset}`);
         }
         const failureSrt = buildTranslationFailureSrt(error);
         rememberTranslationFailure(cacheKey, failureSrt);
