@@ -54,7 +54,7 @@ const CONTEXT_LINES_BEFORE = 12;
 const CONTEXT_LINES_AFTER = 12;
 const PREVIOUS_TRANSLATION_CONTEXT = 8;
 
-// v190: model principal pentru toate cererile; fallback strict după două HTTP 503
+// v191: model principal cu fallback 503; logăm modelul fiecărei încercări și rezultatul calupului.
 // la același calup/cerere auxiliară. Nu se schimbă cheile, cotele sau bugetul de retry.
 const MODEL_NAME =
     process.env.GEMINI_MODEL ||
@@ -463,7 +463,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.190',
+    version: '13.2.191',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -6883,12 +6883,13 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             attemptedKeyStates.add(keyState);
             attempt++;
 
-            console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks}...${c.reset}`);
+            const modelUsedForAttempt = chooseGemini503Model(gemini503Failures);
+            console.log(`${c.cyan}➤ [Gemini] Traduc calup ${globalChunkIndex + 1}/${totalChunks}... | model: ${modelUsedForAttempt}${c.reset}`);
             const requestLabel = `Calup ${globalChunkIndex + 1}/${totalChunks}`;
             const raw = await callGemini(prompt, keyState, {
                 requestLabel,
                 responseSchema: buildTranslationResponseSchema(requestChunk),
-                modelName: chooseGemini503Model(gemini503Failures)
+                modelName: modelUsedForAttempt
             });
             const parsed = safeJsonParse(raw);
             const dict = normalizeTranslationPayload(parsed);
@@ -6962,10 +6963,10 @@ async function processChunkWithRetry(chunk, allItems, chunkStart, chunkEnd, prev
             if (missingItems.length > 0) {
                 const usableCount = chunk.length - missingItems.length;
                 const passthroughSuffix = passthroughNote ? `; ${passthroughNote}` : '';
-                console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: ${usableCount}/${chunk.length} intrări păstrate/utilizabile${passthroughSuffix}; ${missingItems.length} de recuperat (chei absente: ${missingKeyCount}; valori prezente dar goale/eliminate de formatter: ${presentButUnusableCount}); fără split.${c.reset}`);
+                console.log(`${c.yellow}⚠ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks}: ${usableCount}/${chunk.length} intrări păstrate/utilizabile${passthroughSuffix}; ${missingItems.length} de recuperat (chei absente: ${missingKeyCount}; valori prezente dar goale/eliminate de formatter: ${presentButUnusableCount}); fără split. | model: ${modelUsedForAttempt}${c.reset}`);
             } else {
                 const passthroughSuffix = passthroughNote ? `; ${passthroughNote}` : '';
-                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii${passthroughSuffix})${c.reset}`);
+                console.log(`${c.green}✔ [Gemini] Calup ${globalChunkIndex + 1}/${totalChunks} finalizat! (${chunk.length}/${chunk.length} linii${passthroughSuffix}) | model: ${modelUsedForAttempt}${c.reset}`);
             }
             return results;
         } catch (error) {
