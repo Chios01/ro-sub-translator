@@ -463,7 +463,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.191',
+    version: '13.2.192',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -4932,6 +4932,19 @@ function normalizeRomanianPunctuationSpacing(value) {
     }).join('\n');
 }
 
+// Gemini poate introduce un separator „/ ” la începutul unui rând de
+// continuare, deși sursa nu îl conține (ex. „Îmi pare rău...\n/ pe amândoi”).
+// Curățăm strict rândurile 2+; nu atingem slash-uri din sursă, rapoarte,
+// fracții, căi, URL-uri sau separatoare originale dintre vorbitori.
+function stripOrphanContinuationSlashForExport(value, sourceValue = '') {
+    const text = String(value ?? '');
+    if (!text.includes('\n') || String(sourceValue ?? '').includes('/')) return text;
+    return text.split('\n').map((line, index) => index === 0
+        ? line
+        : line.replace(/^([ \t]*)\/[ \t]+(?=\S)/u, '$1')
+    ).join('\n');
+}
+
 // Elimină exclusiv marcatorii de dialog aflați la începutul rândurilor din SRT-ul exportat.
 // Se aplică după toate regulile de layout, aliniere și capitalizare, astfel încât
 // să nu schimbe împărțirea replicilor sau logica internă de identificare a vorbitorilor.
@@ -5005,10 +5018,11 @@ function prepareSubtitleForExport(item, translatedText, englishNames = new Set()
         item.text, capitalizedText
     );
     const punctuationNormalizedText = normalizeRomanianPunctuationSpacing(terminalPunctuationSynchronizedText);
-    const exportText = removeLeadingDialogueDashesForExport(punctuationNormalizedText, item.text);
+    const slashNormalizedText = stripOrphanContinuationSlashForExport(punctuationNormalizedText, item.text);
+    const exportText = removeLeadingDialogueDashesForExport(slashNormalizedText, item.text);
     return {
         text: exportText,
-        translatedContext: punctuationNormalizedText,
+        translatedContext: slashNormalizedText,
         layoutAdjusted: finalLayoutText !== orthographySafeText.trim(),
         dashRestored: preLayoutDashAlignedText !== orthographySafeText || dashAlignedText !== finalLayoutText
     };
@@ -12193,7 +12207,9 @@ function isStandaloneSilencingCue(value) {
 
     if (hasExplicitShushingAction) {
         // „Mm. [shushes]” este un semnal de tăcere, nu un răspuns afirmativ.
-        return /^(?:m+|h+m+|m+h+m+)?$/u.test(clean);
+        // Păstrăm și „Sh! [shushes]” în inventarul semnalelor autonome:
+        // acțiunea dintre paranteze nu transformă șușoteala în dialog.
+        return /^(?:m+|h+m+|m+h+m+|s+h+|p+s+t+)?$/u.test(clean);
     }
     return /^(?:s+h+|p+s+t+)$/u.test(clean);
 }
@@ -12312,6 +12328,13 @@ function parseSrt(srt, stats = null) {
             stats.nonDialogueSegmentsRemoved += soundStripped.removedCount;
         }
         if (!rawText.trim() && soundStripped.removedCount) {
+            if (stats) stats.nonDialogueBlocksFiltered++;
+            continue;
+        }
+        // Un semnal izolat precum „Sh! [grunts]” devine „Sh!” abia după
+        // eliminarea cue-ului SDH. Refolosim detectorul existent pentru a nu-l
+        // trimite la Gemini/Empty Recovery/QA; dialogul mixt rămâne neatins.
+        if (isStandaloneSilencingCue(rawText)) {
             if (stats) stats.nonDialogueBlocksFiltered++;
             continue;
         }
