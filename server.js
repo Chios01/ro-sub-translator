@@ -463,7 +463,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.195',
+    version: '13.2.191',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1812,30 +1812,6 @@ async function handleSubtitles(req, res) {
     }
 }
 
-// Diagnostic pasiv, activ numai când SubDL livrează bytes fără subtitrare validă.
-// Nu afișăm conținutul, URL-urile, tokenurile, cheile sau antetele serverului.
-function classifyInvalidSubdlContent(bytes) {
-    const buffer = Buffer.from(bytes || []);
-    if (buffer.length >= 4 && buffer.readUInt32LE(0) === 0x04034b50) return 'ZIP';
-    const prefix = buffer.toString('utf8', 0, Math.min(buffer.length, 256)).replace(/^\uFEFF/, '').trimStart();
-    if (/^(?:<!doctype\s+html\b|<html\b|<head\b|<body\b)/i.test(prefix)) return 'HTML';
-    if (/^(?:\[Script Info\]|\[V4\+? Styles\]|\[Events\])/i.test(prefix)) return 'ASS/SSA';
-    if (/^[{[]/.test(prefix)) return 'JSON/array';
-    if (/^WEBVTT\b/i.test(prefix)) return 'VTT';
-    if (/^\d{1,6}\s*\n\s*\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->/i.test(prefix) ||
-        /^\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->/i.test(prefix)) return 'SRT-like';
-    return 'alt-format';
-}
-
-function classifyInvalidSubdlReason(error) {
-    const message = String(error?.message || '');
-    if (message === 'arhiva ZIP nu are director central valid' || message === 'arhivă ZIP prea scurtă' ||
-        message === 'arhivă ZIP goală sau cu structură neacceptată') return 'structura-zip';
-    if (message === 'arhiva nu conține un fișier SRT/VTT/ASS valid') return 'zip-fara-subtitrare-valida';
-    if (message === 'fișierul descărcat nu conține subtitrare SRT/VTT/ASS recunoscută') return 'format-srt-nerecunoscut';
-    return 'validare-esuata';
-}
-
 async function getSubdlSubtitleText(configId, reference, requestedFilename = '') {
     const isApiReference = reference.startsWith('api_');
     const isDirectUrlRef = reference.startsWith('url_');
@@ -1920,7 +1896,7 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
                     bytes = await fetchSubdlDirectWithFallback(directDownloadUrl, addonConfig.subdlKey);
                 } catch (error) {
                     exactFileError = error;
-                    console.log(`[SubDL] Descărcarea fișierului exact a eșuat (${subdlDownloadErrorLabel(error)}); încerc API v2 ca rezervă.`);
+                    console.log(`[SubDL] Descărcarea fișierului exact a eșuat (${error.response?.status || error.subdlDownloadMeta?.status || 'rețea'}); încerc API v2 ca rezervă.`);
                 }
             }
 
@@ -1930,7 +1906,7 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
                 url.searchParams.set('format', 'file');
                 return url.toString();
             };
-            const requestApi = () => retryTransientSubdlDownload(() => axios.get(makeApiUrl(), {
+            const requestApi = () => axios.get(makeApiUrl(), {
                 headers: { Authorization: `Bearer ${addonConfig.subdlKey}`, 'User-Agent': BROWSER_USER_AGENT_FETCH },
                 timeout: 25000,
                 maxContentLength: 25 * 1024 * 1024,
@@ -1938,7 +1914,7 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
                 responseType: 'arraybuffer',
                 maxRedirects: 0,
                 validateStatus: status => status >= 200 && status < 400
-            }), 'Descărcare API v2');
+            });
 
             if (!bytes) {
                 try {
@@ -1992,21 +1968,14 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
             }
         }
 
-        try {
-            return normalizeDownloadedSubtitle(
-                bytes,
-                directDownloadUrl || `https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(plainNId)}/download`,
-                String(requestedFilename || '').slice(0, 500)
-            );
-        } catch (contentError) {
-            // Un HTTP 200 cu HTML/ZIP/SRT invalid nu este eroare de rețea.
-            // Nu relansăm cereri; păstrăm fallback-ul OpenSubtitles.
-            contentError.subdlContentValidationFailed = true;
-            console.log(`[SubDL] Diagnostic conținut invalid: tip=${classifyInvalidSubdlContent(bytes)}; bytes=${Buffer.byteLength(bytes)}; cauză=${classifyInvalidSubdlReason(contentError)}. Fără text sau chei.`);
-            throw contentError;
-        }
+        return normalizeDownloadedSubtitle(
+            bytes,
+            directDownloadUrl || `https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(plainNId)}/download`,
+            String(requestedFilename || '').slice(0, 500)
+        );
     } catch (error) {
-        console.log(`[SubDL] Descărcare nereușită (${isApiReference ? 'ID derivat din URL' : isDirectUrlRef ? 'URL direct' : 'nId'}; ${subdlDownloadErrorLabel(error)}); nu se expune cheia.`);
+        const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
+        console.log(`[SubDL] Descărcare nereușită (${isApiReference ? 'ID derivat din URL' : isDirectUrlRef ? 'URL direct' : 'nId'}; ${status || 'eroare de rețea'}); nu se expune cheia.`);
         error.statusCode = error.statusCode || 502;
         throw error;
     }
@@ -10975,14 +10944,7 @@ async function validateTargetUrl(rawUrl) {
         try {
             addresses = await dns.lookup(hostname, { all: true, verbatim: true });
         } catch (error) {
-            // Păstrăm doar codul DNS, nu mesajul original (care poate conține
-            // detalii interne). EAI_AGAIN poate fi reîncercat de SubDL;
-            // ENOTFOUND rămâne o eroare definitivă, fără retry suplimentar.
-            const safeDnsCodes = new Set(['EAI_AGAIN', 'ENOTFOUND', 'EAI_FAIL', 'EAI_NODATA']);
-            const safeCode = String(error?.code || '').toUpperCase();
-            const dnsError = new Error('Nu s-a putut rezolva gazda URL-ului.');
-            if (safeDnsCodes.has(safeCode)) dnsError.code = safeCode;
-            throw dnsError;
+            throw new Error('Nu s-a putut rezolva gazda URL-ului.');
         }
     }
 
@@ -11032,58 +10994,9 @@ async function fetchValidatedSubtitleUrl(initialUrl) {
     throw new Error('Prea multe redirecționări pentru URL-ul sursă.');
 }
 
-// v192: o singură reîncercare pentru erori temporare de DESCĂRCARE SubDL.
-// Nu se aplică la 400/401/403/404, 429, răspuns invalid sau erori de validare URL.
-const SUBDL_TRANSIENT_DOWNLOAD_CODES = new Set([
-    'ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET', 'EPIPE',
-    'EAI_AGAIN', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ERR_NETWORK'
-]);
-
-function subdlTransientDownloadReason(error) {
-    const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
-    if ([502, 503, 504].includes(status)) return `HTTP ${status}`;
-    // Un HTTP 4xx sau alt status real nu se confundă cu eroarea de rețea.
-    if (status) return '';
-    const code = String(error?.code || '').toUpperCase();
-    return SUBDL_TRANSIENT_DOWNLOAD_CODES.has(code) ? code : '';
-}
-
-function subdlDownloadErrorLabel(error) {
-    const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
-    if (status) return status;
-    const transientReason = subdlTransientDownloadReason(error);
-    if (transientReason) return transientReason;
-    // Diagnostice din coduri/mesaje cunoscute, fără URL, tokenuri sau text arbitrar.
-    if (error?.subdlContentValidationFailed) return 'fișier invalid (ZIP/SRT)';
-    const code = String(error?.code || '').toUpperCase();
-    if (['ENOTFOUND', 'EAI_FAIL', 'EAI_NODATA'].includes(code)) return `DNS ${code}`;
-    if (['CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'DEPTH_ZERO_SELF_SIGNED_CERT'].includes(code)) return 'certificat TLS invalid';
-    const message = String(error?.message || '');
-    if (message === 'Nu s-a putut rezolva gazda URL-ului.') return 'eroare DNS fără cod';
-    if (message === 'Destinația URL nu este permisă.') return 'destinație URL respinsă de validare';
-    if (message === 'URL sursă invalid.' || message === 'URL SubDL nepermis.') return 'URL invalid';
-    if (message === 'SubDL a returnat un fișier gol.' || message === 'descărcarea subtitrării a returnat un fișier gol') return 'fișier gol';
-    if (message.includes('redirecționări') || message.includes('Redirecționare') || message.includes('redirecționare')) return 'redirecționare invalidă';
-    if (message === 'SubDL nu a returnat o subtitrare descărcabilă.') return 'răspuns SubDL fără subtitrare';
-    return 'eroare neclasificată';
-}
-
-async function retryTransientSubdlDownload(operation, stage) {
-    try {
-        return await operation();
-    } catch (error) {
-        const reason = subdlTransientDownloadReason(error);
-        if (!reason) throw error;
-        // Fără chei, tokenuri sau URL-uri în log. Nu repetăm dacă al doilea apel eșuează.
-        console.log(`[SubDL] ${stage}: ${reason}; reîncerc o singură dată după 1s.`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        return operation();
-    }
-}
-
 // Descarcă un candidat de subtitrare ca bytes, urmărind manual redirecționările
 // și validând fiecare destinație pentru a păstra protecția SSRF.
-async function fetchValidatedSubtitleBytesOnce(initialUrl, subdlApiKey = '', authMode = 'header') {
+async function fetchValidatedSubtitleBytes(initialUrl, subdlApiKey = '', authMode = 'header') {
     let currentUrl = initialUrl;
     const maxRedirects = 5;
 
@@ -11143,14 +11056,6 @@ async function fetchValidatedSubtitleBytesOnce(initialUrl, subdlApiKey = '', aut
     throw new Error('prea multe redirecționări pentru subtitrarea alternativă');
 }
 
-async function fetchValidatedSubtitleBytes(initialUrl, subdlApiKey = '', authMode = 'header') {
-    // Revalidăm URL-ul și fiecare redirecționare la a doua încercare (protecție SSRF).
-    return retryTransientSubdlDownload(
-        () => fetchValidatedSubtitleBytesOnce(initialUrl, subdlApiKey, authMode),
-        'Descărcare directă'
-    );
-}
-
 async function fetchSubdlDirectWithFallback(url, apiKey) {
     let headerError;
     try {
@@ -11186,13 +11091,6 @@ function normalizeDownloadedSubtitle(bytes, sourceUrl, preferredVideoFilename = 
     let pathExtension = '';
     try { pathExtension = new URL(sourceUrl).pathname; } catch (_) {}
     const decoded = decodeSubtitleBytes(buffer);
-    // SubDL can serve raw ASS/SSA under extensionless /subtitle/ URLs.
-    // Detect only the recognized ASS/SSA headers and use the existing
-    // validated ASS -> SRT converter; invalid payloads still fail closed.
-    // This does not trigger any additional provider requests or affect Gemini.
-    if (/^(?:\[Script Info\]|\[V4\+? Styles\]|\[Events\])/i.test(decoded.trimStart())) {
-        return normalizeSubtitleText(decoded, 'subtitle.ass');
-    }
     try {
         return normalizeSubtitleText(decoded, pathExtension || 'subtitle.srt');
     } catch (firstError) {
@@ -11674,7 +11572,8 @@ app.get('/:configData/translate', async (req, res) => {
                             } catch (_) {
                                 throw subdlError;
                             }
-                            console.log(`${c.yellow}[SubDL] Descărcarea a eșuat (${subdlDownloadErrorLabel(subdlError)}); încerc fallback OpenSubtitles.${c.reset}`);
+                            const status = Number(subdlError?.response?.status || subdlError?.subdlDownloadMeta?.status || 0);
+                            console.log(`${c.yellow}[SubDL] Descărcarea a eșuat (${status || 'rețea'}); încerc fallback OpenSubtitles.${c.reset}`);
                             const fallbackResponse = await fetchValidatedSubtitleUrl(validatedFallbackTarget.url);
                             effectiveSubtitleSource = 'OpenSubtitles (fallback după SubDL)';
                             effectiveSubtitleName = fallbackSubtitleName || 'OpenSubtitles fallback';
