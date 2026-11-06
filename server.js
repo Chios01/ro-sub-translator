@@ -463,7 +463,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.192',
+    version: '13.2.193',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -1968,11 +1968,18 @@ async function getSubdlSubtitleText(configId, reference, requestedFilename = '')
             }
         }
 
-        return normalizeDownloadedSubtitle(
-            bytes,
-            directDownloadUrl || `https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(plainNId)}/download`,
-            String(requestedFilename || '').slice(0, 500)
-        );
+        try {
+            return normalizeDownloadedSubtitle(
+                bytes,
+                directDownloadUrl || `https://api.subdl.com/api/v2/subtitles/${encodeURIComponent(plainNId)}/download`,
+                String(requestedFilename || '').slice(0, 500)
+            );
+        } catch (contentError) {
+            // Un HTTP 200 cu HTML/ZIP/SRT invalid nu este eroare de rețea.
+            // Nu relansăm cereri; păstrăm fallback-ul OpenSubtitles.
+            contentError.subdlContentValidationFailed = true;
+            throw contentError;
+        }
     } catch (error) {
         console.log(`[SubDL] Descărcare nereușită (${isApiReference ? 'ID derivat din URL' : isDirectUrlRef ? 'URL direct' : 'nId'}; ${subdlDownloadErrorLabel(error)}); nu se expune cheia.`);
         error.statusCode = error.statusCode || 502;
@@ -10943,7 +10950,14 @@ async function validateTargetUrl(rawUrl) {
         try {
             addresses = await dns.lookup(hostname, { all: true, verbatim: true });
         } catch (error) {
-            throw new Error('Nu s-a putut rezolva gazda URL-ului.');
+            // Păstrăm doar codul DNS, nu mesajul original (care poate conține
+            // detalii interne). EAI_AGAIN poate fi reîncercat de SubDL;
+            // ENOTFOUND rămâne o eroare definitivă, fără retry suplimentar.
+            const safeDnsCodes = new Set(['EAI_AGAIN', 'ENOTFOUND', 'EAI_FAIL', 'EAI_NODATA']);
+            const safeCode = String(error?.code || '').toUpperCase();
+            const dnsError = new Error('Nu s-a putut rezolva gazda URL-ului.');
+            if (safeDnsCodes.has(safeCode)) dnsError.code = safeCode;
+            throw dnsError;
         }
     }
 
@@ -11011,7 +11025,22 @@ function subdlTransientDownloadReason(error) {
 
 function subdlDownloadErrorLabel(error) {
     const status = Number(error?.response?.status || error?.subdlDownloadMeta?.status || 0);
-    return status || subdlTransientDownloadReason(error) || 'eroare de rețea';
+    if (status) return status;
+    const transientReason = subdlTransientDownloadReason(error);
+    if (transientReason) return transientReason;
+    // Diagnostice din coduri/mesaje cunoscute, fără URL, tokenuri sau text arbitrar.
+    if (error?.subdlContentValidationFailed) return 'fișier invalid (ZIP/SRT)';
+    const code = String(error?.code || '').toUpperCase();
+    if (['ENOTFOUND', 'EAI_FAIL', 'EAI_NODATA'].includes(code)) return `DNS ${code}`;
+    if (['CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'DEPTH_ZERO_SELF_SIGNED_CERT'].includes(code)) return 'certificat TLS invalid';
+    const message = String(error?.message || '');
+    if (message === 'Nu s-a putut rezolva gazda URL-ului.') return 'eroare DNS fără cod';
+    if (message === 'Destinația URL nu este permisă.') return 'destinație URL respinsă de validare';
+    if (message === 'URL sursă invalid.' || message === 'URL SubDL nepermis.') return 'URL invalid';
+    if (message === 'SubDL a returnat un fișier gol.' || message === 'descărcarea subtitrării a returnat un fișier gol') return 'fișier gol';
+    if (message.includes('redirecționări') || message.includes('Redirecționare') || message.includes('redirecționare')) return 'redirecționare invalidă';
+    if (message === 'SubDL nu a returnat o subtitrare descărcabilă.') return 'răspuns SubDL fără subtitrare';
+    return 'eroare neclasificată';
 }
 
 async function retryTransientSubdlDownload(operation, stage) {
