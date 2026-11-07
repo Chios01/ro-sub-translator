@@ -487,7 +487,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.194',
+    version: '13.2.197',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -2696,6 +2696,11 @@ function isStandaloneNonDialogueSoundCue(value) {
         .replace(/\s+/g, ' ')
         .trim();
     if (!text || text.length > 180) return false;
+
+    // Onomatopee sonore autonome, nu dialog: „Whrrrrr!” / „Wrrrr!” / „Vrrrr!”.
+    // Se filtrează înainte de Gemini și QA, numai când sunt întregul cue.
+    // „Whrrrr, listen!” sau o replică mixtă se păstrează integral.
+    if (/^(?:wh|w|v)r{3,}[.!?…]*$/iu.test(text)) return true;
 
     // Prioritate dialogului când un nume se prezintă vorbind la telefon:
     // „Agent Finley speaking.” nu trebuie confundat cu „[Agent Finley speaking]”.
@@ -6702,6 +6707,14 @@ function hasCorruptedSubtitleText(text, originalText) {
     // O traducere de un singur cuvânt scurt, cu majusculă inițială dar fără nicio vocală,
     // este de obicei text corupt (de ex. „Gtt”). Acronimele majuscule sunt exceptate.
     const bareWord = s.replace(/[.!?…]+$/u, '').trim();
+    // Onomatopee scurte („Brrr!”, „Psst!”, „Tsk!”, „Vrrrr!”) nu sunt
+    // corupere atunci când și sursa este exclusiv o onomatopee de același tip.
+    // Dialogul real („Hello” -> „Gtt!”) este verificat ca înainte.
+    const bareSound = value => String(value || '').replace(/<[^>]+>/g, ' ')
+        .replace(/\[[^\]\n]*\]/g, ' ').replace(/[.!?…\s]+$/gu, '').trim();
+    const soundPattern = /^(?:wh?r{3,}|vr{3,}|br{2,}|ps+t+|tsk+|sh{2,}|s{3,}|ts{2,})$/iu;
+    const sourceSound = bareSound(originalText);
+    if (soundPattern.test(bareWord) && soundPattern.test(sourceSound)) return false;
     if (/^\p{Lu}[\p{Ll}]{2,5}$/u.test(bareWord) && !/[aeiouyăâî]/iu.test(bareWord)) return true;
 
     // Litere latine izolate, improbabile ca token românesc în interiorul unei
@@ -8011,13 +8024,92 @@ function applyLocalGrammarDeterministicFixes(text) {
     return result;
 }
 
-function detectLocalGrammarReviewReasons(text) {
+// v197: reparăm fără Gemini numai alarme QA cu o corecție ortografică
+// univocă sau susținută de textul EN. Cazurile de sens/persoană neclare
+// rămân în Quality Retry/Final Repair; nu ghicim traducerea.
+function applyHighConfidenceQaRepairs(originalText, translatedText) {
+    let output = String(translatedText || '');
+    if (!output.trim()) return output;
+    const source = String(originalText || '');
+    const properNamesInSource = new Set(
+        source.match(/(?<![\p{L}])\p{Lu}[\p{Ll}]{2,}(?![\p{L}])/gu) || []
+    );
+    const preserveCase = (matched, corrected) => {
+        if (matched === matched.toLocaleUpperCase('ro-RO')) return corrected.toLocaleUpperCase('ro-RO');
+        if (matched[0] === matched[0].toLocaleUpperCase('ro-RO')) {
+            return corrected[0].toLocaleUpperCase('ro-RO') + corrected.slice(1);
+        }
+        return corrected;
+    };
+    // Forme fără diacritice care, în dialogul românesc, au o corectură unică.
+    // Numele proprii găsite identic în original rămân nemodificate.
+    const certainWords = new Map(Object.entries({
+        stiu:'știu', stii:'știi', stiti:'știți', inteleg:'înțeleg',
+        intelegi:'înțelegi', multumesc:'mulțumesc', multumim:'mulțumim',
+        sunteti:'sunteți', aveti:'aveți', puteti:'puteți', vreti:'vreți'
+    }));
+    output = output.replace(
+        /(?<![\p{L}])(stiu|stii|stiti|inteleg|intelegi|multumesc|multumim|sunteti|aveti|puteti|vreti)(?![\p{L}])/giu,
+        matched => properNamesInSource.has(matched)
+            ? matched : preserveCase(matched, certainWords.get(matched.toLocaleLowerCase('ro-RO')))
+    );
+
+    // Câteva prepoziții foarte precise, nu orice „in”: expresii latine precum
+    // „in vitro / in vivo / in situ / in camera” sunt excluse structural.
+    output = output.replace(
+        /(?<![\p{L}'’\-])in(?=[ \t]+(?:noaptea|dimineața|seara|orașul|oraș|pădure|pădurea|clădire|clădirea|fața|spatele|curte|curtea|lume|viață|viața)(?![\p{L}]))/giu,
+        matched => preserveCase(matched, 'în')
+    );
+
+    // Clitic greșit lipit de auxiliarul de viitor. Nu schimbăm un „va” normal.
+    output = output.replace(/(?<![\p{L}])(mi|ți|ne|vă|îi|i|le)-va(?![\p{L}])/giu,
+        (matched, clitic) => preserveCase(matched, ({mi:'îmi', 'ți':'îți', ne:'ne', 'vă':'vă', 'îi':'îi', i:'îi', le:'le'})[clitic.toLocaleLowerCase('ro-RO')] + ' va')
+    );
+
+    // Calchierea „în ordine să” este corectată numai când originalul conține
+    // explicit „in order to”. Fără această dovadă, semnalul rămâne pentru AI.
+    if (/\bin\s+order\s+to\b/i.test(source)) {
+        output = output.replace(/(?<![\p{L}])în[ \t]+ordine[ \t]+să(?=[ \t]+[\p{L}])/giu,
+            matched => preserveCase(matched, 'ca să'));
+    }
+
+    // „o să-mi scoat” nu este o formă verbală validă. Alegem persoana I
+    // NUMAI dacă originalul aceluiași cue spune explicit „I can/could/...”.
+    // Ex. EN „Until I can get the picture” -> RO „o să-mi scot ...”.
+    // Dacă persoana nu reiese din sursă, rămâne doar avertismentul contextual.
+    if (/\bI\s+(?:can|could|will|would|want|need)\b/i.test(source)) {
+        output = output.replace(/(?<![\p{L}])o[ \t]+să-mi[ \t]+scoat(?![\p{L}])/giu,
+            matched => matched.replace(/scoat$/iu, 'scot'));
+    }
+    return output;
+}
+
+function detectLocalGrammarReviewReasons(text, originalText = '') {
     const clean = String(text || '')
         .replace(/<[^>]+>/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
 
     if (!clean) return [];
+
+    // Pentru semnalele ortografice evaluăm separat textul: numele proprii
+    // păstrate IDENTIC în EN și RO nu sunt cuvinte românești fără diacritice.
+    // Nu ascundem cuvintele cu litere mici (ex. „tara” = posibil „țara”) și
+    // nu modificăm niciun caracter din subtitrarea exportată.
+    const sourceProperWords = new Set(
+        (String(originalText || '').match(/(?<![\p{L}])\p{Lu}[\p{Ll}]{2,}(?![\p{L}])/gu) || [])
+    );
+    const withoutGroundedNames = clean.replace(
+        /(?<![\p{L}])\p{Lu}[\p{Ll}]{2,}(?![\p{L}])/gu,
+        word => sourceProperWords.has(word) ? ' '.repeat(word.length) : word
+    );
+    // „in vitro/in vivo/in situ” și câteva alte expresii latine consacrate
+    // se scriu „in”, nu „în”. Mascăm doar „in” din aceste expresii, fără
+    // să pierdem alte apariții de „in” greșit în aceeași replică.
+    const orthographyText = withoutGroundedNames.replace(
+        /(?<![\p{L}'’\-])in(?=[ \t]+(?:vitro|vivo|situ|memoriam|extremis|absentia|camera|utero|silico)(?![\p{L}]))/giu,
+        'în'
+    );
 
     const reasons = [];
 
@@ -8039,6 +8131,9 @@ function detectLocalGrammarReviewReasons(text) {
         { pattern: /(?<![\p{L}])lasă-mi-te(?![\p{L}])/iu, message: 'succesiune de clitice agramaticală „lasă-mi-te”' },
         { pattern: /(?<![\p{L}])strisoarea(?![\p{L}])/iu, message: 'posibilă deformare ortografică „strisoarea”' },
         { pattern: /(?<![\p{L}])ne-am\s+lipsit(?![\p{L}])/iu, message: 'formulare suspectă „ne-am lipsit”' },
+        // Caz real ratat de QA: „o să-mi scoat” (în loc de „o să-mi scot/scoată”).
+        // Doar semnal de revizuire contextuală, fără autocorectare.
+        { pattern: /(?<![\p{L}])o\s+să-mi\s+scoat(?![\p{L}])/iu, message: 'formă verbală suspectă „o să-mi scoat”; verifică originalul și acordul' },
         { pattern: /(?<![\p{L}])le\s+mai\s+te\s+ui(?:ți|ti)(?![\p{L}])/iu, message: 'succesiune de pronume suspectă „le mai te uiți”' },
         { pattern: /(?<![\p{L}])(?:așa|asa)\s+and\s+(?:gândeam|gandeam)(?![\p{L}])/iu, message: 'fragment englezesc netradus „Așa and gândeam”' },
         { pattern: /(?<![\p{L}])pot\s+să\s+(?:vorbim|mergem|facem|avem|plecăm|plecam|vedem|spunem|știm|stim|fim)(?![\p{L}])/iu, message: 'nepotrivire de persoană după „pot să”' },
@@ -8051,7 +8146,10 @@ function detectLocalGrammarReviewReasons(text) {
 
         // Semnale generale (nu doar cazuri izolate). Nu corectează automat:
         // marchează replica pentru singura verificare AI punctuală deja existentă.
-        { pattern: /(?<![\p{L}])(?:stiu|stii|stiti|inteleg|intelegi|multumesc|multumim|sunteti|aveti|puteti|vreti|inca|dupa|asa|pana|cand|tara|romana)(?![\p{L}])/iu, message: 'cuvânt românesc probabil scris fără diacritice' },
+        { pattern: /(?<![\p{L}])(?:stiu|stii|stiti|inteleg|intelegi|multumesc|multumim|sunteti|aveti|puteti|vreti|inca|dupa|asa|pana|cand|romana)(?![\p{L}])/iu, message: 'cuvânt românesc probabil scris fără diacritice' },
+        // „Tara” poate fi nume propriu; doar „tara” scris integral cu litere mici
+        // rămâne un semnal pentru substantivul „țara” fără diacritică.
+        { pattern: /(?<![\p{L}])tara(?![\p{L}])/u, message: 'cuvânt românesc probabil scris fără diacritice' },
         { pattern: /(?:(?<![\p{L}'’-])in|(?:^|[.!?…]\s+)In)\s+\p{Ll}/u, message: 'cuvântul „in” este probabil „în” scris fără diacritică (sau engleză rămasă)' },
         { pattern: /(?<![\p{L}])\p{L}{3,}esti(?![\p{L}])/iu, message: 'formă verbală probabil scrisă fără diacritică („-ești”)' },
         { pattern: /(?<![\p{L}])(?:mi|ți|ne|vă|îi|i|le)-va(?![\p{L}])/iu, message: 'viitor greșit „mi-va / ți-va” (corect: „îmi va”, „îți va”)' },
@@ -8061,12 +8159,23 @@ function detectLocalGrammarReviewReasons(text) {
         { pattern: /(?<![\p{L}])\p{L}+\/ă(?![\p{L}])|\(ă\)/iu, message: 'formă de gen dublă cu slash/paranteză; alege forma potrivită din context' }
     ];
     for (const guard of highConfidenceRomanianQualityGuards) {
-        if (guard.pattern.test(clean)) reasons.push(guard.message);
+        const orthographyOnly =
+            guard.message === 'cuvânt românesc probabil scris fără diacritice' ||
+            guard.message === 'cuvântul „in” este probabil „în” scris fără diacritică (sau engleză rămasă)' ||
+            guard.message === 'formă verbală probabil scrisă fără diacritică („-ești”)';
+        if (guard.pattern.test(orthographyOnly ? orthographyText : clean)) reasons.push(guard.message);
     }
 
-    // Registru amestecat în aceeași replică („dumneavoastră” + „tu/ești/te/ți”).
-    if (/(?<![\p{L}])(?:dumneavoastră|dvs|dumneata)(?![\p{L}])/iu.test(clean) &&
-        /(?<![\p{L}])(?:tu|ești|tău|tale|tine|ți|te)(?![\p{L}])/iu.test(clean)) {
+    // Două replici cu marcatori expliciți de vorbitor pot utiliza legitim
+    // registrul formal și informal în același bloc SRT.
+    const speakerLines = String(text || '').replace(/<[^>]+>/g, ' ')
+        .split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const separateSpeakers = speakerLines.length >= 2 &&
+        speakerLines.every(line => /^[-–—][ \t]+\S/u.test(line));
+    const registerSegments = separateSpeakers ? speakerLines : [clean];
+    if (registerSegments.some(segment =>
+        /(?<![\p{L}])(?:dumneavoastră|dvs|dumneata)(?![\p{L}])/iu.test(segment) &&
+        /(?<![\p{L}])(?:tu|ești|tău|tale|tine|ți|te)(?![\p{L}])/iu.test(segment))) {
         reasons.push('registru amestecat în aceeași replică (dumneavoastră și tu)');
     }
 
@@ -8210,7 +8319,7 @@ function detectSourceAwareQualityReviewReasons(item, translation, contextItems, 
 
 function collectQualityReviewReasons(item, translation, contextItems, translatedById) {
     return [
-        ...detectLocalGrammarReviewReasons(translation),
+        ...detectLocalGrammarReviewReasons(translation, item?.text),
         ...detectSourceAwareQualityReviewReasons(item, translation, contextItems, translatedById)
     ];
 }
@@ -8585,7 +8694,7 @@ async function runLocalGrammarQualityPass(items, translatedById) {
         // Aplicăm întâi numai corecțiile ancorate clar în sursă și typo-fix-urile
         // cu risc mic; astfel AI primește o versiune curățată, nu duplică munca locală.
         const sourceFixed = applySourceGroundedSemanticFixes(item.text, current);
-        const fixed = applyLocalGrammarDeterministicFixes(sourceFixed);
+        const fixed = applyHighConfidenceQaRepairs(item.text, applyLocalGrammarDeterministicFixes(sourceFixed));
         if (fixed !== current) {
             translatedById[id] = formatSubtitleLine(fixed);
             autoFixed++;
@@ -10627,6 +10736,17 @@ async function translateSrtWithGemini(srtText, apiKeys, qaStatus = null, mediaCo
     }
     if (finalContentFilterChanged || finalContentFilterEmptied) {
         console.log(`${c.cyan}[Curățare finală sigură] ${finalContentFilterChanged} replici normalizate${finalContentFilterEmptied ? `; ${finalContentFilterEmptied} au rămas goale și vor fi raportate de QA` : ''}. Se elimină numai vocalizările românești vizate (ă/ăă/ah/aa/hă/Hm/Mm/Mhm/îhî) și bâlbâielile scrise evidente.${c.reset}`);
+    }
+
+    // Reaplicăm corecțiile QA certe după toate răspunsurile AI și filtrele finale.
+    // Nu relansăm Gemini: dacă review-ul a reintrodus o greșeală sigură, ea
+    // este corectată înainte de QA FINAL și export.
+    for (const item of items) {
+        const id = String(item.id);
+        const current = String(translatedById[id] || '');
+        if (!current.trim() || item.musicOnly || isJunkOrInterjection(item.text)) continue;
+        const repaired = applyHighConfidenceQaRepairs(item.text, current);
+        if (repaired !== current) translatedById[id] = repaired;
     }
 
     // Corectare locală conservatoare a majusculelor după toate reviziile AI și
