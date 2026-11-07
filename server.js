@@ -487,7 +487,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.193',
+    version: '13.2.194',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -539,7 +539,49 @@ function safeAttachmentId(value) {
     return safe || 'subtitle';
 }
 
-app.get('/arhiva-secreta', (req, res) => {
+// Parola arhivei se configurează exclusiv în Render: ARCHIVE_PASSWORD.
+// Fără parolă configurată, arhiva rămâne închisă (fail closed).
+// Nicio altă rută / configurație Gemini nu folosește aceste credențiale.
+function requireArchiveAuthentication(req, res, next) {
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Vary', 'Authorization');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+
+    const archivePassword = process.env.ARCHIVE_PASSWORD;
+    if (typeof archivePassword !== 'string' || !archivePassword.trim()) {
+        return res.status(503).type('text/plain').send('Arhiva este indisponibilă: parola nu este configurată pe server.');
+    }
+
+    const authorization = req.headers?.authorization;
+    let username = '';
+    let password = '';
+    // O limită mică evită procesarea antetelor arbitrar de mari.
+    if (typeof authorization === 'string' && authorization.length <= 4096) {
+        const match = /^Basic\s+([A-Za-z0-9+/]+={0,2})$/i.exec(authorization.trim());
+        if (match) {
+            const decoded = Buffer.from(match[1], 'base64').toString('utf8');
+            const colon = decoded.indexOf(':');
+            if (colon >= 0) {
+                username = decoded.slice(0, colon);
+                password = decoded.slice(colon + 1);
+            }
+        }
+    }
+
+    // SHA-256 produce buffere egale ca lungime pentru compararea în timp constant.
+    const suppliedDigest = crypto.createHash('sha256').update(password, 'utf8').digest();
+    const expectedDigest = crypto.createHash('sha256').update(archivePassword, 'utf8').digest();
+    if (username === 'admin' && crypto.timingSafeEqual(suppliedDigest, expectedDigest)) {
+        return next();
+    }
+
+    res.setHeader('WWW-Authenticate', 'Basic realm="Arhiva Secreta", charset="UTF-8"');
+    return res.status(401).type('text/plain').send('Acces la arhivă permis numai cu utilizatorul admin și parola corectă.');
+}
+
+app.get('/arhiva-secreta', requireArchiveAuthentication, (req, res) => {
     let html = '<html lang="ro"><head><title>Arhiva Secreta - Quality Control</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>';
     html += '<body style="background:#111;color:#eee;font-family:sans-serif;padding:20px;">';
     html += '<h2 style="color:#0f0;">Arhiva Subtitrări (Ultimele 10)</h2>';
@@ -562,7 +604,7 @@ app.get('/arhiva-secreta', (req, res) => {
     res.send(html);
 });
 
-app.get('/download-srt-en/:index', (req, res) => {
+app.get('/download-srt-en/:index', requireArchiveAuthentication, (req, res) => {
     const index = parseInt(req.params.index);
     if (isNaN(index) || !secretArchive[index] || !secretArchive[index].original) {
         return res.status(404).send('Originalul nu există sau a fost șters automat din memorie.');
@@ -573,7 +615,7 @@ app.get('/download-srt-en/:index', (req, res) => {
     res.send(item.original);
 });
 
-app.get('/download-srt/:index', (req, res) => {
+app.get('/download-srt/:index', requireArchiveAuthentication, (req, res) => {
     const index = parseInt(req.params.index);
     if (isNaN(index) || !secretArchive[index]) {
         return res.status(404).send('Fișierul nu există sau a fost șters automat din memorie.');
