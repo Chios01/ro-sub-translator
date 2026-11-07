@@ -227,12 +227,14 @@ function logTranslationResult(identity, message) {
 }
 
 // ============================================================
-// MEMORY CACHE & SECRET ARCHIVE (MAX 30 ELEMENTE)
+// MEMORY CACHE (60 SUBTITRĂRI) & SECRET ARCHIVE (NESCHIMBATĂ)
 // ============================================================
 
 const memoryCache = new Map();
-// Cheile rezultatelor QA livrate cu fallback rămân protejate de evacuarea LRU.
-// Astfel, cererile repetate pentru aceeași subtitrare nu repornesc Gemini automat.
+// Rezultatele QA parțiale sunt păstrate prioritar în LRU, în limita unui
+// plafon separat. Astfel nu pot crește fără limită în memoria Render.
+const TRANSLATION_CACHE_MAX_RESULTS = 60;
+const QA_FALLBACK_CACHE_MAX_RESULTS = 30;
 const qaFallbackCacheKeys = new Set();
 const secretArchive = [];
 
@@ -401,19 +403,41 @@ function getMemoryCacheEntry(key) {
     return value;
 }
 
-// Limitează cache-ul la 30 de rezultate finalizate. Promisiunile active nu sunt
-// evacuate: altfel o cerere identică ar putea porni o a doua traducere Gemini.
-// protectedKey este păstrată în timpul curățării pentru a nu elimina tocmai
-// rezultatul accesat sau finalizat cel mai recent.
+// Limitează strict rezultatele finalizate la 60, dintre care cel mult 30
+// rezultate QA parțiale. Promisiunile active NU se evacuează: aceeași cerere
+// trebuie să poată aștepta același job Gemini, fără dublarea traducerii.
+// Intrările QA rămân prioritare, dar nu mai sunt protejate nelimitat.
+// protectedKey păstrează rezultatul tocmai finalizat/accesat la curățarea curentă.
 function cleanMemoryCache(protectedKey = null) {
-    if (memoryCache.size <= 30) return;
+    // Înlătură eventualele marcaje QA pentru intrări care nu mai sunt rezultate.
+    for (const key of qaFallbackCacheKeys) {
+        if (typeof memoryCache.get(key) !== 'string') qaFallbackCacheKeys.delete(key);
+    }
 
-    for (const [key, value] of memoryCache) {
-        if (memoryCache.size <= 30) break;
-        if (key === protectedKey || qaFallbackCacheKeys.has(key)) continue;
-        if (typeof value === 'string') {
+    // Ordinea memoryCache este LRU, inclusiv după getMemoryCacheEntry().
+    function evictOldestFinalized(qaOnly) {
+        for (const [key, value] of memoryCache) {
+            if (key === protectedKey || typeof value !== 'string') continue;
+            if (qaOnly !== qaFallbackCacheKeys.has(key)) continue;
             memoryCache.delete(key);
+            qaFallbackCacheKeys.delete(key);
+            return true;
         }
+        return false;
+    }
+
+    while (qaFallbackCacheKeys.size > QA_FALLBACK_CACHE_MAX_RESULTS) {
+        if (!evictOldestFinalized(true)) break;
+    }
+
+    let finishedCount = 0;
+    for (const value of memoryCache.values()) {
+        if (typeof value === 'string') finishedCount++;
+    }
+    while (finishedCount > TRANSLATION_CACHE_MAX_RESULTS) {
+        // Întâi rezultate obișnuite; QA parțial doar dacă nu mai există altele.
+        if (!evictOldestFinalized(false) && !evictOldestFinalized(true)) break;
+        finishedCount--;
     }
 }
 
@@ -463,7 +487,7 @@ function hasActiveTranslationForMedia(ownerFingerprint, normalizedMediaId) {
 
 const manifest = {
     id: 'community.chios.geminitranslator',
-    version: '13.2.192',
+    version: '13.2.193',
     name: 'RO Sub Translator',
     logo: 'https://raw.githubusercontent.com/Chios01/ro-sub-translator/main/Design_Litera_C_i_litera_G_sunt_suprapuse_i_se_mpletesc_ca_z.jpg',
     description: 'Subtitrări instant din Engleză în Română, traduse inteligent prin Gemini AI. Powered by Chios.',
@@ -11628,10 +11652,10 @@ app.get('/:configData/translate', async (req, res) => {
                         // Rezultatul parțial este tratat ca rezultat final de cache pentru
                         // această subtitrare. O nouă cerere GET (inclusiv retry automat al
                         // clientului/Stremio) primește același SRT și NU pornește Gemini din nou.
-                        // Reîncercarea se face numai după resetarea explicită a cache-ului.
+                        // O reîncercare poate începe doar după evacuarea LRU sau resetarea cache-ului.
                         memoryCache.set(cacheKey, translatedSrtString.endsWith('\n') ? translatedSrtString : `${translatedSrtString}\n`);
                         qaFallbackCacheKeys.add(cacheKey);
-                        logTranslationResult(translationLogIdentity, `${c.yellow}[Cache QA] Rezultatul parțial este memorat până la resetarea explicită a serviciului; cererile repetate nu vor porni automat o nouă traducere. ID-uri păstrate în engleză: ${(qaStatus.fallbackIds || qaStatus.unresolvedIds || []).join(', ') || 'necunoscute'}.${c.reset}`);
+                        logTranslationResult(translationLogIdentity, `${c.yellow}[Cache QA] Rezultatul parțial este memorat (cache LRU cu limită); cererile repetate nu vor reporni Gemini cât timp intrarea rămâne în cache. ID-uri păstrate în engleză: ${(qaStatus.fallbackIds || qaStatus.unresolvedIds || []).join(', ') || 'necunoscute'}.${c.reset}`);
                     } else {
                         logTranslationResult(translationLogIdentity, `${c.yellow}[Cache] Rezultatul nu este memorat: traducerea este goală sau QA FINAL a raportat erori. O cerere ulterioară va putea reîncerca.${c.reset}`);
                     }
